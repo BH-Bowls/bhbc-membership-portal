@@ -1,0 +1,883 @@
+// app/renewals/page.tsx
+// Membership renewal page for 2026 season
+
+'use client';
+
+import { useState, useEffect } from 'react';
+import { useSession } from 'next-auth/react';
+import { useRouter } from 'next/navigation';
+import { UserSelector } from '@/components/UserSelector';
+
+interface UserProfile {
+  userName: string;
+  fullKnownAs: string;
+  ageDemographic: string;
+  memberType: string;
+  friendliesLastYear: number;
+  emailAddress: string;
+  title: string | null;
+}
+
+interface ManageableUser {
+  userName: string;
+  fullKnownAs: string;
+  emailAddress: string;
+  memberType: string;
+  isSelf: boolean;
+}
+
+interface Renewal {
+  userName: string;
+  renewingMembership: boolean;
+  number200ClubEntries: number;
+  pref200Club?: string;
+  cleaningDatesToAvoid?: string;
+  teaDatesToAvoid?: string;
+  drivingAwayMatches?: string;
+  drivingAdditionalInfo?: string;
+  greenMaintenance?: string;
+  greenAdditionalInfo?: string;
+  barDuty?: string;
+  barAdditionalInfo?: string;
+  otherSkills?: string;
+  mensChampionship: boolean;
+  ladiesMaynard: boolean;
+  mensTwoWood: boolean;
+  ladiesTwoWood: boolean;
+  marriedPairs: boolean;
+  drawnPairs: boolean;
+  australianPairs: boolean;
+  drawnTriples: boolean;
+  handicap: boolean;
+  oldlands: boolean;
+  veterans: boolean;
+  drawnPairsSub: boolean;
+  australianPairsSub: boolean;
+  drawnTriplesSub: boolean;
+}
+
+interface FeeBreakdown {
+  membershipFee: number;
+  club200Fee: number;
+  compsFee: number;
+  total: number;
+}
+
+export default function RenewalsPage() {
+  const { data: session, status } = useSession();
+  const router = useRouter();
+
+  // Buddy system state
+  const [manageableUsers, setManageableUsers] = useState<ManageableUser[]>([]);
+  const [selectedUserName, setSelectedUserName] = useState<string>('');
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [renewal, setRenewal] = useState<Renewal | null>(null);
+  const [fees, setFees] = useState<FeeBreakdown>({
+    membershipFee: 0,
+    club200Fee: 0,
+    compsFee: 0,
+    total: 0,
+  });
+
+  // Editable fields for renewal (not saved to profile)
+  const [ageDemographic, setAgeDemographic] = useState<string>('');
+  const [memberType, setMemberType] = useState<string>('');
+  const [fullTimeEducation, setFullTimeEducation] = useState<boolean>(false);
+
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isSubmitted, setIsSubmitted] = useState(false);
+  const [error, setError] = useState('');
+  const [eligibility, setEligibility] = useState({
+    canEnterCompetitions: false,
+    friendliesLastYear: 0,
+  });
+
+  // Load manageable users on mount (buddy system)
+  useEffect(() => {
+    if (status === 'authenticated') {
+      loadManageableUsers();
+    }
+  }, [status]);
+
+  // Load renewal data when selected user changes
+  useEffect(() => {
+    if (selectedUserName) {
+      loadRenewalData(selectedUserName);
+    }
+  }, [selectedUserName]);
+
+  // Recalculate fees whenever renewal data or demographics change
+  useEffect(() => {
+    if (profile && renewal && ageDemographic && memberType) {
+      const newFees = calculateFeesClient(
+        { ...profile, ageDemographic, memberType },
+        renewal,
+        fullTimeEducation
+      );
+      setFees(newFees);
+    }
+  }, [profile, renewal, ageDemographic, memberType, fullTimeEducation]);
+
+  const loadManageableUsers = async () => {
+    try {
+      const response = await fetch('/api/buddies');
+      if (!response.ok) throw new Error('Failed to load manageable users');
+
+      const data = await response.json();
+      setManageableUsers(data.users);
+      setIsAdmin(data.isAdmin);
+
+      // Auto-select self by default
+      const selfUser = data.users.find((u: ManageableUser) => u.isSelf);
+      if (selfUser) {
+        setSelectedUserName(selfUser.userName);
+      }
+    } catch (err) {
+      console.error('Error loading manageable users:', err);
+      setError('Failed to load user list');
+    }
+  };
+
+  const loadRenewalData = async (userName: string) => {
+    try {
+      setIsLoading(true);
+      setError('');
+      const response = await fetch(`/api/renewals?userName=${userName}`);
+      if (!response.ok) throw new Error('Failed to load renewal data');
+
+      const data = await response.json();
+      setProfile(data.profile);
+      setRenewal(data.renewal);
+      setFees(data.fees);
+      setEligibility(data.eligibility);
+
+      // Initialize editable fields from profile
+      setAgeDemographic(data.profile.ageDemographic);
+      setMemberType(data.profile.memberType);
+    } catch (err) {
+      setError('Failed to load renewal data. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleChange = (field: keyof Renewal, value: any) => {
+    if (!renewal) return;
+    setRenewal({ ...renewal, [field]: value });
+  };
+
+  const handleSave = async () => {
+    if (!renewal) return;
+
+    setIsSaving(true);
+    setError('');
+
+    try {
+      const response = await fetch('/api/renewals', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...renewal,
+          userName: selectedUserName, // Include target user for buddy system
+        }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to save renewal');
+      }
+
+      const data = await response.json();
+      setFees(data.fees);
+      setIsSubmitted(true);
+    } catch (err: any) {
+      setError(err.message || 'Failed to save renewal');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Client-side fee calculation (mirrors backend logic)
+  const calculateFeesClient = (
+    profile: UserProfile,
+    renewal: Renewal,
+    fullTimeEdu: boolean = false
+  ): FeeBreakdown => {
+    let membershipFee = 0;
+
+    const ageDem = profile.ageDemographic;
+    const memType = profile.memberType;
+
+    // Fee calculation based on member type and age demographic
+    switch (memType) {
+      case 'Playing':
+        switch (ageDem) {
+          case 'U18':
+            membershipFee = 10;
+            break;
+          case '18-24':
+            membershipFee = fullTimeEdu ? 10 : 60;
+            break;
+          case '25-59':
+            membershipFee = 110;
+            break;
+          case '60+':
+            membershipFee = 110;
+            break;
+          case '80+':
+            membershipFee = 60;
+            break;
+        }
+        break;
+      case 'Social':
+        membershipFee = 25;
+        break;
+      case 'Honorary':
+        membershipFee = 0;
+        break;
+    }
+
+    // Calculate 200 Club fees
+    const club200Fee = renewal.number200ClubEntries * 6;
+
+    // Calculate competition fees
+    const competitions = [
+      'mensChampionship',
+      'ladiesMaynard',
+      'mensTwoWood',
+      'ladiesTwoWood',
+      'marriedPairs',
+      'drawnPairs',
+      'australianPairs',
+      'drawnTriples',
+      'handicap',
+      'oldlands',
+      'veterans',
+    ];
+
+    const compCount = competitions.filter(
+      (comp) => renewal[comp as keyof Renewal] === true
+    ).length;
+
+    const compsFee = compCount * 2;
+
+    const total = membershipFee + club200Fee + compsFee;
+
+    return { membershipFee, club200Fee, compsFee, total };
+  };
+
+  const formatCurrency = (amount: number) => `£${amount.toFixed(2)}`;
+
+  // Get allowed member types based on current type
+  const getAllowedMemberTypes = () => {
+    if (!profile) return [];
+    const currentType = profile.memberType;
+
+    if (currentType === 'Honorary') {
+      return ['Playing', 'Social', 'Honorary'];
+    } else if (currentType === 'Playing' || currentType === 'Social') {
+      return ['Playing', 'Social'];
+    }
+    return [currentType]; // Fallback: can only keep current type
+  };
+
+  // Determine if user can enter a competition based on gender
+  const canEnterCompetition = (competitionKey: string): boolean => {
+    if (!profile?.title) return true; // Default to allow if no title
+
+    const isMale = profile.title === 'Mr';
+    const isFemale = ['Mrs', 'Miss', 'Ms'].includes(profile.title);
+
+    // Men's only competitions
+    if (competitionKey === 'mensChampionship' || competitionKey === 'mensTwoWood') {
+      return isMale;
+    }
+
+    // Ladies' only competitions
+    if (competitionKey === 'ladiesMaynard' || competitionKey === 'ladiesTwoWood') {
+      return isFemale;
+    }
+
+    // All other competitions are open to everyone
+    return true;
+  };
+
+  if (status === 'loading' || isLoading || !profile || !renewal) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading renewal data...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Success message after submission
+  if (isSubmitted && renewal.renewingMembership) {
+    const selectedUser = manageableUsers.find((u) => u.userName === selectedUserName);
+    const isManagingOther = selectedUser && !selectedUser.isSelf;
+
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <nav className="bg-white shadow-sm">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex justify-between h-16">
+              <div className="flex items-center">
+                <button
+                  onClick={() => router.push('/')}
+                  className="text-indigo-600 hover:text-indigo-700 font-medium"
+                >
+                  ← Back to Home
+                </button>
+              </div>
+              <div className="flex items-center">
+                <h1 className="text-xl font-bold text-gray-900">Renewal Confirmation</h1>
+              </div>
+              <div className="w-24"></div>
+            </div>
+          </div>
+        </nav>
+
+        <main className="max-w-3xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
+          {/* User Selector (Buddy System) - Allow switching to manage another user */}
+          {manageableUsers.length > 1 && (
+            <UserSelector
+              users={manageableUsers}
+              selectedUserName={selectedUserName}
+              onChange={(userName) => {
+                setSelectedUserName(userName);
+                setIsSubmitted(false); // Reset to form view
+              }}
+              featureName="renewal"
+              isAdmin={isAdmin}
+            />
+          )}
+          <div className="bg-white shadow-lg rounded-lg overflow-hidden">
+            <div className="bg-green-50 px-6 py-4 border-b border-green-100">
+              <div className="flex items-center">
+                <svg className="h-6 w-6 text-green-600 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                <h2 className="text-lg font-semibold text-green-900">
+                  {isManagingOther
+                    ? `Thank you! ${profile?.fullKnownAs}'s renewal has been submitted.`
+                    : 'Thank you! Your renewal has been submitted.'}
+                </h2>
+              </div>
+            </div>
+
+            <div className="px-6 py-8">
+              <div className="mb-6">
+                <h3 className="text-lg font-medium text-gray-900 mb-4">Fee Summary</h3>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Membership Fee:</span>
+                    <span className="font-medium">{formatCurrency(fees.membershipFee)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">200 Club:</span>
+                    <span className="font-medium">{formatCurrency(fees.club200Fee)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Competitions:</span>
+                    <span className="font-medium">{formatCurrency(fees.compsFee)}</span>
+                  </div>
+                  <div className="border-t pt-2 mt-2 flex justify-between text-lg">
+                    <span className="font-semibold text-gray-900">Total Payable:</span>
+                    <span className="font-bold text-indigo-600">{formatCurrency(fees.total)}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6">
+                <h3 className="text-lg font-medium text-blue-900 mb-3">Payment Details</h3>
+                <div className="space-y-1 text-sm text-blue-800">
+                  <p><span className="font-medium">Bank:</span> HSBC</p>
+                  <p><span className="font-medium">Sort Code:</span> 40-15-16</p>
+                  <p><span className="font-medium">Account Number:</span> 81554948</p>
+                  <p><span className="font-medium">Account Name:</span> Burgess Hill Bowls Club</p>
+                  <p><span className="font-medium">Reference:</span> {profile.fullKnownAs} SUBS</p>
+                </div>
+                <p className="mt-4 text-sm text-blue-700">
+                  Please make payment at your earliest convenience. Cash, cheque, and card payments are also accepted at the bar.
+                </p>
+              </div>
+
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                <p className="text-sm text-gray-700">
+                  ✉️ A confirmation email has been sent to{' '}
+                  {isManagingOther && (
+                    <span className="font-medium">{profile?.fullKnownAs} at </span>
+                  )}
+                  <span className="font-medium">{profile?.emailAddress}</span>
+                </p>
+              </div>
+
+              <div className="mt-6 flex justify-center">
+                <button
+                  onClick={() => router.push('/')}
+                  className="px-6 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
+                >
+                  Return to Home
+                </button>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <nav className="bg-white shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between h-16">
+            <div className="flex items-center">
+              <button
+                onClick={() => router.push('/')}
+                className="text-indigo-600 hover:text-indigo-700 font-medium"
+              >
+                ← Back to Home
+              </button>
+            </div>
+            <div className="flex items-center">
+              <h1 className="text-xl font-bold text-gray-900">2026 Membership Renewal</h1>
+            </div>
+            <div className="w-24"></div>
+          </div>
+        </div>
+      </nav>
+
+      {/* Main Content */}
+      <main className="max-w-4xl mx-auto py-6 sm:px-6 lg:px-8">
+        {/* User Selector (Buddy System) */}
+        {manageableUsers.length > 0 && (
+          <UserSelector
+            users={manageableUsers}
+            selectedUserName={selectedUserName}
+            onChange={(userName) => {
+              setSelectedUserName(userName);
+              setIsSubmitted(false); // Reset submission state when changing users
+            }}
+            featureName="renewal"
+            isAdmin={isAdmin}
+          />
+        )}
+
+        {/* Error Message */}
+        {error && (
+          <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+            {error}
+          </div>
+        )}
+
+        {/* Success Message (non-renewing) */}
+        {isSubmitted && !renewal.renewingMembership && (
+          <div className="mb-4 bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded">
+            Your renewal status has been updated.
+          </div>
+        )}
+
+        {/* Renewal Form */}
+        <div className="bg-white shadow rounded-lg">
+          <div className="px-4 py-5 sm:p-6">
+            {/* Membership Renewal Section */}
+            <div className="mb-8">
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  checked={renewal.renewingMembership}
+                  onChange={(e) => handleChange('renewingMembership', e.target.checked)}
+                  className="h-5 w-5 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                />
+                <label className="ml-3 text-lg font-medium text-gray-900">
+                  I will be renewing my membership for the 2026 season
+                </label>
+              </div>
+
+              {renewal.renewingMembership && (
+                <div className="mt-6 p-4 bg-gray-50 rounded-md">
+                  <p className="text-sm text-gray-600 mb-4">
+                    Please ensure you select the correct age demographic as that affects the membership level.
+                  </p>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Age Demographic
+                      </label>
+                      <select
+                        value={ageDemographic}
+                        onChange={(e) => setAgeDemographic(e.target.value)}
+                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                      >
+                        <option value="U18">Under 18</option>
+                        <option value="18-24">18-24</option>
+                        <option value="25-59">25-59</option>
+                        <option value="60+">60+</option>
+                        <option value="80+">80+</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Member Type
+                      </label>
+                      <select
+                        value={memberType}
+                        onChange={(e) => setMemberType(e.target.value)}
+                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                      >
+                        {getAllowedMemberTypes().map((type) => (
+                          <option key={type} value={type}>
+                            {type}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Full-time Education Checkbox (only for 18-24) */}
+                  {ageDemographic === '18-24' && (
+                    <div className="mt-4 pt-4 border-t">
+                      <div className="flex items-center">
+                        <input
+                          type="checkbox"
+                          checked={fullTimeEducation}
+                          onChange={(e) => setFullTimeEducation(e.target.checked)}
+                          className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                        />
+                        <label className="ml-2 text-sm text-gray-700">
+                          I am in full-time education
+                          <span className="ml-2 text-xs text-gray-500">(reduces fee from £60 to £10)</span>
+                        </label>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="mt-4 pt-4 border-t">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm font-medium text-gray-700">Membership Fee:</span>
+                      <span className="text-lg font-semibold text-indigo-600">
+                        {formatCurrency(fees.membershipFee)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {renewal.renewingMembership && (
+              <>
+                {/* 200 Club Section */}
+                <div className="mb-8 pb-8 border-b">
+                  <h3 className="text-lg font-medium text-gray-900 mb-2">200 Club</h3>
+                  <p className="text-sm text-gray-600 mb-4">
+                    A 200 club entry costs £6 per year for a monthly draw for cash prizes throughout the playing season. Please enter the total number of 200 club entries required.
+                  </p>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Number of entries (£6 per entry)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="10"
+                        value={renewal.number200ClubEntries}
+                        onChange={(e) => handleChange('number200ClubEntries', parseInt(e.target.value) || 0)}
+                        className="block w-32 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                      />
+                    </div>
+                    {renewal.number200ClubEntries > 0 && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Preferred numbers (optional)
+                        </label>
+                        <input
+                          type="text"
+                          value={renewal.pref200Club || ''}
+                          onChange={(e) => handleChange('pref200Club', e.target.value)}
+                          placeholder="e.g., 7, 23, 45"
+                          className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                        />
+                      </div>
+                    )}
+                    <div className="flex justify-between items-center pt-2">
+                      <span className="text-sm font-medium text-gray-700">200 Club Fee:</span>
+                      <span className="text-lg font-semibold text-indigo-600">
+                        {formatCurrency(fees.club200Fee)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Volunteering Section */}
+                <div className="mb-8 pb-8 border-b">
+                  <h3 className="text-lg font-medium text-gray-900 mb-2">Volunteering</h3>
+                  <p className="text-sm text-gray-600 mb-4">
+                    The club relies on volunteers to run the club, so please consider how you can help.
+                  </p>
+                  <div className="space-y-6">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Tea Duty - Dates to avoid (optional)
+                      </label>
+                      <p className="text-xs text-gray-500 mb-2">
+                        All FULL members are expected to take their turn with tea duty throughout the season. Please indicate any days or dates you are not available, or if you are willing to do additional duties.
+                      </p>
+                      <textarea
+                        value={renewal.teaDatesToAvoid || ''}
+                        onChange={(e) => handleChange('teaDatesToAvoid', e.target.value)}
+                        rows={2}
+                        placeholder="e.g., July 15, August 10-20"
+                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Cleaning - Dates to avoid (optional)
+                      </label>
+                      <p className="text-xs text-gray-500 mb-2">
+                        All FULL members are expected to take their turn with cleaning duty on a Saturday morning. Please indicate any dates you are not available.
+                      </p>
+                      <textarea
+                        value={renewal.cleaningDatesToAvoid || ''}
+                        onChange={(e) => handleChange('cleaningDatesToAvoid', e.target.value)}
+                        rows={2}
+                        placeholder="e.g., December, summer holidays"
+                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                      />
+                    </div>
+
+                    {/* Driving - Only for Playing members */}
+                    {memberType === 'Playing' && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Driving to Away Matches (optional)
+                        </label>
+                        <p className="text-xs text-gray-500 mb-2">
+                          Please indicate if you are willing to drive other members to away matches occasionally.
+                        </p>
+                        <select
+                          value={renewal.drivingAwayMatches || ''}
+                          onChange={(e) => handleChange('drivingAwayMatches', e.target.value)}
+                          className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border mb-2"
+                        >
+                          <option value="">Please select</option>
+                          <option value="Yes">Yes</option>
+                          <option value="No">No</option>
+                        </select>
+                        <textarea
+                          value={renewal.drivingAdditionalInfo || ''}
+                          onChange={(e) => handleChange('drivingAdditionalInfo', e.target.value)}
+                          rows={2}
+                          placeholder="Additional information (e.g., limited space, certain days only)"
+                          className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                        />
+                      </div>
+                    )}
+
+                    {/* Green, Bar, Other Skills - Available for all members */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Green &amp; Surrounds Maintenance (optional)
+                      </label>
+                      <p className="text-xs text-gray-500 mb-2">
+                        Please indicate if you are willing to help keeping up with the many things that need to be done outside, for instance sweeping, mowing surrounds, hedges &amp; general maintenance.
+                      </p>
+                      <select
+                        value={renewal.greenMaintenance || ''}
+                        onChange={(e) => handleChange('greenMaintenance', e.target.value)}
+                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border mb-2"
+                      >
+                        <option value="">Please select</option>
+                        <option value="Yes">Yes</option>
+                        <option value="No">No</option>
+                      </select>
+                      <textarea
+                        value={renewal.greenAdditionalInfo || ''}
+                        onChange={(e) => handleChange('greenAdditionalInfo', e.target.value)}
+                        rows={2}
+                        placeholder="Additional information"
+                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Bar Duty (optional)
+                      </label>
+                      <p className="text-xs text-gray-500 mb-2">
+                        Please indicate if you are willing to help with running the bar. This can involve one or two voluntary evening shifts per month or opening the bar after a home game.
+                      </p>
+                      <select
+                        value={renewal.barDuty || ''}
+                        onChange={(e) => handleChange('barDuty', e.target.value)}
+                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border mb-2"
+                      >
+                        <option value="">Please select</option>
+                        <option value="Yes">Yes</option>
+                        <option value="No">No</option>
+                      </select>
+                      <textarea
+                        value={renewal.barAdditionalInfo || ''}
+                        onChange={(e) => handleChange('barAdditionalInfo', e.target.value)}
+                        rows={2}
+                        placeholder="Additional information"
+                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Other Skills (optional)
+                      </label>
+                      <p className="text-xs text-gray-500 mb-2">
+                        If you have any other skills which may benefit the club, or other ways in which you may be able to help, please give details here. (e.g. plumbing, electrics, decorating, bookkeeping, legal, IT, local councillor, grant applications etc)
+                      </p>
+                      <textarea
+                        value={renewal.otherSkills || ''}
+                        onChange={(e) => handleChange('otherSkills', e.target.value)}
+                        rows={3}
+                        placeholder="e.g., plumbing, IT support, legal advice..."
+                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Club Competitions Section - Only for Playing members */}
+                {memberType === 'Playing' && (
+                  <div className="mb-8 pb-8 border-b">
+                    <h3 className="text-lg font-medium text-gray-900 mb-2">Club Competitions</h3>
+
+                    {/* Detailed Instructions */}
+                    <div className="mb-4 space-y-2 text-sm text-gray-700">
+                      <p>Entry to competitions will only be accepted by playing members who have made themselves available for 8 Friendly matches in the previous season.</p>
+                      <p>
+                        According to our information, the number of friendlies that you made yourself available for was <span className="font-semibold">{eligibility.friendliesLastYear}</span>, therefore you are <span className={eligibility.canEnterCompetitions ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}>{eligibility.canEnterCompetitions ? 'eligible' : 'NOT eligible'}</span> to enter Club Comps next year.
+                      </p>
+                      <p className="text-xs">New members shall not be eligible to enter any Club competition in their first full playing season. Exceptions will be made for experienced bowlers by the Tournament Committee.</p>
+                      <p className="text-xs">The OLDLAND competition is open only to those members who have NOT won a BHBC singles competition.</p>
+                      <p className="text-xs font-medium">The FINALS are on Sat 5th and Sun 6th Sep. PLEASE DO NOT enter competitions unless you can participate on those days.</p>
+                      <p className="text-xs">The 1st round of TRIPLES is to be played at 10 a.m. on the first Sunday in June, unless an earlier date is agreed by all 6 players.</p>
+                      <p className="text-xs">To be eligible to play in the Veterans Mixed, you must be 60 or over on the 1st March.</p>
+                      <p className="mt-3 font-medium">Please select each competition you are entering. There is an entry fee of £2.00 per competition.</p>
+                    </div>
+
+                    {/* Competition Checkboxes */}
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        {[
+                          { key: 'mensChampionship', label: "Men's Championship" },
+                          { key: 'ladiesMaynard', label: "Ladies' Maynard" },
+                          { key: 'mensTwoWood', label: "Men's Two Wood" },
+                          { key: 'ladiesTwoWood', label: "Ladies' Two Wood" },
+                          { key: 'marriedPairs', label: 'Married Pairs' },
+                          { key: 'drawnPairs', label: 'Drawn Pairs' },
+                          { key: 'australianPairs', label: 'Australian Pairs' },
+                          { key: 'drawnTriples', label: 'Drawn Triples' },
+                          { key: 'handicap', label: 'Handicap' },
+                          { key: 'oldlands', label: 'Oldlands' },
+                          { key: 'veterans', label: 'Veterans (60+)' },
+                        ]
+                          .filter(({ key }) => canEnterCompetition(key))
+                          .map(({ key, label }) => (
+                            <div key={key} className="flex items-center">
+                              <input
+                                type="checkbox"
+                                checked={renewal[key as keyof Renewal] as boolean}
+                                onChange={(e) => handleChange(key as keyof Renewal, e.target.checked)}
+                                disabled={!eligibility.canEnterCompetitions}
+                                className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded disabled:opacity-50"
+                              />
+                              <label className={`ml-2 text-sm ${
+                                !eligibility.canEnterCompetitions ? 'text-gray-400' : 'text-gray-900'
+                              }`}>
+                                {label}
+                              </label>
+                            </div>
+                          ))}
+                      </div>
+
+                      {/* Substitutions (no fee) - Also require 8+ friendlies */}
+                      <div className="mt-6 pt-6 border-t">
+                        <p className="text-sm font-medium text-gray-700 mb-3">
+                          Substitutes (no fee unless called upon to play)
+                        </p>
+                        <div className="space-y-2">
+                          {[
+                            { key: 'drawnPairsSub', label: 'Drawn Pairs Substitute' },
+                            { key: 'australianPairsSub', label: 'Australian Pairs Substitute' },
+                            { key: 'drawnTriplesSub', label: 'Drawn Triples Substitute' },
+                          ].map(({ key, label }) => (
+                            <div key={key} className="flex items-center">
+                              <input
+                                type="checkbox"
+                                checked={renewal[key as keyof Renewal] as boolean}
+                                onChange={(e) => handleChange(key as keyof Renewal, e.target.checked)}
+                                disabled={!eligibility.canEnterCompetitions}
+                                className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded disabled:opacity-50"
+                              />
+                              <label className={`ml-2 text-sm ${
+                                !eligibility.canEnterCompetitions ? 'text-gray-400' : 'text-gray-900'
+                              }`}>
+                                {label}
+                              </label>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="mt-6 pt-4 border-t flex justify-between items-center">
+                        <span className="text-sm font-medium text-gray-700">Competition Fees:</span>
+                        <span className="text-lg font-semibold text-indigo-600">
+                          {formatCurrency(fees.compsFee)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Total Fee Section */}
+            {renewal.renewingMembership && (
+              <div className="mb-8 bg-indigo-50 border-2 border-indigo-200 rounded-lg p-6">
+                <div className="flex justify-between items-center">
+                  <span className="text-xl font-bold text-gray-900">Total Fee Payable:</span>
+                  <span className="text-3xl font-bold text-indigo-600">
+                    {formatCurrency(fees.total)}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Action Buttons */}
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={() => router.push('/')}
+                className="px-6 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50"
+                disabled={isSaving}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSave}
+                className="px-6 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50"
+                disabled={isSaving}
+              >
+                {isSaving ? 'Saving...' : renewal.renewingMembership ? 'Submit Renewal' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}
