@@ -146,9 +146,9 @@ function LoginForm() {
         <div className="text-center text-xs text-gray-500 mt-4">
           <p>You can log in with:</p>
           <ul className="mt-2 space-y-1">
-            <li>• Your username (e.g., john_doe)</li>
+            <li>• Your username (e.g., john_smyth)</li>
             <li>• Your email address</li>
-            <li>• Your username with periods (e.g., john.doe)</li>
+            <li>• Your username with periods (e.g., john.smyth)</li>
           </ul>
         </div>
       </div>
