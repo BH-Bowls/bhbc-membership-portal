@@ -108,7 +108,7 @@ function LoginForm() {
                   </h3>
                   {error.includes('shared by') && (
                     <div className="mt-2 text-sm text-red-700">
-                      <p className="font-medium">Please use your username to login:</p>
+                      <p className="font-medium">Please use your Username to login:</p>
                       <ul className="list-disc list-inside mt-1 space-y-1">
                         <li>Format: firstname_lastname (e.g., liam_dasey)</li>
                         <li>Your username is unique to you</li>
@@ -146,9 +146,9 @@ function LoginForm() {
         <div className="text-center text-xs text-gray-500 mt-4">
           <p>You can log in with:</p>
           <ul className="mt-2 space-y-1">
-            <li>• Your username (e.g., john_smith)</li>
+            <li>• Your username (e.g., john_doe)</li>
             <li>• Your email address</li>
-            <li>• Your username with periods (e.g., john.smith)</li>
+            <li>• Your username with periods (e.g., john.doe)</li>
           </ul>
         </div>
       </div>
