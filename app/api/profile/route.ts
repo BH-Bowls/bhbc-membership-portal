@@ -93,7 +93,7 @@ export async function PUT(request: NextRequest) {
       // Skip userName if provided (it's the target identifier, not an update)
       if (field === 'userName') continue;
 
-      const canEdit = canEditProfileField(
+      const canEdit = await canEditProfileField(
         session.user.userName,
         session.user.role,
         targetUserName,

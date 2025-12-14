@@ -13,6 +13,8 @@ interface ProfileData {
   firstName: string;
   lastName: string;
   knownAs: string;
+  fullKnownAs: string;
+  buddyUserName: string;
   emailAddress: string;
   landline: string;
   mobile: string;
@@ -236,6 +238,7 @@ export default function ProfilePage() {
           }}
           featureName="profile"
           isAdmin={isAdmin}
+          disabled={isEditing}
         />
 
         {/* Profile Card */}
@@ -280,7 +283,7 @@ export default function ProfilePage() {
                     <select
                       value={editedProfile.title || ''}
                       onChange={(e) => handleChange('title', e.target.value)}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border text-gray-900"
                     >
                       <option value="Mr">Mr</option>
                       <option value="Mrs">Mrs</option>
@@ -299,7 +302,7 @@ export default function ProfilePage() {
                       type="text"
                       value={editedProfile.firstName || ''}
                       onChange={(e) => handleChange('firstName', e.target.value)}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border text-gray-900"
                     />
                   ) : (
                     <p className="mt-1 text-sm text-gray-900">{profile.firstName}</p>
@@ -313,7 +316,7 @@ export default function ProfilePage() {
                       type="text"
                       value={editedProfile.lastName || ''}
                       onChange={(e) => handleChange('lastName', e.target.value)}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border text-gray-900"
                     />
                   ) : (
                     <p className="mt-1 text-sm text-gray-900">{profile.lastName}</p>
@@ -327,11 +330,38 @@ export default function ProfilePage() {
                       type="text"
                       value={editedProfile.knownAs || ''}
                       onChange={(e) => handleChange('knownAs', e.target.value)}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border text-gray-900"
                       placeholder="Leave blank to use first name"
                     />
                   ) : (
                     <p className="mt-1 text-sm text-gray-900">{profile.knownAs || '—'}</p>
+                  )}
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Display Name (for Membership book etc)
+                  </label>
+                  <p className="mt-1 text-sm text-gray-900">{profile.fullKnownAs || '—'}</p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Buddy User ID</label>
+                  {isEditing ? (
+                    <>
+                      <input
+                        type="text"
+                        value={editedProfile.buddyUserName || ''}
+                        onChange={(e) => handleChange('buddyUserName', e.target.value)}
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border text-gray-900"
+                        placeholder="john_smith"
+                      />
+                      <p className="mt-1 text-xs text-gray-500">
+                        Format: firstname_lastname (e.g., john_smith)
+                      </p>
+                    </>
+                  ) : (
+                    <p className="mt-1 text-sm text-gray-900">{profile.buddyUserName || '—'}</p>
                   )}
                 </div>
               </div>
@@ -344,25 +374,14 @@ export default function ProfilePage() {
                 <div className="sm:col-span-2">
                   <label className="block text-sm font-medium text-gray-700">
                     Email Address
-                    {isEditing && selectedUserName !== session?.user?.userName && !isAdmin && (
-                      <span className="ml-2 text-xs text-gray-500 italic">(Self or admin only)</span>
-                    )}
                   </label>
                   {isEditing ? (
-                    <>
-                      <input
-                        type="email"
-                        value={editedProfile.emailAddress || ''}
-                        onChange={(e) => handleChange('emailAddress', e.target.value)}
-                        disabled={selectedUserName !== session?.user?.userName && !isAdmin}
-                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border disabled:bg-gray-100 disabled:cursor-not-allowed"
-                      />
-                      {selectedUserName !== session?.user?.userName && !isAdmin && (
-                        <p className="mt-1 text-xs text-gray-600 italic">
-                          Only the member or an admin can change their email address (security)
-                        </p>
-                      )}
-                    </>
+                    <input
+                      type="email"
+                      value={editedProfile.emailAddress || ''}
+                      onChange={(e) => handleChange('emailAddress', e.target.value)}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border text-gray-900"
+                    />
                   ) : (
                     <p className="mt-1 text-sm text-gray-900">{profile.emailAddress || '—'}</p>
                   )}
@@ -375,7 +394,7 @@ export default function ProfilePage() {
                       type="tel"
                       value={editedProfile.landline || ''}
                       onChange={(e) => handleChange('landline', e.target.value)}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border text-gray-900"
                     />
                   ) : (
                     <p className="mt-1 text-sm text-gray-900">{profile.landline || '—'}</p>
@@ -389,7 +408,7 @@ export default function ProfilePage() {
                       type="tel"
                       value={editedProfile.mobile || ''}
                       onChange={(e) => handleChange('mobile', e.target.value)}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border text-gray-900"
                     />
                   ) : (
                     <p className="mt-1 text-sm text-gray-900">{profile.mobile || '—'}</p>
@@ -409,7 +428,7 @@ export default function ProfilePage() {
                       type="text"
                       value={editedProfile.address1 || ''}
                       onChange={(e) => handleChange('address1', e.target.value)}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border text-gray-900"
                     />
                   ) : (
                     <p className="mt-1 text-sm text-gray-900">{profile.address1 || '—'}</p>
@@ -423,7 +442,7 @@ export default function ProfilePage() {
                       type="text"
                       value={editedProfile.address2 || ''}
                       onChange={(e) => handleChange('address2', e.target.value)}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border text-gray-900"
                     />
                   ) : (
                     <p className="mt-1 text-sm text-gray-900">{profile.address2 || '—'}</p>
@@ -438,7 +457,7 @@ export default function ProfilePage() {
                         type="text"
                         value={editedProfile.address3 || ''}
                         onChange={(e) => handleChange('address3', e.target.value)}
-                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border text-gray-900"
                       />
                     ) : (
                       <p className="mt-1 text-sm text-gray-900">{profile.address3 || '—'}</p>
@@ -452,7 +471,7 @@ export default function ProfilePage() {
                         type="text"
                         value={editedProfile.postCode || ''}
                         onChange={(e) => handleChange('postCode', e.target.value.toUpperCase())}
-                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border text-gray-900"
                       />
                     ) : (
                       <p className="mt-1 text-sm text-gray-900">{profile.postCode || '—'}</p>
@@ -472,7 +491,7 @@ export default function ProfilePage() {
                     <select
                       value={editedProfile.memberType || ''}
                       onChange={(e) => handleChange('memberType', e.target.value)}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border text-gray-900"
                     >
                       <option value="Playing">Playing</option>
                       <option value="Social">Social</option>
@@ -489,7 +508,7 @@ export default function ProfilePage() {
                       type="number"
                       value={editedProfile.yearStarted || ''}
                       onChange={(e) => handleChange('yearStarted', parseInt(e.target.value))}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border text-gray-900"
                     />
                   ) : (
                     <p className="mt-1 text-sm text-gray-900">{profile.yearStarted || '—'}</p>
@@ -502,7 +521,7 @@ export default function ProfilePage() {
                     <select
                       value={editedProfile.ageDemographic || ''}
                       onChange={(e) => handleChange('ageDemographic', e.target.value)}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border text-gray-900"
                     >
                       <option value="U18">Under 18</option>
                       <option value="18-24">Between 18 and 24</option>
@@ -531,7 +550,7 @@ export default function ProfilePage() {
                           value={formatDateForInput(editedProfile.birthdate || '')}
                           onChange={(e) => handleChange('birthdate', formatDateForStorage(e.target.value))}
                           required
-                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border text-gray-900"
                         />
                       ) : (
                         <p className="mt-1 text-sm text-gray-900">
@@ -561,7 +580,7 @@ export default function ProfilePage() {
                       type="text"
                       value={editedProfile.lockerNo || ''}
                       onChange={(e) => handleChange('lockerNo', e.target.value)}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border text-gray-900"
                     />
                   ) : (
                     <p className="mt-1 text-sm text-gray-900">{profile.lockerNo || '—'}</p>
@@ -587,7 +606,7 @@ export default function ProfilePage() {
                     <select
                       value={editedProfile.drivingAwayMatches || ''}
                       onChange={(e) => handleChange('drivingAwayMatches', e.target.value)}
-                      className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border mb-2"
+                      className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border mb-2 text-gray-900"
                     >
                       <option value="" disabled>Please select</option>
                       <option value="Yes">Yes</option>
@@ -598,7 +617,7 @@ export default function ProfilePage() {
                       onChange={(e) => handleChange('drivingAdditionalInfo', e.target.value)}
                       placeholder="Additional information (e.g., limited space)"
                       rows={2}
-                      className="mt-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                      className="mt-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border text-gray-900"
                     />
                   </>
                 ) : (
@@ -628,7 +647,7 @@ export default function ProfilePage() {
                     <select
                       value={editedProfile.greenMaintenance || ''}
                       onChange={(e) => handleChange('greenMaintenance', e.target.value)}
-                      className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border mb-2"
+                      className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border mb-2 text-gray-900"
                     >
                       <option value="" disabled>Please select</option>
                       <option value="Yes">Yes</option>
@@ -639,7 +658,7 @@ export default function ProfilePage() {
                       onChange={(e) => handleChange('greenAdditionalInfo', e.target.value)}
                       placeholder="Additional information"
                       rows={2}
-                      className="mt-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                      className="mt-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border text-gray-900"
                     />
                   </>
                 ) : (
@@ -669,7 +688,7 @@ export default function ProfilePage() {
                     <select
                       value={editedProfile.barDuty || ''}
                       onChange={(e) => handleChange('barDuty', e.target.value)}
-                      className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border mb-2"
+                      className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border mb-2 text-gray-900"
                     >
                       <option value="" disabled>Please select</option>
                       <option value="Yes">Yes</option>
@@ -680,7 +699,7 @@ export default function ProfilePage() {
                       onChange={(e) => handleChange('barAdditionalInfo', e.target.value)}
                       placeholder="Additional information"
                       rows={2}
-                      className="mt-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                      className="mt-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border text-gray-900"
                     />
                   </>
                 ) : (
@@ -710,7 +729,7 @@ export default function ProfilePage() {
                     value={editedProfile.otherSkills || ''}
                     onChange={(e) => handleChange('otherSkills', e.target.value)}
                     rows={3}
-                    className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                    className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border text-gray-900"
                   />
                 ) : (
                   <p className="mt-1 text-sm text-gray-900">

@@ -65,7 +65,7 @@ export async function updateUserProfile(
       return { success: false, error: 'User not found' };
     }
 
-    const colMap = await getColumnMap('Users');
+    const colMap = await getColumnMap('Members');
     const sheets = getGoogleSheetsClient();
 
     // Define which fields can be updated
@@ -74,6 +74,7 @@ export async function updateUserProfile(
       'firstName',
       'lastName',
       'knownAs',
+      'buddyUserName',
       'emailAddress',
       'landline',
       'mobile',
@@ -84,8 +85,8 @@ export async function updateUserProfile(
       'lockerNo',
       'birthdate',
       'ageDemographic',
-      'memberType',        // ← ADD THIS
-      'yearStarted',       // ← ADD THIS
+      'memberType',
+      'yearStarted',
       'socialEmails',
       'handbookEntry',
       'drivingAwayMatches',
@@ -103,9 +104,10 @@ export async function updateUserProfile(
     // Manual mapping for fields that don't follow camelCase pattern
     const fieldToColumnMap: { [key: string]: string } = {
 	  'address1': 'address_1',
-	  'address2': 'address_2', 
+	  'address2': 'address_2',
 	  'address3': 'address_3',
 	  'lockerNo': 'locker_no',
+	  'buddyUserName': 'buddy_user_name',
     };
 
     for (const field of allowedFields) {
@@ -125,7 +127,7 @@ export async function updateUserProfile(
           }
 
           updateData.push({
-            range: `Users!${colLetter}${user._rowNumber}`,
+            range: `Members!${colLetter}${user._rowNumber}`,
             values: [[cellValue ?? '']],
           });
         }
@@ -136,7 +138,7 @@ export async function updateUserProfile(
     const profileDateCol = colMap['profile_updated_date'];
     if (profileDateCol !== undefined) {
       updateData.push({
-        range: `Users!${getColumnLetter(profileDateCol)}${user._rowNumber}`,
+        range: `Members!${getColumnLetter(profileDateCol)}${user._rowNumber}`,
         values: [[new Date().toISOString()]],
       });
     }

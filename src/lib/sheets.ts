@@ -114,7 +114,7 @@ let columnMapCache: Map<string, { [key: string]: number }> = new Map();
  * Get column mapping from header row
  * Caches result to avoid repeated API calls
  */
-export async function getColumnMap(sheetName: string = 'Users'): Promise<{ [key: string]: number }> {
+export async function getColumnMap(sheetName: string = 'Members'): Promise<{ [key: string]: number }> {
   // Check if we have this sheet cached
   if (columnMapCache.has(sheetName)) {
     return columnMapCache.get(sheetName)!;
@@ -173,11 +173,11 @@ export function getColumnLetter(index: number): string {
  */
 export async function getAllUsers(): Promise<User[]> {
   try {
-    const colMap = await getColumnMap('Users');
+    const colMap = await getColumnMap('Members');
     const sheets = getGoogleSheetsClient();
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: getSpreadsheetId(),
-      range: 'Users!A2:BZ', // Start from row 2 (skip header), extended to include reset token columns
+      range: 'Members!A2:BZ', // Start from row 2 (skip header), extended to include reset token columns
     });
 
     const rows = response.data.values || [];
@@ -223,7 +223,7 @@ export async function updateLastLogin(userName: string, success: boolean): Promi
     const user = await getUserByUsername(userName);
     if (!user || !user._rowNumber) return;
 
-    const colMap = await getColumnMap('Users');
+    const colMap = await getColumnMap('Members');
     const colName = success ? 'last_login_date' : 'last_login_failed_date';
     const colIndex = colMap[colName];
     
@@ -238,7 +238,7 @@ export async function updateLastLogin(userName: string, success: boolean): Promi
     
     await sheets.spreadsheets.values.update({
       spreadsheetId: getSpreadsheetId(),
-      range: `Users!${colLetter}${user._rowNumber}`,
+      range: `Members!${colLetter}${user._rowNumber}`,
       valueInputOption: 'USER_ENTERED',
       requestBody: {
         values: [[now]]
@@ -263,7 +263,7 @@ export async function updatePasswordHash(
       throw new Error('User not found');
     }
 
-    const colMap = await getColumnMap('Users');
+    const colMap = await getColumnMap('Members');
     const sheets = getGoogleSheetsClient();
     
     const passwordCol = getColumnLetter(colMap['password_hash']);
@@ -275,15 +275,15 @@ export async function updatePasswordHash(
       requestBody: {
         data: [
           {
-            range: `Users!${passwordCol}${user._rowNumber}`,
+            range: `Members!${passwordCol}${user._rowNumber}`,
             values: [[newPasswordHash]]
           },
           {
-            range: `Users!${tempCol}${user._rowNumber}`,
+            range: `Members!${tempCol}${user._rowNumber}`,
             values: [[isTempPassword ? 'Y' : 'N']]
           },
           {
-            range: `Users!${resetCol}${user._rowNumber}`,
+            range: `Members!${resetCol}${user._rowNumber}`,
             values: [[new Date().toISOString()]]
           }
         ],
@@ -322,7 +322,7 @@ function parseUserRow(row: any[], rowNumber: number, colMap: { [key: string]: nu
     firstName: get('first_name') || '',
     lastName: get('last_name') || '',
     knownAs: get('known_as'),
-    fullKnownAs: get('full_known_as'),
+    fullKnownAs: get('full_name'),
     emailAddress: get('email_address'),
     landline: get('landline'),
     mobile: get('mobile'),
@@ -500,7 +500,7 @@ export async function generatePasswordResetToken(
     // Set expiry to 1 hour from now
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 
-    const colMap = await getColumnMap('Users');
+    const colMap = await getColumnMap('Members');
     const sheets = getGoogleSheetsClient();
 
     const tokenCol = getColumnLetter(colMap['reset_token']);
@@ -512,11 +512,11 @@ export async function generatePasswordResetToken(
       requestBody: {
         data: [
           {
-            range: `Users!${tokenCol}${user._rowNumber}`,
+            range: `Members!${tokenCol}${user._rowNumber}`,
             values: [[token]],
           },
           {
-            range: `Users!${expiresCol}${user._rowNumber}`,
+            range: `Members!${expiresCol}${user._rowNumber}`,
             values: [[expiresAt]],
           },
         ],
@@ -573,7 +573,7 @@ export async function clearResetToken(userName: string): Promise<void> {
       return;
     }
 
-    const colMap = await getColumnMap('Users');
+    const colMap = await getColumnMap('Members');
     const sheets = getGoogleSheetsClient();
 
     const tokenCol = getColumnLetter(colMap['reset_token']);
@@ -584,11 +584,11 @@ export async function clearResetToken(userName: string): Promise<void> {
       requestBody: {
         data: [
           {
-            range: `Users!${tokenCol}${user._rowNumber}`,
+            range: `Members!${tokenCol}${user._rowNumber}`,
             values: [['']],
           },
           {
-            range: `Users!${expiresCol}${user._rowNumber}`,
+            range: `Members!${expiresCol}${user._rowNumber}`,
             values: [['']],
           },
         ],
@@ -701,7 +701,7 @@ export async function testSheetsConnection() {
     if (!connected) throw new Error('Connection failed');
     
     console.log('\nTest 2: Column Mapping');
-    const colMap = await getColumnMap('Users');
+    const colMap = await getColumnMap('Members');
     const keyColumns = ['user_name', 'email_address', 'password_hash', 'role'];
     const missing = keyColumns.filter(col => colMap[col] === undefined);
     if (missing.length > 0) {

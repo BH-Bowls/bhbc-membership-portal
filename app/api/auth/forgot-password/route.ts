@@ -7,19 +7,7 @@ import {
   countRecentResetRequests,
   getUserByUsername,
 } from '@/lib/sheets';
-import nodemailer from 'nodemailer';
-
-function getEmailTransporter() {
-  return nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.SMTP_PORT || '587'),
-    secure: false,
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASSWORD,
-    },
-  });
-}
+import { sendTemplateEmail, isEmailConfigured } from '@/lib/email/mailer';
 
 async function sendPasswordResetEmail(
   email: string,
@@ -28,40 +16,24 @@ async function sendPasswordResetEmail(
   baseUrl: string
 ): Promise<boolean> {
   try {
-    if (!process.env.SMTP_USER || !process.env.SMTP_PASSWORD) {
+    if (!isEmailConfigured()) {
       console.error('SMTP not configured');
       return false;
     }
 
-    const transporter = getEmailTransporter();
     const resetUrl = `${baseUrl}/reset-password?token=${token}`;
 
-    const subject = 'BHBC Password Reset Request';
-    const body = `Dear ${name},
+    const result = await sendTemplateEmail(
+      email,
+      'BHBC Password Reset Request',
+      'password-reset',
+      {
+        memberName: name,
+        resetUrl: resetUrl,
+      }
+    );
 
-We received a request to reset your password for your Burgess Hill Bowls Club Members Portal account.
-
-To reset your password, click the link below:
-
-${resetUrl}
-
-This link will expire in 1 hour for security reasons.
-
-If you did not request a password reset, please ignore this email. Your password will remain unchanged.
-
-For security reasons, do not share this link with anyone.
-
-Best regards,
-Burgess Hill Bowls Club`;
-
-    await transporter.sendMail({
-      from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
-      to: email,
-      subject: subject,
-      text: body,
-    });
-
-    return true;
+    return result.success;
   } catch (error) {
     console.error('Error sending password reset email:', error);
     return false;

@@ -8,48 +8,26 @@ import {
   clearResetToken,
 } from '@/lib/sheets';
 import bcrypt from 'bcryptjs';
-import nodemailer from 'nodemailer';
-
-function getEmailTransporter() {
-  return nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.SMTP_PORT || '587'),
-    secure: false,
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASSWORD,
-    },
-  });
-}
+import { sendTemplateEmail, isEmailConfigured } from '@/lib/email/mailer';
 
 async function sendPasswordChangedEmail(
   email: string,
   name: string
 ): Promise<void> {
   try {
-    if (!process.env.SMTP_USER || !process.env.SMTP_PASSWORD) {
+    if (!isEmailConfigured()) {
       console.error('SMTP not configured');
       return;
     }
 
-    const transporter = getEmailTransporter();
-
-    const subject = 'BHBC Password Changed Successfully';
-    const body = `Dear ${name},
-
-This email confirms that your password for the Burgess Hill Bowls Club Members Portal has been successfully changed.
-
-If you did not make this change, please contact the club administrator immediately.
-
-Best regards,
-Burgess Hill Bowls Club`;
-
-    await transporter.sendMail({
-      from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
-      to: email,
-      subject: subject,
-      text: body,
-    });
+    await sendTemplateEmail(
+      email,
+      'BHBC Password Changed Successfully',
+      'password-changed',
+      {
+        memberName: name,
+      }
+    );
   } catch (error) {
     console.error('Error sending password changed email:', error);
   }

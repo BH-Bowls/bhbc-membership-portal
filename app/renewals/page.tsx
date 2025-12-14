@@ -54,6 +54,8 @@ interface Renewal {
   drawnPairsSub: boolean;
   australianPairsSub: boolean;
   drawnTriplesSub: boolean;
+  banking?: number | null;
+  dateReceived?: string | null;
 }
 
 interface FeeBreakdown {
@@ -403,7 +405,7 @@ export default function RenewalsPage() {
                   <p><span className="font-medium">Reference:</span> {profile.fullKnownAs} SUBS</p>
                 </div>
                 <p className="mt-4 text-sm text-blue-700">
-                  Please make payment at your earliest convenience. Cash, cheque, and card payments are also accepted at the bar.
+                  Please make payment at your earliest convenience. Card payments are also accepted at the bar.
                 </p>
               </div>
 
@@ -858,6 +860,25 @@ export default function RenewalsPage() {
               </div>
             )}
 
+            {/* Payment Received Notice */}
+            {renewal.banking !== null && renewal.banking !== undefined && (
+              <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
+                <div className="flex items-start">
+                  <svg className="h-5 w-5 text-green-600 mr-2 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                  </svg>
+                  <div className="flex-1">
+                    <h3 className="text-sm font-medium text-green-800">
+                      Payment Received
+                    </h3>
+                    <p className="mt-1 text-sm text-green-700">
+                      Your renewal payment of {formatCurrency(renewal.banking)} has been received{renewal.dateReceived && ` on ${new Date(renewal.dateReceived).toLocaleDateString()}`}. You can view your renewal details below, but cannot make changes.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Action Buttons */}
             <div className="flex justify-end space-x-3">
               <button
@@ -869,8 +890,8 @@ export default function RenewalsPage() {
               </button>
               <button
                 onClick={handleSave}
-                className="px-6 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50"
-                disabled={isSaving}
+                className="px-6 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={isSaving || (renewal.banking !== null && renewal.banking !== undefined)}
               >
                 {isSaving ? 'Saving...' : renewal.renewingMembership ? 'Submit Renewal' : 'Save'}
               </button>

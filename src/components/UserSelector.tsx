@@ -15,6 +15,7 @@ interface UserSelectorProps {
   onChange: (userName: string) => void;
   featureName: string; // 'profile', 'renewals', etc.
   isAdmin?: boolean;
+  disabled?: boolean;
 }
 
 export function UserSelector({
@@ -23,6 +24,7 @@ export function UserSelector({
   onChange,
   featureName,
   isAdmin = false,
+  disabled = false,
 }: UserSelectorProps) {
   // Only show if multiple users
   if (users.length <= 1) {
@@ -46,7 +48,8 @@ export function UserSelector({
       <select
         value={selectedUserName}
         onChange={(e) => onChange(e.target.value)}
-        className="block w-full max-w-md rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+        disabled={disabled}
+        className="block w-full max-w-md rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border disabled:bg-gray-100 disabled:cursor-not-allowed disabled:text-gray-500"
       >
         {validUsers.map((user) => (
           <option key={user.userName} value={user.userName}>

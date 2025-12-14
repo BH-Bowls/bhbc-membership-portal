@@ -8,7 +8,7 @@ import {
   getColumnLetter,
 } from './sheets';
 import { google } from 'googleapis';
-import nodemailer from 'nodemailer';
+import { sendTemplateEmail, isEmailConfigured } from './email/mailer';
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -89,17 +89,7 @@ function getGoogleSheetsClient() {
   return google.sheets({ version: 'v4', auth });
 }
 
-function getEmailTransporter() {
-  return nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.SMTP_PORT || '587'),
-    secure: false, // Use TLS
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASSWORD,
-    },
-  });
-}
+// Email transporter moved to centralized email/mailer.ts
 
 /**
  * Parse a row from Renewals sheet into Renewal object
@@ -456,49 +446,55 @@ export async function sendRenewalConfirmation(
     }
 
     // Check if SMTP is configured
-    if (!process.env.SMTP_USER || !process.env.SMTP_PASSWORD) {
+    if (!isEmailConfigured()) {
       return { success: false, error: 'SMTP not configured' };
     }
-
-    const transporter = getEmailTransporter();
 
     // Format currency
     const formatCurrency = (amount: number) => `£${amount.toFixed(2)}`;
 
-    // Build email content
-    const subject = 'BHBC Membership Renewal Confirmation';
-    const body = `Dear ${user.fullKnownAs || user.firstName},
+    // Build competitions list
+    const competitions: string[] = [];
+    if (renewal.mensChampionship) competitions.push('Men\'s Championship');
+    if (renewal.ladiesMaynard) competitions.push('Ladies Maynard');
+    if (renewal.mensTwoWood) competitions.push('Men\'s Two Wood');
+    if (renewal.ladiesTwoWood) competitions.push('Ladies Two Wood');
+    if (renewal.marriedPairs) competitions.push('Married Pairs');
+    if (renewal.drawnPairs) competitions.push('Drawn Pairs');
+    if (renewal.australianPairs) competitions.push('Australian Pairs');
+    if (renewal.drawnTriples) competitions.push('Drawn Triples');
+    if (renewal.handicap) competitions.push('Handicap');
+    if (renewal.oldlands) competitions.push('Oldlands');
+    if (renewal.veterans) competitions.push('Veterans');
+    if (renewal.drawnPairsSub) competitions.push('Drawn Pairs (Sub)');
+    if (renewal.australianPairsSub) competitions.push('Australian Pairs (Sub)');
+    if (renewal.drawnTriplesSub) competitions.push('Drawn Triples (Sub)');
 
-Thank you for renewing your membership for the 2026 season.
+    const competitionsText = competitions.length > 0
+      ? competitions.join('<br>• ')
+      : 'None selected';
 
-Your renewal details:
-- Membership Fee: ${formatCurrency(fees.membershipFee)}
-- Competitions: ${formatCurrency(fees.compsFee)}
-- 200 Club: ${formatCurrency(fees.club200Fee)}
-─────────────────────────
-Total Payable: ${formatCurrency(fees.total)}
+    // Send email using template
+    const result = await sendTemplateEmail(
+      user.emailAddress,
+      'BHBC Membership Renewal Confirmation',
+      'renewal-confirmation',
+      {
+        memberName: user.fullKnownAs || user.firstName,
+        membershipFee: formatCurrency(fees.membershipFee),
+        compsFee: formatCurrency(fees.compsFee),
+        club200Fee: formatCurrency(fees.club200Fee),
+        totalFee: formatCurrency(fees.total),
+        paymentReference: `${user.fullKnownAs || user.firstName} SUBS`,
+        memberType: user.memberType,
+        number200Club: renewal.number200ClubEntries > 0 ? renewal.number200ClubEntries.toString() : 'None',
+        competitions: '• ' + competitionsText,
+      }
+    );
 
-Payment Details:
-Bank: HSBC
-Sort Code: 40-15-16
-Account Number: 81554948
-Account Name: Burgess Hill Bowls Club
-Reference: ${user.fullKnownAs || user.firstName} SUBS
-
-Please make payment at your earliest convenience. Cash, cheque, and card payments are also accepted at the bar.
-
-If you have any questions, please contact the Treasurer.
-
-Best regards,
-Burgess Hill Bowls Club`;
-
-    // Send email
-    await transporter.sendMail({
-      from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
-      to: user.emailAddress,
-      subject: subject,
-      text: body,
-    });
+    if (!result.success) {
+      return result;
+    }
 
     // Update confirmation_email_date in the sheet
     const emailSentDate = new Date().toISOString();

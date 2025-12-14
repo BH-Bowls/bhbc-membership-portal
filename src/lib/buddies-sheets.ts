@@ -48,20 +48,25 @@ export function canManageFriendlies(
  * Returns true if field can be edited, false if restricted
  * Note: Assumes canManageUser() has already been checked
  */
-export function canEditProfileField(
+export async function canEditProfileField(
   currentUserName: string,
   currentUserRole: string,
   targetUserName: string,
   fieldName: string
-): boolean {
+): Promise<boolean> {
   // Password fields: self or admin only
   if (fieldName === 'password' || fieldName === 'passwordHash') {
     return currentUserName === targetUserName || currentUserRole === 'Admin';
   }
 
-  // Email: self or admin only (authentication identifier)
+  // Email: self, buddy, or admin (buddies need to manage their buddy's contact info)
   if (fieldName === 'emailAddress') {
-    return currentUserName === targetUserName || currentUserRole === 'Admin';
+    if (currentUserName === targetUserName || currentUserRole === 'Admin') {
+      return true;
+    }
+    // Check if current user is the buddy of target user
+    const targetUser = await getUserByUsername(targetUserName);
+    return targetUser?.buddyUserName === currentUserName;
   }
 
   // Username: admin only (primary key)

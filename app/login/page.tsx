@@ -66,6 +66,9 @@ function LoginForm() {
                 name="identifier"
                 type="text"
                 autoComplete="username"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck="false"
                 required
                 value={identifier}
                 onChange={(e) => setIdentifier(e.target.value)}
