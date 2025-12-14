@@ -6,8 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
-    "test:sheets": "dotenv -e .env.local -- tsx src/scripts/test-sheets.ts"
+    "lint": "next lint"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
