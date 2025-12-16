@@ -7,6 +7,7 @@ import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { UserSelector } from '@/components/UserSelector';
+import { Navbar } from '@/components/Navbar';
 
 interface ProfileData {
   title: string;
@@ -194,25 +195,7 @@ export default function ProfilePage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <nav className="bg-white shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16">
-            <div className="flex items-center">
-              <button
-                onClick={() => router.push('/')}
-                className="text-indigo-600 hover:text-indigo-700 font-medium"
-              >
-                ← Back to Home
-              </button>
-            </div>
-            <div className="flex items-center">
-              <h1 className="text-xl font-bold text-gray-900">My Profile</h1>
-            </div>
-            <div className="w-24"></div>
-          </div>
-        </div>
-      </nav>
+      <Navbar userName={session?.user?.name} userRole={session?.user?.role} />
 
       {/* Main Content */}
       <main className="max-w-4xl mx-auto py-6 sm:px-6 lg:px-8">

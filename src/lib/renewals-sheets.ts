@@ -22,6 +22,7 @@ export interface Renewal {
   compsFee: number;
   fee200Club: number;
   totalPayment: number;
+  outstanding?: number | null;
   banking?: number | null;
   dateReceived?: string | null;
   number200ClubEntries: number;
@@ -111,7 +112,11 @@ function parseRenewalRow(
 
   const getNumber = (field: string): number => {
     const val = get(field);
-    return val ? parseFloat(val) : 0;
+    if (!val) return 0;
+    // Strip currency symbols (£, $), commas, and whitespace before parsing
+    const cleaned = val.replace(/[£$,\s]/g, '');
+    const parsed = parseFloat(cleaned);
+    return isNaN(parsed) ? 0 : parsed;
   };
 
   return {
@@ -122,7 +127,8 @@ function parseRenewalRow(
     compsFee: getNumber('competitions_fee'),
     fee200Club: getNumber('club_200_fee'),
     totalPayment: getNumber('total_fee_due'),
-    banking: getNumber('amount_paid') || null,
+    outstanding: getNumber('outstanding') || null,
+    banking: getNumber('banking') || null,
     dateReceived: get('date_paid'),
     number200ClubEntries: getNumber('club_200_entries'),
     pref200Club: get('club_200_preferred_numbers'),
@@ -287,7 +293,8 @@ export async function updateRenewal(
       compsFee: 'competitions_fee',
       fee200Club: 'club_200_fee',
       totalPayment: 'total_fee_due',
-      banking: 'amount_paid',
+      outstanding: 'outstanding',
+      banking: 'banking',
       dateReceived: 'date_paid',
       confirmationEmailDate: 'confirmation_email_date',
       createdAt: 'created_at',
@@ -325,6 +332,17 @@ export async function updateRenewal(
         range: `Renewals!${getColumnLetter(dateUpdatedCol)}${renewal._rowNumber}`,
         values: [[new Date().toISOString()]],
       });
+    }
+
+    // Set created_at if it doesn't exist
+    if (!renewal.createdAt) {
+      const createdAtCol = colMap['created_at'];
+      if (createdAtCol !== undefined) {
+        updateData.push({
+          range: `Renewals!${getColumnLetter(createdAtCol)}${renewal._rowNumber}`,
+          values: [[new Date().toISOString()]],
+        });
+      }
     }
 
     // Execute batch update
@@ -453,7 +471,7 @@ export async function sendRenewalConfirmation(
     // Format currency
     const formatCurrency = (amount: number) => `£${amount.toFixed(2)}`;
 
-    // Build competitions list
+    // Build competitions list (excluding substitutes)
     const competitions: string[] = [];
     if (renewal.mensChampionship) competitions.push('Men\'s Championship');
     if (renewal.ladiesMaynard) competitions.push('Ladies Maynard');
@@ -466,13 +484,20 @@ export async function sendRenewalConfirmation(
     if (renewal.handicap) competitions.push('Handicap');
     if (renewal.oldlands) competitions.push('Oldlands');
     if (renewal.veterans) competitions.push('Veterans');
-    if (renewal.drawnPairsSub) competitions.push('Drawn Pairs (Sub)');
-    if (renewal.australianPairsSub) competitions.push('Australian Pairs (Sub)');
-    if (renewal.drawnTriplesSub) competitions.push('Drawn Triples (Sub)');
 
     const competitionsText = competitions.length > 0
       ? competitions.join('<br>• ')
       : 'None selected';
+
+    // Build substitutes list
+    const substitutes: string[] = [];
+    if (renewal.drawnPairsSub) substitutes.push('Drawn Pairs');
+    if (renewal.australianPairsSub) substitutes.push('Australian Pairs');
+    if (renewal.drawnTriplesSub) substitutes.push('Drawn Triples');
+
+    const substitutesText = substitutes.length > 0
+      ? substitutes.join('<br>• ')
+      : null;
 
     // Send email using template
     const result = await sendTemplateEmail(
@@ -485,10 +510,21 @@ export async function sendRenewalConfirmation(
         compsFee: formatCurrency(fees.compsFee),
         club200Fee: formatCurrency(fees.club200Fee),
         totalFee: formatCurrency(fees.total),
-        paymentReference: `${user.fullKnownAs || user.firstName} SUBS`,
+        paymentReference: `SUBS ${(user.fullKnownAs || user.firstName).split(' ').pop()?.toUpperCase()}`,
         memberType: user.memberType,
         number200Club: renewal.number200ClubEntries > 0 ? renewal.number200ClubEntries.toString() : 'None',
+        pref200Club: renewal.pref200Club || null,
         competitions: '• ' + competitionsText,
+        substitutes: substitutesText ? '• ' + substitutesText : null,
+        teaDatesToAvoid: renewal.teaDatesToAvoid || null,
+        cleaningDatesToAvoid: renewal.cleaningDatesToAvoid || null,
+        drivingAwayMatches: user.drivingAwayMatches || null,
+        drivingAdditionalInfo: user.drivingAdditionalInfo || null,
+        greenMaintenance: user.greenMaintenance || null,
+        greenAdditionalInfo: user.greenAdditionalInfo || null,
+        barDuty: user.barDuty || null,
+        barAdditionalInfo: user.barAdditionalInfo || null,
+        otherSkills: user.otherSkills || null,
       }
     );
 

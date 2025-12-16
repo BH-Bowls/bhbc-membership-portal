@@ -8,7 +8,7 @@ import { google } from 'googleapis';
 // ENVIRONMENT VARIABLE GETTERS (Lazy Loading)
 // ============================================================================
 
-function getSpreadsheetId(): string {
+export function getSpreadsheetId(): string {
   const id = process.env.SPREADSHEET_ID;
   if (!id) {
     throw new Error('SPREADSHEET_ID environment variable is not set. Check your .env.local file.');
@@ -36,7 +36,7 @@ function getPrivateKey(): string {
 // GOOGLE SHEETS CLIENT
 // ============================================================================
 
-function getGoogleSheetsClient() {
+export function getGoogleSheetsClient() {
   const auth = new google.auth.GoogleAuth({
     credentials: {
       client_email: getServiceAccountEmail(),
@@ -313,7 +313,11 @@ function parseUserRow(row: any[], rowNumber: number, colMap: { [key: string]: nu
   
   const getInt = (field: string): number => {
     const val = get(field);
-    return val ? parseInt(val) : 0;
+    if (!val) return 0;
+    // Strip currency symbols (£, $), commas, and whitespace before parsing
+    const cleaned = val.replace(/[£$,\s]/g, '');
+    const parsed = parseInt(cleaned);
+    return isNaN(parsed) ? 0 : parsed;
   };
 
   return {

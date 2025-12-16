@@ -215,6 +215,7 @@ export async function PUT(request: NextRequest) {
       compsFee: fees.compsFee,
       fee200Club: fees.club200Fee,
       totalPayment: fees.total,
+      outstanding: fees.total,
     };
 
     // Update renewal data in Renewals sheet

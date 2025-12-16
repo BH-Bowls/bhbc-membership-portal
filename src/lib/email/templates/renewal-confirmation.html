@@ -95,6 +95,16 @@
                       {{number200Club}}
                     </td>
                   </tr>
+                  {{#if pref200Club}}
+                  <tr>
+                    <td style="padding: 8px 0; font-size: 15px; color: #4B5563;">
+                      Preferred Numbers:
+                    </td>
+                    <td style="padding: 8px 0; font-size: 15px; color: #1F2937; font-weight: 500;">
+                      {{pref200Club}}
+                    </td>
+                  </tr>
+                  {{/if}}
                   <tr>
                     <td colspan="2" style="padding: 12px 0 8px 0; font-size: 15px; color: #4B5563; font-weight: 600;">
                       Competitions Entered:
@@ -105,6 +115,87 @@
                       {{competitions}}
                     </td>
                   </tr>
+                  {{#if substitutes}}
+                  <tr>
+                    <td colspan="2" style="padding: 12px 0 8px 0; font-size: 15px; color: #4B5563; font-weight: 600;">
+                      Substitutes:
+                    </td>
+                  </tr>
+                  <tr>
+                    <td colspan="2" style="padding: 0 0 8px 0; font-size: 14px; color: #1F2937; line-height: 1.6;">
+                      {{substitutes}}
+                    </td>
+                  </tr>
+                  {{/if}}
+                </table>
+              </div>
+
+              <h2 style="margin: 30px 0 20px 0; font-size: 20px; color: #1F2937; border-bottom: 2px solid #4F46E5; padding-bottom: 10px;">
+                Volunteering Preferences
+              </h2>
+
+              <div style="background-color: #F9FAFB; padding: 20px; border-radius: 8px; margin: 0 0 30px 0; border: 1px solid #E5E7EB;">
+                <table role="presentation" style="width: 100%; border-collapse: collapse;">
+                  {{#if teaDatesToAvoid}}
+                  <tr>
+                    <td style="padding: 8px 0; font-size: 15px; color: #4B5563; vertical-align: top; width: 40%;">
+                      Tea Duty - Dates to Avoid:
+                    </td>
+                    <td style="padding: 8px 0; font-size: 15px; color: #1F2937;">
+                      {{teaDatesToAvoid}}
+                    </td>
+                  </tr>
+                  {{/if}}
+                  {{#if cleaningDatesToAvoid}}
+                  <tr>
+                    <td style="padding: 8px 0; font-size: 15px; color: #4B5563; vertical-align: top;">
+                      Cleaning - Dates to Avoid:
+                    </td>
+                    <td style="padding: 8px 0; font-size: 15px; color: #1F2937;">
+                      {{cleaningDatesToAvoid}}
+                    </td>
+                  </tr>
+                  {{/if}}
+                  {{#if drivingAwayMatches}}
+                  <tr>
+                    <td style="padding: 8px 0; font-size: 15px; color: #4B5563; vertical-align: top;">
+                      Driving to Away Matches:
+                    </td>
+                    <td style="padding: 8px 0; font-size: 15px; color: #1F2937;">
+                      {{drivingAwayMatches}}{{#if drivingAdditionalInfo}} - {{drivingAdditionalInfo}}{{/if}}
+                    </td>
+                  </tr>
+                  {{/if}}
+                  {{#if greenMaintenance}}
+                  <tr>
+                    <td style="padding: 8px 0; font-size: 15px; color: #4B5563; vertical-align: top;">
+                      Green &amp; Surrounds Maintenance:
+                    </td>
+                    <td style="padding: 8px 0; font-size: 15px; color: #1F2937;">
+                      {{greenMaintenance}}{{#if greenAdditionalInfo}} - {{greenAdditionalInfo}}{{/if}}
+                    </td>
+                  </tr>
+                  {{/if}}
+                  {{#if barDuty}}
+                  <tr>
+                    <td style="padding: 8px 0; font-size: 15px; color: #4B5563; vertical-align: top;">
+                      Bar Duty:
+                    </td>
+                    <td style="padding: 8px 0; font-size: 15px; color: #1F2937;">
+                      {{barDuty}}{{#if barAdditionalInfo}} - {{barAdditionalInfo}}{{/if}}
+                    </td>
+                  </tr>
+                  {{/if}}
+                  {{#if otherSkills}}
+                  <tr>
+                    <td style="padding: 8px 0; font-size: 15px; color: #4B5563; vertical-align: top;">
+                      Other Skills:
+                    </td>
+                    <td style="padding: 8px 0; font-size: 15px; color: #1F2937;">
+                      {{otherSkills}}
+                    </td>
+                  </tr>
+                  {{/if}}
                 </table>
               </div>
 
