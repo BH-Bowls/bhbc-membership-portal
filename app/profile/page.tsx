@@ -195,7 +195,7 @@ export default function ProfilePage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={session?.user?.name} userRole={session?.user?.role} />
+      <Navbar userName={session?.user?.name ?? undefined} userRole={session?.user?.role ?? undefined} />
 
       {/* Main Content */}
       <main className="max-w-4xl mx-auto py-6 sm:px-6 lg:px-8">

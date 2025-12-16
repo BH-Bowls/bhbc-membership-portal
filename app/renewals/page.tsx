@@ -331,7 +331,7 @@ export default function RenewalsPage() {
 
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar userName={session?.user?.name} userRole={session?.user?.role} />
+        <Navbar userName={session?.user?.name ?? undefined} userRole={session?.user?.role ?? undefined} />
 
         <main className="max-w-3xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
           {/* User Selector (Buddy System) - Allow switching to manage another user */}
@@ -425,7 +425,7 @@ export default function RenewalsPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={session?.user?.name} userRole={session?.user?.role} />
+      <Navbar userName={session?.user?.name ?? undefined} userRole={session?.user?.role ?? undefined} />
 
       {/* Main Content */}
       <main className="max-w-4xl mx-auto py-6 sm:px-6 lg:px-8">
