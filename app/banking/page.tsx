@@ -389,7 +389,7 @@ export default function BankingPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={session?.user?.name} userRole={session?.user?.role} />
+      <Navbar userName={session?.user?.name ?? undefined} userRole={session?.user?.role ?? undefined} />
 
       {/* FULL WIDTH CONTAINER */}
       <main className="w-full px-6 py-6">
