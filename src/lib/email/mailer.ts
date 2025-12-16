@@ -74,7 +74,7 @@ export async function sendTemplateEmail(
   to: string,
   subject: string,
   templateName: string,
-  variables: Record<string, string>
+  variables: Record<string, string | null | undefined>
 ): Promise<{ success: boolean; error?: string }> {
   try {
     if (!isEmailConfigured()) {
