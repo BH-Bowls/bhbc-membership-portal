@@ -4,6 +4,7 @@
 import nodemailer from 'nodemailer';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import Handlebars from 'handlebars';
 
 /**
  * Get configured email transporter
@@ -33,15 +34,13 @@ export function isEmailConfigured(): boolean {
 function loadTemplate(templateName: string, variables: Record<string, string | null | undefined>): string {
   try {
     const templatePath = join(process.cwd(), 'src', 'lib', 'email', 'templates', `${templateName}.html`);
-    let template = readFileSync(templatePath, 'utf-8');
+    const templateSource = readFileSync(templatePath, 'utf-8');
 
-    // Replace all {{variable}} placeholders with actual values
-    for (const [key, value] of Object.entries(variables)) {
-      const regex = new RegExp(`{{${key}}}`, 'g');
-      template = template.replace(regex, value ?? '');
-    }
+    // Compile the Handlebars template
+    const template = Handlebars.compile(templateSource);
 
-    return template;
+    // Render the template with variables
+    return template(variables);
   } catch (error) {
     console.error(`Error loading template ${templateName}:`, error);
     throw new Error(`Failed to load email template: ${templateName}`);
