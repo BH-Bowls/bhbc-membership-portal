@@ -30,7 +30,7 @@ export function isEmailConfigured(): boolean {
 /**
  * Load email template from file and replace variables
  */
-function loadTemplate(templateName: string, variables: Record<string, string>): string {
+function loadTemplate(templateName: string, variables: Record<string, string | null | undefined>): string {
   try {
     const templatePath = join(process.cwd(), 'src', 'lib', 'email', 'templates', `${templateName}.html`);
     let template = readFileSync(templatePath, 'utf-8');
@@ -38,7 +38,7 @@ function loadTemplate(templateName: string, variables: Record<string, string>): 
     // Replace all {{variable}} placeholders with actual values
     for (const [key, value] of Object.entries(variables)) {
       const regex = new RegExp(`{{${key}}}`, 'g');
-      template = template.replace(regex, value);
+      template = template.replace(regex, value ?? '');
     }
 
     return template;
