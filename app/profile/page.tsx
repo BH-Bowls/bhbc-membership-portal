@@ -120,6 +120,12 @@ export default function ProfilePage() {
   };
 
   const handleSave = async () => {
+    // Validation: Check if required fields are set
+    if (!editedProfile.ageDemographic || !editedProfile.memberType) {
+      setError('Please select both Age Demographic and Member Type before saving.');
+      return;
+    }
+
     setIsSaving(true);
     setError('');
     setSuccessMessage('');
@@ -476,6 +482,7 @@ export default function ProfilePage() {
                       onChange={(e) => handleChange('memberType', e.target.value)}
                       className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border text-gray-900"
                     >
+                      <option value="">-- Select Member Type --</option>
                       <option value="Playing">Playing</option>
                       <option value="Social">Social</option>
                     </select>
@@ -506,6 +513,7 @@ export default function ProfilePage() {
                       onChange={(e) => handleChange('ageDemographic', e.target.value)}
                       className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border text-gray-900"
                     >
+                      <option value="">-- Select Age Demographic --</option>
                       <option value="U18">Under 18</option>
                       <option value="18-24">Between 18 and 24</option>
                       <option value="25-59">Between 25 and 59</option>

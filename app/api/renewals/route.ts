@@ -156,8 +156,8 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    // Split data: volunteering fields go to Users sheet, rest goes to Renewals sheet
-    const volunteeringFields = {
+    // Split data: volunteering fields + demographics go to Users sheet, rest goes to Renewals sheet
+    const volunteeringFields: Record<string, any> = {
       drivingAwayMatches: data.drivingAwayMatches,
       drivingAdditionalInfo: data.drivingAdditionalInfo,
       greenMaintenance: data.greenMaintenance,
@@ -167,7 +167,15 @@ export async function PUT(request: NextRequest) {
       otherSkills: data.otherSkills,
     };
 
-    // Remove volunteering fields from renewal data
+    // Also sync age demographic and member type to Members sheet if provided
+    if (data.ageDemographic) {
+      volunteeringFields.ageDemographic = data.ageDemographic;
+    }
+    if (data.memberType) {
+      volunteeringFields.memberType = data.memberType;
+    }
+
+    // Remove volunteering fields and demographics from renewal data
     const renewalData = { ...data };
     delete renewalData.userName; // Don't include userName in updates
     delete renewalData.drivingAwayMatches;
@@ -177,6 +185,8 @@ export async function PUT(request: NextRequest) {
     delete renewalData.barDuty;
     delete renewalData.barAdditionalInfo;
     delete renewalData.otherSkills;
+    delete renewalData.ageDemographic; // Don't save to Renewals sheet
+    delete renewalData.memberType; // Don't save to Renewals sheet
 
     // Filter payment fields (admin-only edit)
     if (!canEditPaymentFields(session.user.role)) {
@@ -184,11 +194,11 @@ export async function PUT(request: NextRequest) {
       delete renewalData.dateReceived;
     }
 
-    // Calculate fees
+    // Calculate fees (use new demographics if provided, otherwise use profile values)
     const fees = calculateFees(
       {
-        ageDemographic: profile.ageDemographic,
-        memberType: profile.memberType,
+        ageDemographic: data.ageDemographic || profile.ageDemographic,
+        memberType: data.memberType || profile.memberType,
         fullTimeEducation: false, // TODO: Add this field to profile if needed
       },
       renewalData
@@ -207,11 +217,12 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    // Prepare renewal updates with calculated fees
+    // Prepare renewal updates with calculated fees (use new member type if provided)
+    const effectiveMemberType = data.memberType || profile.memberType;
     const renewalUpdates: Partial<Renewal> = {
       ...renewalData,
-      playingFees: profile.memberType === 'Playing' ? fees.membershipFee : 0,
-      socialFees: profile.memberType === 'Social' ? fees.membershipFee : 0,
+      playingFees: effectiveMemberType === 'Playing' ? fees.membershipFee : 0,
+      socialFees: effectiveMemberType === 'Social' ? fees.membershipFee : 0,
       compsFee: fees.compsFee,
       fee200Club: fees.club200Fee,
       totalPayment: fees.total,

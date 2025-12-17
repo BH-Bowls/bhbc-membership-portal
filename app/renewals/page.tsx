@@ -176,6 +176,12 @@ export default function RenewalsPage() {
   const handleSave = async () => {
     if (!renewal) return;
 
+    // Validation: Check if required fields are set
+    if (!ageDemographic || !memberType) {
+      setError('Please select both Age Demographic and Member Type before saving.');
+      return;
+    }
+
     setIsSaving(true);
     setError('');
 
@@ -186,6 +192,8 @@ export default function RenewalsPage() {
         body: JSON.stringify({
           ...renewal,
           userName: selectedUserName, // Include target user for buddy system
+          ageDemographic, // Include age demographic for Members sheet update
+          memberType, // Include member type for Members sheet update
         }),
       });
 
@@ -491,6 +499,7 @@ export default function RenewalsPage() {
                         disabled={paymentReceived}
                         className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                       >
+                        <option value="">-- Select Age Demographic --</option>
                         <option value="U18">Under 18</option>
                         <option value="18-24">18-24</option>
                         <option value="25-59">25-59</option>
@@ -508,6 +517,7 @@ export default function RenewalsPage() {
                         disabled={paymentReceived}
                         className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                       >
+                        <option value="">-- Select Member Type --</option>
                         {getAllowedMemberTypes().map((type) => (
                           <option key={type} value={type}>
                             {type}
