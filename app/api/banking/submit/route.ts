@@ -12,6 +12,7 @@ import {
 
 interface MatchedRenewal {
   userName: string;
+  totalPayment: number;
   outstanding: number;
   banking: number;
   donations: number;
@@ -22,7 +23,7 @@ interface MatchedRenewal {
   payment_ids: string;
   payment_notes?: string;
   paymentType: string; // TRF, CDM, etc.
-  paymentTypeAmount: number; // Current amount in that column
+  paymentTypeAmount: number; // Current banking amount
 }
 
 interface MatchedPayment {
@@ -64,11 +65,19 @@ export async function POST(request: NextRequest) {
     for (const renewal of matchedRenewals as MatchedRenewal[]) {
       const paymentTypeColumn = getPaymentTypeColumn(renewal.paymentType);
 
+      // Calculate new values by adding matched amounts to existing amounts
+      const newBanking = renewal.banking + renewal.matched_banking;
+      const newDonations = renewal.donations + renewal.matched_donations;
+      const newDifference = renewal.difference + renewal.matched_difference;
+
+      // Calculate outstanding: total_fee_due - banking + donations + difference
+      const newOutstanding = renewal.totalPayment - newBanking + newDonations + newDifference;
+
       await updateRenewalPayment(renewal.userName, {
-        outstanding: renewal.outstanding - renewal.matched_banking,
-        banking: renewal.banking + renewal.matched_banking,
-        donations: renewal.donations + renewal.matched_donations,
-        difference: renewal.difference + renewal.matched_difference,
+        outstanding: newOutstanding,
+        banking: newBanking,
+        donations: newDonations,
+        difference: newDifference,
         paymentTypeColumn,
         paymentTypeAmount: renewal.paymentTypeAmount + renewal.matched_banking,
         payment_ids: renewal.payment_ids,

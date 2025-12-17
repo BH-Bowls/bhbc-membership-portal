@@ -45,8 +45,8 @@ export default function BankingPage() {
 
   // Manual match fields
   const [manualBanking, setManualBanking] = useState(0);
-  const [manualDonations, setManualDonations] = useState(0);
-  const [manualDifference, setManualDifference] = useState(0);
+  const [manualDonations, setManualDonations] = useState<string | number>('');
+  const [manualDifference, setManualDifference] = useState<string | number>('');
   const [manualNotes, setManualNotes] = useState('');
 
   // CSV import
@@ -108,16 +108,48 @@ export default function BankingPage() {
     if (renewal.isMatched) return;
 
     renewal.isSelected = !renewal.isSelected;
+
     if (renewal.isSelected) {
-      renewal.selected_banking = renewal.outstanding;
+      // Get current totals BEFORE adding this renewal
+      const paymentTotals = calculatePaymentTotals(payments);
+      const renewalTotals = calculateRenewalTotals(renewals);
+      const current_payment = paymentTotals.totalSelected;
+      const current_renewal = renewalTotals.totalSelected;
+      const current_difference = current_payment - current_renewal;
+
+      // Calculate banking based on current difference
+      if (current_difference > 0) {
+        renewal.selected_banking = renewal.outstanding;
+      } else {
+        renewal.selected_banking = renewal.outstanding + current_difference;
+      }
     } else {
       renewal.selected_banking = 0;
       renewal.selected_donations = 0;
       renewal.selected_difference = 0;
     }
 
-    // Try auto-match
-    autoMatchIfEqual(renewals, payments);
+    // NOW recalculate totals with the new banking
+    const updatedPaymentTotals = calculatePaymentTotals(payments);
+    const updatedRenewalTotals = calculateRenewalTotals(renewals);
+    const new_payment = updatedPaymentTotals.totalSelected;
+    const new_renewal = updatedRenewalTotals.totalSelected;
+    const new_difference = new_payment - new_renewal;
+
+    // Auto-match logic
+    if (new_difference === 0) {
+      // Perfect match - auto match all
+      autoMatchIfEqual(renewals, payments);
+    } else if (new_difference < 0) {
+      // Underpayment - open manual match dialog
+      setEditingRenewal(renewal);
+      setManualDonations('');
+      setManualDifference('');
+      setManualNotes('');
+      setShowManualMatchDialog(true);
+    }
+    // If new_difference > 0, do nothing - let user continue selecting
+
     setRenewals([...renewals]);
     setPayments([...payments]);
   };
@@ -225,8 +257,8 @@ export default function BankingPage() {
 
     setEditingRenewal(renewal);
     setManualBanking(renewal.selected_banking);
-    setManualDonations(renewal.selected_donations);
-    setManualDifference(renewal.selected_difference);
+    setManualDonations(renewal.selected_donations || '');
+    setManualDifference(renewal.selected_difference || '');
     setManualNotes('');
     setShowManualMatchDialog(true);
   };
@@ -235,14 +267,61 @@ export default function BankingPage() {
   const handleSaveManualMatch = () => {
     if (!editingRenewal) return;
 
-    editingRenewal.selected_banking = manualBanking;
-    editingRenewal.selected_donations = manualDonations;
-    editingRenewal.selected_difference = manualDifference;
+    // Calculate totals excluding the current renewal
+    const paymentTotals = calculatePaymentTotals(payments);
+    const renewalTotals = calculateRenewalTotals(renewals);
+    const total_selected_payment = paymentTotals.totalSelected;
+
+    // Exclude current renewal to get available amount
+    const other_renewals_total = renewalTotals.totalSelected - editingRenewal.selected_banking;
+    const available_for_current = total_selected_payment - other_renewals_total;
+
+    // Parse donations and difference
+    const donationsNum = typeof manualDonations === 'string' ? parseFloat(manualDonations) || 0 : manualDonations;
+    const differenceNum = typeof manualDifference === 'string' ? parseFloat(manualDifference) || 0 : manualDifference;
+
+    // Banking = total available for this renewal
+    // (donations and difference are tracked separately and balance in the outstanding formula)
+    const calculatedBanking = available_for_current;
+
+    editingRenewal.selected_banking = calculatedBanking;
+    editingRenewal.selected_donations = donationsNum;
+    editingRenewal.selected_difference = differenceNum;
+    editingRenewal.matched_banking = calculatedBanking;
+    editingRenewal.matched_donations = donationsNum;
+    editingRenewal.matched_difference = differenceNum;
+    // Update outstanding: total_fee_due - banking + donations + difference
+    editingRenewal.outstanding = editingRenewal.totalPayment - calculatedBanking + donationsNum + differenceNum;
+    editingRenewal.isMatched = true;
+    editingRenewal.isSelected = false;
+
+    // Mark ALL other selected renewals as matched
+    renewals.forEach(r => {
+      if (r.isSelected && r !== editingRenewal) {
+        const banking = r.outstanding;
+        r.selected_banking = banking;
+        r.selected_donations = 0;
+        r.selected_difference = 0;
+        r.matched_banking = banking;
+        r.matched_donations = 0;
+        r.matched_difference = 0;
+        // Update outstanding: total_fee_due - banking + donations + difference
+        r.outstanding = r.totalPayment - banking + 0 + 0;
+        r.isMatched = true;
+        r.isSelected = false;
+      }
+    });
+
+    // Mark selected payments as matched
+    payments.forEach(p => {
+      if (p.isSelected) {
+        p.matched_amount = p.amount;
+        p.isMatched = true;
+        p.isSelected = false;
+      }
+    });
 
     setShowManualMatchDialog(false);
-
-    // Try auto-match with new values
-    autoMatchIfEqual(renewals, payments);
     setRenewals([...renewals]);
     setPayments([...payments]);
   };
@@ -328,21 +407,31 @@ export default function BankingPage() {
     }
 
     try {
+      // Build payment_ids string from matched payment IDs
+      const newPaymentIds = matchedPayments.map(p => p.payment_id).join(', ');
+
       // Prepare data
-      const renewalsData = matchedRenewals.map(r => ({
-        userName: r.userName,
-        outstanding: r.outstanding,
-        banking: r.banking,
-        donations: r.donations,
-        difference: r.difference,
-        matched_banking: r.matched_banking,
-        matched_donations: r.matched_donations,
-        matched_difference: r.matched_difference,
-        payment_ids: r.payment_ids,
-        payment_notes: manualNotes || paymentReference,
-        paymentType: payments.find(p => p.isMatched)?.type || 'TRF',
-        paymentTypeAmount: 0, // Will be calculated server-side
-      }));
+      const renewalsData = matchedRenewals.map(r => {
+        // Append new payment IDs to existing ones
+        const existingIds = r.payment_ids || '';
+        const updatedPaymentIds = existingIds ? `${existingIds}, ${newPaymentIds}` : newPaymentIds;
+
+        return {
+          userName: r.userName,
+          totalPayment: r.totalPayment,
+          outstanding: r.outstanding,
+          banking: r.banking,
+          donations: r.donations,
+          difference: r.difference,
+          matched_banking: r.matched_banking,
+          matched_donations: r.matched_donations,
+          matched_difference: r.matched_difference,
+          payment_ids: updatedPaymentIds,
+          payment_notes: manualNotes || '',
+          paymentType: matchedPayments[0]?.type || 'TRF',
+          paymentTypeAmount: r.banking, // Current banking amount
+        };
+      });
 
       const paymentsData = matchedPayments.map(p => ({
         payment_id: p.payment_id,
@@ -436,20 +525,32 @@ export default function BankingPage() {
           </div>
         )}
 
-        {/* TWO-COLUMN LAYOUT - FULL WIDTH */}
-        <div className="grid grid-cols-2 gap-6">
-          {/* LEFT COLUMN - RENEWALS */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-lg font-semibold mb-4">Renewals (Outstanding)</h2>
+        {/* TWO-COLUMN LAYOUT - 40:60 PROPORTION */}
+        <div className="grid grid-cols-[40%_60%] gap-6">
+          {/* LEFT COLUMN - RENEWALS (40%) */}
+          <div className="bg-white rounded-lg shadow">
+            <div className="p-6 pb-0">
+              <h2 className="text-lg font-semibold mb-4">Renewals (Outstanding)</h2>
 
-            <div className="space-y-2 max-h-[600px] overflow-y-auto">
+              {/* Column Headers */}
+              <div className="grid grid-cols-[auto_1fr_auto_auto] gap-3 pb-2 border-b font-medium text-sm text-gray-600">
+                <div className="w-5"></div>
+                <div>Member</div>
+                <div className="text-right">Outstanding</div>
+                <div className="text-right w-20">Banking</div>
+              </div>
+            </div>
+
+            <div className="px-6 max-h-[600px] overflow-y-auto">
               {renewals.map(renewal => (
                 <div
                   key={renewal.userName}
-                  className="flex items-center justify-between p-3 hover:bg-gray-50 rounded cursor-pointer border"
+                  className={`grid grid-cols-[auto_1fr_auto_auto] gap-3 py-3 hover:bg-gray-50 border-b border-gray-100 ${
+                    renewal.isSelected ? 'cursor-pointer' : ''
+                  }`}
                   onClick={() => renewal.isSelected && openManualMatchDialog(renewal)}
                 >
-                  <div className="flex items-center space-x-3">
+                  <div>
                     <input
                       type="checkbox"
                       checked={renewal.isSelected || renewal.isMatched}
@@ -460,22 +561,23 @@ export default function BankingPage() {
                       }`}
                       onClick={(e) => e.stopPropagation()}
                     />
-                    <div>
-                      <div className="font-medium">{renewal.fullKnownAs}</div>
-                      <div className="text-sm text-gray-500">{renewal.userName}</div>
-                    </div>
                   </div>
-                  <div className="text-right">
-                    <div className="font-semibold text-indigo-600">
-                      £{renewal.outstanding.toFixed(2)}
-                    </div>
+                  <div>
+                    <div className="font-medium">{renewal.fullKnownAs}</div>
+                    <div className="text-sm text-gray-500">{renewal.userName}</div>
+                  </div>
+                  <div className="text-right font-semibold text-indigo-600">
+                    £{renewal.outstanding.toFixed(2)}
+                  </div>
+                  <div className="text-right font-semibold text-green-600 w-20">
+                    £{renewal.selected_banking.toFixed(2)}
                   </div>
                 </div>
               ))}
             </div>
 
             {/* Renewals Totals */}
-            <div className="mt-6 pt-4 border-t space-y-2">
+            <div className="p-6 pt-4 border-t space-y-2">
               <div className="flex justify-between text-sm">
                 <span>Total Outstanding:</span>
                 <span className="font-semibold">£{renewalTotals.totalOutstanding.toFixed(2)}</span>
@@ -491,18 +593,29 @@ export default function BankingPage() {
             </div>
           </div>
 
-          {/* RIGHT COLUMN - PAYMENTS */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-lg font-semibold mb-4">Payments (Unmatched)</h2>
+          {/* RIGHT COLUMN - PAYMENTS (65%) */}
+          <div className="bg-white rounded-lg shadow">
+            <div className="p-6 pb-0">
+              <h2 className="text-lg font-semibold mb-4">Payments (Unmatched)</h2>
 
-            <div className="space-y-2 max-h-[600px] overflow-y-auto">
+              {/* Column Headers - 4 distinct columns */}
+              <div className="grid grid-cols-[auto_100px_60px_1fr_100px] gap-3 pb-2 border-b font-medium text-sm text-gray-600">
+                <div className="w-5"></div>
+                <div>Date</div>
+                <div>Type</div>
+                <div>Reference</div>
+                <div className="text-right">Amount</div>
+              </div>
+            </div>
+
+            <div className="px-6 max-h-[600px] overflow-y-auto">
               {payments.map(payment => (
                 <div
                   key={payment.payment_id}
-                  className="flex items-center justify-between p-3 hover:bg-gray-50 rounded border"
+                  className="grid grid-cols-[auto_100px_60px_1fr_100px] gap-3 py-3 hover:bg-gray-50 border-b border-gray-100"
                   onDoubleClick={() => openAmendDialog(payment)}
                 >
-                  <div className="flex items-center space-x-3">
+                  <div>
                     <input
                       type="checkbox"
                       checked={payment.isSelected || payment.isMatched}
@@ -512,40 +625,45 @@ export default function BankingPage() {
                         payment.isMatched ? 'text-red-600' : 'text-gray-900'
                       }`}
                     />
-                    <div>
-                      <div className="flex items-center space-x-2">
-                        <span className="text-xs font-mono bg-gray-100 px-2 py-1 rounded">
-                          {payment.date}
-                        </span>
-                        <span className="text-xs font-semibold text-blue-600">
-                          {payment.type}
-                        </span>
-                      </div>
-                      <div className="text-sm mt-1">{payment.reference}</div>
-                    </div>
                   </div>
-                  <div className="text-right">
-                    <div className="font-semibold text-green-600">
-                      £{payment.amount.toFixed(2)}
-                    </div>
+                  <div className="text-xs font-mono text-gray-700">
+                    {payment.date}
+                  </div>
+                  <div className="text-xs font-semibold text-blue-600">
+                    {payment.type}
+                  </div>
+                  <div className="text-sm text-gray-900 truncate">
+                    {payment.reference}
+                  </div>
+                  <div className="text-right font-semibold text-green-600">
+                    £{payment.amount.toFixed(2)}
                   </div>
                 </div>
               ))}
             </div>
 
             {/* Payments Totals */}
-            <div className="mt-6 pt-4 border-t space-y-2">
-              <div className="flex justify-between text-sm">
-                <span>Total Banking:</span>
-                <span className="font-semibold">£{paymentTotals.totalBanking.toFixed(2)}</span>
+            <div className="p-6 pt-4 border-t space-y-2">
+              <div className="grid grid-cols-[auto_100px_60px_1fr_100px] gap-3 text-sm">
+                <div></div>
+                <div></div>
+                <div></div>
+                <div>Total Banking:</div>
+                <div className="text-right font-semibold">£{paymentTotals.totalBanking.toFixed(2)}</div>
               </div>
-              <div className="flex justify-between text-sm text-red-600">
-                <span>Total Matched:</span>
-                <span className="font-semibold">£{paymentTotals.totalMatched.toFixed(2)}</span>
+              <div className="grid grid-cols-[auto_100px_60px_1fr_100px] gap-3 text-sm text-red-600">
+                <div></div>
+                <div></div>
+                <div></div>
+                <div>Total Matched:</div>
+                <div className="text-right font-semibold">£{paymentTotals.totalMatched.toFixed(2)}</div>
               </div>
-              <div className="flex justify-between text-sm">
-                <span>Total Selected:</span>
-                <span className="font-semibold">£{paymentTotals.totalSelected.toFixed(2)}</span>
+              <div className="grid grid-cols-[auto_100px_60px_1fr_100px] gap-3 text-sm">
+                <div></div>
+                <div></div>
+                <div></div>
+                <div>Total Selected:</div>
+                <div className="text-right font-semibold">£{paymentTotals.totalSelected.toFixed(2)}</div>
               </div>
             </div>
           </div>
@@ -645,81 +763,125 @@ export default function BankingPage() {
         )}
 
         {/* Manual Match Dialog */}
-        {showManualMatchDialog && editingRenewal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 w-96">
-              <h3 className="text-lg font-semibold mb-4">Manual Match Renewal</h3>
+        {showManualMatchDialog && editingRenewal && (() => {
+          // Calculate totals
+          const paymentTotals = calculatePaymentTotals(payments);
+          const renewalTotals = calculateRenewalTotals(renewals);
 
-              <div className="mb-4">
-                <div className="text-sm text-gray-600">Member: {editingRenewal.fullKnownAs}</div>
-                <div className="text-sm text-gray-600">Total Fee Due: £{editingRenewal.totalPayment.toFixed(2)}</div>
-                <div className="text-sm text-gray-600">Outstanding: £{editingRenewal.outstanding.toFixed(2)}</div>
-              </div>
+          const total_selected_payment = paymentTotals.totalSelected;
 
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium mb-1">Banking</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={manualBanking}
-                    onChange={(e) => setManualBanking(parseFloat(e.target.value) || 0)}
-                    className="w-full border rounded px-3 py-2"
-                  />
-                </div>
+          // Exclude current renewal from the total to get "other renewals"
+          const other_renewals_total = renewalTotals.totalSelected - editingRenewal.selected_banking;
 
-                <div>
-                  <label className="block text-sm font-medium mb-1">Donations</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={manualDonations}
-                    onChange={(e) => setManualDonations(parseFloat(e.target.value) || 0)}
-                    className="w-full border rounded px-3 py-2"
-                  />
-                </div>
+          // Available amount for THIS renewal
+          const available_for_current = total_selected_payment - other_renewals_total;
 
-                <div>
-                  <label className="block text-sm font-medium mb-1">Difference</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={manualDifference}
-                    onChange={(e) => setManualDifference(parseFloat(e.target.value) || 0)}
-                    className="w-full border rounded px-3 py-2"
-                  />
-                </div>
+          // Parse donations and difference inputs
+          const donationsNum = typeof manualDonations === 'string' ? parseFloat(manualDonations) || 0 : manualDonations;
+          const differenceNum = typeof manualDifference === 'string' ? parseFloat(manualDifference) || 0 : manualDifference;
 
-                <div className="pt-2 border-t">
-                  <div className="text-sm font-medium">
-                    Part Payment: £
-                    {calculatePartPayment(
-                      editingRenewal.outstanding,
-                      manualBanking,
-                      manualDonations,
-                      manualDifference
-                    ).toFixed(2)}
+          // Banking = available amount for this renewal
+          const calculatedBanking = available_for_current;
+
+          // Payment Difference should be 0 when banking equals available
+          const paymentDifference = 0;
+
+          return (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <div className="bg-white rounded-lg p-6 w-96">
+                <h3 className="text-lg font-semibold mb-4">Manual Match Renewal</h3>
+
+                <div className="mb-4 space-y-1">
+                  <div className="text-sm text-gray-600">Member: {editingRenewal.fullKnownAs}</div>
+                  <div className="text-sm text-gray-600">Total Fee Due: £{editingRenewal.totalPayment.toFixed(2)}</div>
+                  <div className="text-sm text-gray-600">Outstanding: £{editingRenewal.outstanding.toFixed(2)}</div>
+                  <div className="text-xs text-gray-400 border-t pt-2 mt-2">
+                    Selected Payment Total: £{total_selected_payment.toFixed(2)}
+                  </div>
+                  <div className="text-xs text-gray-400">
+                    Other Renewals Total: £{other_renewals_total.toFixed(2)}
+                  </div>
+                  <div className="text-sm font-medium text-purple-600">
+                    Available for This Renewal: £{available_for_current.toFixed(2)}
                   </div>
                 </div>
-              </div>
 
-              <div className="mt-6 flex justify-end space-x-3">
-                <button
-                  onClick={() => setShowManualMatchDialog(false)}
-                  className="px-4 py-2 border rounded hover:bg-gray-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleSaveManualMatch}
-                  className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700"
-                >
-                  Amend
-                </button>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Donations</label>
+                    <input
+                      type="text"
+                      value={manualDonations}
+                      onChange={(e) => setManualDonations(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full border rounded px-3 py-2"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Difference</label>
+                    <input
+                      type="text"
+                      value={manualDifference}
+                      onChange={(e) => setManualDifference(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full border rounded px-3 py-2"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Payment Notes</label>
+                    <input
+                      type="text"
+                      value={manualNotes}
+                      onChange={(e) => setManualNotes(e.target.value)}
+                      placeholder="Optional notes"
+                      className="w-full border rounded px-3 py-2"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Banking</label>
+                    <div className="text-lg font-semibold text-gray-900">
+                      £{calculatedBanking.toFixed(2)}
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">Payment Difference:</span>
+                      <div className="flex items-center space-x-2">
+                        <span className={`font-semibold ${paymentDifference !== 0 ? 'text-red-600' : 'text-green-600'}`}>
+                          £{paymentDifference.toFixed(2)}
+                        </span>
+                        {paymentDifference !== 0 && (
+                          <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded font-semibold">
+                            Part Pay
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-6 flex justify-end space-x-3">
+                  <button
+                    onClick={() => setShowManualMatchDialog(false)}
+                    className="px-4 py-2 border rounded hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSaveManualMatch}
+                    className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700"
+                  >
+                    Amend
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* CSV Import Dialog */}
         {showImportDialog && (
