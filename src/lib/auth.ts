@@ -41,11 +41,22 @@ export const authOptions: NextAuthOptions = {
         token.role = user.role;
         token.name = user.name;
         token.email = user.email;
+        // Store login time for absolute expiration check
+        token.loginTime = Date.now();
       }
       return token;
     },
 
     async session({ session, token }) {
+      // Check absolute expiration (3 months from login)
+      const threeMonthsInMs = 90 * 24 * 60 * 60 * 1000; // 90 days in milliseconds
+      const loginTime = token.loginTime as number;
+
+      if (loginTime && Date.now() - loginTime > threeMonthsInMs) {
+        // Session has exceeded 3 months - force logout
+        throw new Error('Session expired');
+      }
+
       // Add custom fields to session
       if (session.user) {
         session.user.userName = token.userName as string;

@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { signOut } from 'next-auth/react';
 import Link from 'next/link';
+import Image from 'next/image';
 
 interface NavItem {
   name: string;
@@ -109,9 +110,14 @@ export function Navbar({ userName, userRole }: NavbarProps) {
           {/* Logo/Brand */}
           <div className="flex items-center">
             <Link href="/" className="flex-shrink-0 flex items-center">
-              <h1 className="text-xl font-bold text-gray-900">
-                BHBC Members Portal
-              </h1>
+              <Image
+                src="/bhbc-logo.jpg"
+                alt="BHBC Logo"
+                width={40}
+                height={40}
+                className="h-10 w-auto"
+                priority
+              />
             </Link>
           </div>
 
