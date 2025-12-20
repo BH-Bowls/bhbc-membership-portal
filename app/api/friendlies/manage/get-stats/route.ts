@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Update stats for all players in game sheet
-    const playersUpdated = await updateGameSheetStats(game.tabName, tab_date);
+    const playersUpdated = await updateGameSheetStats(game.tabName);
 
     return NextResponse.json({
       success: true,
