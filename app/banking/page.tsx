@@ -284,12 +284,17 @@ export default function BankingPage() {
     // (donations and difference are tracked separately and balance in the outstanding formula)
     const calculatedBanking = available_for_current;
 
+    // Get currently selected items for tracking relationships
+    const selectedPaymentIds = payments.filter(p => p.isSelected).map(p => p.payment_id);
+    const selectedRenewalUserNames = renewals.filter(r => r.isSelected || r === editingRenewal).map(r => r.userName);
+
     editingRenewal.selected_banking = calculatedBanking;
     editingRenewal.selected_donations = donationsNum;
     editingRenewal.selected_difference = differenceNum;
     editingRenewal.matched_banking = calculatedBanking;
     editingRenewal.matched_donations = donationsNum;
     editingRenewal.matched_difference = differenceNum;
+    editingRenewal.matched_payment_ids = [...selectedPaymentIds]; // Store which payments were used
     // Update outstanding: total_fee_due - banking + donations + difference
     editingRenewal.outstanding = editingRenewal.totalPayment - calculatedBanking + donationsNum + differenceNum;
     editingRenewal.isMatched = true;
@@ -305,6 +310,7 @@ export default function BankingPage() {
         r.matched_banking = banking;
         r.matched_donations = 0;
         r.matched_difference = 0;
+        r.matched_payment_ids = [...selectedPaymentIds]; // Store which payments were used
         // Update outstanding: total_fee_due - banking + donations + difference
         r.outstanding = r.totalPayment - banking + 0 + 0;
         r.isMatched = true;
@@ -316,6 +322,7 @@ export default function BankingPage() {
     payments.forEach(p => {
       if (p.isSelected) {
         p.matched_amount = p.amount;
+        p.matched_user_names = [...selectedRenewalUserNames]; // Store which renewals were matched
         p.isMatched = true;
         p.isSelected = false;
       }
@@ -407,12 +414,10 @@ export default function BankingPage() {
     }
 
     try {
-      // Build payment_ids string from matched payment IDs
-      const newPaymentIds = matchedPayments.map(p => p.payment_id).join(', ');
-
-      // Prepare data
+      // Prepare data - use stored relationships for each renewal
       const renewalsData = matchedRenewals.map(r => {
-        // Append new payment IDs to existing ones
+        // Use the specific payment IDs that were matched to THIS renewal
+        const newPaymentIds = r.matched_payment_ids.join(', ');
         const existingIds = r.payment_ids || '';
         const updatedPaymentIds = existingIds ? `${existingIds}, ${newPaymentIds}` : newPaymentIds;
 
@@ -433,9 +438,10 @@ export default function BankingPage() {
         };
       });
 
+      // Prepare payment data - use stored relationships for each payment
       const paymentsData = matchedPayments.map(p => ({
         payment_id: p.payment_id,
-        matched_users: matchedRenewals.map(r => r.userName).join(','),
+        matched_users: p.matched_user_names.join(','), // Use the specific users matched to THIS payment
       }));
 
       const res = await fetch('/api/banking/submit', {
@@ -490,11 +496,11 @@ export default function BankingPage() {
 
           <div className="flex space-x-3">
             <button
-              onClick={openAddDialog}
+              onClick={() => router.push('/banking/add-payments')}
               className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 flex items-center"
             >
               <span className="mr-2">+</span>
-              Add Payment
+              Add Payments
             </button>
 
             <label className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 cursor-pointer flex items-center">

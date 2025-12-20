@@ -7,13 +7,18 @@ import { useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { signOut } from 'next-auth/react';
 import Link from 'next/link';
-import Image from 'next/image';
+
+interface SubMenuItem {
+  name: string;
+  href: string;
+}
 
 interface NavItem {
   name: string;
-  href: string;
+  href?: string;
   icon?: React.ReactNode;
   adminOnly?: boolean;
+  subItems?: SubMenuItem[];
 }
 
 interface NavbarProps {
@@ -23,12 +28,15 @@ interface NavbarProps {
 
 export function Navbar({ userName, userRole }: NavbarProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [openDropdown, setOpenDropdown] = useState<string | null>(null);
   const pathname = usePathname();
   const router = useRouter();
 
   const isAdmin = userRole === 'Admin' || userRole === 'superadmin';
   const isTreasurer = userRole === 'T';
+  const isCaptain = userRole === 'Captain';
   const canAccessBanking = isAdmin || isTreasurer;
+  const canAccessCaptainTools = isAdmin || isCaptain;
 
   // Navigation items - easy to add more here
   const navigationItems: NavItem[] = [
@@ -59,16 +67,28 @@ export function Navbar({ userName, userRole }: NavbarProps) {
         </svg>
       ),
     },
-    {
-      name: 'Banking',
-      href: '/banking',
+    ...(canAccessBanking ? [{
+      name: 'Treasurer',
       icon: (
         <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
       ),
-      adminOnly: !canAccessBanking, // Hide if not admin or treasurer
-    },
+      subItems: [
+        { name: 'Banking', href: '/banking' },
+      ],
+    }] : []),
+    ...(canAccessCaptainTools ? [{
+      name: 'Captain',
+      icon: (
+        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+        </svg>
+      ),
+      subItems: [
+        { name: 'Friendly Management', href: '/friendlies/manage' },
+      ],
+    }] : []),
     {
       name: 'Friendlies',
       href: '/friendlies',
@@ -80,23 +100,20 @@ export function Navbar({ userName, userRole }: NavbarProps) {
     },
   ];
 
-  // Filter items based on user role
-  const visibleItems = navigationItems.filter(
-    (item) => {
-      // Banking: show only to Admin or Treasurer
-      if (item.href === '/banking') {
-        return canAccessBanking;
-      }
-      // Other admin-only items
-      return !item.adminOnly || isAdmin;
-    }
-  );
-
   const isActive = (href: string) => {
     if (href === '/') {
       return pathname === '/';
     }
     return pathname?.startsWith(href);
+  };
+
+  const isDropdownActive = (subItems?: SubMenuItem[]) => {
+    if (!subItems) return false;
+    return subItems.some(item => isActive(item.href));
+  };
+
+  const toggleDropdown = (itemName: string) => {
+    setOpenDropdown(openDropdown === itemName ? null : itemName);
   };
 
   const handleSignOut = () => {
@@ -110,32 +127,70 @@ export function Navbar({ userName, userRole }: NavbarProps) {
           {/* Logo/Brand */}
           <div className="flex items-center">
             <Link href="/" className="flex-shrink-0 flex items-center">
-              <Image
+              <img
                 src="/bhbc-logo.jpg"
                 alt="BHBC Logo"
-                width={40}
-                height={40}
-                className="h-10 w-auto"
-                priority
+                style={{ height: '40px', width: 'auto' }}
               />
             </Link>
           </div>
 
           {/* Desktop Navigation */}
           <div className="hidden md:flex md:items-center md:space-x-4">
-            {visibleItems.map((item) => (
-              <Link
-                key={item.name}
-                href={item.href}
-                className={`inline-flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors ${
-                  isActive(item.href)
-                    ? 'bg-indigo-100 text-indigo-700'
-                    : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
-                }`}
-              >
-                {item.icon && <span className="mr-2">{item.icon}</span>}
-                {item.name}
-              </Link>
+            {navigationItems.map((item) => (
+              item.subItems ? (
+                // Dropdown menu item
+                <div key={item.name} className="relative">
+                  <button
+                    onClick={() => toggleDropdown(item.name)}
+                    className={`inline-flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors ${
+                      isDropdownActive(item.subItems)
+                        ? 'bg-indigo-100 text-indigo-700'
+                        : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
+                    }`}
+                  >
+                    {item.icon && <span className="mr-2">{item.icon}</span>}
+                    {item.name}
+                    <svg className="ml-1 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  {openDropdown === item.name && (
+                    <div className="absolute left-0 mt-2 w-48 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-50">
+                      <div className="py-1">
+                        {item.subItems.map((subItem) => (
+                          <Link
+                            key={subItem.name}
+                            href={subItem.href}
+                            onClick={() => setOpenDropdown(null)}
+                            className={`block px-4 py-2 text-sm ${
+                              isActive(subItem.href)
+                                ? 'bg-indigo-100 text-indigo-700'
+                                : 'text-gray-700 hover:bg-gray-100'
+                            }`}
+                          >
+                            {subItem.name}
+                          </Link>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                // Regular link item
+                <Link
+                  key={item.name}
+                  href={item.href!}
+                  className={`inline-flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors ${
+                    isActive(item.href!)
+                      ? 'bg-indigo-100 text-indigo-700'
+                      : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
+                  }`}
+                >
+                  {item.icon && <span className="mr-2">{item.icon}</span>}
+                  {item.name}
+                </Link>
+              )
             ))}
 
             {/* User Info & Sign Out */}
@@ -180,20 +235,69 @@ export function Navbar({ userName, userRole }: NavbarProps) {
       {mobileMenuOpen && (
         <div className="md:hidden">
           <div className="px-2 pt-2 pb-3 space-y-1">
-            {visibleItems.map((item) => (
-              <Link
-                key={item.name}
-                href={item.href}
-                onClick={() => setMobileMenuOpen(false)}
-                className={`flex items-center px-3 py-2 text-base font-medium rounded-md ${
-                  isActive(item.href)
-                    ? 'bg-indigo-100 text-indigo-700'
-                    : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
-                }`}
-              >
-                {item.icon && <span className="mr-3">{item.icon}</span>}
-                {item.name}
-              </Link>
+            {navigationItems.map((item) => (
+              item.subItems ? (
+                // Dropdown menu item in mobile
+                <div key={item.name}>
+                  <button
+                    onClick={() => toggleDropdown(item.name)}
+                    className={`flex items-center justify-between w-full px-3 py-2 text-base font-medium rounded-md ${
+                      isDropdownActive(item.subItems)
+                        ? 'bg-indigo-100 text-indigo-700'
+                        : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
+                    }`}
+                  >
+                    <span className="flex items-center">
+                      {item.icon && <span className="mr-3">{item.icon}</span>}
+                      {item.name}
+                    </span>
+                    <svg
+                      className={`h-4 w-4 transition-transform ${openDropdown === item.name ? 'rotate-180' : ''}`}
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  {openDropdown === item.name && (
+                    <div className="ml-6 mt-1 space-y-1">
+                      {item.subItems.map((subItem) => (
+                        <Link
+                          key={subItem.name}
+                          href={subItem.href}
+                          onClick={() => {
+                            setMobileMenuOpen(false);
+                            setOpenDropdown(null);
+                          }}
+                          className={`block px-3 py-2 text-sm rounded-md ${
+                            isActive(subItem.href)
+                              ? 'bg-indigo-100 text-indigo-700'
+                              : 'text-gray-600 hover:bg-gray-100'
+                          }`}
+                        >
+                          {subItem.name}
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                // Regular link item in mobile
+                <Link
+                  key={item.name}
+                  href={item.href!}
+                  onClick={() => setMobileMenuOpen(false)}
+                  className={`flex items-center px-3 py-2 text-base font-medium rounded-md ${
+                    isActive(item.href!)
+                      ? 'bg-indigo-100 text-indigo-700'
+                      : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
+                  }`}
+                >
+                  {item.icon && <span className="mr-3">{item.icon}</span>}
+                  {item.name}
+                </Link>
+              )
             ))}
           </div>
           <div className="pt-4 pb-3 border-t border-gray-200">

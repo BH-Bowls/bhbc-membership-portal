@@ -74,6 +74,7 @@ export interface RenewalWithState extends RenewalForBanking {
   matched_banking: number;
   matched_donations: number;
   matched_difference: number;
+  matched_payment_ids: string[]; // Track which specific payment IDs were used for this renewal
 }
 
 export interface PaymentWithState extends Payment {
@@ -81,6 +82,7 @@ export interface PaymentWithState extends Payment {
   isMatched: boolean;
   selected_amount: number;
   matched_amount: number;
+  matched_user_names: string[]; // Track which specific user names were matched with this payment
 }
 
 /**
@@ -97,6 +99,7 @@ export function initializeRenewalState(renewal: RenewalForBanking): RenewalWithS
     matched_banking: 0,
     matched_donations: 0,
     matched_difference: 0,
+    matched_payment_ids: [],
   };
 }
 
@@ -110,6 +113,7 @@ export function initializePaymentState(payment: Payment): PaymentWithState {
     isMatched: false,
     selected_amount: 0,
     matched_amount: 0,
+    matched_user_names: [],
   };
 }
 
@@ -145,7 +149,7 @@ export function calculatePaymentTotals(payments: PaymentWithState[]) {
 
 /**
  * Auto-match selected items if totals equal
- * Moves selected_* to matched_* fields
+ * Moves selected_* to matched_* fields and stores payment-renewal relationships
  */
 export function autoMatchIfEqual(
   renewals: RenewalWithState[],
@@ -160,29 +164,35 @@ export function autoMatchIfEqual(
     return false;
   }
 
-  // Move selected → matched for renewals
-  renewals
-    .filter(r => r.isSelected)
-    .forEach(renewal => {
-      renewal.matched_banking = renewal.selected_banking;
-      renewal.matched_donations = renewal.selected_donations;
-      renewal.matched_difference = renewal.selected_difference;
-      renewal.selected_banking = 0;
-      renewal.selected_donations = 0;
-      renewal.selected_difference = 0;
-      renewal.isSelected = false;
-      renewal.isMatched = true;
-    });
+  // Get currently selected items
+  const selectedRenewals = renewals.filter(r => r.isSelected);
+  const selectedPayments = payments.filter(p => p.isSelected);
 
-  // Move selected → matched for payments
-  payments
-    .filter(p => p.isSelected)
-    .forEach(payment => {
-      payment.matched_amount = payment.selected_amount;
-      payment.selected_amount = 0;
-      payment.isSelected = false;
-      payment.isMatched = true;
-    });
+  // Get payment IDs and user names for cross-referencing
+  const selectedPaymentIds = selectedPayments.map(p => p.payment_id);
+  const selectedUserNames = selectedRenewals.map(r => r.userName);
+
+  // Move selected → matched for renewals and store payment IDs
+  selectedRenewals.forEach(renewal => {
+    renewal.matched_banking = renewal.selected_banking;
+    renewal.matched_donations = renewal.selected_donations;
+    renewal.matched_difference = renewal.selected_difference;
+    renewal.matched_payment_ids = [...selectedPaymentIds]; // Store which payments were used
+    renewal.selected_banking = 0;
+    renewal.selected_donations = 0;
+    renewal.selected_difference = 0;
+    renewal.isSelected = false;
+    renewal.isMatched = true;
+  });
+
+  // Move selected → matched for payments and store user names
+  selectedPayments.forEach(payment => {
+    payment.matched_amount = payment.selected_amount;
+    payment.matched_user_names = [...selectedUserNames]; // Store which renewals were matched
+    payment.selected_amount = 0;
+    payment.isSelected = false;
+    payment.isMatched = true;
+  });
 
   return true;
 }
@@ -244,8 +254,25 @@ export function runGlobalAutoMatch(
       );
     });
 
-    // Select all matches
+    // Also include buddies of matched renewals (for family/couple payments)
+    const matchesWithBuddies = new Set(matches);
     matches.forEach(renewal => {
+      if (renewal.buddyUserName) {
+        // Find the buddy
+        const buddy = renewals.find(
+          r =>
+            r.userName === renewal.buddyUserName &&
+            r.outstanding > 0 &&
+            !r.isMatched
+        );
+        if (buddy) {
+          matchesWithBuddies.add(buddy);
+        }
+      }
+    });
+
+    // Select all matches including buddies
+    Array.from(matchesWithBuddies).forEach(renewal => {
       renewal.isSelected = true;
       renewal.selected_banking = renewal.outstanding;
     });

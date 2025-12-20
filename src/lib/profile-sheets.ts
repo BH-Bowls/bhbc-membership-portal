@@ -14,8 +14,8 @@ import { google } from 'googleapis';
 export { type User };
 
 function getSpreadsheetId(): string {
-  const id = process.env.SPREADSHEET_ID;
-  if (!id) throw new Error('SPREADSHEET_ID not set');
+  const id = process.env.MEMBERS_SPREADSHEET_ID;
+  if (!id) throw new Error('MEMBERS_SPREADSHEET_ID not set');
   return id;
 }
 

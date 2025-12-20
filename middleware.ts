@@ -1,13 +1,29 @@
 import { withAuth } from 'next-auth/middleware';
+import { NextResponse } from 'next/server';
 
-export default withAuth({
-  callbacks: {
-    authorized: ({ token }) => !!token,
+export default withAuth(
+  function middleware(req) {
+    const token = req.nextauth.token;
+    const pathname = req.nextUrl.pathname;
+
+    // Protect /friendlies/manage routes - Captain or Admin only
+    if (pathname.startsWith('/friendlies/manage')) {
+      if (!token || !['Captain', 'Admin'].includes(token.role as string)) {
+        return NextResponse.redirect(new URL('/friendlies', req.url));
+      }
+    }
+
+    return NextResponse.next();
   },
-  pages: {
-    signIn: '/login',
-  },
-});
+  {
+    callbacks: {
+      authorized: ({ token }) => !!token,
+    },
+    pages: {
+      signIn: '/login',
+    },
+  }
+);
 
 export const config = {
   matcher: [
