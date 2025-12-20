@@ -188,7 +188,7 @@ export async function getGames(statusFilter?: GameStatus): Promise<Game[]> {
     league: get(row, 'league') || '',
     tabName: get(row, 'tab_name') || '',
     status: (get(row, 'status') || '') as GameStatus,
-    include: get(row, 'include'),
+    include: get(row, 'include') || undefined,
     entered: getInt(row, 'entered'),
     selected: getInt(row, 'selected'),
     reserves: getInt(row, 'reserves'),

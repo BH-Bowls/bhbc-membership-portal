@@ -45,8 +45,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Map snake_case to camelCase for updateGameSheet
+    const mappedSelections = selections.map(s => ({
+      rowNumber: s.row_number,
+      selected: s.selected,
+      team: s.team,
+      position: s.position,
+      driving: s.driving,
+      carNumber: s.car_number,
+      captain: s.captain,
+    }));
+
     // Update game sheet
-    await updateGameSheet(game.tabName, selections);
+    await updateGameSheet(game.tabName, mappedSelections);
 
     // Get updated players and sort them
     const allPlayers = await getGameSheet(game.tabName);

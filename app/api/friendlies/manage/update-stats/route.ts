@@ -55,9 +55,6 @@ export async function POST(request: NextRequest) {
         case 'T':
           newStatus = 'T'; // Reserve Team
           break;
-        case 'A':
-          newStatus = 'A'; // Available (not used in current spec but keeping for compatibility)
-          break;
         default:
           newStatus = 'E'; // Still entered but not selected
       }

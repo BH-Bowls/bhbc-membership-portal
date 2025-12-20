@@ -8,7 +8,7 @@ import {
   createGameColumn,
   createGameSheet,
 } from '@/lib/friendlies-sheets';
-import { ChangeStatusRequest, ChangeStatusResponse } from '@/lib/types/friendlies';
+import { ChangeStatusRequest, ChangeStatusResponse, GameStatus } from '@/lib/types/friendlies';
 
 export async function POST(request: NextRequest) {
   try {
@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
     }
 
     const currentStatus = game.status || '';
-    let newStatus = currentStatus;
+    let newStatus: GameStatus = currentStatus;
     let gameSheetCreated = false;
 
     // Handle different actions
