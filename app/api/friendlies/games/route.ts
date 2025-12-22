@@ -22,6 +22,8 @@ export async function GET(request: NextRequest) {
     const userName = session.user.userName;
     const userEntries = await getPlayerEntries(userName);
 
+    console.log(`User ${userName} has ${userEntries.length} entries:`, userEntries.map(e => `${e.tabName}:${e.status}`).join(', '));
+
     // Map user entries to games
     const gamesWithUserStatus = games.map(game => {
       const entry = userEntries.find(e => e.tabName === game.tabName);
@@ -31,6 +33,9 @@ export async function GET(request: NextRequest) {
         userStatus: entry?.status || null,
       };
     });
+
+    const enteredCount = gamesWithUserStatus.filter(g => g.userEntered).length;
+    console.log(`Returning ${games.length} games, ${enteredCount} with user entries for ${userName}`);
 
     return NextResponse.json({ games: gamesWithUserStatus });
   } catch (error) {

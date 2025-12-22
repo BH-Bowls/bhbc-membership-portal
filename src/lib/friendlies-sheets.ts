@@ -371,12 +371,66 @@ export async function createGameColumn(tabName: string): Promise<void> {
 }
 
 /**
+ * Get the lookup value for a user in the Players sheet
+ * Returns full_name if Players sheet uses full_name column, otherwise userName
+ */
+async function getPlayerLookupValue(userName: string, spreadsheetId: string, colMap: { [key: string]: number }): Promise<string> {
+  console.log(`Players sheet column map:`, Object.keys(colMap));
+
+  // If Players sheet has user_name column, use userName directly
+  if (colMap['user_name'] !== undefined) {
+    console.log(`Players sheet has user_name column at index ${colMap['user_name']}, using userName: ${userName}`);
+    return userName;
+  }
+
+  // If Players sheet has full_name, name, or similar column, get full_name from Members sheet
+  const nameColumn = colMap['full_name'] ?? colMap['name'];
+  if (nameColumn !== undefined) {
+    console.log(`Players sheet has name column at index ${nameColumn}, looking up full name for ${userName} in Members sheet`);
+    const sheets = getSheetsClient();
+    const membersSpreadsheetId = getMembersSpreadsheetId();
+    const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
+
+    console.log(`Members sheet columns:`, Object.keys(membersColMap));
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: membersSpreadsheetId,
+      range: 'Members!A:ZZ',
+    });
+
+    const rows = response.data.values || [];
+    const userNameCol = membersColMap['user_name'] ?? 0;
+    const fullNameCol = membersColMap['full_name'] ?? membersColMap['name'] ?? 1;
+
+    console.log(`Searching for userName "${userName}" in Members column ${userNameCol}, will get full_name from column ${fullNameCol}`);
+    console.log(`Found ${rows.length} rows in Members sheet`);
+
+    const memberRow = rows.find((row, index) => index > 0 && row[userNameCol] === userName);
+    if (memberRow && memberRow[fullNameCol]) {
+      console.log(`Found member: ${memberRow[fullNameCol]}`);
+      return memberRow[fullNameCol];
+    } else {
+      console.log(`Member not found for userName: ${userName}, memberRow:`, memberRow);
+    }
+  } else {
+    console.log(`Players sheet has no user_name, full_name, or name column, using userName: ${userName}`);
+  }
+
+  // Fall back to userName
+  console.log(`Falling back to userName: ${userName}`);
+  return userName;
+}
+
+/**
  * Get player entries for a specific user
  */
 export async function getPlayerEntries(userName: string): Promise<PlayerEntry[]> {
   const spreadsheetId = getFriendliesSpreadsheetId();
   const colMap = await getColumnMap(spreadsheetId, 'Players');
   const sheets = getSheetsClient();
+
+  // Get the appropriate lookup value (userName or full_name)
+  const lookupValue = await getPlayerLookupValue(userName, spreadsheetId, colMap);
 
   // Get all data from Players sheet
   const response = await sheets.spreadsheets.values.get({
@@ -387,27 +441,50 @@ export async function getPlayerEntries(userName: string): Promise<PlayerEntry[]>
   const rows = response.data.values || [];
   const headers = rows[0] || [];
 
-  // Find the row for this user using dynamic column lookup
-  const userNameCol = colMap['user_name'] !== undefined ? colMap['user_name'] : 0;
-  const userRowIndex = rows.findIndex((row, index) => index > 0 && row[userNameCol] === userName);
+  // Determine which column to search in
+  let userNameCol = colMap['user_name'] ?? colMap['full_name'] ?? colMap['name'] ?? 0;
+
+  const userRowIndex = rows.findIndex((row, index) => index > 0 && row[userNameCol] === lookupValue);
 
   if (userRowIndex === -1) {
+    console.log(`User not found in Players sheet. Looking for "${lookupValue}" in column ${userNameCol}`);
+    console.log(`First few values in that column:`, rows.slice(1, 6).map(r => r[userNameCol]));
     return [];
   }
 
+  console.log(`Found user at row ${userRowIndex}, lookupValue: "${lookupValue}"`);
   const userRow = rows[userRowIndex];
+  console.log(`User row has ${userRow.length} columns`);
 
-  // Map game columns (any column that's not in the fixed column map)
-  const fixedColumns = new Set(Object.values(colMap));
+  // Fixed columns in Players sheet (not game columns)
+  const fixedColumnNames = ['name', 'name_down', 'picked', '%_played_vs_name_down', 'withdrawn', 'cancelled'];
+  const fixedColumns = new Set(
+    fixedColumnNames
+      .map(name => colMap[name])
+      .filter(idx => idx !== undefined)
+  );
+  console.log(`Fixed columns (indices):`, Array.from(fixedColumns).sort((a, b) => a - b));
+  console.log(`Total headers: ${headers.length}`);
+
   const entries: PlayerEntry[] = [];
+  let gameColumnsChecked = 0;
   for (let i = 0; i < headers.length; i++) {
     // Skip fixed columns, only process game columns
-    if (!fixedColumns.has(i) && headers[i] && userRow[i]) {
-      entries.push({
-        tabName: headers[i],
-        status: userRow[i] as PlayerEntryStatus,
-      });
+    if (!fixedColumns.has(i) && headers[i]) {
+      gameColumnsChecked++;
+      if (userRow[i]) {
+        console.log(`Found entry at column ${i} (${headers[i]}): ${userRow[i]}`);
+        entries.push({
+          tabName: headers[i],
+          status: userRow[i] as PlayerEntryStatus,
+        });
+      }
     }
+  }
+
+  console.log(`Checked ${gameColumnsChecked} game columns, found ${entries.length} entries for ${lookupValue}`);
+  if (entries.length > 0) {
+    console.log(`First few entries:`, entries.slice(0, 3));
   }
 
   return entries;
@@ -425,6 +502,9 @@ export async function updatePlayerEntry(
   const colMap = await getColumnMap(spreadsheetId, 'Players');
   const sheets = getSheetsClient();
 
+  // Get the appropriate lookup value (userName or full_name)
+  const lookupValue = await getPlayerLookupValue(userName, spreadsheetId, colMap);
+
   // Get headers to find the column for this game
   const headersResponse = await sheets.spreadsheets.values.get({
     spreadsheetId,
@@ -438,8 +518,9 @@ export async function updatePlayerEntry(
     throw new Error(`Game column not found: ${tabName}`);
   }
 
-  // Get user name column and all user names to find the row
-  const userNameCol = colMap['user_name'] !== undefined ? colMap['user_name'] : 0;
+  // Determine which column to search in
+  let userNameCol = colMap['user_name'] ?? colMap['full_name'] ?? colMap['name'] ?? 0;
+
   const userNameColLetter = getColumnLetter(userNameCol);
 
   const playersResponse = await sheets.spreadsheets.values.get({
@@ -448,10 +529,10 @@ export async function updatePlayerEntry(
   });
 
   const players = playersResponse.data.values || [];
-  const userRowIndex = players.findIndex((row, index) => index > 0 && row[0] === userName);
+  const userRowIndex = players.findIndex((row, index) => index > 0 && row[0] === lookupValue);
 
   if (userRowIndex === -1) {
-    throw new Error(`User not found: ${userName}`);
+    throw new Error(`User not found: ${lookupValue} (userName: ${userName}, searched in column ${userNameColLetter})`);
   }
 
   // Convert column index to letter
@@ -549,7 +630,7 @@ export async function createGameSheet(tabDate: string, tabName: string): Promise
   const game = games.find(g => g.tabDate === tabDate);
   if (!game) throw new Error(`Game not found: ${tabDate}`);
 
-  // Get template sheet ID
+  // Get template sheet ID and Games sheet index
   const spreadsheet = await sheets.spreadsheets.get({
     spreadsheetId: getFriendliesSpreadsheetId(),
   });
@@ -562,6 +643,15 @@ export async function createGameSheet(tabDate: string, tabName: string): Promise
     throw new Error('Template sheet not found');
   }
 
+  // Find Games sheet index to insert new sheet after it
+  const gamesSheetIndex = spreadsheet.data.sheets?.findIndex(
+    sheet => sheet.properties?.title === 'Games'
+  );
+
+  const insertIndex = gamesSheetIndex !== undefined && gamesSheetIndex !== -1
+    ? gamesSheetIndex + 1
+    : undefined;
+
   // Duplicate the template
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId: getFriendliesSpreadsheetId(),
@@ -570,6 +660,7 @@ export async function createGameSheet(tabDate: string, tabName: string): Promise
         {
           duplicateSheet: {
             sourceSheetId: templateSheet.properties.sheetId,
+            insertSheetIndex: insertIndex,
             newSheetName: tabName,
           },
         },
@@ -949,7 +1040,7 @@ export async function getTeaRota(
                        'July', 'August', 'September', 'October', 'November', 'December'];
     const monthName = monthNames[month - 1];
 
-    const dateMatch = rowDate &&
+    const dateMatch = rowDate && monthName &&
       (rowDate.includes(`${day} ${monthName}`) || rowDate.includes(`${day} ${monthName.substring(0, 3)}`));
     const timeMatch = rowTime === time;
     const clubMatch = rowClub === clubName;

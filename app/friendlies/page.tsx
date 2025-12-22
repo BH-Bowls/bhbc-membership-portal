@@ -20,6 +20,14 @@ export default function FriendliesPage() {
     fetchGames();
   }, []);
 
+  useEffect(() => {
+    if (games.length > 0) {
+      const enteredGames = games.filter(g => g.userEntered);
+      console.log(`Total games: ${games.length}, User entered: ${enteredGames.length}`);
+      console.log('Entered games:', enteredGames.map(g => `${g.tabName} (${g.userStatus})`).join(', '));
+    }
+  }, [games]);
+
   async function fetchGames() {
     setLoading(true);
     try {
@@ -52,12 +60,24 @@ export default function FriendliesPage() {
       const data = await response.json();
 
       if (data.success) {
+        // Check if any entries failed
+        const failed = data.results?.filter((r: any) => !r.entered) || [];
+        if (failed.length > 0) {
+          console.error('Some entries failed:', failed);
+          const errorDetails = failed.map((f: any) => `${f.game_id}: ${f.error}`).join('\n');
+          alert(`Failed to enter ${failed.length} game(s):\n\n${errorDetails}`);
+        }
+
         // Refresh games list
         await fetchGames();
         setSelectedGames(new Set());
+      } else {
+        console.error('Failed to enter games:', data.error);
+        alert(`Failed to enter games: ${data.error}`);
       }
     } catch (error) {
       console.error('Error entering games:', error);
+      alert('An error occurred while entering games. Check console for details.');
     } finally {
       setEntering(false);
     }

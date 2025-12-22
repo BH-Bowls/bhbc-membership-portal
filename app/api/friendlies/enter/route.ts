@@ -44,11 +44,56 @@ export async function POST(request: NextRequest) {
         }
 
         // Update player entry to 'E'
-        await updatePlayerEntry(userName, game.tabName, 'E');
-        results.push({ game_id: tabDate, entered: true });
+        try {
+          await updatePlayerEntry(userName, game.tabName, 'E');
+          console.log(`Successfully entered ${userName} into ${game.tabName} (${tabDate})`);
+          results.push({ game_id: tabDate, entered: true });
+        } catch (updateError: any) {
+          console.error(`Error entering game ${tabDate}:`, updateError);
+          results.push({
+            game_id: tabDate,
+            entered: false,
+            error: updateError.message || 'Update failed'
+          });
+        }
       } catch (error) {
-        console.error(`Error entering game ${tabDate}:`, error);
-        results.push({ game_id: tabDate, entered: false, error: 'Update failed' });
+        console.error(`Error processing game ${tabDate}:`, error);
+        results.push({ game_id: tabDate, entered: false, error: 'Processing failed' });
+      }
+    }
+
+    // Update entered counts for all successfully entered games by counting entries in Players sheet
+    const successfulEntries = results.filter(r => r.entered);
+    if (successfulEntries.length > 0) {
+      const { updateGameCounts } = await import('@/lib/friendlies-sheets');
+      const { getGoogleSheetsClient } = await import('@/lib/sheets');
+      const sheets = getGoogleSheetsClient();
+      const spreadsheetId = process.env.FRIENDLIES_SPREADSHEET_ID!;
+
+      // Get all Players sheet data once
+      const playersResponse = await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: 'Players!A:ZZ',
+      });
+
+      const rows = playersResponse.data.values || [];
+      const headers = rows[0] || [];
+
+      for (const result of successfulEntries) {
+        const game = allGames.find(g => g.tabDate === result.game_id);
+        if (game) {
+          // Find the column for this game
+          const gameColIndex = headers.findIndex(h => h === game.tabName);
+          console.log(`Looking for game column "${game.tabName}", found at index ${gameColIndex}`);
+          if (gameColIndex !== -1) {
+            // Count non-empty entries in this column (skip header row)
+            const enteredCount = rows.slice(1).filter(row => row[gameColIndex]).length;
+            console.log(`Game ${game.tabName}: ${enteredCount} players entered, updating Games sheet`);
+            await updateGameCounts(result.game_id, { entered: enteredCount });
+          } else {
+            console.log(`Game column not found for "${game.tabName}" in Players sheet`);
+          }
+        }
       }
     }
 
