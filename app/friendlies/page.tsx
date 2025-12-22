@@ -11,7 +11,7 @@ type FilterType = 'all' | 'O' | 'entered' | 'selected';
 export default function FriendliesPage() {
   const { data: session } = useSession();
   const [games, setGames] = useState<GameWithUserStatus[]>([]);
-  const [filter, setFilter] = useState<FilterType>('all');
+  const [filter, setFilter] = useState<FilterType>('O');
   const [selectedGames, setSelectedGames] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [entering, setEntering] = useState(false);
@@ -22,9 +22,11 @@ export default function FriendliesPage() {
 
   useEffect(() => {
     if (games.length > 0) {
-      const enteredGames = games.filter(g => g.userEntered);
-      console.log(`Total games: ${games.length}, User entered: ${enteredGames.length}`);
-      console.log('Entered games:', enteredGames.map(g => `${g.tabName} (${g.userStatus})`).join(', '));
+      // Initialize selected games with currently entered games
+      const enteredTabDates = new Set(
+        games.filter(g => g.status === 'O' && g.userEntered).map(g => g.tabDate)
+      );
+      setSelectedGames(enteredTabDates);
     }
   }, [games]);
 
@@ -38,46 +40,70 @@ export default function FriendliesPage() {
         setGames(data.games);
       }
     } catch (error) {
-      console.error('Error fetching games:', error);
+      alert('Failed to load games. Please refresh the page.');
     } finally {
       setLoading(false);
     }
   }
 
-  async function handleEnterGames() {
-    if (selectedGames.size === 0) return;
-
+  async function handleUpdateGames() {
     setEntering(true);
     try {
-      const response = await fetch('/api/friendlies/enter', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          game_ids: Array.from(selectedGames),
-        }),
-      });
+      const openGames = games.filter(g => g.status === 'O');
+      const currentlyEntered = new Set(openGames.filter(g => g.userEntered).map(g => g.tabDate));
 
-      const data = await response.json();
+      // Games to enter: selected but not currently entered
+      const toEnter = Array.from(selectedGames).filter(id => !currentlyEntered.has(id));
 
-      if (data.success) {
-        // Check if any entries failed
-        const failed = data.results?.filter((r: any) => !r.entered) || [];
-        if (failed.length > 0) {
-          console.error('Some entries failed:', failed);
-          const errorDetails = failed.map((f: any) => `${f.game_id}: ${f.error}`).join('\n');
-          alert(`Failed to enter ${failed.length} game(s):\n\n${errorDetails}`);
+      // Games to remove: currently entered but not selected
+      const toRemove = openGames.filter(g => currentlyEntered.has(g.tabDate) && !selectedGames.has(g.tabDate)).map(g => g.tabDate);
+
+      let errors: string[] = [];
+
+      // Enter new games
+      if (toEnter.length > 0) {
+        const enterResponse = await fetch('/api/friendlies/enter', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ game_ids: toEnter }),
+        });
+
+        const enterData = await enterResponse.json();
+        if (enterData.success) {
+          const failed = enterData.results?.filter((r: any) => !r.entered) || [];
+          if (failed.length > 0) {
+            errors.push(...failed.map((f: any) => `Enter ${f.game_id}: ${f.error}`));
+          }
+        } else {
+          errors.push(`Enter failed: ${enterData.error}`);
         }
-
-        // Refresh games list
-        await fetchGames();
-        setSelectedGames(new Set());
-      } else {
-        console.error('Failed to enter games:', data.error);
-        alert(`Failed to enter games: ${data.error}`);
       }
+
+      // Remove entries
+      for (const tabDate of toRemove) {
+        try {
+          const removeResponse = await fetch('/api/friendlies/withdraw', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tab_date: tabDate }),
+          });
+
+          if (!removeResponse.ok) {
+            errors.push(`Remove ${tabDate}: Failed`);
+          }
+        } catch (error) {
+          errors.push(`Remove ${tabDate}: Error`);
+        }
+      }
+
+      if (errors.length > 0) {
+        alert(`Some updates failed:\n\n${errors.join('\n')}`);
+      }
+
+      // Refresh games list
+      await fetchGames();
     } catch (error) {
-      console.error('Error entering games:', error);
-      alert('An error occurred while entering games. Check console for details.');
+      alert('An error occurred while updating games.');
     } finally {
       setEntering(false);
     }
@@ -90,7 +116,8 @@ export default function FriendliesPage() {
       case 'entered':
         return game.userEntered;
       case 'selected':
-        return game.userStatus && ['P', 'R', 'T'].includes(game.userStatus);
+        // Show if user is Playing, Reserve, or Reserve Team (including withdrawn)
+        return game.userStatus && ['P', 'R', 'T', 'PW', 'RW', 'TW'].includes(game.userStatus);
       default:
         return true;
     }
@@ -226,9 +253,14 @@ export default function FriendliesPage() {
                     <span className="font-medium">{game.entered}</span> players entered
                   </p>
                 )}
+                {game.status === 'P' && game.bhbcScore !== undefined && game.opponentScore !== undefined && (
+                  <p className="text-lg font-bold">
+                    Score: <span className="text-blue-600">{game.bhbcScore}</span> - <span className="text-gray-600">{game.opponentScore}</span>
+                  </p>
+                )}
               </div>
 
-              {game.status === 'O' && !game.userEntered && (
+              {game.status === 'O' && (
                 <label className="flex items-center space-x-2 cursor-pointer">
                   <input
                     type="checkbox"
@@ -244,14 +276,10 @@ export default function FriendliesPage() {
                     }}
                     className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
                   />
-                  <span className="text-sm font-medium text-blue-600">Select to enter</span>
+                  <span className="text-sm font-medium text-blue-600">
+                    {game.userEntered ? 'Entered' : 'Enter this game'}
+                  </span>
                 </label>
-              )}
-
-              {game.userEntered && game.status === 'O' && (
-                <div className="bg-blue-50 border border-blue-200 rounded px-3 py-2 text-sm text-blue-800">
-                  You are entered
-                </div>
               )}
 
               {['S', 'P'].includes(game.status) && game.userEntered && (
@@ -267,30 +295,42 @@ export default function FriendliesPage() {
         </div>
       )}
 
-      {/* Floating action button for entering selected games */}
-      {selectedGames.size > 0 && (
-        <div className="fixed bottom-8 right-8 z-50">
-          <button
-            onClick={handleEnterGames}
-            disabled={entering}
-            className="bg-green-600 text-white px-6 py-3 rounded-full shadow-lg hover:bg-green-700 transition-colors flex items-center space-x-2 disabled:opacity-50"
-          >
-            {entering ? (
-              <>
-                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                <span>Entering...</span>
-              </>
-            ) : (
-              <>
-                <span>Enter {selectedGames.size} Game{selectedGames.size !== 1 ? 's' : ''}</span>
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-              </>
-            )}
-          </button>
-        </div>
-      )}
+      {/* Floating action button for updating game entries */}
+      {(() => {
+        const openGames = games.filter(g => g.status === 'O');
+        const currentlyEntered = new Set(openGames.filter(g => g.userEntered).map(g => g.tabDate));
+
+        // Calculate number of changes
+        const toEnter = Array.from(selectedGames).filter(id => !currentlyEntered.has(id));
+        const toRemove = openGames.filter(g => currentlyEntered.has(g.tabDate) && !selectedGames.has(g.tabDate));
+        const changeCount = toEnter.length + toRemove.length;
+
+        const hasChanges = changeCount > 0;
+
+        return hasChanges && (
+          <div className="fixed bottom-8 right-8 z-50">
+            <button
+              onClick={handleUpdateGames}
+              disabled={entering}
+              className="bg-green-600 text-white px-6 py-3 rounded-full shadow-lg hover:bg-green-700 transition-colors flex items-center space-x-2 disabled:opacity-50"
+            >
+              {entering ? (
+                <>
+                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                  <span>Updating...</span>
+                </>
+              ) : (
+                <>
+                  <span>Update {changeCount} Game{changeCount !== 1 ? 's' : ''}</span>
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                </>
+              )}
+            </button>
+          </div>
+        );
+      })()}
       </div>
     </div>
   );

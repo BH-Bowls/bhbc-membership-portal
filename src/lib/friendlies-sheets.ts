@@ -375,23 +375,17 @@ export async function createGameColumn(tabName: string): Promise<void> {
  * Returns full_name if Players sheet uses full_name column, otherwise userName
  */
 async function getPlayerLookupValue(userName: string, spreadsheetId: string, colMap: { [key: string]: number }): Promise<string> {
-  console.log(`Players sheet column map:`, Object.keys(colMap));
-
   // If Players sheet has user_name column, use userName directly
   if (colMap['user_name'] !== undefined) {
-    console.log(`Players sheet has user_name column at index ${colMap['user_name']}, using userName: ${userName}`);
     return userName;
   }
 
   // If Players sheet has full_name, name, or similar column, get full_name from Members sheet
   const nameColumn = colMap['full_name'] ?? colMap['name'];
   if (nameColumn !== undefined) {
-    console.log(`Players sheet has name column at index ${nameColumn}, looking up full name for ${userName} in Members sheet`);
     const sheets = getSheetsClient();
     const membersSpreadsheetId = getMembersSpreadsheetId();
     const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
-
-    console.log(`Members sheet columns:`, Object.keys(membersColMap));
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: membersSpreadsheetId,
@@ -402,22 +396,13 @@ async function getPlayerLookupValue(userName: string, spreadsheetId: string, col
     const userNameCol = membersColMap['user_name'] ?? 0;
     const fullNameCol = membersColMap['full_name'] ?? membersColMap['name'] ?? 1;
 
-    console.log(`Searching for userName "${userName}" in Members column ${userNameCol}, will get full_name from column ${fullNameCol}`);
-    console.log(`Found ${rows.length} rows in Members sheet`);
-
     const memberRow = rows.find((row, index) => index > 0 && row[userNameCol] === userName);
     if (memberRow && memberRow[fullNameCol]) {
-      console.log(`Found member: ${memberRow[fullNameCol]}`);
       return memberRow[fullNameCol];
-    } else {
-      console.log(`Member not found for userName: ${userName}, memberRow:`, memberRow);
     }
-  } else {
-    console.log(`Players sheet has no user_name, full_name, or name column, using userName: ${userName}`);
   }
 
   // Fall back to userName
-  console.log(`Falling back to userName: ${userName}`);
   return userName;
 }
 
@@ -447,14 +432,10 @@ export async function getPlayerEntries(userName: string): Promise<PlayerEntry[]>
   const userRowIndex = rows.findIndex((row, index) => index > 0 && row[userNameCol] === lookupValue);
 
   if (userRowIndex === -1) {
-    console.log(`User not found in Players sheet. Looking for "${lookupValue}" in column ${userNameCol}`);
-    console.log(`First few values in that column:`, rows.slice(1, 6).map(r => r[userNameCol]));
     return [];
   }
 
-  console.log(`Found user at row ${userRowIndex}, lookupValue: "${lookupValue}"`);
   const userRow = rows[userRowIndex];
-  console.log(`User row has ${userRow.length} columns`);
 
   // Fixed columns in Players sheet (not game columns)
   const fixedColumnNames = ['name', 'name_down', 'picked', '%_played_vs_name_down', 'withdrawn', 'cancelled'];
@@ -463,28 +444,18 @@ export async function getPlayerEntries(userName: string): Promise<PlayerEntry[]>
       .map(name => colMap[name])
       .filter(idx => idx !== undefined)
   );
-  console.log(`Fixed columns (indices):`, Array.from(fixedColumns).sort((a, b) => a - b));
-  console.log(`Total headers: ${headers.length}`);
 
   const entries: PlayerEntry[] = [];
-  let gameColumnsChecked = 0;
   for (let i = 0; i < headers.length; i++) {
     // Skip fixed columns, only process game columns
     if (!fixedColumns.has(i) && headers[i]) {
-      gameColumnsChecked++;
       if (userRow[i]) {
-        console.log(`Found entry at column ${i} (${headers[i]}): ${userRow[i]}`);
         entries.push({
           tabName: headers[i],
           status: userRow[i] as PlayerEntryStatus,
         });
       }
     }
-  }
-
-  console.log(`Checked ${gameColumnsChecked} game columns, found ${entries.length} entries for ${lookupValue}`);
-  if (entries.length > 0) {
-    console.log(`First few entries:`, entries.slice(0, 3));
   }
 
   return entries;

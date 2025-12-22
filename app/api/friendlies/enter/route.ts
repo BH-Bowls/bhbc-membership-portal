@@ -46,10 +46,8 @@ export async function POST(request: NextRequest) {
         // Update player entry to 'E'
         try {
           await updatePlayerEntry(userName, game.tabName, 'E');
-          console.log(`Successfully entered ${userName} into ${game.tabName} (${tabDate})`);
           results.push({ game_id: tabDate, entered: true });
         } catch (updateError: any) {
-          console.error(`Error entering game ${tabDate}:`, updateError);
           results.push({
             game_id: tabDate,
             entered: false,
@@ -57,7 +55,6 @@ export async function POST(request: NextRequest) {
           });
         }
       } catch (error) {
-        console.error(`Error processing game ${tabDate}:`, error);
         results.push({ game_id: tabDate, entered: false, error: 'Processing failed' });
       }
     }
@@ -84,14 +81,10 @@ export async function POST(request: NextRequest) {
         if (game) {
           // Find the column for this game
           const gameColIndex = headers.findIndex(h => h === game.tabName);
-          console.log(`Looking for game column "${game.tabName}", found at index ${gameColIndex}`);
           if (gameColIndex !== -1) {
             // Count non-empty entries in this column (skip header row)
             const enteredCount = rows.slice(1).filter(row => row[gameColIndex]).length;
-            console.log(`Game ${game.tabName}: ${enteredCount} players entered, updating Games sheet`);
             await updateGameCounts(result.game_id, { entered: enteredCount });
-          } else {
-            console.log(`Game column not found for "${game.tabName}" in Players sheet`);
           }
         }
       }
@@ -99,7 +92,6 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, results });
   } catch (error) {
-    console.error('Error entering games:', error);
     return NextResponse.json(
       { error: 'Failed to enter games' },
       { status: 500 }

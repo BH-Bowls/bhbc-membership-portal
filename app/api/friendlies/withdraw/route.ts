@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, getGameSheet, updateGameSheet, updatePlayerEntry } from '@/lib/friendlies-sheets';
+import { getGames, getGameSheet, updateGameSheet, updatePlayerEntry, updateGameCounts } from '@/lib/friendlies-sheets';
 import { sendWithdrawalEmail } from '@/lib/email/friendlies';
 import { WithdrawRequest } from '@/lib/types/friendlies';
 
@@ -29,8 +29,28 @@ export async function POST(request: NextRequest) {
 
     // Handle withdrawal based on game status
     if (game.status === 'O') {
-      // Game is still open - just remove entry from Players sheet
+      // Game is still open - just remove entry from Players sheet and update count
       await updatePlayerEntry(userName, game.tabName, '');
+
+      // Update entered count
+      const { getGoogleSheetsClient } = await import('@/lib/sheets');
+      const sheets = getGoogleSheetsClient();
+      const spreadsheetId = process.env.FRIENDLIES_SPREADSHEET_ID!;
+
+      const playersResponse = await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: 'Players!A:ZZ',
+      });
+
+      const rows = playersResponse.data.values || [];
+      const headers = rows[0] || [];
+      const gameColIndex = headers.findIndex(h => h === game.tabName);
+
+      if (gameColIndex !== -1) {
+        const enteredCount = rows.slice(1).filter(row => row[gameColIndex]).length;
+        await updateGameCounts(tab_date, { entered: enteredCount });
+      }
+
       return NextResponse.json({
         success: true,
         message: 'Entry removed',
