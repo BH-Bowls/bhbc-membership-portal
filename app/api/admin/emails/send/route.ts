@@ -1,0 +1,268 @@
+// app/api/admin/emails/send/route.ts
+// API endpoint to send emails to members using selected template and attachments
+
+import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import { getAllUsers, updateEmailSentStatus } from '@/lib/sheets';
+import { sendMemberEmail } from '@/lib/email/member-mailer';
+
+// ============================================================================
+// Type Definitions
+// ============================================================================
+
+/**
+ * Request body for send emails endpoint
+ */
+interface SendEmailsRequest {
+  templateId: string;              // Email template ID
+  attachmentIds: string[];         // Array of attachment template IDs
+}
+
+/**
+ * Progress event types for Server-Sent Events
+ */
+type ProgressEventType = 'progress' | 'success' | 'error' | 'complete';
+
+/**
+ * Progress event data structure
+ */
+interface ProgressEvent {
+  type: ProgressEventType;
+  current?: number;
+  total?: number;
+  userName?: string;
+  error?: string;
+  sent?: number;
+  succeeded?: number;
+  failed?: number;
+}
+
+// ============================================================================
+// API Handler
+// ============================================================================
+
+/**
+ * POST /api/admin/emails/send
+ * Send emails to all members with include="Y" using selected template
+ *
+ * Authorization: Admin only
+ * Request Body: { templateId: string, attachmentIds: string[] }
+ * Response: Server-Sent Events stream with progress updates
+ */
+export async function POST(request: NextRequest) {
+  try {
+    // Verify user is authenticated
+    const session = await getServerSession(authOptions);
+
+    // Check if session exists
+    if (!session) {
+      return NextResponse.json(
+        { error: 'Unauthorized - Please log in' },
+        { status: 401 }
+      );
+    }
+
+    // Check authorization: Admin only
+    if (session.user?.role !== 'Admin') {
+      return NextResponse.json(
+        { error: 'Forbidden - Admin access required' },
+        { status: 403 }
+      );
+    }
+
+    // Parse request body
+    const body = await request.json();
+    const { templateId, attachmentIds } = body as SendEmailsRequest;
+
+    // Validate request body
+    if (!templateId || typeof templateId !== 'string') {
+      return NextResponse.json(
+        { error: 'Invalid request - templateId is required' },
+        { status: 400 }
+      );
+    }
+
+    if (!Array.isArray(attachmentIds)) {
+      return NextResponse.json(
+        { error: 'Invalid request - attachmentIds must be an array' },
+        { status: 400 }
+      );
+    }
+
+    // Create Server-Sent Events response
+    // This allows us to send progress updates as emails are sent
+    const encoder = new TextEncoder();
+
+    // Create readable stream for SSE
+    const stream = new ReadableStream({
+      async start(controller) {
+        // Helper function to send SSE event
+        const sendEvent = (event: ProgressEvent) => {
+          // Format event as SSE data
+          const data = `data: ${JSON.stringify(event)}\n\n`;
+
+          // Encode and enqueue to stream
+          controller.enqueue(encoder.encode(data));
+        };
+
+        try {
+          // Fetch all members from Members sheet
+          const allMembers = await getAllUsers();
+
+          // Filter for members with include="Y"
+          // Only these members should receive emails
+          const membersToEmail = [];
+          for (const member of allMembers) {
+            // Check if include field is "Y" (case-insensitive)
+            if (member.include && member.include.toUpperCase() === 'Y') {
+              membersToEmail.push(member);
+            }
+          }
+
+          // Get total count for progress tracking
+          const total = membersToEmail.length;
+
+          // Check if any members found
+          if (total === 0) {
+            // Send complete event with zero count
+            sendEvent({
+              type: 'complete',
+              sent: 0,
+              succeeded: 0,
+              failed: 0,
+            });
+
+            // Close stream
+            controller.close();
+            return;
+          }
+
+          // Counters for summary
+          let succeeded = 0;
+          let failed = 0;
+
+          // Send initial progress event to set total count
+          sendEvent({
+            type: 'progress',
+            current: 0,
+            total,
+            userName: '',
+          });
+
+          // Loop through each member and send email
+          // Process sequentially to avoid overwhelming email server
+          for (let i = 0; i < membersToEmail.length; i++) {
+            const member = membersToEmail[i];
+
+            // Get user name for progress display
+            const userName = `${member.firstName} ${member.lastName}`.trim() || member.userName || 'Unknown';
+
+            // Send progress event
+            sendEvent({
+              type: 'progress',
+              current: i + 1,
+              total,
+              userName,
+            });
+
+            try {
+              // Send email to this member using selected template and attachments
+              // WAIT for completion before proceeding to next member
+              const result = await sendMemberEmail(member, templateId, attachmentIds);
+
+              // Check if email send was successful
+              if (result.success) {
+                // Increment success counter
+                succeeded++;
+
+                // Update Google Sheets with success status
+                await updateEmailSentStatus(member.userName, true);
+
+                // Send success event
+                sendEvent({
+                  type: 'success',
+                  userName,
+                });
+              } else {
+                // Increment failure counter
+                failed++;
+
+                // Update Google Sheets with error status
+                await updateEmailSentStatus(member.userName, false, result.error);
+
+                // Send error event
+                sendEvent({
+                  type: 'error',
+                  userName,
+                  error: result.error || 'Unknown error',
+                });
+              }
+            } catch (error) {
+              // Increment failure counter
+              failed++;
+
+              // Get error message
+              const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+
+              // Update Google Sheets with error status
+              await updateEmailSentStatus(member.userName, false, errorMsg);
+
+              // Send error event
+              sendEvent({
+                type: 'error',
+                userName,
+                error: errorMsg,
+              });
+
+              // Log error for debugging
+              console.error(`[send-emails] Error sending to ${userName}:`, error);
+            }
+          }
+
+          // Send completion event with summary
+          sendEvent({
+            type: 'complete',
+            sent: total,
+            succeeded,
+            failed,
+          });
+
+          // Close stream
+          controller.close();
+        } catch (error) {
+          // Log error for debugging
+          console.error('[send-emails] Error in stream:', error);
+
+          // Send error event
+          const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+          sendEvent({
+            type: 'error',
+            error: errorMsg,
+          });
+
+          // Close stream
+          controller.close();
+        }
+      },
+    });
+
+    // Return SSE response
+    return new NextResponse(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      },
+    });
+  } catch (error) {
+    // Log error for debugging
+    console.error('[send-emails] Error processing request:', error);
+
+    // Return error response
+    return NextResponse.json(
+      { error: 'Failed to process request' },
+      { status: 500 }
+    );
+  }
+}

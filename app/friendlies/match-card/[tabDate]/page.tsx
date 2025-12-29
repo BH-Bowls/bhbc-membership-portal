@@ -1,3 +1,8 @@
+// app/friendlies/match-card/[tabDate]/page.tsx
+// Match Card Display Page - shows formatted match card ready for printing
+// Displays team selections, reserves, captain, tea rota (home), and venue details (away)
+// Includes print-optimized layout with page breaks for reserve teams
+
 'use client';
 
 import { useEffect, useState } from 'react';
@@ -7,41 +12,135 @@ import { Navbar } from '@/components/Navbar';
 import Link from 'next/link';
 import { MatchCardData } from '@/lib/types/friendlies';
 
+// ============================================================================
+// Main Component
+// ============================================================================
+
+/**
+ * Match Card Page Component
+ * Displays a print-ready match card for a specific game
+ *
+ * Features:
+ * - Teams with player positions and captain indicator
+ * - Reserves list with positions
+ * - Reserve teams (if applicable)
+ * - Tea rota (home games only)
+ * - Venue details with directions link (away games only)
+ * - Club contacts (away games only)
+ * - Driver information with car numbers (away games only)
+ * - Print button and optimized print layout
+ */
 export default function MatchCardPage() {
+  // Get current user session
   const { data: session } = useSession();
+
+  // Get route parameters (tabDate identifies the game)
   const params = useParams();
   const tabDate = params.tabDate as string;
 
+  // State: Match card data (teams, reserves, venue, contacts, etc.)
   const [matchCard, setMatchCard] = useState<MatchCardData | null>(null);
+
+  // State: Loading indicator while fetching match card
   const [loading, setLoading] = useState(true);
 
+  // ============================================================================
+  // Effects
+  // ============================================================================
+
+  /**
+   * Effect: Fetch match card when page loads or tabDate changes
+   * Runs whenever the tabDate parameter changes
+   */
   useEffect(() => {
+    // Fetch match card data from API
     fetchMatchCard();
   }, [tabDate]);
 
+  // ============================================================================
+  // API Functions
+  // ============================================================================
+
+  /**
+   * Fetch match card data from API
+   * Gets all information needed for the match card display:
+   * - Game details
+   * - Team selections with positions
+   * - Reserves
+   * - Reserve teams
+   * - Captain of the day
+   * - Tea rota (home games)
+   * - Venue details (away games)
+   * - Club contacts (away games)
+   */
   async function fetchMatchCard() {
+    // Show loading spinner
     setLoading(true);
+
     try {
+      // Call match card API with game identifier
       const response = await fetch(`/api/friendlies/match-card/${tabDate}`);
       const data = await response.json();
 
+      // Check if request was successful
       if (response.ok) {
+        // Update match card data
         setMatchCard(data);
       } else {
+        // Show error alert
         alert(data.error || 'Failed to load match card');
       }
     } catch (error) {
+      // Network or other error
       console.error('Error fetching match card:', error);
       alert('Failed to load match card');
     } finally {
+      // Hide loading spinner
       setLoading(false);
     }
   }
 
+  // ============================================================================
+  // Event Handlers
+  // ============================================================================
+
+  /**
+   * Handle Print button click
+   * Triggers browser print dialog
+   * CSS media queries handle print-specific styling
+   */
   function handlePrint() {
     window.print();
   }
 
+  // ============================================================================
+  // Helper Functions
+  // ============================================================================
+
+  /**
+   * Get position label from position code
+   * Converts single-letter codes to full position names
+   * @param pos Position code (S, 1, 2, 3)
+   * @returns Full position name (Skip, Lead, Second, Third)
+   */
+  const getPositionLabel = (pos: string) => {
+    // Define position code to label mappings
+    const labels: { [key: string]: string } = {
+      'S': 'Skip',      // S = Skip
+      '1': 'Lead',      // 1 = Lead
+      '2': 'Second',    // 2 = Second
+      '3': 'Third',     // 3 = Third
+    };
+
+    // Return label or original code if not found
+    return labels[pos] || pos;
+  };
+
+  // ============================================================================
+  // Loading State
+  // ============================================================================
+
+  // Show loading spinner while fetching match card
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50">
@@ -56,22 +155,23 @@ export default function MatchCardPage() {
     );
   }
 
+  // Return null if no match card data (shouldn't happen after loading completes)
   if (!matchCard) return null;
 
+  // ============================================================================
+  // Extract Match Card Data
+  // ============================================================================
+
+  // Destructure match card data for easier access
   const { game, teams, reserves, reserveTeams, captain, teaRota, clubDetails, clubContacts } = matchCard;
 
-  const getPositionLabel = (pos: string) => {
-    const labels: { [key: string]: string } = {
-      'S': 'Skip',
-      '1': 'Lead',
-      '2': 'Second',
-      '3': 'Third',
-    };
-    return labels[pos] || pos;
-  };
+  // ============================================================================
+  // Render UI
+  // ============================================================================
 
   return (
     <>
+      {/* Print-specific styles - hide navbar and buttons, enable page breaks */}
       <style jsx global>{`
         @media print {
           body {
@@ -88,17 +188,20 @@ export default function MatchCardPage() {
       `}</style>
 
       <div className="min-h-screen bg-gray-50">
-        {/* Navigation - hidden when printing */}
+        {/* Navigation bar - hidden when printing */}
         <div className="no-print">
           <Navbar userName={session?.user.name ?? undefined} userRole={session?.user.role ?? undefined} />
         </div>
 
-        {/* No-print header */}
+        {/* Header with back link and print button - hidden when printing */}
         <div className="no-print bg-white border-b border-gray-200 p-4">
           <div className="container mx-auto max-w-4xl flex justify-between items-center">
+            {/* Link back to game details page */}
             <Link href={`/friendlies/game/${tabDate}`} className="text-blue-600 hover:text-blue-800">
               ← Back to Game
             </Link>
+
+            {/* Print button - triggers browser print dialog */}
             <button
               onClick={handlePrint}
               className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 transition-colors"
@@ -108,14 +211,23 @@ export default function MatchCardPage() {
           </div>
         </div>
 
-        {/* Match card content */}
+        {/* Match card content - main printable area */}
         <div className="container mx-auto max-w-4xl px-4 py-8">
           <div className="bg-white rounded-lg shadow-lg p-8">
-            {/* Header */}
+
+            {/* ============================================================ */}
+            {/* Header Section - Club name, opponent, date, time, format */}
+            {/* ============================================================ */}
             <div className="text-center border-b-2 border-gray-300 pb-4 mb-6">
+              {/* Club name */}
               <h1 className="text-3xl font-bold text-gray-900">BURGESS HILL BOWLS CLUB</h1>
+
+              {/* Opponent name */}
               <h2 className="text-2xl font-semibold mt-2 text-blue-600">{game.clubName}</h2>
+
+              {/* Game details - date, time, home/away, format */}
               <div className="mt-3 text-lg">
+                {/* Full date with day name */}
                 <p>
                   {new Date(game.date).toLocaleDateString('en-GB', {
                     weekday: 'long',
@@ -124,14 +236,20 @@ export default function MatchCardPage() {
                     year: 'numeric',
                   })}
                 </p>
+
+                {/* Time, venue, format, gender */}
                 <p className="font-semibold">
                   {game.time} - {game.homeAway === 'H' ? 'HOME' : 'AWAY'} - {game.format} - {game.ladiesMen}
                 </p>
+
+                {/* Dress code if specified */}
                 {game.dress && <p className="text-sm text-gray-600">Dress: {game.dress}</p>}
               </div>
             </div>
 
-            {/* Captain of the Day */}
+            {/* ============================================================ */}
+            {/* Captain of the Day - highlighted box */}
+            {/* ============================================================ */}
             {captain && (
               <div className="bg-purple-100 border-2 border-purple-600 rounded-lg p-4 mb-6 text-center">
                 <p className="text-lg">
@@ -140,34 +258,50 @@ export default function MatchCardPage() {
               </div>
             )}
 
-            {/* Teams */}
+            {/* ============================================================ */}
+            {/* Teams Section - grid of teams with players and positions */}
+            {/* ============================================================ */}
             <div className="mb-6">
               <h3 className="text-xl font-bold mb-4 text-gray-800">TEAMS</h3>
+
+              {/* Display teams in 2-column grid */}
               <div className="grid grid-cols-2 gap-4">
+                {/* Loop through each team */}
                 {teams.map(team => (
                   <div key={team.team} className="border-2 border-gray-300 rounded-lg p-4">
+                    {/* Team number header */}
                     <h4 className="font-bold text-lg mb-3 text-center bg-gray-100 py-2 rounded">
                       Team {team.team}
                     </h4>
+
+                    {/* Players in this team */}
                     <div className="space-y-2">
+                      {/* Loop through each player in team */}
                       {team.players.map((player, idx) => (
                         <div
                           key={idx}
                           className={`flex justify-between p-2 rounded ${
+                            // Highlight captain with purple background
                             player.isCaptain ? 'bg-purple-100 font-bold' : 'bg-gray-50'
                           }`}
                         >
+                          {/* Player name with star if captain */}
                           <span>
                             {player.name}
                             {player.isCaptain && ' ★'}
                           </span>
+
+                          {/* Position label (Skip, Lead, Second, Third) */}
                           <span className="text-gray-600">{getPositionLabel(player.position)}</span>
                         </div>
                       ))}
                     </div>
+
+                    {/* Driver information - only show for away games if team has drivers */}
                     {game.homeAway === 'A' && team.players.some(p => p.driving) && (
                       <div className="mt-3 pt-2 border-t border-gray-300 text-sm">
                         <strong>Drivers:</strong>{' '}
+                        {/* List all drivers with car numbers */}
                         {team.players
                           .filter(p => p.driving === 'Y')
                           .map(p => `${p.name}${p.carNumber ? ` (Car ${p.carNumber})` : ''}`)
@@ -179,15 +313,23 @@ export default function MatchCardPage() {
               </div>
             </div>
 
-            {/* Reserves */}
+            {/* ============================================================ */}
+            {/* Reserves Section - players not in teams but available */}
+            {/* ============================================================ */}
             {reserves.length > 0 && (
               <div className="mb-6">
                 <h3 className="text-xl font-bold mb-3 text-gray-800">RESERVES</h3>
+
+                {/* Yellow-bordered box for reserves */}
                 <div className="border-2 border-yellow-400 bg-yellow-50 rounded-lg p-4">
                   <div className="space-y-2">
+                    {/* Loop through each reserve player */}
                     {reserves.map((reserve, idx) => (
                       <div key={idx} className="flex justify-between p-2 bg-white rounded">
+                        {/* Reserve player name */}
                         <span className="font-medium">{reserve.name}</span>
+
+                        {/* Position if specified */}
                         {reserve.position && (
                           <span className="text-gray-600">{getPositionLabel(reserve.position)}</span>
                         )}
@@ -198,10 +340,15 @@ export default function MatchCardPage() {
               </div>
             )}
 
-            {/* Tea Rota (Home games only) */}
+            {/* ============================================================ */}
+            {/* Tea Rota - only for home games */}
+            {/* Shows who is responsible for making tea */}
+            {/* ============================================================ */}
             {game.homeAway === 'H' && teaRota && (
               <div className="mb-6 border-2 border-green-400 bg-green-50 rounded-lg p-4">
                 <h3 className="text-xl font-bold mb-3 text-gray-800">TEA DUTY</h3>
+
+                {/* List of tea duty roles */}
                 <div className="space-y-1">
                   <p><strong>Lead:</strong> {teaRota.lead}</p>
                   <p><strong>Second:</strong> {teaRota.second}</p>
@@ -210,15 +357,22 @@ export default function MatchCardPage() {
               </div>
             )}
 
-            {/* Venue Details (Away games only) */}
+            {/* ============================================================ */}
+            {/* Venue Details - only for away games */}
+            {/* Shows address, directions, driving costs */}
+            {/* ============================================================ */}
             {game.homeAway === 'A' && clubDetails && (
               <div className="mb-6 border-2 border-blue-400 bg-blue-50 rounded-lg p-4">
                 <h3 className="text-xl font-bold mb-3 text-gray-800">VENUE</h3>
+
                 <div className="space-y-2">
+                  {/* Address and postcode */}
                   <div>
                     <p className="font-semibold">{clubDetails.address}</p>
                     <p className="text-lg font-bold">{clubDetails.postCode}</p>
                   </div>
+
+                  {/* Google Maps directions link */}
                   {clubDetails.directionsUrl && (
                     <p>
                       <a
@@ -231,11 +385,15 @@ export default function MatchCardPage() {
                       </a>
                     </p>
                   )}
+
+                  {/* General information about the venue */}
                   {clubDetails.generalInfo && (
                     <p className="text-sm">
                       <strong>Info:</strong> {clubDetails.generalInfo}
                     </p>
                   )}
+
+                  {/* Petrol cost per person with driving band */}
                   {clubDetails.petrolCost > 0 && (
                     <p className="text-lg font-semibold text-green-700">
                       Petrol Cost: £{clubDetails.petrolCost.toFixed(2)} per person (Band {clubDetails.drivingBand})
@@ -245,27 +403,39 @@ export default function MatchCardPage() {
               </div>
             )}
 
-            {/* Club Contacts (Away games only) */}
+            {/* ============================================================ */}
+            {/* Club Contacts - only for away games */}
+            {/* Shows contact details for opponent club officials */}
+            {/* ============================================================ */}
             {game.homeAway === 'A' && clubContacts && clubContacts.length > 0 && (
               <div className="mb-6 border-2 border-indigo-400 bg-indigo-50 rounded-lg p-4">
                 <h3 className="text-xl font-bold mb-3 text-gray-800">CONTACTS</h3>
+
                 <div className="space-y-3">
+                  {/* Loop through each contact */}
                   {clubContacts.map((contact, idx) => (
                     <div key={idx} className="bg-white p-3 rounded">
+                      {/* Contact name and role */}
                       <p className="font-bold">
                         {contact.name}
                         {contact.role && <span className="text-sm font-normal text-gray-600"> ({contact.role})</span>}
                       </p>
+
+                      {/* Mobile number - clickable to call */}
                       {contact.mobile && (
                         <p className="text-sm">
                           Mobile: <a href={`tel:${contact.mobile.replace(/\s/g, '')}`} className="text-blue-600">{contact.mobile}</a>
                         </p>
                       )}
+
+                      {/* Landline number - clickable to call */}
                       {contact.phone && (
                         <p className="text-sm">
                           Phone: <a href={`tel:${contact.phone.replace(/\s/g, '')}`} className="text-blue-600">{contact.phone}</a>
                         </p>
                       )}
+
+                      {/* Email address - clickable to email */}
                       {contact.email && (
                         <p className="text-sm">
                           Email: <a href={`mailto:${contact.email}`} className="text-blue-600">{contact.email}</a>
@@ -277,21 +447,35 @@ export default function MatchCardPage() {
               </div>
             )}
 
-            {/* Reserve Teams */}
+            {/* ============================================================ */}
+            {/* Reserve Teams Section - additional teams beyond main teams */}
+            {/* Starts on new page when printing */}
+            {/* ============================================================ */}
             {reserveTeams.length > 0 && (
+              // Page break before reserve teams when printing
               <div className="page-break">
                 <div className="mt-8 pt-8 border-t-4 border-gray-300">
                   <h3 className="text-xl font-bold mb-4 text-gray-800">RESERVE TEAMS</h3>
+
+                  {/* Display reserve teams in 2-column grid */}
                   <div className="grid grid-cols-2 gap-4">
+                    {/* Loop through each reserve team */}
                     {reserveTeams.map(team => (
                       <div key={team.team} className="border-2 border-orange-400 bg-orange-50 rounded-lg p-4">
+                        {/* Reserve team number header */}
                         <h4 className="font-bold text-lg mb-3 text-center bg-orange-200 py-2 rounded">
                           Reserve Team {team.team}
                         </h4>
+
+                        {/* Players in this reserve team */}
                         <div className="space-y-2">
+                          {/* Loop through each player in reserve team */}
                           {team.players.map((player, idx) => (
                             <div key={idx} className="flex justify-between p-2 bg-white rounded">
+                              {/* Player name */}
                               <span>{player.name}</span>
+
+                              {/* Position label */}
                               <span className="text-gray-600">{getPositionLabel(player.position)}</span>
                             </div>
                           ))}

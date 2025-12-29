@@ -4,58 +4,145 @@
 import type { Payment, RenewalForBanking } from './banking-sheets';
 
 // ============================================================================
+// Constants
+// ============================================================================
+
+/**
+ * Tolerance for amount matching in pounds (0.01 = 1 penny)
+ * Accounts for floating point rounding errors
+ */
+const AMOUNT_MATCH_TOLERANCE = 0.01;
+
+// ============================================================================
 // Helper Functions
 // ============================================================================
 
 /**
  * Extract search term from payment reference
- * Strips common prefixes like "SUBS", "MEMBERSHIP", "RENEWAL"
+ * Strips common keywords like "SUBS", "MEMBERSHIP", "RENEWAL"
+ * Handles both space-separated and concatenated formats
+ *
+ * Examples:
+ * - "SUBS DASEY" → "DASEY"
+ * - "GardnerSUBS" → "Gardner"
+ * - "DOREEN MARSH SUBS" → "DOREEN MARSH"
+ * - "Dasey LJ & C" → "Dasey LJ & C" (no keywords to remove)
  */
 export function extractSearchTerm(reference: string): string {
-  const prefixes = ['SUBS', 'MEMBERSHIP', 'RENEWAL'];
-  const words = reference.trim().split(/\s+/);
+  const keywords = ['SUBS', 'MEMBERSHIP', 'RENEWAL'];
 
-  // If first word is a prefix, remove it
-  if (words.length > 1 && prefixes.includes(words[0].toUpperCase())) {
-    return words.slice(1).join(' ');
+  let cleaned = reference.trim();
+
+  // Remove keywords (case-insensitive, with or without surrounding spaces)
+  // This handles: "SUBS DASEY", "DASEY SUBS", "GardnerSUBS", "SUBSGardner"
+  for (const keyword of keywords) {
+    // Match keyword with optional surrounding whitespace
+    const regex = new RegExp(`\\s*${keyword}\\s*`, 'gi');
+    cleaned = cleaned.replace(regex, ' ');
   }
 
-  return reference;
+  // Clean up multiple spaces and trim
+  cleaned = cleaned.replace(/\s+/g, ' ').trim();
+
+  return cleaned;
+}
+
+/**
+ * Extract significant words from a string for matching
+ * Filters out short words (initials), symbols, and returns words >= 3 characters
+ */
+function extractSignificantWords(text: string): string[] {
+  // Split by whitespace and non-letter characters
+  const words = text.toLowerCase().split(/[^a-z]+/);
+
+  // Keep only words with 3+ characters (filters out initials like "LJ", "JM")
+  return words.filter(word => word.length >= 3);
+}
+
+/**
+ * Check if two strings share common significant words
+ * Used for fuzzy matching of complex payment references
+ */
+function hasCommonWords(searchTerm: string, targetField: string): boolean {
+  const searchWords = extractSignificantWords(searchTerm);
+  const targetWords = extractSignificantWords(targetField);
+
+  // Check if any search word matches any target word
+  for (const searchWord of searchWords) {
+    for (const targetWord of targetWords) {
+      if (searchWord === targetWord || searchWord.includes(targetWord) || targetWord.includes(searchWord)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 /**
  * Find renewals matching a search term
- * Searches: fullKnownAs, lastName, userName, buddyUserName
+ * Searches member names (fullKnownAs, lastName, userName, buddyUserName)
+ * Only returns renewals with outstanding balances (unpaid or partially paid)
+ *
+ * Uses word-based matching to handle complex references like:
+ * - "Dasey LJ & C DASEY" → matches "Dasey"
+ * - "DOREEN MARSH SUBS" → matches "Marsh" or "Doreen Marsh"
+ *
+ * @param searchTerm The name or username to search for (case-insensitive)
+ * @param renewals Array of all renewal records
+ * @returns Array of renewals matching the search term with outstanding > 0
  */
 export function findMatchingRenewals(
   searchTerm: string,
   renewals: RenewalForBanking[]
 ): RenewalForBanking[] {
-  const termLower = searchTerm.toLowerCase();
+  // Build array of matching renewals
+  const matches: RenewalForBanking[] = [];
 
-  return renewals
-    .filter(r => r.outstanding > 0) // Only unpaid/part-paid
-    .filter(renewal => {
-      const fields = [
-        renewal.fullKnownAs,
-        renewal.lastName,
-        renewal.userName,
-        renewal.buddyUserName,
-      ];
+  // Loop through all renewals
+  for (const renewal of renewals) {
+    // Skip renewals that are fully paid (no outstanding balance)
+    if (renewal.outstanding <= 0) {
+      continue;
+    }
 
-      return fields.some(field => field?.toLowerCase().includes(termLower));
-    });
+    // Check if search term matches any name field
+    // Search fields: full name, last name, username
+    let isMatch = false;
+
+    // Check full known name (e.g., "John Smith")
+    if (renewal.fullKnownAs && hasCommonWords(searchTerm, renewal.fullKnownAs)) {
+      isMatch = true;
+    }
+
+    // Check last name
+    if (!isMatch && renewal.lastName && hasCommonWords(searchTerm, renewal.lastName)) {
+      isMatch = true;
+    }
+
+    // Check username (e.g., "john_smith")
+    if (!isMatch && renewal.userName && hasCommonWords(searchTerm, renewal.userName)) {
+      isMatch = true;
+    }
+
+    // Add to matches if any field matched
+    if (isMatch) {
+      matches.push(renewal);
+    }
+  }
+
+  return matches;
 }
 
 /**
- * Check if selected totals match (within 0.01 tolerance)
+ * Check if selected totals match (within tolerance for rounding errors)
  */
 export function checkAmountsMatch(
   renewalsTotal: number,
   paymentsTotal: number
 ): boolean {
   return (
-    Math.abs(renewalsTotal - paymentsTotal) < 0.01 &&
+    Math.abs(renewalsTotal - paymentsTotal) < AMOUNT_MATCH_TOLERANCE &&
     renewalsTotal > 0 &&
     paymentsTotal > 0
   );
@@ -150,6 +237,13 @@ export function calculatePaymentTotals(payments: PaymentWithState[]) {
 /**
  * Auto-match selected items if totals equal
  * Moves selected_* to matched_* fields and stores payment-renewal relationships
+ *
+ * **MUTATES INPUT ARRAYS**: Directly modifies renewal and payment objects in place
+ * for performance reasons (banking UI with potentially hundreds of records).
+ *
+ * @param renewals Array of renewals (will be mutated)
+ * @param payments Array of payments (will be mutated)
+ * @returns true if match was successful, false if totals don't match
  */
 export function autoMatchIfEqual(
   renewals: RenewalWithState[],
@@ -199,6 +293,12 @@ export function autoMatchIfEqual(
 
 /**
  * Unselect all selected items
+ *
+ * **MUTATES INPUT ARRAYS**: Directly modifies renewal and payment objects in place
+ * to clear their selection state.
+ *
+ * @param renewals Array of renewals (will be mutated)
+ * @param payments Array of payments (will be mutated)
  */
 export function unselectAll(
   renewals: RenewalWithState[],
@@ -223,12 +323,42 @@ export function unselectAll(
 
 /**
  * Global auto-match: Loop through payments, try to match each
+ *
+ * **MUTATES INPUT ARRAYS**: Directly modifies renewal and payment objects in place
+ * as it attempts to auto-match payments to renewals based on names in payment references.
+ *
+ * Algorithm:
+ * 1. For each unmatched payment, extract search term from reference
+ * 2. Find renewals matching the search term (including buddies if they also match)
+ * 3. If total amounts match, auto-match them together
+ * 4. If no match, unselect and try next payment
+ *
+ * Performance optimizations:
+ * - Pre-filters unmatched renewals to avoid checking matched ones repeatedly
+ * - Uses Map for O(1) buddy lookups instead of O(n) find()
+ * - Calculates totals directly from selected items instead of filtering all items
+ *
+ * @param renewals Array of renewals (will be mutated)
+ * @param payments Array of payments (will be mutated)
  */
 export function runGlobalAutoMatch(
   renewals: RenewalWithState[],
   payments: PaymentWithState[]
 ): void {
   const unmatchedPayments = payments.filter(p => !p.isMatched);
+
+  // Optimization: Pre-filter unmatched renewals with outstanding > 0
+  // This avoids checking matched renewals or fully paid renewals repeatedly
+  const getUnmatchedRenewals = () =>
+    renewals.filter(r => r.outstanding > 0 && !r.isMatched);
+
+  // Optimization: Create username index for O(1) buddy lookups
+  // This is much faster than using find() for each buddy lookup
+  const createUsernameIndex = (renewalsList: RenewalWithState[]) => {
+    const index = new Map<string, RenewalWithState>();
+    renewalsList.forEach(r => index.set(r.userName, r));
+    return index;
+  };
 
   for (const payment of unmatchedPayments) {
     // Select payment
@@ -238,44 +368,83 @@ export function runGlobalAutoMatch(
     // Extract search term
     const searchTerm = extractSearchTerm(payment.reference);
 
-    // Find matching renewals
-    const matches = renewals.filter(r => {
-      const fields = [
-        r.fullKnownAs,
-        r.lastName,
-        r.userName,
-        r.buddyUserName,
-      ];
-      const termLower = searchTerm.toLowerCase();
-      return (
-        r.outstanding > 0 &&
-        !r.isMatched &&
-        fields.some(field => field?.toLowerCase().includes(termLower))
-      );
-    });
+    // Get current unmatched renewals (refresh each iteration as matches change state)
+    const unmatchedRenewals = getUnmatchedRenewals();
+    const usernameIndex = createUsernameIndex(unmatchedRenewals);
+
+    // Find matching renewals using word-based matching
+    // This handles complex references like "Dasey LJ & C DASEY", "GardnerSUBS", etc.
+    const matches: RenewalWithState[] = [];
+    for (const renewal of unmatchedRenewals) {
+      // Check if search term matches any field for this renewal
+      let isMatch = false;
+
+      // Check full known name
+      if (renewal.fullKnownAs && hasCommonWords(searchTerm, renewal.fullKnownAs)) {
+        isMatch = true;
+      }
+
+      // Check last name
+      if (!isMatch && renewal.lastName && hasCommonWords(searchTerm, renewal.lastName)) {
+        isMatch = true;
+      }
+
+      // Check username
+      if (!isMatch && renewal.userName && hasCommonWords(searchTerm, renewal.userName)) {
+        isMatch = true;
+      }
+
+      // Add to matches if any field matched
+      if (isMatch) {
+        matches.push(renewal);
+      }
+    }
 
     // Also include buddies of matched renewals (for family/couple payments)
+    // Include ALL buddies of matched renewals, regardless of whether buddy's name matches search term
+    // This handles cases like "SUBS DASEY" where the payment reference only mentions one family member
+    // but should include all family members (e.g., daniel_appleton who is buddy of celia_dasey)
     const matchesWithBuddies = new Set(matches);
-    matches.forEach(renewal => {
+
+    // Direction 1: Check if matched renewals have buddies
+    // Example: liam_dasey has buddyUserName="celia_dasey" → add celia_dasey
+    for (const renewal of matches) {
+      // Check if this renewal has a buddy
       if (renewal.buddyUserName) {
-        // Find the buddy
-        const buddy = renewals.find(
-          r =>
-            r.userName === renewal.buddyUserName &&
-            r.outstanding > 0 &&
-            !r.isMatched
-        );
+        // Optimization: O(1) buddy lookup using Map instead of O(n) find()
+        const buddy = usernameIndex.get(renewal.buddyUserName);
+
+        // Check if buddy exists in the unmatched renewals
         if (buddy) {
+          // Add buddy to matches even if their name doesn't match search term
+          // The mutual buddy relationship is sufficient for family payments
           matchesWithBuddies.add(buddy);
         }
       }
-    });
+    }
+
+    // Direction 2: Check reverse - find renewals that list matched renewals as THEIR buddy
+    // Example: daniel_appleton has buddyUserName="celia_dasey" → add daniel_appleton
+    for (const renewal of unmatchedRenewals) {
+      // Check if this renewal has a buddy
+      if (renewal.buddyUserName) {
+        // Check if this renewal's buddy is one of our matched renewals
+        for (const match of matches) {
+          if (renewal.buddyUserName === match.userName) {
+            // This renewal's buddy is in our matches - add this renewal
+            matchesWithBuddies.add(renewal);
+            break;
+          }
+        }
+      }
+    }
 
     // Select all matches including buddies
-    Array.from(matchesWithBuddies).forEach(renewal => {
+    // Convert Set to Array and loop through
+    for (const renewal of Array.from(matchesWithBuddies)) {
       renewal.isSelected = true;
       renewal.selected_banking = renewal.outstanding;
-    });
+    }
 
     // Check if totals match
     const matched = autoMatchIfEqual(renewals, payments);
@@ -288,13 +457,30 @@ export function runGlobalAutoMatch(
 }
 
 /**
- * Calculate part payment
+ * Calculate new outstanding balance after a payment
+ *
+ * Formula: newOutstanding = currentOutstanding - banking + donations + difference
+ *
+ * Where:
+ * - currentOutstanding: Amount currently owed
+ * - banking: Amount paid via bank transfer/card/cash (reduces outstanding)
+ * - donations: Amount added to donations column (increases outstanding as it reduces payment to club)
+ * - difference: Adjustment amount (positive increases outstanding, negative decreases)
+ *
+ * Note: This formula treats donations as reducing the payment to the club, not as extra money given.
+ * Verify this matches your business requirements.
+ *
+ * @param currentOutstanding Current outstanding balance
+ * @param banking Amount being paid via banking methods
+ * @param donations Amount being allocated to donations
+ * @param difference Adjustment amount (can be positive or negative)
+ * @returns New outstanding balance after payment
  */
-export function calculatePartPayment(
-  outstanding: number,
+export function calculateNewOutstanding(
+  currentOutstanding: number,
   banking: number,
   donations: number,
   difference: number
 ): number {
-  return outstanding - banking + donations + difference;
+  return currentOutstanding - banking + donations + difference;
 }

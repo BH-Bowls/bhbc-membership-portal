@@ -10,7 +10,9 @@ export async function GET(
 ) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user) {
+
+    // Check if user is logged in
+    if (!session || !session.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -25,7 +27,15 @@ export async function GET(
 
     // Get game details
     const games = await getGames();
-    const game = games.find(g => g.tabName === tabName);
+
+    // Find the game with this tabName
+    let game = null;
+    for (const g of games) {
+      if (g.tabName === tabName) {
+        game = g;
+        break;
+      }
+    }
 
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
@@ -61,7 +71,6 @@ export async function GET(
       players,
     });
   } catch (error) {
-    console.error('Error fetching game for selection:', error);
     return NextResponse.json(
       { error: 'Failed to fetch game' },
       { status: 500 }

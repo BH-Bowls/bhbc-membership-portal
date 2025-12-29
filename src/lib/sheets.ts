@@ -74,7 +74,7 @@ export interface User {
   renewStatus: string | null;
   friendlies2023: number;
   friendlies2024: number;
-  friendliesLastYear: number;
+  friendliesLastYear: number | string; // Can be number or "X" for manual override
   comments: string | null;
   socialEmails: boolean;
   handbookEntry: boolean;
@@ -86,7 +86,11 @@ export interface User {
   barAdditionalInfo: string | null;
   otherSkills: string | null;
   profileUpdatedDate: string | null;
-  
+
+  // Renewal Email Fields
+  include: string | null; // "Y" or "N" - controls whether member receives renewal emails
+  renewalEmailSentStatus: string | null; // Email send status: "Success. Email sent DD/MM/YYYY" or "Error: [message]"
+
   // Auth Data
   buddyUserName: string | null;
   userName: string;
@@ -111,36 +115,79 @@ export interface User {
 let columnMapCache: Map<string, { [key: string]: number }> = new Map();
 
 /**
- * Get column mapping from header row
- * Caches result to avoid repeated API calls
+ * Get mapping of column names to indices for a Google Sheet
+ *
+ * This is a critical function used by all sheet operations.
+ * Instead of hardcoding column positions (error-prone), we read the header row
+ * and create a flexible mapping: column_name → column_index
+ *
+ * Example: If header row is ["User Name", "Email Address", "Phone"],
+ * returns: { "user_name": 0, "email_address": 1, "phone": 2 }
+ *
+ * Caching: Results are cached in memory to avoid repeated API calls
+ * Call clearColumnMapCache() after schema changes
+ *
+ * @param sheetName Name of the sheet tab (default: 'Members')
+ * @returns Object mapping normalized column names to zero-based indices
  */
 export async function getColumnMap(sheetName: string = 'Members'): Promise<{ [key: string]: number }> {
-  // Check if we have this sheet cached
+  // Check if we have already cached the column map for this sheet
+  // This avoids unnecessary API calls on repeated access
   if (columnMapCache.has(sheetName)) {
-    return columnMapCache.get(sheetName)!;
+    // Get the cached map (we know it exists from the check above)
+    const cachedMap = columnMapCache.get(sheetName);
+    if (cachedMap) {
+      return cachedMap;
+    }
   }
 
   try {
+    // Get authenticated Google Sheets client
     const sheets = getGoogleSheetsClient();
+
+    // Fetch only the header row (row 1) from the sheet
+    // This is much faster than fetching all data
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: getSpreadsheetId(),
-      range: `${sheetName}!1:1`, // Header row
+      range: `${sheetName}!1:1`, // Row 1 contains column headers
     });
 
-    const headers = response.data.values?.[0] || [];
+    // Extract header row from response
+    // If sheet is empty or has no data, use empty array
+    const values = response.data.values;
+    let headers: any[] = [];
+    if (values && values[0]) {
+      headers = values[0];
+    }
+
+    // Build mapping object: column_name → column_index
     const map: { [key: string]: number } = {};
 
-    headers.forEach((header, index) => {
-      // Normalize header: lowercase, replace spaces with underscores
-      const normalized = String(header).toLowerCase().trim().replace(/\s+/g, '_');
-      map[normalized] = index;
-    });
+    // Loop through each header cell
+    for (let index = 0; index < headers.length; index++) {
+      const header = headers[index];
 
-    // Cache this sheet's column map
+      // Normalize header to consistent format:
+      // - Convert to lowercase for case-insensitive matching
+      // - Trim whitespace
+      // - Replace spaces with underscores
+      // Example: "User Name" becomes "user_name"
+      const normalized = String(header).toLowerCase().trim().replace(/\s+/g, '_');
+
+      // Store the mapping: normalized_name → column_index
+      map[normalized] = index;
+    }
+
+    // Cache this sheet's column map for future use
+    // Avoids making the same API call repeatedly
     columnMapCache.set(sheetName, map);
+
     return map;
   } catch (error) {
+    // Log error for debugging
     console.error('Error getting column map:', error);
+
+    // Throw user-friendly error message
     throw new Error('Failed to read sheet headers');
   }
 }
@@ -169,21 +216,70 @@ export function getColumnLetter(index: number): string {
 // ============================================================================
 
 /**
- * Get all users from Users sheet
+ * Get all users from the Members Google Sheet
+ *
+ * This is the primary data retrieval function used throughout the system.
+ * Fetches all member records and parses them into User objects.
+ *
+ * Process:
+ * 1. Get column mapping for flexible field positions
+ * 2. Fetch all data rows from sheet (skip header row)
+ * 3. Parse each row into a User object
+ *
+ * @returns Array of all users in the system
+ * @throws Error if unable to fetch data from Google Sheets
  */
 export async function getAllUsers(): Promise<User[]> {
   try {
+    // Get the column mapping for the Members sheet
+    // This tells us which column index corresponds to each field
     const colMap = await getColumnMap('Members');
+
+    // Get authenticated Google Sheets client
     const sheets = getGoogleSheetsClient();
+
+    // Fetch all user data from the Members sheet
+    // Range A2:BZ means:
+    // - Start at row 2 (skip header row 1)
+    // - Include columns A through BZ (covers all user fields including new ones)
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: getSpreadsheetId(),
-      range: 'Members!A2:BZ', // Start from row 2 (skip header), extended to include reset token columns
+      range: 'Members!A2:BZ',
+      valueRenderOption: 'FORMATTED_VALUE', // Get values as displayed in sheet (formulas evaluated)
     });
 
-    const rows = response.data.values || [];
-    return rows.map((row, index) => parseUserRow(row, index + 2, colMap));
+    // Extract rows from response
+    // If sheet has no data, use empty array
+    const values = response.data.values;
+    let rows: any[] = [];
+    if (values) {
+      rows = values;
+    }
+
+    // Parse each row into a User object
+    const users: User[] = [];
+
+    // Loop through each data row
+    for (let index = 0; index < rows.length; index++) {
+      const row = rows[index];
+
+      // Calculate actual row number in sheet
+      // index 0 corresponds to sheet row 2 (since row 1 is header)
+      const rowNumber = index + 2;
+
+      // Parse this row into a User object
+      const user = parseUserRow(row, rowNumber, colMap);
+
+      // Add to users array
+      users.push(user);
+    }
+
+    return users;
   } catch (error) {
+    // Log error for debugging
     console.error('Error getting users:', error);
+
+    // Throw user-friendly error message
     throw new Error('Failed to fetch users from Google Sheets');
   }
 }
@@ -226,7 +322,7 @@ export async function updateLastLogin(userName: string, success: boolean): Promi
     const colMap = await getColumnMap('Members');
     const colName = success ? 'last_login_date' : 'last_login_failed_date';
     const colIndex = colMap[colName];
-    
+
     if (colIndex === undefined) {
       console.error(`Column ${colName} not found in sheet`);
       return;
@@ -235,7 +331,7 @@ export async function updateLastLogin(userName: string, success: boolean): Promi
     const colLetter = getColumnLetter(colIndex);
     const sheets = getGoogleSheetsClient();
     const now = new Date().toISOString();
-    
+
     await sheets.spreadsheets.values.update({
       spreadsheetId: getSpreadsheetId(),
       range: `Members!${colLetter}${user._rowNumber}`,
@@ -246,6 +342,46 @@ export async function updateLastLogin(userName: string, success: boolean): Promi
     });
   } catch (error) {
     console.error('Error updating last login:', error);
+  }
+}
+
+/**
+ * Update renewal email sent status
+ * Records success with date or error message
+ */
+export async function updateEmailSentStatus(userName: string, success: boolean, errorMessage?: string): Promise<void> {
+  try {
+    const user = await getUserByUsername(userName);
+    if (!user || !user._rowNumber) return;
+
+    const colMap = await getColumnMap('Members');
+    const colIndex = colMap['renewal_email_sent_status'];
+
+    if (colIndex === undefined) {
+      console.error('Column renewal_email_sent_status not found in sheet');
+      return;
+    }
+
+    const colLetter = getColumnLetter(colIndex);
+    const sheets = getGoogleSheetsClient();
+
+    // Format: "Success. Email sent DD/MM/YYYY" or "Error: [message]"
+    const now = new Date();
+    const dateStr = `${now.getDate().toString().padStart(2, '0')}/${(now.getMonth() + 1).toString().padStart(2, '0')}/${now.getFullYear()}`;
+    const statusValue = success
+      ? `Success. Email sent ${dateStr}`
+      : `Error: ${errorMessage || 'Unknown error'}`;
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: getSpreadsheetId(),
+      range: `Members!${colLetter}${user._rowNumber}`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: {
+        values: [[statusValue]]
+      }
+    });
+  } catch (error) {
+    console.error('Error updating email sent status:', error);
   }
 }
 
@@ -297,27 +433,78 @@ export async function updatePasswordHash(
 }
 
 /**
- * Parse a row from Users sheet into User object
- * Uses column map for flexible positioning
+ * Parse a Google Sheets row into a User object
+ *
+ * This function extracts all user fields from a sheet row using the column map.
+ * It handles various data types and formats:
+ * - Strings: Returned as-is or null if missing
+ * - Booleans: Converted from Y/N, Yes/No, TRUE/FALSE
+ * - Numbers: Parsed from strings, handling currency symbols
+ *
+ * @param row The raw row data from Google Sheets (array of cell values)
+ * @param rowNumber The row number in the sheet (for updates/tracking)
+ * @param colMap Column name to index mapping from getColumnMap()
+ * @returns Fully parsed User object with all fields populated
  */
 function parseUserRow(row: any[], rowNumber: number, colMap: { [key: string]: number }): User {
+  // Helper function: Get string value from a column
+  // Returns null if column doesn't exist or cell is empty
   const get = (field: string): string | null => {
+    // Look up the column index for this field name
     const index = colMap[field];
-    return index !== undefined ? (row[index] || null) : null;
+
+    // Check if field exists in the column map
+    if (index === undefined) {
+      return null;
+    }
+
+    // Get the cell value at this index
+    const cellValue = row[index];
+
+    // Return null if cell is empty or undefined
+    if (!cellValue) {
+      return null;
+    }
+
+    return cellValue;
   };
-  
+
+  // Helper function: Get boolean value from a column
+  // Google Sheets stores booleans as text (Y/N, Yes/No, TRUE/FALSE)
   const getBool = (field: string): boolean => {
     const val = get(field);
-    return val === 'Y' || val === 'Yes' || val === 'yes' || val === 'TRUE' || val === 'true';
+
+    // Check if value matches any form of "yes" or "true"
+    if (val === 'Y' || val === 'Yes' || val === 'yes' || val === 'TRUE' || val === 'true') {
+      return true;
+    }
+
+    return false;
   };
-  
+
+  // Helper function: Get integer value from a column
+  // Handles currency symbols (£, $), commas, and whitespace
   const getInt = (field: string): number => {
     const val = get(field);
-    if (!val) return 0;
+
+    // Return 0 if cell is empty
+    if (!val) {
+      return 0;
+    }
+
     // Strip currency symbols (£, $), commas, and whitespace before parsing
+    // Example: "£1,234" becomes "1234"
     const cleaned = val.replace(/[£$,\s]/g, '');
+
+    // Parse the cleaned string to an integer
     const parsed = parseInt(cleaned);
-    return isNaN(parsed) ? 0 : parsed;
+
+    // Return 0 if parsing failed (NaN)
+    if (isNaN(parsed)) {
+      return 0;
+    }
+
+    return parsed;
   };
 
   return {
@@ -326,7 +513,7 @@ function parseUserRow(row: any[], rowNumber: number, colMap: { [key: string]: nu
     firstName: get('first_name') || '',
     lastName: get('last_name') || '',
     knownAs: get('known_as'),
-    fullKnownAs: get('full_name'),
+    fullKnownAs: get('full_known_as'),
     emailAddress: get('email_address'),
     landline: get('landline'),
     mobile: get('mobile'),
@@ -342,7 +529,13 @@ function parseUserRow(row: any[], rowNumber: number, colMap: { [key: string]: nu
     renewStatus: get('renew_status'),
     friendlies2023: getInt('friendlies_2023'),
     friendlies2024: getInt('friendlies_2024'),
-    friendliesLastYear: getInt('friendlies_last_year'),
+    // Handle friendliesLastYear as either number or "X" (manual override)
+    friendliesLastYear: (() => {
+      const value = get('friendlies_last_year');
+      if (value === 'X') return 'X';
+      if (!value) return 0;
+      return parseInt(value, 10) || 0;
+    })(),
     comments: get('comments'),
     socialEmails: getBool('social_emails'),
     handbookEntry: getBool('handbook_entry'),
@@ -354,7 +547,11 @@ function parseUserRow(row: any[], rowNumber: number, colMap: { [key: string]: nu
     barAdditionalInfo: get('bar_additional_info'),
     otherSkills: get('other_skills'),
     profileUpdatedDate: get('profile_updated_date'),
-    
+
+    // Renewal Email Fields
+    include: get('include'), // "Y" or "N" - controls who receives renewal emails
+    renewalEmailSentStatus: get('renewal_email_sent_status'), // Tracks email send status and date
+
     // Auth Data
     buddyUserName: get('buddy_user_name'),
     userName: get('user_name') || '',

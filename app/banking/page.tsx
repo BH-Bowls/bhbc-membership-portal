@@ -14,7 +14,6 @@ import {
   calculatePaymentTotals,
   autoMatchIfEqual,
   runGlobalAutoMatch,
-  calculatePartPayment,
   type RenewalWithState,
   type PaymentWithState,
 } from '@/lib/banking-match';
@@ -27,6 +26,7 @@ export default function BankingPage() {
   const [renewals, setRenewals] = useState<RenewalWithState[]>([]);
   const [payments, setPayments] = useState<PaymentWithState[]>([]);
   const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
@@ -52,8 +52,7 @@ export default function BankingPage() {
   // CSV import
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [csvData, setCsvData] = useState<any[]>([]);
-  const [availableTypes, setAvailableTypes] = useState<string[]>([]);
-  const [selectedImportType, setSelectedImportType] = useState('TRF');
+  const [isImporting, setIsImporting] = useState(false);
 
   // Check authorization
   const canAccess = session?.user?.role === 'Admin' || session?.user?.role === 'T';
@@ -341,6 +340,7 @@ export default function BankingPage() {
     setCsvFile(file);
 
     // Parse CSV
+    // Expected format: Date, Type (ignored), Description, Amount, Balance (ignored)
     const reader = new FileReader();
     reader.onload = (event) => {
       const text = event.target?.result as string;
@@ -354,22 +354,26 @@ export default function BankingPage() {
           const values = line.split(',');
           return {
             Date: values[0]?.trim(),
-            Type: values[1]?.trim(),
-            Reference: values[2]?.trim(),
+            Description: values[2]?.trim(), // Use Description (column 3) as reference
             Amount: values[3]?.trim(),
           };
         });
 
       setCsvData(data);
 
-      // Get unique types
-      const types = [...new Set(data.map(d => d.Type))].filter(Boolean);
-      setAvailableTypes(types);
-      if (types.length > 0) {
-        setSelectedImportType(types[0]);
-      }
+      // Filter for SUBS transactions (done on backend now)
+      const subsCount = data.filter(d =>
+        d.Description?.toLowerCase().includes('subs')
+      ).length;
 
+      // Show confirmation dialog
       setShowImportDialog(true);
+
+      // Update success message to show how many SUBS transactions found
+      if (subsCount === 0) {
+        setError('No SUBS transactions found in CSV');
+        setShowImportDialog(false);
+      }
     };
 
     reader.readAsText(file);
@@ -377,13 +381,15 @@ export default function BankingPage() {
 
   // Import CSV
   const handleImportCSV = async () => {
+    setIsImporting(true);
+    setError('');
+
     try {
       const res = await fetch('/api/banking/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           csvData,
-          selectedType: selectedImportType,
         }),
       });
 
@@ -396,10 +402,12 @@ export default function BankingPage() {
 
       setShowImportDialog(false);
       setCsvFile(null);
-      setSuccess(`Imported ${result.count} payments`);
-      loadData();
+      setSuccess(`Imported ${result.count} payments successfully`);
+      await loadData(); // Reload data to show imported payments
     } catch (err: any) {
-      setError(err.message);
+      setError(err.message || 'Failed to import CSV');
+    } finally {
+      setIsImporting(false);
     }
   };
 
@@ -412,6 +420,11 @@ export default function BankingPage() {
       setError('No matched items to submit');
       return;
     }
+
+    // Set submitting state to show loading indicator
+    setSubmitting(true);
+    setError('');
+    setSuccess('');
 
     try {
       // Prepare data - use stored relationships for each renewal
@@ -462,6 +475,9 @@ export default function BankingPage() {
       loadData();
     } catch (err: any) {
       setError(err.message);
+    } finally {
+      // Always clear submitting state when done
+      setSubmitting(false);
     }
   };
 
@@ -680,9 +696,20 @@ export default function BankingPage() {
           <div className="mt-6 text-center">
             <button
               onClick={handleSubmit}
-              className="px-8 py-3 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 text-lg font-semibold"
+              disabled={submitting}
+              className={`px-8 py-3 text-white rounded-md text-lg font-semibold inline-flex items-center gap-2 ${
+                submitting
+                  ? 'bg-indigo-400 cursor-not-allowed'
+                  : 'bg-indigo-600 hover:bg-indigo-700'
+              }`}
             >
-              Submit Matched Payments
+              {submitting && (
+                <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+              )}
+              {submitting ? 'Submitting...' : 'Submit Matched Payments'}
             </button>
           </div>
         )}
@@ -893,30 +920,28 @@ export default function BankingPage() {
         {showImportDialog && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white rounded-lg p-6 w-96">
-              <h3 className="text-lg font-semibold mb-4">Import Payments</h3>
+              <h3 className="text-lg font-semibold mb-4">Import SUBS Payments</h3>
 
-              {availableTypes.length > 1 ? (
-                <div className="mb-4">
-                  <p className="text-sm text-gray-600 mb-3">
-                    The CSV contains multiple payment types. Select which type to import:
-                  </p>
-                  <select
-                    value={selectedImportType}
-                    onChange={(e) => setSelectedImportType(e.target.value)}
-                    className="w-full border rounded px-3 py-2"
-                  >
-                    {availableTypes.map(type => (
-                      <option key={type} value={type}>{type}</option>
-                    ))}
-                  </select>
-                  <p className="text-sm text-gray-500 mt-2">
-                    Found: {csvData.filter(d => d.Type === selectedImportType).length} {selectedImportType} payments
-                  </p>
-                </div>
-              ) : (
-                <p className="text-sm text-gray-600 mb-4">
-                  Found: {csvData.length} {availableTypes[0]} payments
+              <div className="mb-4">
+                <p className="text-sm text-gray-600 mb-2">
+                  Only transactions containing "SUBS" in the description will be imported.
                 </p>
+                <p className="text-sm font-medium text-gray-900">
+                  Found: {csvData.filter(d => d.Description?.toLowerCase().includes('subs')).length} SUBS transactions
+                </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  All transactions will be imported as TRF (Bank Transfer)
+                </p>
+              </div>
+
+              {isImporting && (
+                <div className="mb-4 flex items-center text-sm text-indigo-600">
+                  <svg className="animate-spin h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Importing payments...
+                </div>
               )}
 
               <div className="flex justify-end space-x-3">
@@ -925,15 +950,23 @@ export default function BankingPage() {
                     setShowImportDialog(false);
                     setCsvFile(null);
                   }}
-                  className="px-4 py-2 border rounded hover:bg-gray-50"
+                  disabled={isImporting}
+                  className="px-4 py-2 border rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleImportCSV}
-                  className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700"
+                  disabled={isImporting}
+                  className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center"
                 >
-                  Import
+                  {isImporting && (
+                    <svg className="animate-spin h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                  )}
+                  {isImporting ? 'Importing...' : 'Import'}
                 </button>
               </div>
             </div>

@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { generateNextPaymentId, addPaymentToSheet } from '@/lib/banking-sheets';
+import { generateNextPaymentId, addPaymentsToSheet } from '@/lib/banking-sheets';
 
 export async function POST(request: NextRequest) {
   try {
@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { csvData, selectedType } = body;
+    const { csvData } = body;
 
     if (!csvData || !Array.isArray(csvData)) {
       return NextResponse.json(
@@ -28,41 +28,58 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!selectedType) {
-      return NextResponse.json(
-        { error: 'Payment type required' },
-        { status: 400 }
-      );
+    // Filter for transactions containing "SUBS" (case-insensitive) in Description
+    // Expected CSV columns: Date, Type (ignored), Description, Amount, Balance (ignored)
+    const filteredData = csvData.filter((row: any) => {
+      const description = row.Description || '';
+      return description.toLowerCase().includes('subs');
+    });
+
+    if (filteredData.length === 0) {
+      return NextResponse.json({
+        success: true,
+        paymentIds: [],
+        count: 0,
+        message: 'No SUBS transactions found to import',
+      });
     }
 
-    // Filter for selected type
-    const filteredData = csvData.filter(
-      (row: any) => row.Type === selectedType
-    );
+    // Generate starting payment ID once (avoids API quota issues)
+    const startingPaymentId = await generateNextPaymentId();
+    const prefix = 'P';
+    const startingNumber = parseInt(startingPaymentId.substring(1), 10);
 
+    // Build array of all payments to add in batch
+    // Generate subsequent IDs locally to avoid hitting API quota
+    const paymentsToAdd = [];
     const paymentIds: string[] = [];
 
-    // Add each payment
-    for (const row of filteredData) {
-      const payment_id = await generateNextPaymentId();
+    for (let i = 0; i < filteredData.length; i++) {
+      const row = filteredData[i];
+      const paymentNumber = startingNumber + i;
+      const payment_id = `${prefix}${String(paymentNumber).padStart(3, '0')}`;
 
-      await addPaymentToSheet({
+      paymentsToAdd.push({
         payment_id,
         date: row.Date,
-        type: selectedType,
-        reference: row.Reference || '',
+        type: 'TRF' as const, // All SUBS payments are bank transfers
+        reference: row.Description || '',
         amount: parseFloat(row.Amount) || 0,
-        status: 'Unmatched',
+        status: 'Unmatched' as const,
         matched_users: '',
       });
 
       paymentIds.push(payment_id);
     }
 
+    // Add all payments in a single batch operation (avoids write quota limit)
+    await addPaymentsToSheet(paymentsToAdd);
+
     return NextResponse.json({
       success: true,
       paymentIds,
       count: paymentIds.length,
+      message: `Imported ${paymentIds.length} SUBS transactions as TRF`,
     });
   } catch (error) {
     console.error('Error importing CSV:', error);

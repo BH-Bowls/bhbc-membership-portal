@@ -10,7 +10,9 @@ export async function GET(
 ) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user) {
+
+    // Check if user is logged in
+    if (!session || !session.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -19,7 +21,15 @@ export async function GET(
 
     // Get game details
     const games = await getGames();
-    const game = games.find(g => g.tabDate === tabDate);
+
+    // Find the game with this tabName (URL parameter is called tabDate but contains tabName)
+    let game = null;
+    for (const g of games) {
+      if (g.tabName === tabDate) {
+        game = g;
+        break;
+      }
+    }
 
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
@@ -27,7 +37,15 @@ export async function GET(
 
     // Verify user has entered this game
     const userEntries = await getPlayerEntries(userName);
-    const userEntry = userEntries.find(e => e.tabName === game.tabName);
+
+    // Find user's entry for this game
+    let userEntry = null;
+    for (const e of userEntries) {
+      if (e.tabName === game.tabName) {
+        userEntry = e;
+        break;
+      }
+    }
 
     if (!userEntry) {
       return NextResponse.json({ error: 'You have not entered this game' }, { status: 403 });
@@ -50,7 +68,13 @@ export async function GET(
     );
 
     // Find current user's details
-    const currentUser = allPlayers.find(p => p.name === userName);
+    let currentUser = null;
+    for (const p of allPlayers) {
+      if (p.name === userName) {
+        currentUser = p;
+        break;
+      }
+    }
 
     // Organize into teams
     const regularPlayers = selectedPlayers.filter(p => p.selected === 'Y');
@@ -59,15 +83,30 @@ export async function GET(
 
     // Group regular players by team
     const teams: any[] = [];
-    const teamNumbers = [...new Set(regularPlayers.map(p => p.team).filter(t => t !== null))];
 
-    for (const teamNum of teamNumbers.sort()) {
+    // Get unique team numbers
+    const teamNumbersSet = new Set<number>();
+    for (const p of regularPlayers) {
+      if (p.team !== null) {
+        teamNumbersSet.add(p.team);
+      }
+    }
+    const teamNumbers = Array.from(teamNumbersSet);
+    teamNumbers.sort();
+
+    for (const teamNum of teamNumbers) {
       const teamPlayers = regularPlayers
         .filter(p => p.team === teamNum)
         .sort((a, b) => {
           const posOrder = { 'S': 0, '1': 1, '2': 2, '3': 3 };
-          return (posOrder[a.position as keyof typeof posOrder] || 99) -
-                 (posOrder[b.position as keyof typeof posOrder] || 99);
+
+          let posA = posOrder[a.position as keyof typeof posOrder];
+          if (posA === undefined) posA = 99;
+
+          let posB = posOrder[b.position as keyof typeof posOrder];
+          if (posB === undefined) posB = 99;
+
+          return posA - posB;
         });
 
       teams.push({
@@ -83,15 +122,30 @@ export async function GET(
 
     // Group reserve team players
     const reserveTeamsList: any[] = [];
-    const reserveTeamNumbers = [...new Set(reserveTeams.map(p => p.team).filter(t => t !== null))];
 
-    for (const teamNum of reserveTeamNumbers.sort()) {
+    // Get unique reserve team numbers
+    const reserveTeamNumbersSet = new Set<number>();
+    for (const p of reserveTeams) {
+      if (p.team !== null) {
+        reserveTeamNumbersSet.add(p.team);
+      }
+    }
+    const reserveTeamNumbers = Array.from(reserveTeamNumbersSet);
+    reserveTeamNumbers.sort();
+
+    for (const teamNum of reserveTeamNumbers) {
       const teamPlayers = reserveTeams
         .filter(p => p.team === teamNum)
         .sort((a, b) => {
           const posOrder = { 'S': 0, '1': 1, '2': 2, '3': 3 };
-          return (posOrder[a.position as keyof typeof posOrder] || 99) -
-                 (posOrder[b.position as keyof typeof posOrder] || 99);
+
+          let posA = posOrder[a.position as keyof typeof posOrder];
+          if (posA === undefined) posA = 99;
+
+          let posB = posOrder[b.position as keyof typeof posOrder];
+          if (posB === undefined) posB = 99;
+
+          return posA - posB;
         });
 
       reserveTeamsList.push({
@@ -105,7 +159,39 @@ export async function GET(
     }
 
     // Find captain of day
-    const captain = allPlayers.find(p => p.captain === 'Y');
+    let captain = null;
+    for (const p of allPlayers) {
+      if (p.captain === 'Y') {
+        captain = p;
+        break;
+      }
+    }
+
+    // Get user's status for this game
+    let userStatus = null;
+    if (currentUser) {
+      userStatus = currentUser.selected;
+    }
+
+    let userTeam = null;
+    if (currentUser) {
+      userTeam = currentUser.team;
+    }
+
+    let userPosition = null;
+    if (currentUser) {
+      userPosition = currentUser.position;
+    }
+
+    let userConfirmed = false;
+    if (currentUser) {
+      userConfirmed = currentUser.status === 'Y';
+    }
+
+    let captainOfDay = '';
+    if (captain) {
+      captainOfDay = captain.name;
+    }
 
     return NextResponse.json({
       game: {
@@ -116,10 +202,10 @@ export async function GET(
         homeAway: game.homeAway,
         format: game.format,
         status: game.status,
-        userStatus: currentUser?.selected || null,
-        userTeam: currentUser?.team || null,
-        userPosition: currentUser?.position || null,
-        userConfirmed: currentUser?.status === 'Y',
+        userStatus: userStatus,
+        userTeam: userTeam,
+        userPosition: userPosition,
+        userConfirmed: userConfirmed,
       },
       teams,
       reserves: reserves.map(r => ({
@@ -129,10 +215,9 @@ export async function GET(
         status: r.status,
       })),
       reserveTeams: reserveTeamsList,
-      captainOfDay: captain?.name || '',
+      captainOfDay: captainOfDay,
     });
   } catch (error) {
-    console.error('Error fetching game details:', error);
     return NextResponse.json(
       { error: 'Failed to fetch game details' },
       { status: 500 }

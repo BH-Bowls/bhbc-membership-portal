@@ -51,9 +51,12 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('Error fetching profile:', error);
+    console.error('[GET /api/profile] Error fetching profile:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch profile' },
+      {
+        error: 'Failed to fetch profile',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      },
       { status: 500 }
     );
   }
@@ -61,6 +64,9 @@ export async function GET(request: NextRequest) {
 
 // PUT /api/profile
 export async function PUT(request: NextRequest) {
+  // Track what we've updated for error reporting
+  let profileUpdated = false;
+
   try {
     const session = await getServerSession(authOptions);
 
@@ -87,7 +93,7 @@ export async function PUT(request: NextRequest) {
     }
 
     // Filter updates based on field-level permissions
-    const allowedUpdates: any = {};
+    const allowedUpdates: Partial<typeof updates> = {};
 
     for (const [field, value] of Object.entries(updates)) {
       // Skip userName if provided (it's the target identifier, not an update)
@@ -104,7 +110,7 @@ export async function PUT(request: NextRequest) {
         allowedUpdates[field] = value;
       } else {
         console.warn(
-          `User ${session.user.userName} attempted to edit restricted field: ${field} for ${targetUserName}`
+          `[PUT /api/profile] User ${session.user.userName} attempted to edit restricted field: ${field} for ${targetUserName}`
         );
       }
     }
@@ -114,20 +120,35 @@ export async function PUT(request: NextRequest) {
 
     if (!result.success) {
       return NextResponse.json(
-        { error: result.error || 'Failed to update profile' },
+        {
+          error: result.error || 'Failed to update profile',
+          profileUpdated: false,
+        },
         { status: 400 }
       );
     }
+
+    // Track that profile update succeeded
+    profileUpdated = true;
 
     return NextResponse.json({
       success: true,
       message: 'Profile updated successfully',
     });
   } catch (error) {
-    console.error('Error updating profile:', error);
+    console.error('[PUT /api/profile] Error updating profile:', error);
+
+    // Provide detailed error information including what was successfully updated
     return NextResponse.json(
-      { error: 'Failed to update profile' },
-      { status: 500 }
+      {
+        error: 'Failed to update profile',
+        details: error instanceof Error ? error.message : 'Unknown error',
+        profileUpdated,
+        message: profileUpdated
+          ? 'Profile update partially completed but encountered an error'
+          : 'Failed to update profile',
+      },
+      { status: profileUpdated ? 207 : 500 } // 207 Multi-Status for partial success
     );
   }
 }

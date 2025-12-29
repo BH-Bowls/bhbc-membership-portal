@@ -3,6 +3,8 @@
 
 'use client';
 
+import { SearchableSelect } from './SearchableSelect';
+
 interface User {
   userName: string;
   fullKnownAs: string;
@@ -44,19 +46,17 @@ export function UserSelector({
         {isAdmin && <span className="ml-2 text-xs text-gray-600">(Admin)</span>}
       </label>
 
-      {/* User selector dropdown - native browser search works fine */}
-      <select
+      {/* User selector dropdown - searchable */}
+      <SearchableSelect
+        options={validUsers.map((user) => ({
+          value: user.userName,
+          label: `${user.fullKnownAs}${user.isSelf ? ' (You)' : ''}`,
+        }))}
         value={selectedUserName}
-        onChange={(e) => onChange(e.target.value)}
-        disabled={disabled}
-        className="block w-full max-w-md rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border disabled:bg-gray-100 disabled:cursor-not-allowed disabled:text-gray-500"
-      >
-        {validUsers.map((user) => (
-          <option key={user.userName} value={user.userName}>
-            {user.fullKnownAs} {user.isSelf ? '(You)' : ''}
-          </option>
-        ))}
-      </select>
+        onChange={onChange}
+        placeholder="Type to search users..."
+        className="max-w-md"
+      />
 
       {/* Warning when managing someone else */}
       {isManagingOther && (

@@ -1,20 +1,29 @@
-// POST /api/friendlies/enter - Enter one or more games
+// app/api/friendlies/enter/route.ts
+// API endpoint for players to enter one or more games
+// Updates Players sheet with 'E' status and recalculates entered counts in Games sheet
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getGames, updatePlayerEntry } from '@/lib/friendlies-sheets';
 import { EnterGamesRequest, EnterGamesResponse } from '@/lib/types/friendlies';
 
+// POST handler - Enters user into one or more games
 export async function POST(request: NextRequest) {
   try {
+    // Verify user is authenticated
     const session = await getServerSession(authOptions);
-    if (!session?.user) {
+
+    // Reject if not logged in
+    if (!session || !session.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    // Parse request body
     const body: EnterGamesRequest = await request.json();
     const { game_ids } = body;
 
+    // Validate game_ids is a non-empty array
     if (!Array.isArray(game_ids) || game_ids.length === 0) {
       return NextResponse.json(
         { error: 'Invalid game_ids' },
@@ -22,76 +31,122 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Get current user's username
     const userName = session.user.userName;
 
-    // Get all games to verify status
+    // Fetch all games to verify each game exists and is open
     const allGames = await getGames();
 
+    // Initialize results array to track success/failure for each game
     const results: EnterGamesResponse['results'] = [];
 
-    for (const tabDate of game_ids) {
+    // Process each game entry request
+    for (const tabName of game_ids) {
       try {
-        // Verify game exists and is open
-        const game = allGames.find(g => g.tabDate === tabDate);
+        // Find the game in our games list
+        let game = null;
+        for (const g of allGames) {
+          if (g.tabName === tabName) {
+            game = g;
+            break;
+          }
+        }
+
+        // Skip if game doesn't exist
         if (!game) {
-          results.push({ game_id: tabDate, entered: false, error: 'Game not found' });
+          results.push({ game_id: tabName, entered: false, error: 'Game not found' });
           continue;
         }
 
+        // Only allow entry if game status is 'O' (Open)
         if (game.status !== 'O') {
-          results.push({ game_id: tabDate, entered: false, error: 'Game not open for entry' });
+          results.push({ game_id: tabName, entered: false, error: 'Game not open for entry' });
           continue;
         }
 
-        // Update player entry to 'E'
+        // Update this user's entry in Players sheet to 'E' (Entered)
         try {
           await updatePlayerEntry(userName, game.tabName, 'E');
-          results.push({ game_id: tabDate, entered: true });
+          results.push({ game_id: tabName, entered: true });
         } catch (updateError: any) {
+          // Record error if update fails
           results.push({
-            game_id: tabDate,
+            game_id: tabName,
             entered: false,
             error: updateError.message || 'Update failed'
           });
         }
       } catch (error) {
-        results.push({ game_id: tabDate, entered: false, error: 'Processing failed' });
+        // Catch any unexpected errors for this game
+        results.push({ game_id: tabName, entered: false, error: 'Processing failed' });
       }
     }
 
-    // Update entered counts for all successfully entered games by counting entries in Players sheet
+    // Update entered counts in Games sheet for all successfully entered games
+    // This requires counting actual entries in Players sheet to get accurate totals
     const successfulEntries = results.filter(r => r.entered);
+
     if (successfulEntries.length > 0) {
+      // Dynamically import functions to avoid circular dependencies
       const { updateGameCounts } = await import('@/lib/friendlies-sheets');
       const { getGoogleSheetsClient } = await import('@/lib/sheets');
+
+      // Get Sheets client and spreadsheet ID
       const sheets = getGoogleSheetsClient();
       const spreadsheetId = process.env.FRIENDLIES_SPREADSHEET_ID!;
 
-      // Get all Players sheet data once
+      // Fetch all Players sheet data once for efficiency
       const playersResponse = await sheets.spreadsheets.values.get({
         spreadsheetId,
         range: 'Players!A:ZZ',
       });
 
+      // Extract rows and headers from Players sheet
       const rows = playersResponse.data.values || [];
       const headers = rows[0] || [];
 
+      // Update count for each successfully entered game
       for (const result of successfulEntries) {
-        const game = allGames.find(g => g.tabDate === result.game_id);
+        // Find the game object for this entry
+        let game = null;
+        for (const g of allGames) {
+          if (g.tabName === result.game_id) {
+            game = g;
+            break;
+          }
+        }
+
         if (game) {
-          // Find the column for this game
-          const gameColIndex = headers.findIndex(h => h === game.tabName);
+          // Find which column in Players sheet corresponds to this game
+          let gameColIndex = -1;
+          for (let i = 0; i < headers.length; i++) {
+            if (headers[i] === game.tabName) {
+              gameColIndex = i;
+              break;
+            }
+          }
+
           if (gameColIndex !== -1) {
-            // Count non-empty entries in this column (skip header row)
-            const enteredCount = rows.slice(1).filter(row => row[gameColIndex]).length;
+            // Count how many players have entered this game
+            // (Count non-empty cells in this game's column, excluding header)
+            let enteredCount = 0;
+            for (let i = 1; i < rows.length; i++) {
+              if (rows[i][gameColIndex]) {
+                enteredCount++;
+              }
+            }
+
+            // Update the entered count in Games sheet
             await updateGameCounts(result.game_id, { entered: enteredCount });
           }
         }
       }
     }
 
+    // Return success response with results for each game
     return NextResponse.json({ success: true, results });
   } catch (error) {
+    // Log error and return 500 response
     return NextResponse.json(
       { error: 'Failed to enter games' },
       { status: 500 }

@@ -87,9 +87,17 @@ export async function GET(request: NextRequest) {
     );
 
     // Calculate eligibility
+    // Allow competitions if:
+    // - friendliesLastYear >= 8 (met requirement)
+    // - friendliesLastYear === "X" (manual override for illness/exceptional circumstances)
+    const friendliesValue = profile.friendliesLastYear;
+    const canEnterCompetitions =
+      friendliesValue === 'X' ||
+      (typeof friendliesValue === 'number' && friendliesValue >= 8);
+
     const eligibility = {
-      canEnterCompetitions: profile.friendliesLastYear >= 8,
-      friendliesLastYear: profile.friendliesLastYear,
+      canEnterCompetitions,
+      friendliesLastYear: friendliesValue,
     };
 
     return NextResponse.json({
@@ -122,6 +130,11 @@ export async function GET(request: NextRequest) {
 // PUT /api/renewals
 // Updates renewal data and sends confirmation email (buddy system)
 export async function PUT(request: NextRequest) {
+  // Track what we've updated for error reporting (partial success handling)
+  let profileUpdated = false;
+  let renewalUpdated = false;
+  let emailSent = false;
+
   try {
     const session = await getServerSession(authOptions);
 
@@ -153,6 +166,16 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json(
         { error: 'Profile not found' },
         { status: 404 }
+      );
+    }
+
+    // Get existing renewal data to preserve partial payments
+    const existingRenewal = await getRenewalByUsername(targetUserName);
+
+    if (!existingRenewal) {
+      return NextResponse.json(
+        { error: 'Failed to load existing renewal data' },
+        { status: 500 }
       );
     }
 
@@ -212,13 +235,35 @@ export async function PUT(request: NextRequest) {
 
     if (!profileUpdateResult.success) {
       return NextResponse.json(
-        { error: profileUpdateResult.error || 'Failed to update volunteering preferences' },
+        {
+          error: profileUpdateResult.error || 'Failed to update volunteering preferences',
+          partialSuccess: false,
+          profileUpdated: false,
+          renewalUpdated: false,
+        },
         { status: 400 }
       );
     }
 
+    // Track that profile update succeeded
+    profileUpdated = true;
+
     // Prepare renewal updates with calculated fees (use new member type if provided)
     const effectiveMemberType = data.memberType || profile.memberType;
+
+    // Calculate outstanding amount correctly:
+    // - If admin is updating banking amount, use the new amount from renewalData
+    // - Otherwise, use existing banking amount to preserve partial payments
+    // Formula: outstanding = totalPayment - amountPaid
+    const bankingAmount = renewalData.banking !== undefined
+      ? renewalData.banking  // Admin is updating payment amount
+      : (existingRenewal.banking || 0);  // Use existing payment amount
+
+    const calculatedOutstanding = fees.total - bankingAmount;
+
+    // Ensure outstanding is never negative (can't overpay)
+    const validatedOutstanding = Math.max(0, calculatedOutstanding);
+
     const renewalUpdates: Partial<Renewal> = {
       ...renewalData,
       playingFees: effectiveMemberType === 'Playing' ? fees.membershipFee : 0,
@@ -226,7 +271,7 @@ export async function PUT(request: NextRequest) {
       compsFee: fees.compsFee,
       fee200Club: fees.club200Fee,
       totalPayment: fees.total,
-      outstanding: fees.total,
+      outstanding: validatedOutstanding,
     };
 
     // Update renewal data in Renewals sheet
@@ -234,10 +279,21 @@ export async function PUT(request: NextRequest) {
 
     if (!result.success) {
       return NextResponse.json(
-        { error: result.error || 'Failed to update renewal' },
-        { status: 400 }
+        {
+          error: result.error || 'Failed to update renewal',
+          partialSuccess: profileUpdated,  // Profile was updated but renewal failed
+          profileUpdated,
+          renewalUpdated: false,
+          message: profileUpdated
+            ? 'Profile updated successfully but renewal update failed. Please try again.'
+            : 'Failed to update renewal',
+        },
+        { status: 207 }  // 207 Multi-Status for partial success
       );
     }
+
+    // Track that renewal update succeeded
+    renewalUpdated = true;
 
     // Get updated renewal data
     const updatedRenewal = await getRenewalByUsername(targetUserName);
@@ -260,13 +316,21 @@ export async function PUT(request: NextRequest) {
       if (!emailResult.success) {
         console.error('Failed to send confirmation email:', emailResult.error);
         // Don't fail the request if email fails, just log it
+        emailSent = false;
         return NextResponse.json({
           success: true,
+          partialSuccess: true,
           renewal: updatedRenewal,
           fees,
+          profileUpdated: true,
+          renewalUpdated: true,
+          emailSent: false,
           warning: 'Renewal saved but confirmation email could not be sent',
         });
       }
+
+      // Track that email was sent successfully
+      emailSent = true;
     }
 
     return NextResponse.json({
@@ -279,9 +343,23 @@ export async function PUT(request: NextRequest) {
     });
   } catch (error) {
     console.error('Error updating renewal:', error);
+
+    // Provide detailed error information including what was successfully updated
+    const partialSuccess = profileUpdated || renewalUpdated || emailSent;
+
     return NextResponse.json(
-      { error: 'Failed to update renewal' },
-      { status: 500 }
+      {
+        error: 'Failed to update renewal',
+        details: error instanceof Error ? error.message : 'Unknown error',
+        partialSuccess,
+        profileUpdated,
+        renewalUpdated,
+        emailSent,
+        message: partialSuccess
+          ? `Partial update completed. Profile: ${profileUpdated ? 'updated' : 'not updated'}, Renewal: ${renewalUpdated ? 'updated' : 'not updated'}, Email: ${emailSent ? 'sent' : 'not sent'}`
+          : 'Fatal error occurred before any updates could be made.',
+      },
+      { status: partialSuccess ? 207 : 500 }  // 207 Multi-Status for partial success, 500 for complete failure
     );
   }
 }

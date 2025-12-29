@@ -7,8 +7,46 @@ import {
   getColumnMap,
   getColumnLetter,
 } from './sheets';
+import {
+  createRowFieldGetter,
+  createRowNumberGetter,
+  wrapError,
+} from './banking-sheets';
 import { google } from 'googleapis';
 import { sendTemplateEmail, isEmailConfigured } from './email/mailer';
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
+/**
+ * Membership fee structure (in pounds)
+ */
+const MEMBERSHIP_FEES = {
+  U18: 10,
+  YOUNG_ADULT_STUDENT: 10,  // 18-24 in full-time education
+  YOUNG_ADULT: 60,          // 18-24 not in education
+  ADULT: 110,               // 25-59 and 60+
+  SENIOR: 60,               // 80+
+  SOCIAL: 25,
+  HONORARY: 0,
+} as const;
+
+/**
+ * Fee per 200 Club entry (in pounds)
+ */
+const CLUB_200_ENTRY_FEE = 6;
+
+/**
+ * Fee per competition entry (in pounds)
+ */
+const COMPETITION_ENTRY_FEE = 2;
+
+/**
+ * Google Sheets constants
+ */
+const RENEWALS_SHEET_RANGE = 'Renewals!A2:AP';  // 42 columns: A-AP
+const HEADER_ROW_OFFSET = 2;  // Row 1 is header, data starts at row 2
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -93,30 +131,33 @@ function getGoogleSheetsClient() {
 // Email transporter moved to centralized email/mailer.ts
 
 /**
- * Parse a row from Renewals sheet into Renewal object
+ * Parse a Google Sheets row into a Renewal object
+ * Extracts all renewal fields from a sheet row using column mapping
+ *
+ * @param row The raw row data from Google Sheets (array of cell values)
+ * @param rowNumber The row number in the sheet (for tracking/updates)
+ * @param colMap Mapping of column names to array indices
+ * @returns Parsed Renewal object with all fields populated
  */
 function parseRenewalRow(
   row: any[],
   rowNumber: number,
   colMap: { [key: string]: number }
 ): Renewal {
-  const get = (field: string): string | null => {
-    const index = colMap[field];
-    return index !== undefined ? (row[index] || null) : null;
-  };
+  // Create field getter function using shared helper from banking-sheets
+  // This safely extracts string values from cells by column name
+  const get = createRowFieldGetter(row, colMap);
 
+  // Create number getter function using shared helper
+  // This extracts numeric values, handling currency symbols and commas
+  const getNumber = createRowNumberGetter(get);
+
+  // Create boolean getter for Y/N fields in Google Sheets
+  // Google Sheets stores boolean preferences as text (Y/N, Yes/No, TRUE/FALSE)
   const getBool = (field: string): boolean => {
     const val = get(field);
+    // Check if value is any form of "yes" or "true"
     return val === 'Y' || val === 'Yes' || val === 'yes' || val === 'TRUE' || val === 'true';
-  };
-
-  const getNumber = (field: string): number => {
-    const val = get(field);
-    if (!val) return 0;
-    // Strip currency symbols (£, $), commas, and whitespace before parsing
-    const cleaned = val.replace(/[£$,\s]/g, '');
-    const parsed = parseFloat(cleaned);
-    return isNaN(parsed) ? 0 : parsed;
   };
 
   return {
@@ -164,35 +205,89 @@ function parseRenewalRow(
  * - Fetch from Renewals sheet
  * - If no row exists, create blank row with user_name
  * - Return renewal data
+ *
+ * Race Condition Handling:
+ * - If two requests come in simultaneously for a non-existent user,
+ *   both may create rows, resulting in duplicates
+ * - After creation, we re-read to verify and detect duplicates
+ * - This doesn't fully prevent race conditions (would need database locks),
+ *   but significantly reduces likelihood and handles duplicates gracefully
+ *
+ * @param userName Username to look up (case-insensitive)
+ * @returns Renewal data if found/created
+ * @throws Error if unable to query or create renewal (network error, API error, etc.)
  */
 export async function getRenewalByUsername(
   userName: string
-): Promise<Renewal | null> {
+): Promise<Renewal> {
   try {
     const colMap = await getColumnMap('Renewals');
     const sheets = getGoogleSheetsClient();
 
-    // Get all renewals data (42 columns: A-AP)
+    // Get all renewals data
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: getSpreadsheetId(),
-      range: 'Renewals!A2:AP', // Start from row 2 (skip header)
+      range: RENEWALS_SHEET_RANGE,
     });
 
-    const rows = response.data.values || [];
+    // Extract rows from response (empty array if no data)
+    const rows = response.data.values;
+    if (!rows) {
+      // No data in sheet - create first row for this user
+      const now = new Date().toISOString();
+      const newRow: any[] = [];
+      newRow[colMap['user_name']] = userName;
+      newRow[colMap['created_at']] = now;
+
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: getSpreadsheetId(),
+        range: 'Renewals!A:AP',
+        valueInputOption: 'USER_ENTERED',
+        requestBody: {
+          values: [newRow],
+        },
+      });
+
+      // Re-read to get the created row
+      const verifyResponse = await sheets.spreadsheets.values.get({
+        spreadsheetId: getSpreadsheetId(),
+        range: RENEWALS_SHEET_RANGE,
+      });
+
+      const verifyRows = verifyResponse.data.values || [];
+      return parseRenewalRow(verifyRows[0], HEADER_ROW_OFFSET, colMap);
+    }
+
+    // Get the column index for user_name field
     const userNameColIndex = colMap['user_name'];
 
-    // Find user's row
-    const rowIndex = rows.findIndex(
-      (row) => row[userNameColIndex]?.toLowerCase() === userName.toLowerCase()
-    );
+    // Find user's row by searching for matching username (case-insensitive)
+    // Loop through all rows to find the one with matching user_name
+    let rowIndex = -1;
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
 
+      // Get the username value from this row
+      const rowUserName = row[userNameColIndex];
+
+      // Check if this row has a username and it matches our search
+      if (rowUserName) {
+        if (rowUserName.toLowerCase() === userName.toLowerCase()) {
+          rowIndex = i;
+          break;
+        }
+      }
+    }
+
+    // Check if we found the user
     if (rowIndex >= 0) {
-      // User exists - return their data
-      return parseRenewalRow(rows[rowIndex], rowIndex + 2, colMap);
+      // User exists - parse and return their renewal data
+      // Row numbers in Google Sheets start at 1, and row 1 is the header
+      // So data row index 0 corresponds to sheet row 2
+      return parseRenewalRow(rows[rowIndex], rowIndex + HEADER_ROW_OFFSET, colMap);
     }
 
     // User doesn't exist - create blank row with username and created_at
-    const nextRowNumber = rows.length + 2; // +2 because header is row 1
     const now = new Date().toISOString();
 
     // Create a row with values in the correct positions
@@ -201,6 +296,7 @@ export async function getRenewalByUsername(
     newRow[colMap['user_name']] = userName;
     newRow[colMap['created_at']] = now;
 
+    // Attempt to create the row
     await sheets.spreadsheets.values.append({
       spreadsheetId: getSpreadsheetId(),
       range: 'Renewals!A:AP',
@@ -210,36 +306,53 @@ export async function getRenewalByUsername(
       },
     });
 
-    // Return blank renewal object
-    return {
-      userName,
-      renewingMembership: false,
-      playingFees: 0,
-      socialFees: 0,
-      compsFee: 0,
-      fee200Club: 0,
-      totalPayment: 0,
-      number200ClubEntries: 0,
-      mensChampionship: false,
-      ladiesMaynard: false,
-      mensTwoWood: false,
-      ladiesTwoWood: false,
-      marriedPairs: false,
-      drawnPairs: false,
-      australianPairs: false,
-      drawnTriples: false,
-      handicap: false,
-      oldlands: false,
-      veterans: false,
-      drawnPairsSub: false,
-      australianPairsSub: false,
-      drawnTriplesSub: false,
-      createdAt: now,
-      _rowNumber: nextRowNumber,
-    };
+    // Re-read sheet to verify creation and detect race condition duplicates
+    // If another request created a row simultaneously, we'll find it here
+    const verifyResponse = await sheets.spreadsheets.values.get({
+      spreadsheetId: getSpreadsheetId(),
+      range: RENEWALS_SHEET_RANGE,
+    });
+
+    // Extract rows from verification response
+    const verifyRows = verifyResponse.data.values;
+    if (!verifyRows) {
+      throw new Error(`Created renewal row for ${userName} but sheet is empty on verification`);
+    }
+
+    // Find the user's row (may be the one we just created, or one created by another request)
+    // This handles the race condition where two requests create rows simultaneously
+    let verifyRowIndex = -1;
+    for (let i = 0; i < verifyRows.length; i++) {
+      const row = verifyRows[i];
+
+      // Get the username from this row
+      const rowUserName = row[userNameColIndex];
+
+      // Check if this row matches our user
+      if (rowUserName) {
+        if (rowUserName.toLowerCase() === userName.toLowerCase()) {
+          verifyRowIndex = i;
+          break;
+        }
+      }
+    }
+
+    // Check if we found the row we just created
+    if (verifyRowIndex >= 0) {
+      // Return the actual row from the sheet (handles race condition gracefully)
+      // If another request created a duplicate, we return the first match found
+      return parseRenewalRow(verifyRows[verifyRowIndex], verifyRowIndex + HEADER_ROW_OFFSET, colMap);
+    }
+
+    // This should never happen - we just created the row!
+    console.error(`[getRenewalByUsername] Created row for ${userName} but cannot find it on re-read`);
+    throw new Error(`Created renewal row for ${userName} but cannot verify creation`);
   } catch (error) {
-    console.error('Error getting renewal:', error);
-    return null;
+    console.error(`[getRenewalByUsername] Error getting/creating renewal for ${userName}:`, error);
+    throw wrapError(
+      `Failed to get or create renewal for user ${userName}`,
+      error
+    );
   }
 }
 
@@ -358,16 +471,34 @@ export async function updateRenewal(
 
     return { success: true };
   } catch (error) {
-    console.error('Error updating renewal:', error);
-    return { success: false, error: 'Failed to update renewal' };
+    console.error(`[updateRenewal] Failed to update renewal for ${userName}:`, error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to update renewal',
+    };
   }
 }
 
 /**
  * Calculate fees based on renewal data
- * - Takes user profile (age_demographic, member_type)
- * - Takes renewal selections
- * - Returns breakdown: { membershipFee, compsFee, club200Fee, total }
+ * Determines total fees owed based on member type, age, and selections
+ *
+ * Fee Structure:
+ * - Membership fee: Based on member type (Playing/Social/Honorary) and age
+ * - 200 Club fee: £6 per entry
+ * - Competition fee: £2 per competition entered
+ *
+ * Age-based Playing Membership Fees:
+ * - Under 18: £10
+ * - 18-24 (student): £10
+ * - 18-24 (not student): £60
+ * - 25-59: £110
+ * - 60+: £110
+ * - 80+: £60
+ *
+ * @param profile User profile with age demographic and member type
+ * @param renewal Renewal selections (competitions, 200 Club entries, etc.)
+ * @returns Fee breakdown with membership, 200 Club, competitions, and total
  */
 export function calculateFees(
   profile: {
@@ -377,72 +508,93 @@ export function calculateFees(
   },
   renewal: Partial<Renewal>
 ): FeeBreakdown {
+  // Initialize membership fee (will be set based on type and age)
   let membershipFee = 0;
 
-  // Calculate membership fees based on age and type
+  // Extract profile fields for easier access
   const { ageDemographic, memberType, fullTimeEducation } = profile;
 
-  // Fee calculation based on member type and age demographic
+  // Calculate membership fee based on member type and age demographic
+  // Different fee structures for Playing vs Social vs Honorary members
   switch (memberType) {
     case 'Playing':
       switch (ageDemographic) {
         case 'U18':
-          membershipFee = 10;
+          membershipFee = MEMBERSHIP_FEES.U18;
           break;
         case '18-24':
-          membershipFee = fullTimeEducation ? 10 : 60;
+          membershipFee = fullTimeEducation ? MEMBERSHIP_FEES.YOUNG_ADULT_STUDENT : MEMBERSHIP_FEES.YOUNG_ADULT;
           break;
         case '25-59':
-          membershipFee = 110;
+          membershipFee = MEMBERSHIP_FEES.ADULT;
           break;
         case '60+':
-          membershipFee = 110;
+          membershipFee = MEMBERSHIP_FEES.ADULT;
           break;
         case '80+':
-          membershipFee = 60;
+          membershipFee = MEMBERSHIP_FEES.SENIOR;
           break;
       }
       break;
     case 'Social':
-      membershipFee = 25;
+      membershipFee = MEMBERSHIP_FEES.SOCIAL;
       break;
     case 'Honorary':
-      membershipFee = 0;
+      membershipFee = MEMBERSHIP_FEES.HONORARY;
       break;
   }
 
   // Calculate 200 Club fees
-  const club200Fee = (renewal.number200ClubEntries || 0) * 6;
+  // Each entry in the 200 Club costs £6
+  // If number200ClubEntries is undefined or null, default to 0
+  let num200ClubEntries = renewal.number200ClubEntries;
+  if (num200ClubEntries === undefined || num200ClubEntries === null) {
+    num200ClubEntries = 0;
+  }
+  const club200Fee = num200ClubEntries * CLUB_200_ENTRY_FEE;
 
   // Calculate competition fees
+  // Count how many competitions the user has entered
+  // Each competition costs £2 (note: substitute entries are free)
   const competitions = [
-    'mensChampionship',
-    'ladiesMaynard',
-    'mensTwoWood',
-    'ladiesTwoWood',
-    'marriedPairs',
-    'drawnPairs',
-    'australianPairs',
-    'drawnTriples',
-    'handicap',
-    'oldlands',
-    'veterans',
+    'mensChampionship',    // Men's Championship
+    'ladiesMaynard',       // Ladies Maynard
+    'mensTwoWood',         // Men's Two Wood
+    'ladiesTwoWood',       // Ladies Two Wood
+    'marriedPairs',        // Married Pairs
+    'drawnPairs',          // Drawn Pairs
+    'australianPairs',     // Australian Pairs
+    'drawnTriples',        // Drawn Triples
+
+    'handicap',            // Handicap Competition
+    'oldlands',            // Oldlands Competition
+    'veterans',            // Veterans Competition
   ];
 
-  const compCount = competitions.filter(
-    (comp) => renewal[comp as keyof Renewal] === true
-  ).length;
+  // Count how many competitions are selected
+  // Loop through each competition name and check if user selected it
+  let compCount = 0;
+  for (const comp of competitions) {
+    // Check if this competition field is set to true in the renewal
+    const isSelected = renewal[comp as keyof Renewal];
+    if (isSelected) {
+      compCount++;
+    }
+  }
 
-  const compsFee = compCount * 2;
+  // Calculate total competition fees (£2 per competition)
+  const compsFee = compCount * COMPETITION_ENTRY_FEE;
 
-  // Calculate total
+  // Calculate total amount owed
+  // Sum of membership fee + 200 Club fees + competition fees
   const total = membershipFee + club200Fee + compsFee;
 
+  // Return fee breakdown with all components
   return {
-    membershipFee,
-    club200Fee,
-    compsFee,
-    total,
+    membershipFee,        // Base membership fee
+    club200Fee,           // 200 Club fees
+    compsFee,             // Competition entry fees
+    total,                // Total amount owed
   };
 }
 
@@ -540,7 +692,10 @@ export async function sendRenewalConfirmation(
 
     return { success: true };
   } catch (error) {
-    console.error('Error sending renewal confirmation:', error);
-    return { success: false, error: 'Failed to send confirmation email' };
+    console.error(`[sendRenewalConfirmation] Failed to send confirmation for ${userName}:`, error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to send confirmation email',
+    };
   }
 }

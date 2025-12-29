@@ -19,17 +19,32 @@ export async function GET(
 ) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user) {
+
+    // Check if user is logged in
+    if (!session || !session.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const { tabDate } = await params;
     const { searchParams } = new URL(request.url);
-    const type = searchParams.get('type') || 'main'; // main or reserves
+
+    // Get type parameter, default to 'main' if not provided
+    let type = searchParams.get('type');
+    if (!type) {
+      type = 'main'; // main or reserves
+    }
 
     // Get game details
     const games = await getGames();
-    const game = games.find(g => g.tabDate === tabDate);
+
+    // Find the game with this tabName (URL parameter is called tabDate but contains tabName)
+    let game = null;
+    for (const g of games) {
+      if (g.tabName === tabDate) {
+        game = g;
+        break;
+      }
+    }
 
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
@@ -58,18 +73,34 @@ export async function GET(
 
     // Group regular players by team
     const teams: Team[] = [];
-    const teamNumbers = [...new Set(regularPlayers.map(p => p.team).filter(t => t !== null))];
 
-    for (const teamNum of teamNumbers.sort((a, b) => a! - b!)) {
+    // Get unique team numbers
+    const teamNumbersSet = new Set<number>();
+    for (const p of regularPlayers) {
+      if (p.team !== null) {
+        teamNumbersSet.add(p.team);
+      }
+    }
+    const teamNumbers = Array.from(teamNumbersSet);
+    teamNumbers.sort((a, b) => a - b);
+
+    for (const teamNum of teamNumbers) {
       const teamPlayers = regularPlayers
         .filter(p => p.team === teamNum)
         .sort((a, b) => {
           const posOrder: { [key: string]: number } = { 'S': 0, '1': 1, '2': 2, '3': 3 };
-          return (posOrder[a.position] || 99) - (posOrder[b.position] || 99);
+
+          let posA = posOrder[a.position];
+          if (posA === undefined) posA = 99;
+
+          let posB = posOrder[b.position];
+          if (posB === undefined) posB = 99;
+
+          return posA - posB;
         });
 
       teams.push({
-        team: teamNum!,
+        team: teamNum,
         players: teamPlayers.map(p => ({
           name: p.name,
           position: p.position,
@@ -83,18 +114,34 @@ export async function GET(
 
     // Group reserve team players
     const reserveTeams: Team[] = [];
-    const reserveTeamNumbers = [...new Set(reserveTeamPlayers.map(p => p.team).filter(t => t !== null))];
 
-    for (const teamNum of reserveTeamNumbers.sort((a, b) => a! - b!)) {
+    // Get unique reserve team numbers
+    const reserveTeamNumbersSet = new Set<number>();
+    for (const p of reserveTeamPlayers) {
+      if (p.team !== null) {
+        reserveTeamNumbersSet.add(p.team);
+      }
+    }
+    const reserveTeamNumbers = Array.from(reserveTeamNumbersSet);
+    reserveTeamNumbers.sort((a, b) => a - b);
+
+    for (const teamNum of reserveTeamNumbers) {
       const teamPlayers = reserveTeamPlayers
         .filter(p => p.team === teamNum)
         .sort((a, b) => {
           const posOrder: { [key: string]: number } = { 'S': 0, '1': 1, '2': 2, '3': 3 };
-          return (posOrder[a.position] || 99) - (posOrder[b.position] || 99);
+
+          let posA = posOrder[a.position];
+          if (posA === undefined) posA = 99;
+
+          let posB = posOrder[b.position];
+          if (posB === undefined) posB = 99;
+
+          return posA - posB;
         });
 
       reserveTeams.push({
-        team: teamNum!,
+        team: teamNum,
         players: teamPlayers.map(p => ({
           name: p.name,
           position: p.position,
@@ -112,7 +159,18 @@ export async function GET(
     }));
 
     // Find captain of day
-    const captainPlayer = allPlayers.find(p => p.captain === 'Y');
+    let captainPlayer = null;
+    for (const p of allPlayers) {
+      if (p.captain === 'Y') {
+        captainPlayer = p;
+        break;
+      }
+    }
+
+    let captainName = '';
+    if (captainPlayer) {
+      captainName = captainPlayer.name;
+    }
 
     // Build match card data
     const matchCardData: MatchCardData = {
@@ -129,7 +187,7 @@ export async function GET(
       teams,
       reserves: reservesList,
       reserveTeams,
-      captain: captainPlayer?.name || '',
+      captain: captainName,
     };
 
     // Add tea rota for HOME games
@@ -151,12 +209,11 @@ export async function GET(
 
       if (clubDetails) {
         // Build address string
-        const addressParts = [
-          clubDetails.address1,
-          clubDetails.address2,
-          clubDetails.address3,
-          clubDetails.address4,
-        ].filter(Boolean);
+        const addressParts = [];
+        if (clubDetails.address1) addressParts.push(clubDetails.address1);
+        if (clubDetails.address2) addressParts.push(clubDetails.address2);
+        if (clubDetails.address3) addressParts.push(clubDetails.address3);
+        if (clubDetails.address4) addressParts.push(clubDetails.address4);
 
         // Generate Google Maps directions URL
         let directionsUrl = '';
@@ -195,7 +252,6 @@ export async function GET(
 
     return NextResponse.json(matchCardData);
   } catch (error) {
-    console.error('Error generating match card:', error);
     return NextResponse.json(
       { error: 'Failed to generate match card' },
       { status: 500 }
