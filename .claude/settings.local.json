@@ -9,7 +9,11 @@
       "Bash(unzip:*)",
       "Bash(cat:*)",
       "Bash(node:*)",
-      "Bash(where:*)"
+      "Bash(where:*)",
+      "Bash(npm run dev:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(taskkill:*)"
     ]
   }
 }

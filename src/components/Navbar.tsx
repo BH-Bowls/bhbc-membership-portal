@@ -3,7 +3,7 @@
 
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { signOut } from 'next-auth/react';
 import Link from 'next/link';
@@ -29,6 +29,8 @@ interface NavbarProps {
 export function Navbar({ userName, userRole }: NavbarProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const profileDropdownRef = useRef<HTMLDivElement>(null);
   const pathname = usePathname();
   const router = useRouter();
 
@@ -137,6 +139,33 @@ export function Navbar({ userName, userRole }: NavbarProps) {
     signOut({ callbackUrl: '/login' });
   };
 
+  // Get user initials from name (e.g., "Liam Dasey" -> "LD")
+  const getUserInitials = (name: string | undefined): string => {
+    if (!name) return 'U';
+    const parts = name.trim().split(' ');
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    }
+    return name.substring(0, 2).toUpperCase();
+  };
+
+  // Close profile dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (profileDropdownRef.current && !profileDropdownRef.current.contains(event.target as Node)) {
+        setProfileMenuOpen(false);
+      }
+    };
+
+    if (profileMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [profileMenuOpen]);
+
   return (
     <nav className="bg-white shadow-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -210,19 +239,46 @@ export function Navbar({ userName, userRole }: NavbarProps) {
               )
             ))}
 
-            {/* User Info & Sign Out */}
-            <div className="flex items-center space-x-4 ml-4 pl-4 border-l border-gray-200">
-              {userName && (
-                <span className="text-sm text-gray-700">
-                  {userName}
-                </span>
-              )}
+            {/* Profile Icon Dropdown */}
+            <div ref={profileDropdownRef} className="relative ml-4 pl-4 border-l border-gray-200">
               <button
-                onClick={handleSignOut}
-                className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 transition-colors"
+                onClick={() => setProfileMenuOpen(!profileMenuOpen)}
+                className="flex items-center justify-center h-10 w-10 rounded-full bg-indigo-600 text-white font-medium hover:bg-indigo-700 transition-colors"
+                title={userName || 'User Profile'}
               >
-                Sign out
+                {getUserInitials(userName)}
               </button>
+              {profileMenuOpen && (
+                <div className="absolute right-0 mt-2 w-48 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-50">
+                  <div className="py-1">
+                    {userName && (
+                      <div className="px-4 py-2 text-sm font-medium text-gray-900 border-b border-gray-200">
+                        {userName}
+                      </div>
+                    )}
+                    <Link
+                      href="/profile"
+                      onClick={() => setProfileMenuOpen(false)}
+                      className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                    >
+                      Profile
+                    </Link>
+                    <Link
+                      href="/change-password"
+                      onClick={() => setProfileMenuOpen(false)}
+                      className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                    >
+                      Change Password
+                    </Link>
+                    <button
+                      onClick={handleSignOut}
+                      className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                    >
+                      Logout
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -326,12 +382,26 @@ export function Navbar({ userName, userRole }: NavbarProps) {
                 )}
               </div>
             )}
-            <div className="px-2">
+            <div className="px-2 space-y-1">
+              <Link
+                href="/profile"
+                onClick={() => setMobileMenuOpen(false)}
+                className="block px-3 py-2 text-base font-medium text-gray-700 hover:bg-gray-100 rounded-md"
+              >
+                Profile
+              </Link>
+              <Link
+                href="/change-password"
+                onClick={() => setMobileMenuOpen(false)}
+                className="block px-3 py-2 text-base font-medium text-gray-700 hover:bg-gray-100 rounded-md"
+              >
+                Change Password
+              </Link>
               <button
                 onClick={handleSignOut}
                 className="w-full flex items-center px-3 py-2 text-base font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700"
               >
-                Sign out
+                Logout
               </button>
             </div>
           </div>

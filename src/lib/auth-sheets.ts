@@ -236,11 +236,9 @@ export async function authenticateUser(
       userAgent: '',
     });
 
-    // Build user display name with fallback
-    let displayName = user.fullKnownAs;
-    if (!displayName) {
-      displayName = `${user.firstName} ${user.lastName}`;
-    }
+    // Build user display name from first and last name (always full name for consistency)
+    // This ensures profile initials are calculated correctly from full name
+    let displayName = `${user.firstName} ${user.lastName}`.trim();
 
     // Build email with fallback to empty string
     let email = user.emailAddress;
@@ -253,7 +251,7 @@ export async function authenticateUser(
       success: true,
       user: {
         id: user.userName,              // Unique identifier
-        name: displayName,               // Display name for UI
+        name: displayName,               // Display name for UI (full name: "Liam Dasey")
         email: email,                    // Email address
         userName: user.userName,         // Username for authorization checks
         role: user.role,                 // Role for permission checks
