@@ -248,31 +248,67 @@ export async function PUT(request: NextRequest) {
     // Track that profile update succeeded
     profileUpdated = true;
 
-    // Prepare renewal updates with calculated fees (use new member type if provided)
-    const effectiveMemberType = data.memberType || profile.memberType;
+    // Prepare renewal updates
+    let renewalUpdates: Partial<Renewal>;
 
-    // Calculate outstanding amount correctly:
-    // - If admin is updating banking amount, use the new amount from renewalData
-    // - Otherwise, use existing banking amount to preserve partial payments
-    // Formula: outstanding = totalPayment - amountPaid
-    const bankingAmount = renewalData.banking !== undefined
-      ? renewalData.banking  // Admin is updating payment amount
-      : (existingRenewal.banking || 0);  // Use existing payment amount
+    // If user is NOT renewing, clear all renewal data except renewingMembership
+    if (!data.renewingMembership) {
+      renewalUpdates = {
+        renewingMembership: false,
+        playingFees: 0,
+        socialFees: 0,
+        compsFee: 0,
+        fee200Club: 0,
+        totalPayment: 0,
+        outstanding: 0,
+        banking: null,
+        dateReceived: null,
+        number200ClubEntries: 0,
+        pref200Club: null,
+        cleaningDatesToAvoid: null,
+        teaDatesToAvoid: null,
+        mensChampionship: false,
+        ladiesMaynard: false,
+        mensTwoWood: false,
+        ladiesTwoWood: false,
+        marriedPairs: false,
+        drawnPairs: false,
+        australianPairs: false,
+        drawnTriples: false,
+        handicap: false,
+        oldlands: false,
+        veterans: false,
+        drawnPairsSub: false,
+        australianPairsSub: false,
+        drawnTriplesSub: false,
+      };
+    } else {
+      // User IS renewing - calculate fees and prepare normal update
+      const effectiveMemberType = data.memberType || profile.memberType;
 
-    const calculatedOutstanding = fees.total - bankingAmount;
+      // Calculate outstanding amount correctly:
+      // - If admin is updating banking amount, use the new amount from renewalData
+      // - Otherwise, use existing banking amount to preserve partial payments
+      // Formula: outstanding = totalPayment - amountPaid
+      const bankingAmount = renewalData.banking !== undefined
+        ? renewalData.banking  // Admin is updating payment amount
+        : (existingRenewal.banking || 0);  // Use existing payment amount
 
-    // Ensure outstanding is never negative (can't overpay)
-    const validatedOutstanding = Math.max(0, calculatedOutstanding);
+      const calculatedOutstanding = fees.total - bankingAmount;
 
-    const renewalUpdates: Partial<Renewal> = {
-      ...renewalData,
-      playingFees: effectiveMemberType === 'Playing' ? fees.membershipFee : 0,
-      socialFees: effectiveMemberType === 'Social' ? fees.membershipFee : 0,
-      compsFee: fees.compsFee,
-      fee200Club: fees.club200Fee,
-      totalPayment: fees.total,
-      outstanding: validatedOutstanding,
-    };
+      // Ensure outstanding is never negative (can't overpay)
+      const validatedOutstanding = Math.max(0, calculatedOutstanding);
+
+      renewalUpdates = {
+        ...renewalData,
+        playingFees: effectiveMemberType === 'Playing' ? fees.membershipFee : 0,
+        socialFees: effectiveMemberType === 'Social' ? fees.membershipFee : 0,
+        compsFee: fees.compsFee,
+        fee200Club: fees.club200Fee,
+        totalPayment: fees.total,
+        outstanding: validatedOutstanding,
+      };
+    }
 
     // Update renewal data in Renewals sheet
     const result = await updateRenewal(targetUserName, renewalUpdates);

@@ -5,6 +5,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { changePassword } from '@/lib/auth-sheets';
+import { sendTemplateEmail, isEmailConfigured } from '@/lib/email/mailer';
+import { getUserByUsername } from '@/lib/sheets';
 
 // ============================================================================
 // Type Definitions
@@ -93,6 +95,27 @@ export async function POST(request: NextRequest) {
 
     // Check if password change was successful
     if (result.success) {
+      // Send password changed confirmation email
+      try {
+        // Get user details for email
+        const user = await getUserByUsername(userName);
+
+        if (user?.emailAddress && isEmailConfigured()) {
+          await sendTemplateEmail(
+            user.emailAddress,
+            'BHBC Password Changed Successfully',
+            'password-changed',
+            {
+              memberName: user.fullKnownAs || user.firstName || 'Member',
+            }
+          );
+        }
+      } catch (emailError) {
+        // Log email error but don't fail the request
+        console.error('[change-password] Failed to send confirmation email:', emailError);
+        // Password was changed successfully, just email failed
+      }
+
       return NextResponse.json({ success: true });
     } else {
       return NextResponse.json(
