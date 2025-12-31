@@ -387,7 +387,9 @@ if (cache) {
   }
 }
 ```
+## 10. Use theme.
 
+Use the Site theme.ts in src/components/
 
 ---
 

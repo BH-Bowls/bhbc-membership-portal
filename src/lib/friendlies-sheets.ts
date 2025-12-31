@@ -617,28 +617,105 @@ export async function updateGameCounts(
  * Called when a game is opened (status changes to 'O')
  * The new column header is the game's tabName (e.g., "West Hoathly 25-Sep")
  * Players will use this column to mark their entry status (E, P, R, etc.) as the game progresses
+ * Copies formatting, data validation, and column width from the previous column
  * @param tabName The game's tab name (becomes the column header)
  */
 export async function createGameColumn(tabName: string): Promise<void> {
   // Get authenticated Google Sheets client
   const sheets = getSheetsClient();
+  const spreadsheetId = getFriendliesSpreadsheetId();
 
   // Fetch the header row from Players sheet to find where to add the new column
   const response = await sheets.spreadsheets.values.get({
-    spreadsheetId: getFriendliesSpreadsheetId(),
+    spreadsheetId,
     range: 'Players!1:1',  // Row 1 contains all column headers
   });
 
   // Get the current headers array (or empty array if no headers exist)
   const headers = response.data.values?.[0] || [];
 
-  // Calculate the next available column letter
+  // Calculate the next available column index and letter
   // If there are 10 headers (A-J), next column is K (index 10)
-  const nextColumn = getColumnLetter(headers.length);
+  const nextColumnIndex = headers.length;
+  const nextColumn = getColumnLetter(nextColumnIndex);
+  const previousColumnIndex = nextColumnIndex - 1;
+
+  // Get Players sheet metadata to find its sheetId and column widths for batchUpdate
+  const spreadsheetMetadata = await sheets.spreadsheets.get({
+    spreadsheetId,
+    // Request grid data and column metadata to get column widths
+    fields: 'sheets(properties,data.columnMetadata)',
+  });
+
+  // Find the Players sheet in the metadata
+  const playersSheet = spreadsheetMetadata.data.sheets?.find(
+    sheet => sheet.properties?.title === 'Players'
+  );
+
+  if (!playersSheet || !playersSheet.properties?.sheetId) {
+    throw new Error('Players sheet not found');
+  }
+
+  const playersSheetId = playersSheet.properties.sheetId;
+
+  // Build batch update requests
+  const requests: any[] = [];
+
+  // If there's a previous column, copy its formatting, data validation, and width
+  if (previousColumnIndex >= 0) {
+    // Request 1: Copy formatting and data validation from previous column to new column
+    requests.push({
+      copyPaste: {
+        source: {
+          sheetId: playersSheetId,
+          startRowIndex: 0,
+          endRowIndex: 1000,  // Copy formatting for up to 1000 rows
+          startColumnIndex: previousColumnIndex,
+          endColumnIndex: previousColumnIndex + 1,
+        },
+        destination: {
+          sheetId: playersSheetId,
+          startRowIndex: 0,
+          endRowIndex: 1000,
+          startColumnIndex: nextColumnIndex,
+          endColumnIndex: nextColumnIndex + 1,
+        },
+        pasteType: 'PASTE_FORMAT',  // Copy formatting only (includes data validation)
+      },
+    });
+
+    // Request 2: Copy column width from previous column
+    const columnMetadata = playersSheet.data?.[0]?.columnMetadata;
+    const previousColumnWidth = columnMetadata?.[previousColumnIndex]?.pixelSize;
+    if (previousColumnWidth) {
+      requests.push({
+        updateDimensionProperties: {
+          range: {
+            sheetId: playersSheetId,
+            dimension: 'COLUMNS',
+            startIndex: nextColumnIndex,
+            endIndex: nextColumnIndex + 1,
+          },
+          properties: {
+            pixelSize: previousColumnWidth,
+          },
+          fields: 'pixelSize',
+        },
+      });
+    }
+  }
+
+  // Execute batch update if we have requests
+  if (requests.length > 0) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests },
+    });
+  }
 
   // Write the game's tabName as the new column header
   await sheets.spreadsheets.values.update({
-    spreadsheetId: getFriendliesSpreadsheetId(),
+    spreadsheetId,
     range: `Players!${nextColumn}1`,  // e.g., "Players!K1" for the 11th column
     valueInputOption: 'USER_ENTERED',
     requestBody: {

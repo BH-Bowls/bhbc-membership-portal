@@ -10,6 +10,7 @@ import { useSession } from 'next-auth/react';
 import { GameWithUserStatus } from '@/lib/types/friendlies';
 import { Navbar } from '@/components/Navbar';
 import Link from 'next/link';
+import { getButtonClasses } from '@/config/theme-helpers';
 
 // ============================================================================
 // Type Definitions
@@ -290,7 +291,7 @@ export default function FriendliesPage() {
           {session?.user.role && ['Captain', 'Admin'].includes(session.user.role) && (
             <Link
               href="/friendlies/manage"
-              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+              className={getButtonClasses('primary', 'md')}
             >
               Manage Games
             </Link>
@@ -304,7 +305,7 @@ export default function FriendliesPage() {
             onClick={() => setFilter('all')}
             className={`px-4 py-2 font-medium border-b-2 ${
               filter === 'all'
-                ? 'border-blue-500 text-blue-600'
+                ? 'border-blue-500 text-blue-500'
                 : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
           >
@@ -316,7 +317,7 @@ export default function FriendliesPage() {
             onClick={() => setFilter('O')}
             className={`px-4 py-2 font-medium border-b-2 ${
               filter === 'O'
-                ? 'border-blue-500 text-blue-600'
+                ? 'border-blue-500 text-blue-500'
                 : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
           >
@@ -328,7 +329,7 @@ export default function FriendliesPage() {
             onClick={() => setFilter('entered')}
             className={`px-4 py-2 font-medium border-b-2 ${
               filter === 'entered'
-                ? 'border-blue-500 text-blue-600'
+                ? 'border-blue-500 text-blue-500'
                 : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
           >
@@ -340,7 +341,7 @@ export default function FriendliesPage() {
             onClick={() => setFilter('selected')}
             className={`px-4 py-2 font-medium border-b-2 ${
               filter === 'selected'
-                ? 'border-blue-500 text-blue-600'
+                ? 'border-blue-500 text-blue-500'
                 : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
           >
@@ -419,7 +420,7 @@ export default function FriendliesPage() {
                   {/* For played games, show final score */}
                   {game.status === 'P' && game.bhbcScore !== undefined && game.opponentScore !== undefined && (
                     <p className="text-lg font-bold">
-                      Score: <span className="text-blue-600">{game.bhbcScore}</span> - <span className="text-gray-600">{game.opponentScore}</span>
+                      Score: <span className="text-blue-500">{game.bhbcScore}</span> - <span className="text-gray-600">{game.opponentScore}</span>
                     </p>
                   )}
                 </div>
@@ -444,11 +445,11 @@ export default function FriendliesPage() {
                         // Update selected games state
                         setSelectedGames(newSelected);
                       }}
-                      className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                      className="w-4 h-4 text-blue-500 rounded focus:ring-blue-500"
                     />
 
                     {/* Label shows current entry status */}
-                    <span className="text-sm font-medium text-blue-600">
+                    <span className="text-sm font-medium text-blue-500">
                       {game.userEntered ? 'Entered' : 'Enter this game'}
                     </span>
                   </label>
@@ -458,7 +459,7 @@ export default function FriendliesPage() {
                 {['S', 'P'].includes(game.status) && game.userEntered && (
                   <Link
                     href={`/friendlies/game/${game.tabName}`}
-                    className="block w-full text-center bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors"
+                    className={`block w-full text-center ${getButtonClasses('primary', 'md')}`}
                   >
                     View Details
                   </Link>

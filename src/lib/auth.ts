@@ -81,11 +81,14 @@ export const authOptions: NextAuthOptions = {
      * JWT callback: runs when JWT token is created or updated
      * Adds custom user fields to the token for later retrieval
      * Called on every request to validate and refresh the token
+     * Also handles impersonation state changes via trigger='update'
      * @param token The existing JWT token
      * @param user The user object (only present on initial sign-in)
+     * @param trigger Reason for callback (signin, update, etc.)
+     * @param session Session data passed during update() calls
      * @returns Updated token with custom fields
      */
-    async jwt({ token, user }) {
+    async jwt({ token, user, trigger, session }) {
       // Check if this is initial sign-in (user object is only present then)
       if (user) {
         // Add custom user fields to JWT token
@@ -98,6 +101,52 @@ export const authOptions: NextAuthOptions = {
         // Store login time for absolute expiration check
         // Used to enforce 90-day maximum session duration
         token.loginTime = Date.now();
+
+        // Initialize impersonation fields (not impersonating at login)
+        token.isImpersonating = false;
+        token.originalAdmin = undefined;
+        token.impersonationStartTime = undefined;
+        token.impersonationSessionId = undefined;
+      }
+
+      // Handle session updates triggered by impersonation API endpoints
+      if (trigger === 'update' && session) {
+        // Start impersonation
+        if (session.action === 'START_IMPERSONATION') {
+          // Store original admin info before switching
+          token.originalAdmin = {
+            userName: token.userName as string,
+            email: token.email as string,
+            name: token.name as string,
+            role: token.role as string,
+          };
+
+          // Switch to impersonated user
+          token.userName = session.targetUser.userName;
+          token.email = session.targetUser.email;
+          token.name = session.targetUser.name;
+          token.role = session.targetUser.role;
+          token.isImpersonating = true;
+          token.impersonationStartTime = Date.now();
+          token.impersonationSessionId = session.sessionId;
+        }
+
+        // Stop impersonation
+        if (session.action === 'STOP_IMPERSONATION') {
+          // Restore original admin info
+          if (token.originalAdmin) {
+            token.userName = token.originalAdmin.userName;
+            token.email = token.originalAdmin.email;
+            token.name = token.originalAdmin.name;
+            token.role = token.originalAdmin.role;
+          }
+
+          // Clear impersonation fields
+          token.isImpersonating = false;
+          token.originalAdmin = undefined;
+          token.impersonationStartTime = undefined;
+          token.impersonationSessionId = undefined;
+        }
       }
 
       return token;
@@ -136,6 +185,12 @@ export const authOptions: NextAuthOptions = {
         session.user.role = token.role as string;
         session.user.name = token.name as string;
         session.user.email = token.email as string;
+
+        // Add impersonation fields to session
+        session.user.isImpersonating = token.isImpersonating || false;
+        if (token.originalAdmin) {
+          session.user.originalAdmin = token.originalAdmin;
+        }
       }
 
       return session;

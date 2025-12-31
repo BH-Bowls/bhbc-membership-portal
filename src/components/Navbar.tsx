@@ -5,8 +5,11 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { signOut } from 'next-auth/react';
+import { signOut, useSession } from 'next-auth/react';
 import Link from 'next/link';
+import { useImpersonation } from '@/hooks/useImpersonation';
+import { ImpersonationModal } from './ImpersonationModal';
+import { getNavItemClasses, getProfileIconClasses, getButtonClasses } from '@/config/theme-helpers';
 
 interface SubMenuItem {
   name: string;
@@ -30,15 +33,30 @@ export function Navbar({ userName, userRole }: NavbarProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [impersonationModalOpen, setImpersonationModalOpen] = useState(false);
   const profileDropdownRef = useRef<HTMLDivElement>(null);
   const pathname = usePathname();
   const router = useRouter();
+
+  // Get session for impersonation state
+  const { data: session } = useSession();
+  const {
+    isImpersonating,
+    originalAdmin,
+    startImpersonation,
+    stopImpersonation
+  } = useImpersonation();
 
   const isAdmin = userRole === 'Admin' || userRole === 'superadmin';
   const isTreasurer = userRole === 'T';
   const isCaptain = userRole === 'Captain';
   const canAccessBanking = isAdmin || isTreasurer;
   const canAccessCaptainTools = isAdmin || isCaptain;
+
+  // Show impersonation controls for everyone (logged in users)
+  // The API will return empty list if they can't impersonate anyone
+  // This allows both admins AND members with buddies to use impersonation
+  const canShowImpersonation = !!session?.user?.userName;
 
   // Navigation items - easy to add more here
   const navigationItems: NavItem[] = [
@@ -189,11 +207,7 @@ export function Navbar({ userName, userRole }: NavbarProps) {
                 <div key={item.name} className="relative">
                   <button
                     onClick={() => toggleDropdown(item.name)}
-                    className={`inline-flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors ${
-                      isDropdownActive(item.subItems)
-                        ? 'bg-indigo-100 text-indigo-700'
-                        : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
-                    }`}
+                    className={getNavItemClasses(isDropdownActive(item.subItems))}
                   >
                     {item.icon && <span className="mr-2">{item.icon}</span>}
                     {item.name}
@@ -211,7 +225,7 @@ export function Navbar({ userName, userRole }: NavbarProps) {
                             onClick={() => setOpenDropdown(null)}
                             className={`block px-4 py-2 text-sm ${
                               isActive(subItem.href)
-                                ? 'bg-indigo-100 text-indigo-700'
+                                ? 'bg-blue-100 text-blue-700'
                                 : 'text-gray-700 hover:bg-gray-100'
                             }`}
                           >
@@ -227,11 +241,7 @@ export function Navbar({ userName, userRole }: NavbarProps) {
                 <Link
                   key={item.name}
                   href={item.href!}
-                  className={`inline-flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors ${
-                    isActive(item.href!)
-                      ? 'bg-indigo-100 text-indigo-700'
-                      : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
-                  }`}
+                  className={getNavItemClasses(isActive(item.href!))}
                 >
                   {item.icon && <span className="mr-2">{item.icon}</span>}
                   {item.name}
@@ -243,19 +253,61 @@ export function Navbar({ userName, userRole }: NavbarProps) {
             <div ref={profileDropdownRef} className="relative ml-4 pl-4 border-l border-gray-200">
               <button
                 onClick={() => setProfileMenuOpen(!profileMenuOpen)}
-                className="flex items-center justify-center h-10 w-10 rounded-full bg-indigo-600 text-white font-medium hover:bg-indigo-700 transition-colors"
-                title={userName || 'User Profile'}
+                className={getProfileIconClasses(isImpersonating || false)}
+                title={isImpersonating ? `Impersonating ${userName}` : userName || 'User Profile'}
               >
                 {getUserInitials(userName)}
               </button>
               {profileMenuOpen && (
-                <div className="absolute right-0 mt-2 w-48 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-50">
+                <div className="absolute right-0 mt-2 w-56 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-50">
                   <div className="py-1">
+                    {/* User name header */}
                     {userName && (
                       <div className="px-4 py-2 text-sm font-medium text-gray-900 border-b border-gray-200">
                         {userName}
+                        {isImpersonating && (
+                          <div className="text-xs text-orange-600 font-normal mt-1">
+                            Switched User
+                          </div>
+                        )}
                       </div>
                     )}
+
+                    {/* Show original admin when impersonating */}
+                    {isImpersonating && originalAdmin && (
+                      <div className="px-4 py-2 text-xs text-gray-500 border-b border-gray-200">
+                        Logged in as: {originalAdmin.name}
+                      </div>
+                    )}
+
+                    {/* Impersonation controls */}
+                    {canShowImpersonation && (
+                      <>
+                        {isImpersonating ? (
+                          <button
+                            onClick={() => {
+                              stopImpersonation();
+                              setProfileMenuOpen(false);
+                            }}
+                            className="block w-full text-left px-4 py-2 text-sm text-orange-700 hover:bg-orange-50 border-b border-gray-200"
+                          >
+                            Exit Switch
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              setImpersonationModalOpen(true);
+                              setProfileMenuOpen(false);
+                            }}
+                            className="block w-full text-left px-4 py-2 text-sm text-blue-500 hover:bg-blue-50 border-b border-gray-200"
+                          >
+                            Switch User
+                          </button>
+                        )}
+                      </>
+                    )}
+
+                    {/* Regular menu items */}
                     <Link
                       href="/profile"
                       onClick={() => setProfileMenuOpen(false)}
@@ -263,19 +315,25 @@ export function Navbar({ userName, userRole }: NavbarProps) {
                     >
                       Profile
                     </Link>
-                    <Link
-                      href="/change-password"
-                      onClick={() => setProfileMenuOpen(false)}
-                      className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                    >
-                      Change Password
-                    </Link>
-                    <button
-                      onClick={handleSignOut}
-                      className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                    >
-                      Logout
-                    </button>
+
+                    {/* Hide these when impersonating */}
+                    {!isImpersonating && (
+                      <>
+                        <Link
+                          href="/change-password"
+                          onClick={() => setProfileMenuOpen(false)}
+                          className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                        >
+                          Change Password
+                        </Link>
+                        <button
+                          onClick={handleSignOut}
+                          className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                        >
+                          Logout
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               )}
@@ -286,7 +344,7 @@ export function Navbar({ userName, userRole }: NavbarProps) {
           <div className="flex items-center md:hidden">
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="inline-flex items-center justify-center p-2 rounded-md text-gray-700 hover:text-gray-900 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500"
+              className="inline-flex items-center justify-center p-2 rounded-md text-gray-700 hover:text-gray-900 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
               aria-expanded="false"
             >
               <span className="sr-only">Open main menu</span>
@@ -314,10 +372,8 @@ export function Navbar({ userName, userRole }: NavbarProps) {
                 <div key={item.name}>
                   <button
                     onClick={() => toggleDropdown(item.name)}
-                    className={`flex items-center justify-between w-full px-3 py-2 text-base font-medium rounded-md ${
-                      isDropdownActive(item.subItems)
-                        ? 'bg-indigo-100 text-indigo-700'
-                        : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
+                    className={`flex items-center justify-between w-full text-base font-medium ${
+                      getNavItemClasses(isDropdownActive(item.subItems))
                     }`}
                   >
                     <span className="flex items-center">
@@ -345,7 +401,7 @@ export function Navbar({ userName, userRole }: NavbarProps) {
                           }}
                           className={`block px-3 py-2 text-sm rounded-md ${
                             isActive(subItem.href)
-                              ? 'bg-indigo-100 text-indigo-700'
+                              ? 'bg-blue-100 text-blue-700'
                               : 'text-gray-600 hover:bg-gray-100'
                           }`}
                         >
@@ -361,10 +417,8 @@ export function Navbar({ userName, userRole }: NavbarProps) {
                   key={item.name}
                   href={item.href!}
                   onClick={() => setMobileMenuOpen(false)}
-                  className={`flex items-center px-3 py-2 text-base font-medium rounded-md ${
-                    isActive(item.href!)
-                      ? 'bg-indigo-100 text-indigo-700'
-                      : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
+                  className={`flex items-center text-base font-medium ${
+                    getNavItemClasses(isActive(item.href!))
                   }`}
                 >
                   {item.icon && <span className="mr-3">{item.icon}</span>}
@@ -399,7 +453,7 @@ export function Navbar({ userName, userRole }: NavbarProps) {
               </Link>
               <button
                 onClick={handleSignOut}
-                className="w-full flex items-center px-3 py-2 text-base font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700"
+                className={`${getButtonClasses('primary', 'md', true)} text-base`}
               >
                 Logout
               </button>
@@ -407,6 +461,13 @@ export function Navbar({ userName, userRole }: NavbarProps) {
           </div>
         </div>
       )}
+
+      {/* Impersonation Modal */}
+      <ImpersonationModal
+        isOpen={impersonationModalOpen}
+        onClose={() => setImpersonationModalOpen(false)}
+        onImpersonate={startImpersonation}
+      />
     </nav>
   );
 }

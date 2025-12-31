@@ -7,7 +7,8 @@ import { authOptions } from '@/lib/auth';
 import { getUserByUsername, updateUserProfile } from '@/lib/profile-sheets';
 import { canManageUser, canEditProfileField } from '@/lib/buddies-sheets';
 
-// GET /api/profile?userName=target
+// GET /api/profile
+// Now works with JWT impersonation - session.user.userName is automatically correct
 export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
@@ -19,20 +20,8 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Get target user from query params (defaults to self)
-    const { searchParams } = new URL(request.url);
-    const targetUserName = searchParams.get('userName') || session.user.userName;
-
-    // Check authorization (buddy system)
-    const canManage = await canManageUser(
-      session.user.userName,
-      session.user.role,
-      targetUserName
-    );
-
-    if (!canManage) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
+    // Use session.user.userName directly (works with impersonation)
+    const targetUserName = session.user.userName;
 
     const profile = await getUserByUsername(targetUserName);
 
@@ -45,10 +34,6 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       profile,
-      managedUser: {
-        userName: targetUserName,
-        isSelf: targetUserName === session.user.userName,
-      },
     });
   } catch (error) {
     console.error('[GET /api/profile] Error fetching profile:', error);
@@ -78,19 +63,10 @@ export async function PUT(request: NextRequest) {
     }
 
     const body = await request.json();
-    const targetUserName = body.userName || session.user.userName;
     const updates = body.updates || body;
 
-    // Check authorization (buddy system)
-    const canManage = await canManageUser(
-      session.user.userName,
-      session.user.role,
-      targetUserName
-    );
-
-    if (!canManage) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
+    // Use session.user.userName directly (works with impersonation)
+    const targetUserName = session.user.userName;
 
     // Filter updates based on field-level permissions
     const allowedUpdates: Partial<typeof updates> = {};

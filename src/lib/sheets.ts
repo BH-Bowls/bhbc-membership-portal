@@ -661,6 +661,62 @@ export async function getRecentFailedAttempts(
   }
 }
 
+/**
+ * Log an impersonation event to the ImpersonationLog sheet
+ * Records all start/stop impersonation actions for security auditing
+ */
+export async function logImpersonationEvent(event: {
+  sessionId: string;
+  action: 'START' | 'STOP';
+  adminUserName: string;
+  adminName: string;
+  adminRole: string;
+  targetUserName?: string | null;
+  targetName?: string | null;
+  targetRole?: string | null;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+}): Promise<void> {
+  try {
+    const sheets = getGoogleSheetsClient();
+
+    // Get next ID by counting rows
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: getSpreadsheetId(),
+      range: 'ImpersonationLog!A:A',
+    });
+
+    const nextId = (response.data.values?.length || 1);
+    const now = new Date().toISOString();
+
+    // Append new row
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: getSpreadsheetId(),
+      range: 'ImpersonationLog!A:L',
+      valueInputOption: 'USER_ENTERED',
+      requestBody: {
+        values: [[
+          nextId,
+          event.sessionId,
+          event.action,
+          event.adminUserName,
+          event.adminName,
+          event.adminRole,
+          event.targetUserName || '',
+          event.targetName || '',
+          event.targetRole || '',
+          event.ipAddress || '',
+          event.userAgent || '',
+          now
+        ]]
+      }
+    });
+  } catch (error) {
+    console.error('Error logging impersonation event:', error);
+    // Don't throw - logging failure shouldn't break impersonation
+  }
+}
+
 // ============================================================================
 // PASSWORD RESET FUNCTIONS
 // ============================================================================

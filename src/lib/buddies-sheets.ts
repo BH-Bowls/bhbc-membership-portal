@@ -188,6 +188,106 @@ export function canEditPaymentFields(
   return false;
 }
 
+/**
+ * Check if current user can impersonate target user
+ *
+ * Impersonation Rules (system-wide via JWT):
+ * 1. Admins can impersonate anyone
+ * 2. Members can impersonate users who list them as their buddy
+ * 3. Cannot impersonate yourself (redundant - you're already yourself)
+ *
+ * @param currentUserName The username of the person attempting to impersonate
+ * @param currentUserRole The role of the current user (Admin, Member, etc.)
+ * @param targetUserName The username to impersonate
+ * @returns true if impersonation is allowed, false if forbidden
+ */
+export async function canImpersonate(
+  currentUserName: string,
+  currentUserRole: string,
+  targetUserName: string
+): Promise<boolean> {
+  // Cannot impersonate yourself (use normal login instead)
+  if (currentUserName === targetUserName) {
+    return false;
+  }
+
+  // Admins and Super Admins can impersonate anyone
+  if (currentUserRole === 'Admin' || currentUserRole === 'Super Admin' || currentUserRole === 'superadmin') {
+    return true;
+  }
+
+  // Check buddy relationship - target must list current user as their buddy
+  const targetUser = await getUserByUsername(targetUserName);
+
+  if (!targetUser) {
+    return false;
+  }
+
+  if (targetUser.buddyUserName === currentUserName) {
+    return true;
+  }
+
+  // No permission rules matched - impersonation denied
+  return false;
+}
+
+/**
+ * Get list of users that current user can impersonate
+ * Used for "Switch User" dropdown in navbar
+ *
+ * Returns:
+ * - Admins: All users except themselves
+ * - Members: Only users who list them as buddy
+ *
+ * @param currentUserName The username of the current user
+ * @param currentUserRole The role of the current user
+ * @returns Array of users that can be impersonated, sorted by name
+ */
+export async function getImpersonatableUsers(
+  currentUserName: string,
+  currentUserRole: string
+): Promise<User[]> {
+  // Get all users from the Members Google Sheet
+  const allUsers = await getAllUsers();
+
+  console.log('👥 getImpersonatableUsers - User:', currentUserName, 'Role:', currentUserRole);
+
+  // If user is admin or super admin, they can impersonate everyone (except themselves)
+  if (currentUserRole === 'Admin' || currentUserRole === 'Super Admin' || currentUserRole === 'superadmin') {
+    console.log('✅ User is admin/super admin, returning all users except self');
+
+    const impersonatableUsers = allUsers.filter(u => u.userName !== currentUserName);
+
+    // Sort alphabetically by full name
+    impersonatableUsers.sort((a, b) => {
+      const nameA = a.fullKnownAs || a.firstName;
+      const nameB = b.fullKnownAs || b.firstName;
+      return nameA.localeCompare(nameB);
+    });
+
+    return impersonatableUsers;
+  }
+
+  console.log('ℹ️  User is not admin, filtering to buddies only');
+
+  // For non-admins, return only users who list them as buddy (exclude self)
+  const buddies = allUsers.filter(u =>
+    u.buddyUserName === currentUserName &&
+    u.userName !== currentUserName
+  );
+
+  // Sort alphabetically by full name
+  buddies.sort((a, b) => {
+    const nameA = a.fullKnownAs || a.firstName;
+    const nameB = b.fullKnownAs || b.firstName;
+    return nameA.localeCompare(nameB);
+  });
+
+  console.log('✅ Found', buddies.length, 'impersonatable users');
+
+  return buddies;
+}
+
 // ============================================================================
 // User List Functions
 // ============================================================================

@@ -5,6 +5,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { getButtonClasses, getLinkClasses, getInputClasses } from '@/config/theme-helpers';
 
 export default function ForgotPasswordPage() {
   const [identifier, setIdentifier] = useState('');
@@ -86,7 +87,7 @@ export default function ForgotPasswordPage() {
           <div className="text-center">
             <Link
               href="/login"
-              className="font-medium text-indigo-600 hover:text-indigo-500"
+              className={getLinkClasses('primary')}
             >
               Back to login
             </Link>
@@ -122,7 +123,7 @@ export default function ForgotPasswordPage() {
               required
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
-              className="appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 focus:z-10 sm:text-sm"
+              className={getInputClasses()}
               placeholder="Username or Email"
               disabled={isLoading}
             />
@@ -155,7 +156,7 @@ export default function ForgotPasswordPage() {
             <button
               type="submit"
               disabled={isLoading}
-              className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              className={`${getButtonClasses('primary', 'md', true)}`}
             >
               {isLoading ? 'Sending...' : 'Send Reset Link'}
             </button>
@@ -164,7 +165,7 @@ export default function ForgotPasswordPage() {
           <div className="text-center">
             <Link
               href="/login"
-              className="font-medium text-indigo-600 hover:text-indigo-500"
+              className={getLinkClasses('primary')}
             >
               Back to login
             </Link>

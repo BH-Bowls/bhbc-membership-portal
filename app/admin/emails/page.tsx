@@ -7,6 +7,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { Navbar } from '@/components/Navbar';
+import { getButtonClasses } from '@/config/theme-helpers';
 
 // ============================================================================
 // Type Definitions
@@ -424,7 +425,7 @@ export default function SendMemberEmailsPage() {
                   <div
                     className={`flex items-center justify-center w-10 h-10 rounded-full border-2 ${
                       currentStep >= step
-                        ? 'bg-blue-600 border-blue-600 text-white'
+                        ? 'bg-blue-500 border-blue-500 text-white'
                         : 'bg-white border-gray-300 text-gray-500'
                     }`}
                   >
@@ -433,7 +434,7 @@ export default function SendMemberEmailsPage() {
                   <div className="flex-1 mx-2">
                     <div
                       className={`text-sm font-medium ${
-                        currentStep >= step ? 'text-blue-600' : 'text-gray-500'
+                        currentStep >= step ? 'text-blue-500' : 'text-gray-500'
                       }`}
                     >
                       {step === 1 && 'Template'}
@@ -443,7 +444,7 @@ export default function SendMemberEmailsPage() {
                   </div>
                   {step < 3 && (
                     <div
-                      className={`flex-1 h-1 ${currentStep > step ? 'bg-blue-600' : 'bg-gray-300'}`}
+                      className={`flex-1 h-1 ${currentStep > step ? 'bg-blue-500' : 'bg-gray-300'}`}
                     ></div>
                   )}
                 </div>
@@ -492,7 +493,7 @@ export default function SendMemberEmailsPage() {
               <button
                 onClick={handleNext}
                 disabled={!selectedTemplate}
-                className="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                className={getButtonClasses('primary', 'md')}
               >
                 Next
               </button>
@@ -538,7 +539,7 @@ export default function SendMemberEmailsPage() {
               </button>
               <button
                 onClick={handleNext}
-                className="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                className={getButtonClasses('primary', 'md')}
               >
                 Next
               </button>
@@ -583,7 +584,7 @@ export default function SendMemberEmailsPage() {
                 {loadingRecipients ? (
                   <p className="text-gray-600">Loading recipients...</p>
                 ) : (
-                  <p className="text-2xl font-bold text-blue-600">{recipientCount} members</p>
+                  <p className="text-2xl font-bold text-blue-500">{recipientCount} members</p>
                 )}
                 <p className="text-sm text-gray-600 mt-1">Members with Include = &quot;Y&quot;</p>
               </div>
@@ -599,7 +600,7 @@ export default function SendMemberEmailsPage() {
               <button
                 onClick={handleSend}
                 disabled={recipientCount === 0}
-                className="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                className={getButtonClasses('primary', 'md')}
               >
                 Send Emails
               </button>
@@ -621,7 +622,7 @@ export default function SendMemberEmailsPage() {
               </div>
               <div className="w-full bg-gray-200 rounded-full h-4">
                 <div
-                  className="bg-blue-600 h-4 rounded-full transition-all"
+                  className="bg-blue-500 h-4 rounded-full transition-all"
                   style={{
                     width: `${totalEmails > 0 ? (currentProgress / totalEmails) * 100 : 0}%`,
                   }}
@@ -669,7 +670,7 @@ export default function SendMemberEmailsPage() {
 
             <div className="grid grid-cols-3 gap-4 mb-6">
               <div className="text-center">
-                <div className="text-3xl font-bold text-blue-600">
+                <div className="text-3xl font-bold text-blue-500">
                   {isCancelled ? (successList.length + errorList.length) : finalStats.sent}
                 </div>
                 <div className="text-sm text-gray-600">Total Processed</div>
@@ -717,7 +718,7 @@ export default function SendMemberEmailsPage() {
 
             <button
               onClick={handleStartOver}
-              className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700"
+              className={getButtonClasses('primary', 'md')}
             >
               Send Another Batch
             </button>

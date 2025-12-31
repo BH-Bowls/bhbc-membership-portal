@@ -5,6 +5,7 @@ import nodemailer from 'nodemailer';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import Handlebars from 'handlebars';
+import { processEmailTemplate } from './template-processor';
 
 /**
  * Get configured email transporter for sending emails
@@ -64,7 +65,10 @@ function loadTemplate(templateName: string, variables: Record<string, string | n
     const template = Handlebars.compile(templateSource);
 
     // Render the template with variables
-    return template(variables);
+    const rendered = template(variables);
+
+    // Process theme placeholders ({{BRAND_NAME}}, {{HEADER_COLOR}}, etc.)
+    return processEmailTemplate(rendered);
   } catch (error) {
     console.error(`Error loading template ${templateName}:`, error);
     throw new Error(`Failed to load email template: ${templateName}`);
@@ -264,8 +268,11 @@ export async function sendEmailWithAttachments(
     // Get authenticated email transporter
     const transporter = getEmailTransporter();
 
+    // Process theme placeholders in HTML content
+    const processedHtml = processEmailTemplate(htmlContent);
+
     // Convert HTML to plain text for non-HTML email clients
-    const textContent = htmlToPlainText(htmlContent);
+    const textContent = htmlToPlainText(processedHtml);
 
     // Send email with both HTML and plain text versions plus attachments
     await transporter.sendMail({
@@ -273,7 +280,7 @@ export async function sendEmailWithAttachments(
       to,
       subject,
       text: textContent,
-      html: htmlContent,
+      html: processedHtml,
       attachments, // Array of {filename, content} objects
     });
 

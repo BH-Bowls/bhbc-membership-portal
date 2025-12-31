@@ -19,6 +19,15 @@ declare module 'next-auth' {
       email?: string | null;
       userName: string;
       role: string;
+
+      // Impersonation fields
+      isImpersonating?: boolean;
+      originalAdmin?: {
+        userName: string;
+        email: string;
+        name: string;
+        role: string;
+      };
     };
   }
 }
@@ -29,5 +38,17 @@ declare module 'next-auth/jwt' {
     role: string;
     name: string;
     email: string;
+    loginTime: number;
+
+    // Impersonation fields
+    isImpersonating?: boolean;
+    originalAdmin?: {
+      userName: string;
+      email: string;
+      name: string;
+      role: string;
+    };
+    impersonationStartTime?: number;
+    impersonationSessionId?: string;
   }
 }

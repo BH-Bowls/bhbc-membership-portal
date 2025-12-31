@@ -408,7 +408,7 @@ export default function MatchCardPage() {
             {/* Shows contact details for opponent club officials */}
             {/* ============================================================ */}
             {game.homeAway === 'A' && clubContacts && clubContacts.length > 0 && (
-              <div className="mb-6 border-2 border-indigo-400 bg-indigo-50 rounded-lg p-4">
+              <div className="mb-6 border-2 border-blue-700 bg-blue-50 rounded-lg p-4">
                 <h3 className="text-xl font-bold mb-3 text-gray-800">CONTACTS</h3>
 
                 <div className="space-y-3">

@@ -96,7 +96,7 @@ export default function ChangePasswordPage() {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto"></div>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
           <p className="mt-4 text-gray-600">Loading...</p>
         </div>
       </div>
@@ -138,7 +138,7 @@ export default function ChangePasswordPage() {
                       id="currentPassword"
                       value={currentPassword}
                       onChange={(e) => setCurrentPassword(e.target.value)}
-                      className="block w-full px-3 py-2 pr-10 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                      className="block w-full px-3 py-2 pr-10 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                       required
                       disabled={isSubmitting || success}
                     />
@@ -173,7 +173,7 @@ export default function ChangePasswordPage() {
                       id="newPassword"
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
-                      className="block w-full px-3 py-2 pr-10 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                      className="block w-full px-3 py-2 pr-10 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                       required
                       minLength={8}
                       disabled={isSubmitting || success}
@@ -210,7 +210,7 @@ export default function ChangePasswordPage() {
                       id="confirmPassword"
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
-                      className="block w-full px-3 py-2 pr-10 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                      className="block w-full px-3 py-2 pr-10 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                       required
                       minLength={8}
                       disabled={isSubmitting || success}
@@ -274,7 +274,7 @@ export default function ChangePasswordPage() {
                   <button
                     type="submit"
                     disabled={isSubmitting || success}
-                    className="flex-1 bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+                    className="flex-1 bg-blue-500 text-white py-2 px-4 rounded-md hover:bg-blue-600 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
                   >
                     {isSubmitting ? 'Changing Password...' : 'Change Password'}
                   </button>

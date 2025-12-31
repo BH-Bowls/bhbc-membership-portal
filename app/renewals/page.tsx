@@ -6,7 +6,6 @@
 import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { UserSelector } from '@/components/UserSelector';
 import { Navbar } from '@/components/Navbar';
 
 interface UserProfile {
@@ -17,14 +16,6 @@ interface UserProfile {
   friendliesLastYear: number | string; // Can be a number or "X" for manual override
   emailAddress: string;
   title: string | null;
-}
-
-interface ManageableUser {
-  userName: string;
-  fullKnownAs: string;
-  emailAddress: string;
-  memberType: string;
-  isSelf: boolean;
 }
 
 interface Renewal {
@@ -71,11 +62,6 @@ export default function RenewalsPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
 
-  // Buddy system state
-  const [manageableUsers, setManageableUsers] = useState<ManageableUser[]>([]);
-  const [selectedUserName, setSelectedUserName] = useState<string>('');
-  const [isAdmin, setIsAdmin] = useState(false);
-
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [renewal, setRenewal] = useState<Renewal | null>(null);
   const [fees, setFees] = useState<FeeBreakdown>({
@@ -102,19 +88,12 @@ export default function RenewalsPage() {
     friendliesLastYear: 0,
   });
 
-  // Load manageable users on mount (buddy system)
+  // Load renewal data on mount (uses session.user.userName automatically)
   useEffect(() => {
-    if (status === 'authenticated') {
-      loadManageableUsers();
+    if (status === 'authenticated' && session?.user?.userName) {
+      loadRenewalData();
     }
-  }, [status]);
-
-  // Load renewal data when selected user changes
-  useEffect(() => {
-    if (selectedUserName) {
-      loadRenewalData(selectedUserName);
-    }
-  }, [selectedUserName]);
+  }, [status, session?.user?.userName]);
 
   // Recalculate fees whenever renewal data or demographics change
   useEffect(() => {
@@ -128,31 +107,12 @@ export default function RenewalsPage() {
     }
   }, [profile, renewal, ageDemographic, memberType, fullTimeEducation]);
 
-  const loadManageableUsers = async () => {
-    try {
-      const response = await fetch('/api/buddies');
-      if (!response.ok) throw new Error('Failed to load manageable users');
-
-      const data = await response.json();
-      setManageableUsers(data.users);
-      setIsAdmin(data.isAdmin);
-
-      // Auto-select self by default
-      const selfUser = data.users.find((u: ManageableUser) => u.isSelf);
-      if (selfUser) {
-        setSelectedUserName(selfUser.userName);
-      }
-    } catch (err) {
-      console.error('Error loading manageable users:', err);
-      setError('Failed to load user list');
-    }
-  };
-
-  const loadRenewalData = async (userName: string) => {
+  const loadRenewalData = async () => {
     try {
       setIsLoading(true);
       setError('');
-      const response = await fetch(`/api/renewals?userName=${userName}`);
+      // No userName parameter needed - API uses session.user.userName
+      const response = await fetch('/api/renewals');
       if (!response.ok) throw new Error('Failed to load renewal data');
 
       const data = await response.json();
@@ -194,7 +154,6 @@ export default function RenewalsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...renewal,
-          userName: selectedUserName, // Include target user for buddy system
           ageDemographic, // Include age demographic for Members sheet update
           memberType, // Include member type for Members sheet update
         }),
@@ -324,7 +283,7 @@ export default function RenewalsPage() {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto"></div>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
           <p className="mt-4 text-gray-600">Loading renewal data...</p>
         </div>
       </div>
@@ -333,31 +292,18 @@ export default function RenewalsPage() {
 
   // Check if payment has been received (form should be read-only)
   // Admins can edit even after payment is received
+  const isAdmin = session?.user?.role === 'Admin' || session?.user?.role === 'Super Admin';
   const paymentReceived = (renewal.banking !== null && renewal.banking !== undefined) && !isAdmin;
 
   // Success message after submission
   if (isSubmitted && renewal.renewingMembership) {
-    const selectedUser = manageableUsers.find((u) => u.userName === selectedUserName);
-    const isManagingOther = selectedUser && !selectedUser.isSelf;
+    const isImpersonating = session?.user?.isImpersonating || false;
 
     return (
       <div className="min-h-screen bg-gray-50">
         <Navbar userName={session?.user?.name ?? undefined} userRole={session?.user?.role ?? undefined} />
 
         <main className="max-w-3xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
-          {/* User Selector (Buddy System) - Allow switching to manage another user */}
-          {manageableUsers.length > 1 && (
-            <UserSelector
-              users={manageableUsers}
-              selectedUserName={selectedUserName}
-              onChange={(userName) => {
-                setSelectedUserName(userName);
-                setIsSubmitted(false); // Reset to form view
-              }}
-              featureName="renewal"
-              isAdmin={isAdmin}
-            />
-          )}
           <div className="bg-white shadow-lg rounded-lg overflow-hidden">
             <div className="bg-green-50 px-6 py-4 border-b border-green-100">
               <div className="flex items-center">
@@ -365,7 +311,7 @@ export default function RenewalsPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
                 <h2 className="text-lg font-semibold text-green-900">
-                  {isManagingOther
+                  {isImpersonating
                     ? `Thank you! ${profile?.fullKnownAs}'s renewal has been submitted.`
                     : 'Thank you! Your renewal has been submitted.'}
                 </h2>
@@ -390,7 +336,7 @@ export default function RenewalsPage() {
                   </div>
                   <div className="border-t pt-2 mt-2 flex justify-between text-lg">
                     <span className="font-semibold text-gray-900">Total Payable:</span>
-                    <span className="font-bold text-indigo-600">{formatCurrency(fees.total)}</span>
+                    <span className="font-bold text-blue-500">{formatCurrency(fees.total)}</span>
                   </div>
                 </div>
               </div>
@@ -412,7 +358,7 @@ export default function RenewalsPage() {
               <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
                 <p className="text-sm text-gray-700">
                   ✉️ A confirmation email has been sent to{' '}
-                  {isManagingOther && (
+                  {isImpersonating && (
                     <span className="font-medium">{profile?.fullKnownAs} at </span>
                   )}
                   <span className="font-medium">{profile?.emailAddress}</span>
@@ -422,7 +368,7 @@ export default function RenewalsPage() {
               <div className="mt-6 flex justify-center">
                 <button
                   onClick={() => router.push('/')}
-                  className="px-6 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
+                  className="px-6 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600"
                 >
                   Return to Home
                 </button>
@@ -440,20 +386,6 @@ export default function RenewalsPage() {
 
       {/* Main Content */}
       <main className="max-w-4xl mx-auto py-6 sm:px-6 lg:px-8">
-        {/* User Selector (Buddy System) */}
-        {manageableUsers.length > 0 && (
-          <UserSelector
-            users={manageableUsers}
-            selectedUserName={selectedUserName}
-            onChange={(userName) => {
-              setSelectedUserName(userName);
-              setIsSubmitted(false); // Reset submission state when changing users
-            }}
-            featureName="renewal"
-            isAdmin={isAdmin}
-          />
-        )}
-
         {/* Error Message */}
         {error && (
           <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
@@ -479,7 +411,7 @@ export default function RenewalsPage() {
                   checked={renewal.renewingMembership}
                   onChange={(e) => handleChange('renewingMembership', e.target.checked)}
                   disabled={paymentReceived}
-                  className="h-5 w-5 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="h-5 w-5 text-blue-500 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                 />
                 <label className="ml-3 text-lg font-medium text-gray-900">
                   I will be renewing my membership for the 2026 season
@@ -500,7 +432,7 @@ export default function RenewalsPage() {
                         value={ageDemographic}
                         onChange={(e) => setAgeDemographic(e.target.value)}
                         disabled={paymentReceived}
-                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
+                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                       >
                         <option value="">-- Select Age Demographic --</option>
                         <option value="U18">Under 18</option>
@@ -518,7 +450,7 @@ export default function RenewalsPage() {
                         value={memberType}
                         onChange={(e) => setMemberType(e.target.value)}
                         disabled={paymentReceived}
-                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
+                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                       >
                         <option value="">-- Select Member Type --</option>
                         {getAllowedMemberTypes().map((type) => (
@@ -539,7 +471,7 @@ export default function RenewalsPage() {
                           checked={fullTimeEducation}
                           onChange={(e) => setFullTimeEducation(e.target.checked)}
                           disabled={paymentReceived}
-                          className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="h-4 w-4 text-blue-500 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                         />
                         <label className="ml-2 text-sm text-gray-700">
                           I am in full-time education
@@ -552,7 +484,7 @@ export default function RenewalsPage() {
                   <div className="mt-4 pt-4 border-t">
                     <div className="flex justify-between items-center">
                       <span className="text-sm font-medium text-gray-700">Membership Fee:</span>
-                      <span className="text-lg font-semibold text-indigo-600">
+                      <span className="text-lg font-semibold text-blue-500">
                         {formatCurrency(fees.membershipFee)}
                       </span>
                     </div>
@@ -581,7 +513,7 @@ export default function RenewalsPage() {
                         value={renewal.number200ClubEntries}
                         onChange={(e) => handleChange('number200ClubEntries', parseInt(e.target.value) || 0)}
                         disabled={paymentReceived}
-                        className="block w-32 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
+                        className="block w-32 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                       />
                     </div>
                     {renewal.number200ClubEntries > 0 && (
@@ -595,13 +527,13 @@ export default function RenewalsPage() {
                           onChange={(e) => handleChange('pref200Club', e.target.value)}
                           placeholder="e.g., 7, 23, 45"
                           disabled={paymentReceived}
-                          className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
+                          className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                         />
                       </div>
                     )}
                     <div className="flex justify-between items-center pt-2">
                       <span className="text-sm font-medium text-gray-700">200 Club Fee:</span>
-                      <span className="text-lg font-semibold text-indigo-600">
+                      <span className="text-lg font-semibold text-blue-500">
                         {formatCurrency(fees.club200Fee)}
                       </span>
                     </div>
@@ -628,7 +560,7 @@ export default function RenewalsPage() {
                         rows={2}
                         placeholder="e.g., July 15, August 10-20"
                         disabled={paymentReceived}
-                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
+                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                       />
                     </div>
                     <div>
@@ -644,7 +576,7 @@ export default function RenewalsPage() {
                         rows={2}
                         placeholder="e.g., December, summer holidays"
                         disabled={paymentReceived}
-                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
+                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                       />
                     </div>
 
@@ -661,7 +593,7 @@ export default function RenewalsPage() {
                           value={renewal.drivingAwayMatches || ''}
                           onChange={(e) => handleChange('drivingAwayMatches', e.target.value)}
                           disabled={paymentReceived}
-                          className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border mb-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
+                          className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border mb-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                         >
                           <option value="">Please select</option>
                           <option value="Yes">Yes</option>
@@ -673,7 +605,7 @@ export default function RenewalsPage() {
                           rows={2}
                           placeholder="Additional information (e.g., limited space, certain days only)"
                           disabled={paymentReceived}
-                          className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
+                          className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                         />
                       </div>
                     )}
@@ -690,7 +622,7 @@ export default function RenewalsPage() {
                         value={renewal.greenMaintenance || ''}
                         onChange={(e) => handleChange('greenMaintenance', e.target.value)}
                         disabled={paymentReceived}
-                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border mb-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
+                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border mb-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                       >
                         <option value="">Please select</option>
                         <option value="Yes">Yes</option>
@@ -702,7 +634,7 @@ export default function RenewalsPage() {
                         rows={2}
                         placeholder="Additional information"
                         disabled={paymentReceived}
-                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
+                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                       />
                     </div>
 
@@ -717,7 +649,7 @@ export default function RenewalsPage() {
                         value={renewal.barDuty || ''}
                         onChange={(e) => handleChange('barDuty', e.target.value)}
                         disabled={paymentReceived}
-                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border mb-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
+                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border mb-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                       >
                         <option value="">Please select</option>
                         <option value="Yes">Yes</option>
@@ -729,7 +661,7 @@ export default function RenewalsPage() {
                         rows={2}
                         placeholder="Additional information"
                         disabled={paymentReceived}
-                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
+                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                       />
                     </div>
 
@@ -746,7 +678,7 @@ export default function RenewalsPage() {
                         rows={3}
                         placeholder="e.g., plumbing, IT support, legal advice..."
                         disabled={paymentReceived}
-                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
+                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                       />
                     </div>
                   </div>
@@ -796,7 +728,7 @@ export default function RenewalsPage() {
                                 checked={renewal[key as keyof Renewal] as boolean}
                                 onChange={(e) => handleChange(key as keyof Renewal, e.target.checked)}
                                 disabled={!eligibility.canEnterCompetitions || paymentReceived}
-                                className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                                className="h-4 w-4 text-blue-500 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                               />
                               <label className={`ml-2 text-sm ${
                                 !eligibility.canEnterCompetitions ? 'text-gray-400' : 'text-gray-900'
@@ -824,7 +756,7 @@ export default function RenewalsPage() {
                                 checked={renewal[key as keyof Renewal] as boolean}
                                 onChange={(e) => handleChange(key as keyof Renewal, e.target.checked)}
                                 disabled={!eligibility.canEnterCompetitions || paymentReceived}
-                                className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                                className="h-4 w-4 text-blue-500 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                               />
                               <label className={`ml-2 text-sm ${
                                 !eligibility.canEnterCompetitions ? 'text-gray-400' : 'text-gray-900'
@@ -838,7 +770,7 @@ export default function RenewalsPage() {
 
                       <div className="mt-6 pt-4 border-t flex justify-between items-center">
                         <span className="text-sm font-medium text-gray-700">Competition Fees:</span>
-                        <span className="text-lg font-semibold text-indigo-600">
+                        <span className="text-lg font-semibold text-blue-500">
                           {formatCurrency(fees.compsFee)}
                         </span>
                       </div>
@@ -850,10 +782,10 @@ export default function RenewalsPage() {
 
             {/* Total Fee Section */}
             {renewal.renewingMembership && (
-              <div className="mb-8 bg-indigo-50 border-2 border-indigo-200 rounded-lg p-6">
+              <div className="mb-8 bg-blue-50 border-2 border-blue-500 rounded-lg p-6">
                 <div className="flex justify-between items-center">
                   <span className="text-xl font-bold text-gray-900">Total Fee Payable:</span>
-                  <span className="text-3xl font-bold text-indigo-600">
+                  <span className="text-3xl font-bold text-blue-500">
                     {formatCurrency(fees.total)}
                   </span>
                 </div>
@@ -877,7 +809,7 @@ export default function RenewalsPage() {
                   </div>
                   <button
                     onClick={() => router.push('/')}
-                    className="ml-4 px-6 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
+                    className="ml-4 px-6 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600"
                   >
                     Return to Home
                   </button>
@@ -894,7 +826,7 @@ export default function RenewalsPage() {
                 </button>
                 <button
                   onClick={handleSave}
-                  className="px-6 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="px-6 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
                   disabled={isSaving}
                 >
                   {isSaving ? 'Saving...' : renewal.renewingMembership ? 'Submit Renewal' : 'Save'}
