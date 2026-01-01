@@ -1668,19 +1668,14 @@ export async function updateGameSheet(
  * @returns Number of stat cells updated
  */
 export async function updateGameSheetStats(tabName: string): Promise<number> {
-  console.log('updateGameSheetStats: Starting for', tabName);
   const spreadsheetId = getFriendliesSpreadsheetId();
   const colMap = await getColumnMap(spreadsheetId, tabName);
-  console.log('updateGameSheetStats: Game sheet columns:', Object.keys(colMap).join(', '));
   const sheets = getSheetsClient();
 
   // Get all players from game sheet
-  console.log('updateGameSheetStats: Getting game sheet players');
   const players = await getGameSheet(tabName);
-  console.log(`updateGameSheetStats: Found ${players.length} players`);
 
   // Read Players sheet once for all lookups
-  console.log('updateGameSheetStats: Reading Players sheet');
   const playersColMap = await getColumnMap(spreadsheetId, 'Players');
   const playersResponse = await sheets.spreadsheets.values.get({
     spreadsheetId,
@@ -1688,10 +1683,8 @@ export async function updateGameSheetStats(tabName: string): Promise<number> {
   });
   const playersRows = playersResponse.data.values || [];
   const playersHeaders = playersRows[0] || [];
-  console.log('updateGameSheetStats: Players sheet loaded');
 
   // Read Members sheet once for driver/bar lookups
-  console.log('updateGameSheetStats: Reading Members sheet');
   const membersSpreadsheetId = getMembersSpreadsheetId();
   const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
   const membersResponse = await sheets.spreadsheets.values.get({
@@ -1700,33 +1693,16 @@ export async function updateGameSheetStats(tabName: string): Promise<number> {
   });
   const membersRows = membersResponse.data.values || [];
 
-  // Log sample of Members sheet names to help debug
-  const fullNameColIdx = membersColMap['full_name'] ?? membersColMap['full_known_as'] ?? membersColMap['user_name'] ?? 0;
-  const sampleNames = membersRows.slice(1, 6).map(row => row[fullNameColIdx]);
-  console.log('updateGameSheetStats: Members sheet loaded');
-  console.log('  Looking up by column:', membersColMap['full_name'] !== undefined ? 'full_name' : membersColMap['full_known_as'] !== undefined ? 'full_known_as' : 'user_name');
-  console.log('  Sample names from Members sheet:', sampleNames);
-  console.log('  Total members:', membersRows.length - 1);
-
   const updates: any[] = [];
   const noteUpdates: any[] = [];
 
   for (let i = 0; i < players.length; i++) {
     const player = players[i];
-    console.log(`updateGameSheetStats: Processing player ${i + 1}/${players.length}: ${player.name}`);
 
     try {
       // Get stats for this player from cached Players sheet
       const stats = getPlayerStatsFromCache(player.name, playersRows, playersColMap, playersHeaders, tabName);
       const driverBar = getDriverBarInfoFromCache(player.name, membersRows, membersColMap);
-
-      console.log(`  Stats for ${player.name}:`, {
-        nameDown: stats.nameDown,
-        picked: stats.picked,
-        percentPlayed: stats.percentPlayed,
-        driverBar: driverBar.code,
-        gamesHistory: stats.last6Games.length
-      });
 
       // Check if required columns exist in the game sheet
       const nameDownIdx = colMap['name_down'];
@@ -1800,7 +1776,6 @@ export async function updateGameSheetStats(tabName: string): Promise<number> {
   }
 
   if (updates.length > 0) {
-    console.log(`updateGameSheetStats: Applying ${updates.length} value updates`);
     await sheets.spreadsheets.values.batchUpdate({
       spreadsheetId,
       requestBody: {
@@ -1812,7 +1787,6 @@ export async function updateGameSheetStats(tabName: string): Promise<number> {
 
   // Apply notes with game history
   if (noteUpdates.length > 0) {
-    console.log(`updateGameSheetStats: Adding ${noteUpdates.length} notes with game history`);
 
     // Find the sheet ID for this tab
     const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
@@ -1850,7 +1824,6 @@ export async function updateGameSheetStats(tabName: string): Promise<number> {
     });
   }
 
-  console.log('updateGameSheetStats: Complete');
   return players.length;
 }
 
@@ -1886,7 +1859,6 @@ function getPlayerStatsFromCache(
     // Try case-insensitive and trimmed comparison as fallback
     if (playerUserName && playerUserName.toString().trim().toLowerCase() === userName.trim().toLowerCase()) {
       userRowIndex = i;
-      console.log(`    Matched ${userName} to ${playerUserName} in Players sheet (case-insensitive)`);
       break;
     }
   }
@@ -1949,14 +1921,6 @@ function getPlayerStatsFromCache(
       percentPlayed = num > 1 ? num / 100 : num;
     }
   }
-
-  // Log raw values for debugging
-  console.log(`    Raw values from Players sheet for ${userName}:`, {
-    name_down: get('name_down'),
-    picked: get('picked'),
-    percent_played: get('percent_played'),
-    final_percentPlayed: percentPlayed
-  });
 
   // Collect last 6 games player participated in
   // Iterate backward through game columns (right to left = newest to oldest)
@@ -2022,16 +1986,12 @@ function getDriverBarInfoFromCache(
     // Case-insensitive and trimmed comparison
     if (memberName.toString().trim().toLowerCase() === userName.trim().toLowerCase()) {
       userRowIndex = i;
-      if (memberName !== userName) {
-        console.log(`    Matched ${userName} to ${memberName} in Members`);
-      }
       break;
     }
   }
 
   if (userRowIndex === -1) {
     // User not in Members sheet - return defaults
-    console.log(`    ${userName} not found in Members sheet`);
     return { code: '-', driver: false, bar: false };
   }
 
@@ -2046,13 +2006,6 @@ function getDriverBarInfoFromCache(
   const barValue = get('bar_duty');
   const driver = driverValue === 'Yes' || driverValue === 'Y';
   const bar = barValue === 'Yes' || barValue === 'Y';
-
-  console.log(`    Driver/Bar for ${userName}:`, {
-    driving_away_matches: driverValue,
-    bar_duty: barValue,
-    driverBool: driver,
-    barBool: bar
-  });
 
   let code = '-';
   if (driver && bar) {

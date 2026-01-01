@@ -64,11 +64,23 @@ function loadTemplate(templateName: string, variables: Record<string, string | n
     // Compile the Handlebars template
     const template = Handlebars.compile(templateSource);
 
-    // Render the template with variables
-    const rendered = template(variables);
+    // Merge theme values into variables so Handlebars can process them
+    // This prevents Handlebars from stripping the {{BRAND_NAME}} etc. placeholders
+    const { theme } = require('@/config/theme');
+    const allVariables = {
+      ...variables,
+      BRAND_NAME: theme.brand.name,
+      BRAND_SHORT_NAME: theme.brand.shortName,
+      HEADER_COLOR: theme.email.headerColor,
+      BUTTON_COLOR: theme.email.buttonColor,
+      LINK_COLOR: theme.email.buttonColor,
+      PRIMARY_COLOR: theme.email.headerColor,
+    };
 
-    // Process theme placeholders ({{BRAND_NAME}}, {{HEADER_COLOR}}, etc.)
-    return processEmailTemplate(rendered);
+    // Render the template with variables (including theme values)
+    const rendered = template(allVariables);
+
+    return rendered;
   } catch (error) {
     console.error(`Error loading template ${templateName}:`, error);
     throw new Error(`Failed to load email template: ${templateName}`);

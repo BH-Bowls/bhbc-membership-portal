@@ -250,12 +250,8 @@ export async function getImpersonatableUsers(
   // Get all users from the Members Google Sheet
   const allUsers = await getAllUsers();
 
-  console.log('👥 getImpersonatableUsers - User:', currentUserName, 'Role:', currentUserRole);
-
   // If user is admin or super admin, they can impersonate everyone (except themselves)
   if (currentUserRole === 'Admin' || currentUserRole === 'Super Admin' || currentUserRole === 'superadmin') {
-    console.log('✅ User is admin/super admin, returning all users except self');
-
     const impersonatableUsers = allUsers.filter(u => u.userName !== currentUserName);
 
     // Sort alphabetically by full name
@@ -267,8 +263,6 @@ export async function getImpersonatableUsers(
 
     return impersonatableUsers;
   }
-
-  console.log('ℹ️  User is not admin, filtering to buddies only');
 
   // For non-admins, return only users who list them as buddy (exclude self)
   const buddies = allUsers.filter(u =>
@@ -282,8 +276,6 @@ export async function getImpersonatableUsers(
     const nameB = b.fullKnownAs || b.firstName;
     return nameA.localeCompare(nameB);
   });
-
-  console.log('✅ Found', buddies.length, 'impersonatable users');
 
   return buddies;
 }
@@ -311,12 +303,8 @@ export async function getManageableUsers(
   // Get all users from the Members Google Sheet
   const allUsers = await getAllUsers();
 
-  // Log for debugging/monitoring
-  console.log('👥 getManageableUsers - User:', currentUserName, 'Role:', currentUserRole, 'Total users:', allUsers.length);
-
   // If user is admin, they can manage everyone
   if (currentUserRole === 'Admin') {
-    console.log('✅ User is admin, returning all users');
 
     // Sort all users alphabetically by full name
     // Loop through and sort manually
@@ -336,8 +324,6 @@ export async function getManageableUsers(
 
     return sortedUsers;
   }
-
-  console.log('ℹ️  User is not admin (role is not "Admin"), filtering to self + buddies');
 
   // For non-admins, build list of manageable users
   const manageableUsers: User[] = [];

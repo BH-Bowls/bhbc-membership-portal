@@ -34,6 +34,7 @@ export function Navbar({ userName, userRole }: NavbarProps) {
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [impersonationModalOpen, setImpersonationModalOpen] = useState(false);
+  const [hasImpersonatableUsers, setHasImpersonatableUsers] = useState(false);
   const profileDropdownRef = useRef<HTMLDivElement>(null);
   const pathname = usePathname();
   const router = useRouter();
@@ -53,10 +54,33 @@ export function Navbar({ userName, userRole }: NavbarProps) {
   const canAccessBanking = isAdmin || isTreasurer;
   const canAccessCaptainTools = isAdmin || isCaptain;
 
-  // Show impersonation controls for everyone (logged in users)
-  // The API will return empty list if they can't impersonate anyone
-  // This allows both admins AND members with buddies to use impersonation
-  const canShowImpersonation = !!session?.user?.userName;
+  // Check if user has anyone they can impersonate
+  useEffect(() => {
+    async function checkImpersonationAccess() {
+      if (!session?.user?.userName) {
+        setHasImpersonatableUsers(false);
+        return;
+      }
+
+      try {
+        const response = await fetch('/api/admin/impersonate/users');
+        if (response.ok) {
+          const data = await response.json();
+          setHasImpersonatableUsers(data.count > 0);
+        } else {
+          setHasImpersonatableUsers(false);
+        }
+      } catch (error) {
+        console.error('Failed to check impersonation access:', error);
+        setHasImpersonatableUsers(false);
+      }
+    }
+
+    checkImpersonationAccess();
+  }, [session?.user?.userName]);
+
+  // Show impersonation controls only if user has someone to impersonate
+  const canShowImpersonation = hasImpersonatableUsers;
 
   // Navigation items - easy to add more here
   const navigationItems: NavItem[] = [
@@ -281,7 +305,7 @@ export function Navbar({ userName, userRole }: NavbarProps) {
                     )}
 
                     {/* Impersonation controls */}
-                    {canShowImpersonation && (
+                    {(canShowImpersonation || isImpersonating) && (
                       <>
                         {isImpersonating ? (
                           <button

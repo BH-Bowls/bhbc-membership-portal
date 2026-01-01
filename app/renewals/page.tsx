@@ -11,6 +11,7 @@ import { Navbar } from '@/components/Navbar';
 interface UserProfile {
   userName: string;
   fullKnownAs: string;
+  lastName: string;
   ageDemographic: string;
   memberType: string;
   friendliesLastYear: number | string; // Can be a number or "X" for manual override
@@ -348,7 +349,7 @@ export default function RenewalsPage() {
                   <p><span className="font-medium">Sort Code:</span> 40-15-16</p>
                   <p><span className="font-medium">Account Number:</span> 81554948</p>
                   <p><span className="font-medium">Account Name:</span> Burgess Hill Bowls Club</p>
-                  <p><span className="font-medium">Reference:</span> SUBS {profile.fullKnownAs.split(' ').pop()?.toUpperCase()}</p>
+                  <p><span className="font-medium">Reference:</span> SUBS {profile.lastName.toUpperCase()}</p>
                 </div>
                 <p className="mt-4 text-sm text-blue-700">
                   Please make payment at your earliest convenience. Card payments are also accepted at the bar.

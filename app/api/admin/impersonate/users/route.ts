@@ -17,18 +17,9 @@ export async function GET(request: NextRequest) {
     // Get current session
     const session = await getServerSession(authOptions);
 
-    console.log('🔍 Impersonate Users API - Session:', {
-      exists: !!session,
-      userName: session?.user?.userName,
-      role: session?.user?.role,
-    });
-
     if (!session?.user?.userName || !session?.user?.role) {
-      console.error('❌ Unauthorized - missing session or user data');
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-
-    console.log('✅ Impersonate Users API - User:', session.user.userName, 'Role:', session.user.role);
 
     // Get impersonatable users based on buddy+admin rules
     const users = await getImpersonatableUsers(

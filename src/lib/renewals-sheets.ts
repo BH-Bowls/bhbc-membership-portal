@@ -662,7 +662,7 @@ export async function sendRenewalConfirmation(
         compsFee: formatCurrency(fees.compsFee),
         club200Fee: formatCurrency(fees.club200Fee),
         totalFee: formatCurrency(fees.total),
-        paymentReference: `SUBS ${(user.fullKnownAs || user.firstName).split(' ').pop()?.toUpperCase()}`,
+        paymentReference: `SUBS ${user.lastName.toUpperCase()}`,
         memberType: user.memberType,
         number200Club: renewal.number200ClubEntries > 0 ? renewal.number200ClubEntries.toString() : 'None',
         pref200Club: renewal.pref200Club || null,

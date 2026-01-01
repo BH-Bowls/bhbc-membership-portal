@@ -104,6 +104,7 @@ export async function GET(request: NextRequest) {
       profile: {
         userName: profile.userName,
         fullKnownAs: profile.fullKnownAs,
+        lastName: profile.lastName,
         ageDemographic: profile.ageDemographic,
         memberType: profile.memberType,
         friendliesLastYear: profile.friendliesLastYear,

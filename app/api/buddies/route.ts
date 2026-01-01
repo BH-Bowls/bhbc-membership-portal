@@ -19,8 +19,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    console.log('🔍 Buddies API - User:', session.user.userName, 'Role:', session.user.role);
-
     const users = await getManageableUsers(
       session.user.userName,
       session.user.role
