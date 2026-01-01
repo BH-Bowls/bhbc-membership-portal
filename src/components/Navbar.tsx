@@ -10,6 +10,7 @@ import Link from 'next/link';
 import { useImpersonation } from '@/hooks/useImpersonation';
 import { ImpersonationModal } from './ImpersonationModal';
 import { getNavItemClasses, getProfileIconClasses, getButtonClasses } from '@/config/theme-helpers';
+import { VersionDisplay } from './VersionDisplay';
 
 interface SubMenuItem {
   name: string;
@@ -358,6 +359,11 @@ export function Navbar({ userName, userRole }: NavbarProps) {
                         </button>
                       </>
                     )}
+
+                    {/* Version info */}
+                    <div className="px-4 py-2 border-t border-gray-200">
+                      <VersionDisplay showBuildDate={true} />
+                    </div>
                   </div>
                 </div>
               )}
@@ -395,149 +401,181 @@ export function Navbar({ userName, userRole }: NavbarProps) {
         </div>
       </div>
 
-      {/* Mobile menu */}
+      {/* Mobile menu overlay */}
       {mobileMenuOpen && (
-        <div className="md:hidden">
-          <div className="px-2 pt-2 pb-3 space-y-1">
-            {navigationItems.map((item) => (
-              item.subItems ? (
-                // Dropdown menu item in mobile
-                <div key={item.name}>
-                  <button
-                    onClick={() => toggleDropdown(item.name)}
-                    className={`flex items-center justify-between w-full text-base font-medium ${
-                      getNavItemClasses(isDropdownActive(item.subItems))
+        <>
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-black bg-opacity-50 z-40 md:hidden"
+            onClick={() => setMobileMenuOpen(false)}
+          ></div>
+
+          {/* Menu panel */}
+          <div className="fixed right-0 top-0 bottom-0 w-80 bg-white shadow-xl z-50 md:hidden overflow-y-auto">
+            {/* Menu header with close button */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50">
+              <h2 className="text-lg font-semibold text-gray-900">Menu</h2>
+              <button
+                onClick={() => setMobileMenuOpen(false)}
+                className="p-2 rounded-md text-gray-500 hover:text-gray-700 hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                aria-label="Close menu"
+              >
+                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="px-2 pt-2 pb-3 space-y-1">
+              {navigationItems.map((item) => (
+                item.subItems ? (
+                  // Dropdown menu item in mobile
+                  <div key={item.name}>
+                    <button
+                      onClick={() => toggleDropdown(item.name)}
+                      className={`flex items-center justify-between w-full px-3 py-2 rounded-md text-base font-medium ${
+                        isDropdownActive(item.subItems)
+                          ? 'bg-blue-100 text-blue-700'
+                          : 'text-gray-700 hover:bg-gray-100'
+                      }`}
+                    >
+                      <span className="flex items-center">
+                        {item.icon && <span className="mr-3">{item.icon}</span>}
+                        {item.name}
+                      </span>
+                      <svg
+                        className={`h-4 w-4 transition-transform ${openDropdown === item.name ? 'rotate-180' : ''}`}
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+                    {openDropdown === item.name && (
+                      <div className="ml-6 mt-1 space-y-1">
+                        {item.subItems.map((subItem) => (
+                          <Link
+                            key={subItem.name}
+                            href={subItem.href}
+                            onClick={() => {
+                              setMobileMenuOpen(false);
+                              setOpenDropdown(null);
+                            }}
+                            className={`block px-3 py-2 text-sm rounded-md ${
+                              isActive(subItem.href)
+                                ? 'bg-blue-100 text-blue-700'
+                                : 'text-gray-600 hover:bg-gray-100'
+                            }`}
+                          >
+                            {subItem.name}
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  // Regular link item in mobile
+                  <Link
+                    key={item.name}
+                    href={item.href!}
+                    onClick={() => setMobileMenuOpen(false)}
+                    className={`flex items-center px-3 py-2 rounded-md text-base font-medium ${
+                      isActive(item.href!)
+                        ? 'bg-blue-100 text-blue-700'
+                        : 'text-gray-700 hover:bg-gray-100'
                     }`}
                   >
-                    <span className="flex items-center">
-                      {item.icon && <span className="mr-3">{item.icon}</span>}
-                      {item.name}
-                    </span>
-                    <svg
-                      className={`h-4 w-4 transition-transform ${openDropdown === item.name ? 'rotate-180' : ''}`}
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
-                  {openDropdown === item.name && (
-                    <div className="ml-6 mt-1 space-y-1">
-                      {item.subItems.map((subItem) => (
-                        <Link
-                          key={subItem.name}
-                          href={subItem.href}
-                          onClick={() => {
-                            setMobileMenuOpen(false);
-                            setOpenDropdown(null);
-                          }}
-                          className={`block px-3 py-2 text-sm rounded-md ${
-                            isActive(subItem.href)
-                              ? 'bg-blue-100 text-blue-700'
-                              : 'text-gray-600 hover:bg-gray-100'
-                          }`}
-                        >
-                          {subItem.name}
-                        </Link>
-                      ))}
+                    {item.icon && <span className="mr-3">{item.icon}</span>}
+                    {item.name}
+                  </Link>
+                )
+              ))}
+            </div>
+            <div className="pt-4 pb-3 border-t border-gray-200">
+              {userName && (
+                <div className="px-4 mb-3">
+                  <div className={`text-sm font-medium ${isImpersonating ? 'text-orange-600' : 'text-gray-900'}`}>
+                    {userName}
+                    {isImpersonating && (
+                      <span className="ml-2 text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">
+                        Switched User
+                      </span>
+                    )}
+                  </div>
+                  {isImpersonating && originalAdmin && (
+                    <div className="text-xs text-gray-500 mt-1">
+                      Logged in as: {originalAdmin.name}
                     </div>
                   )}
-                </div>
-              ) : (
-                // Regular link item in mobile
-                <Link
-                  key={item.name}
-                  href={item.href!}
-                  onClick={() => setMobileMenuOpen(false)}
-                  className={`flex items-center text-base font-medium ${
-                    getNavItemClasses(isActive(item.href!))
-                  }`}
-                >
-                  {item.icon && <span className="mr-3">{item.icon}</span>}
-                  {item.name}
-                </Link>
-              )
-            ))}
-          </div>
-          <div className="pt-4 pb-3 border-t border-gray-200">
-            {userName && (
-              <div className="px-4 mb-3">
-                <div className={`text-sm font-medium ${isImpersonating ? 'text-orange-600' : 'text-gray-900'}`}>
-                  {userName}
-                  {isImpersonating && (
-                    <span className="ml-2 text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">
-                      Switched User
-                    </span>
+                  {userRole && !isImpersonating && (
+                    <div className="text-xs text-gray-500">Role: {userRole}</div>
                   )}
                 </div>
-                {isImpersonating && originalAdmin && (
-                  <div className="text-xs text-gray-500 mt-1">
-                    Logged in as: {originalAdmin.name}
-                  </div>
+              )}
+              <div className="px-2 space-y-1">
+                {/* Impersonation controls */}
+                {(canShowImpersonation || isImpersonating) && (
+                  <>
+                    {isImpersonating ? (
+                      <button
+                        onClick={() => {
+                          stopImpersonation();
+                          setMobileMenuOpen(false);
+                        }}
+                        className="block w-full text-left px-3 py-2 text-base font-medium text-orange-700 bg-orange-50 hover:bg-orange-100 rounded-md"
+                      >
+                        Exit Switch
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          setImpersonationModalOpen(true);
+                          setMobileMenuOpen(false);
+                        }}
+                        className="block w-full text-left px-3 py-2 text-base font-medium text-blue-600 hover:bg-blue-50 rounded-md"
+                      >
+                        Switch User
+                      </button>
+                    )}
+                  </>
                 )}
-                {userRole && !isImpersonating && (
-                  <div className="text-xs text-gray-500">Role: {userRole}</div>
+
+                <Link
+                  href="/profile"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="block px-3 py-2 text-base font-medium text-gray-700 hover:bg-gray-100 rounded-md"
+                >
+                  Profile
+                </Link>
+
+                {/* Hide these when impersonating */}
+                {!isImpersonating && (
+                  <>
+                    <Link
+                      href="/change-password"
+                      onClick={() => setMobileMenuOpen(false)}
+                      className="block px-3 py-2 text-base font-medium text-gray-700 hover:bg-gray-100 rounded-md"
+                    >
+                      Change Password
+                    </Link>
+                    <button
+                      onClick={handleSignOut}
+                      className="block w-full text-left px-3 py-2 text-base font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-md"
+                    >
+                      Logout
+                    </button>
+                  </>
                 )}
               </div>
-            )}
-            <div className="px-2 space-y-1">
-              {/* Impersonation controls */}
-              {(canShowImpersonation || isImpersonating) && (
-                <>
-                  {isImpersonating ? (
-                    <button
-                      onClick={() => {
-                        stopImpersonation();
-                        setMobileMenuOpen(false);
-                      }}
-                      className="block w-full text-left px-3 py-2 text-base font-medium text-orange-700 bg-orange-50 hover:bg-orange-100 rounded-md"
-                    >
-                      Exit Switch
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => {
-                        setImpersonationModalOpen(true);
-                        setMobileMenuOpen(false);
-                      }}
-                      className="block w-full text-left px-3 py-2 text-base font-medium text-blue-600 hover:bg-blue-50 rounded-md"
-                    >
-                      Switch User
-                    </button>
-                  )}
-                </>
-              )}
 
-              <Link
-                href="/profile"
-                onClick={() => setMobileMenuOpen(false)}
-                className="block px-3 py-2 text-base font-medium text-gray-700 hover:bg-gray-100 rounded-md"
-              >
-                Profile
-              </Link>
-
-              {/* Hide these when impersonating */}
-              {!isImpersonating && (
-                <>
-                  <Link
-                    href="/change-password"
-                    onClick={() => setMobileMenuOpen(false)}
-                    className="block px-3 py-2 text-base font-medium text-gray-700 hover:bg-gray-100 rounded-md"
-                  >
-                    Change Password
-                  </Link>
-                  <button
-                    onClick={handleSignOut}
-                    className={`${getButtonClasses('primary', 'md', true)} text-base`}
-                  >
-                    Logout
-                  </button>
-                </>
-              )}
+              {/* Version info */}
+              <div className="px-4 py-3 mt-4 border-t border-gray-200 text-center">
+                <VersionDisplay showBuildDate={true} />
+              </div>
             </div>
           </div>
-        </div>
+        </>
       )}
 
       {/* Impersonation Modal */}
