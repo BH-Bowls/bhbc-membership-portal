@@ -368,8 +368,13 @@ export function Navbar({ userName, userRole }: NavbarProps) {
           <div className="flex items-center md:hidden">
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="inline-flex items-center justify-center p-2 rounded-md text-gray-700 hover:text-gray-900 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
+              className={`relative inline-flex items-center justify-center p-2 rounded-md focus:outline-none focus:ring-2 focus:ring-inset ${
+                isImpersonating
+                  ? 'text-orange-600 hover:text-orange-700 hover:bg-orange-50 focus:ring-orange-500'
+                  : 'text-gray-700 hover:text-gray-900 hover:bg-gray-100 focus:ring-blue-500'
+              }`}
               aria-expanded="false"
+              title={isImpersonating ? `Impersonating ${userName}` : 'Open menu'}
             >
               <span className="sr-only">Open main menu</span>
               {mobileMenuOpen ? (
@@ -380,6 +385,10 @@ export function Navbar({ userName, userRole }: NavbarProps) {
                 <svg className="block h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
                 </svg>
+              )}
+              {/* Orange indicator dot when impersonating */}
+              {isImpersonating && (
+                <span className="absolute top-1 right-1 block h-2 w-2 rounded-full bg-orange-500 ring-2 ring-white"></span>
               )}
             </button>
           </div>
@@ -454,13 +463,52 @@ export function Navbar({ userName, userRole }: NavbarProps) {
           <div className="pt-4 pb-3 border-t border-gray-200">
             {userName && (
               <div className="px-4 mb-3">
-                <div className="text-sm font-medium text-gray-900">{userName}</div>
-                {userRole && (
+                <div className={`text-sm font-medium ${isImpersonating ? 'text-orange-600' : 'text-gray-900'}`}>
+                  {userName}
+                  {isImpersonating && (
+                    <span className="ml-2 text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">
+                      Switched User
+                    </span>
+                  )}
+                </div>
+                {isImpersonating && originalAdmin && (
+                  <div className="text-xs text-gray-500 mt-1">
+                    Logged in as: {originalAdmin.name}
+                  </div>
+                )}
+                {userRole && !isImpersonating && (
                   <div className="text-xs text-gray-500">Role: {userRole}</div>
                 )}
               </div>
             )}
             <div className="px-2 space-y-1">
+              {/* Impersonation controls */}
+              {(canShowImpersonation || isImpersonating) && (
+                <>
+                  {isImpersonating ? (
+                    <button
+                      onClick={() => {
+                        stopImpersonation();
+                        setMobileMenuOpen(false);
+                      }}
+                      className="block w-full text-left px-3 py-2 text-base font-medium text-orange-700 bg-orange-50 hover:bg-orange-100 rounded-md"
+                    >
+                      Exit Switch
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        setImpersonationModalOpen(true);
+                        setMobileMenuOpen(false);
+                      }}
+                      className="block w-full text-left px-3 py-2 text-base font-medium text-blue-600 hover:bg-blue-50 rounded-md"
+                    >
+                      Switch User
+                    </button>
+                  )}
+                </>
+              )}
+
               <Link
                 href="/profile"
                 onClick={() => setMobileMenuOpen(false)}
@@ -468,19 +516,25 @@ export function Navbar({ userName, userRole }: NavbarProps) {
               >
                 Profile
               </Link>
-              <Link
-                href="/change-password"
-                onClick={() => setMobileMenuOpen(false)}
-                className="block px-3 py-2 text-base font-medium text-gray-700 hover:bg-gray-100 rounded-md"
-              >
-                Change Password
-              </Link>
-              <button
-                onClick={handleSignOut}
-                className={`${getButtonClasses('primary', 'md', true)} text-base`}
-              >
-                Logout
-              </button>
+
+              {/* Hide these when impersonating */}
+              {!isImpersonating && (
+                <>
+                  <Link
+                    href="/change-password"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="block px-3 py-2 text-base font-medium text-gray-700 hover:bg-gray-100 rounded-md"
+                  >
+                    Change Password
+                  </Link>
+                  <button
+                    onClick={handleSignOut}
+                    className={`${getButtonClasses('primary', 'md', true)} text-base`}
+                  >
+                    Logout
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
