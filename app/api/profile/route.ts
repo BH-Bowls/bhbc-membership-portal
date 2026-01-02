@@ -32,8 +32,18 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // Lookup buddy name if buddy user ID is set
+    let buddyName = null;
+    if (profile.buddyUserName) {
+      const buddyProfile = await getUserByUsername(profile.buddyUserName);
+      if (buddyProfile) {
+        buddyName = buddyProfile.fullName;
+      }
+    }
+
     return NextResponse.json({
       profile,
+      buddyName,
     });
   } catch (error) {
     console.error('[GET /api/profile] Error fetching profile:', error);

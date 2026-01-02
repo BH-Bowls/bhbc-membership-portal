@@ -18,7 +18,7 @@ export default function HomePage() {
     );
   }
 
-  if (!session) {
+  if (!session || !session.user) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <p className="text-gray-600">Redirecting to login...</p>
@@ -28,7 +28,7 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={session.user.name ?? undefined} userRole={session.user.role ?? undefined} />
+      <Navbar userName={session.user?.name ?? undefined} userRole={session.user?.role ?? undefined} />
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">

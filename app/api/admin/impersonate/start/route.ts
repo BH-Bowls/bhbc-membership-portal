@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
       adminName: session.user.name || '',
       adminRole: session.user.role,
       targetUserName: targetUser.userName,
-      targetName: `${targetUser.firstName} ${targetUser.lastName}`.trim(),
+      targetName: targetUser.fullName,
       targetRole: targetUser.role,
       ipAddress: request.headers.get('x-forwarded-for') ||
                  request.headers.get('x-real-ip') ||
@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
       targetUser: {
         userName: targetUser.userName,
         email: targetUser.emailAddress,
-        name: `${targetUser.firstName} ${targetUser.lastName}`.trim(),
+        name: targetUser.fullName,
         role: targetUser.role,
       },
       sessionId,

@@ -236,9 +236,8 @@ export async function authenticateUser(
       userAgent: '',
     });
 
-    // Build user display name from first and last name (always full name for consistency)
-    // This ensures profile initials are calculated correctly from full name
-    let displayName = `${user.firstName} ${user.lastName}`.trim();
+    // Use Full Name from sheet (e.g., "Celia Dasey" - uses preferred name + last name)
+    let displayName = user.fullName;
 
     // Build email with fallback to empty string
     let email = user.emailAddress;
@@ -251,7 +250,7 @@ export async function authenticateUser(
       success: true,
       user: {
         id: user.userName,              // Unique identifier
-        name: displayName,               // Display name for UI (full name: "Liam Dasey")
+        name: displayName,               // Display name for UI (from Full Name column)
         email: email,                    // Email address
         userName: user.userName,         // Username for authorization checks
         role: user.role,                 // Role for permission checks

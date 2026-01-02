@@ -37,7 +37,7 @@ export interface Payment {
 
 export interface RenewalForBanking {
   userName: string;
-  fullKnownAs: string;
+  fullName: string;
   lastName: string;
   buddyUserName: string | null;
   outstanding: number;
@@ -574,7 +574,7 @@ function parseRenewalForBanking(
 
   return {
     userName: get('user_name'),
-    fullKnownAs: get('full_name'),
+    fullName: get('full_name'),
     lastName: get('last_name'),
     buddyUserName: get('buddy_user_name') || null,
     outstanding: getNumber('outstanding'),

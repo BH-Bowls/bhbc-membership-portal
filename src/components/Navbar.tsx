@@ -35,7 +35,6 @@ export function Navbar({ userName, userRole }: NavbarProps) {
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [impersonationModalOpen, setImpersonationModalOpen] = useState(false);
-  const [hasImpersonatableUsers, setHasImpersonatableUsers] = useState(false);
   const profileDropdownRef = useRef<HTMLDivElement>(null);
   const pathname = usePathname();
   const router = useRouter();
@@ -55,33 +54,9 @@ export function Navbar({ userName, userRole }: NavbarProps) {
   const canAccessBanking = isAdmin || isTreasurer;
   const canAccessCaptainTools = isAdmin || isCaptain;
 
-  // Check if user has anyone they can impersonate
-  useEffect(() => {
-    async function checkImpersonationAccess() {
-      if (!session?.user?.userName) {
-        setHasImpersonatableUsers(false);
-        return;
-      }
-
-      try {
-        const response = await fetch('/api/admin/impersonate/users');
-        if (response.ok) {
-          const data = await response.json();
-          setHasImpersonatableUsers(data.count > 0);
-        } else {
-          setHasImpersonatableUsers(false);
-        }
-      } catch (error) {
-        console.error('Failed to check impersonation access:', error);
-        setHasImpersonatableUsers(false);
-      }
-    }
-
-    checkImpersonationAccess();
-  }, [session?.user?.userName]);
-
-  // Show impersonation controls only if user has someone to impersonate
-  const canShowImpersonation = hasImpersonatableUsers;
+  // Show impersonation button to all users - the modal will load users when opened
+  // and handle empty state if user has no one to impersonate
+  const canShowImpersonation = true;
 
   // Navigation items - easy to add more here
   const navigationItems: NavItem[] = [

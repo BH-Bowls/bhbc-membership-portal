@@ -58,7 +58,8 @@ export interface User {
   firstName: string;
   lastName: string;
   knownAs: string | null;
-  fullKnownAs: string | null;
+  fullKnownAs: string; // Preferred first name for emails (Known As OR First Name)
+  fullName: string; // Full display name from sheet (e.g., "Celia Dasey")
   emailAddress: string | null;
   landline: string | null;
   mobile: string | null;
@@ -513,7 +514,8 @@ function parseUserRow(row: any[], rowNumber: number, colMap: { [key: string]: nu
     firstName: get('first_name') || '',
     lastName: get('last_name') || '',
     knownAs: get('known_as'),
-    fullKnownAs: get('full_known_as'),
+    fullKnownAs: get('known_as') || get('first_name') || '', // Preferred first name
+    fullName: get('full_name') || '', // Full display name from sheet
     emailAddress: get('email_address'),
     landline: get('landline'),
     mobile: get('mobile'),

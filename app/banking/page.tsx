@@ -585,7 +585,7 @@ export default function BankingPage() {
                     />
                   </div>
                   <div>
-                    <div className="font-medium">{renewal.fullKnownAs}</div>
+                    <div className="font-medium">{renewal.fullName}</div>
                     <div className="text-sm text-gray-500">{renewal.userName}</div>
                   </div>
                   <div className="text-right font-semibold text-blue-500">
@@ -825,7 +825,7 @@ export default function BankingPage() {
                 <h3 className="text-lg font-semibold mb-4">Manual Match Renewal</h3>
 
                 <div className="mb-4 space-y-1">
-                  <div className="text-sm text-gray-600">Member: {editingRenewal.fullKnownAs}</div>
+                  <div className="text-sm text-gray-600">Member: {editingRenewal.fullName}</div>
                   <div className="text-sm text-gray-600">Total Fee Due: £{editingRenewal.totalPayment.toFixed(2)}</div>
                   <div className="text-sm text-gray-600">Outstanding: £{editingRenewal.outstanding.toFixed(2)}</div>
                   <div className="text-xs text-gray-400 border-t pt-2 mt-2">

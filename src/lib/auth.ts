@@ -158,10 +158,16 @@ export const authOptions: NextAuthOptions = {
      * Adds custom user fields from JWT token to session object
      * @param session The session object sent to client
      * @param token The JWT token containing user data
-     * @returns Updated session with custom fields
+     * @returns Updated session with custom fields, or null if token is invalid
      * @throws Error if session has exceeded 90-day absolute limit
      */
     async session({ session, token }) {
+      // If token is missing required fields, it's invalid (e.g., decryption failed)
+      // Return null to gracefully invalidate the session
+      if (!token.userName || !token.role) {
+        return null;
+      }
+
       // Calculate absolute expiration time (90 days from login)
       const threeMonthsInMs = 90 * 24 * 60 * 60 * 1000; // 90 days in milliseconds
       const loginTime = token.loginTime as number;
@@ -174,7 +180,7 @@ export const authOptions: NextAuthOptions = {
         if (timeSinceLogin > threeMonthsInMs) {
           // Session has exceeded 3 months - force logout
           // This prevents indefinite sessions even with continued activity
-          throw new Error('Session expired');
+          return null;
         }
       }
 

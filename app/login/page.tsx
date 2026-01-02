@@ -42,9 +42,10 @@ function LoginForm() {
         setError(result.error);
         setIsLoading(false);
       } else {
-        // Redirect to callback URL or home
+        // Redirect to callback URL or home with hard reload
+        // This ensures user gets fresh JavaScript/CSS after login
         const callbackUrl = searchParams.get('callbackUrl') || '/';
-        router.push(callbackUrl);
+        window.location.href = callbackUrl;
       }
     } catch (err) {
       setError('An unexpected error occurred. Please try again.');

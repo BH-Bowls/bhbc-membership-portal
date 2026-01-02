@@ -7,6 +7,7 @@ import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
+import { SearchableSelect } from '@/components/SearchableSelect';
 
 interface ProfileData {
   title: string;
@@ -43,6 +44,8 @@ export default function ProfilePage() {
   const { data: session, status } = useSession();
   const router = useRouter();
   const [profile, setProfile] = useState<ProfileData | null>(null);
+  const [buddyName, setBuddyName] = useState<string | null>(null);
+  const [users, setUsers] = useState<{ value: string; label: string }[]>([]);
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
@@ -53,6 +56,7 @@ export default function ProfilePage() {
   useEffect(() => {
     if (status === 'authenticated' && session?.user?.userName) {
       loadProfile();
+      loadUsers();
     }
   }, [status, session?.user?.userName]);
 
@@ -64,9 +68,26 @@ export default function ProfilePage() {
 
       const data = await response.json();
       setProfile(data.profile);
+      setBuddyName(data.buddyName);
       setEditedProfile(data.profile);
     } catch (err) {
       setError('Failed to load profile');
+    }
+  };
+
+  const loadUsers = async () => {
+    try {
+      const response = await fetch('/api/users/list');
+      if (!response.ok) throw new Error('Failed to load users');
+
+      const data = await response.json();
+      const userOptions = data.users.map((user: { userName: string; fullName: string }) => ({
+        value: user.userName,
+        label: user.fullName,
+      }));
+      setUsers(userOptions);
+    } catch (err) {
+      console.error('Failed to load users for buddy selector:', err);
     }
   };
 
@@ -280,26 +301,26 @@ export default function ProfilePage() {
                   <label className="block text-sm font-medium text-gray-700">
                     Display Name (for Membership book etc)
                   </label>
-                  <p className="mt-1 text-sm text-gray-900">{profile.fullKnownAs || '—'}</p>
+                  <p className="mt-1 text-sm text-gray-900">{profile.fullName || '—'}</p>
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Buddy User ID</label>
+                  <label className="block text-sm font-medium text-gray-700">Buddy Name</label>
                   {isEditing ? (
                     <>
-                      <input
-                        type="text"
+                      <SearchableSelect
+                        options={users}
                         value={editedProfile.buddyUserName || ''}
-                        onChange={(e) => handleChange('buddyUserName', e.target.value)}
-                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border text-gray-900"
-                        placeholder="john_smith"
+                        onChange={(value) => handleChange('buddyUserName', value)}
+                        placeholder="Search for a member..."
+                        className="mt-1"
                       />
                       <p className="mt-1 text-xs text-gray-500">
-                        Format: firstname_lastname (e.g., john_smith)
+                        Your buddy can help manage your profile and renewals
                       </p>
                     </>
                   ) : (
-                    <p className="mt-1 text-sm text-gray-900">{profile.buddyUserName || '—'}</p>
+                    <p className="mt-1 text-sm text-gray-900">{buddyName || '—'}</p>
                   )}
                 </div>
               </div>

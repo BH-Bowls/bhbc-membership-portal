@@ -9,7 +9,7 @@ import { getInputClasses, getBadgeClasses } from '@/config/theme-helpers';
 interface User {
   userName: string;
   name: string;
-  fullKnownAs: string;
+  fullName: string;
   role: string;
   emailAddress: string;
   lastLoginDate: string | null;
@@ -46,7 +46,7 @@ export function ImpersonationModal({
       const term = searchTerm.toLowerCase();
       const filtered = users.filter(user =>
         user.name.toLowerCase().includes(term) ||
-        user.fullKnownAs.toLowerCase().includes(term) ||
+        user.fullName.toLowerCase().includes(term) ||
         user.userName.toLowerCase().includes(term) ||
         user.role.toLowerCase().includes(term)
       );
@@ -137,7 +137,7 @@ export function ImpersonationModal({
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex-1">
-                      <div className="font-medium text-gray-900">{user.fullKnownAs}</div>
+                      <div className="font-medium text-gray-900">{user.fullName}</div>
                       <div className="text-sm text-gray-600">{user.userName}</div>
                       <div className="flex items-center gap-3 mt-1">
                         <span className={getBadgeClasses('primary', 'md')}>

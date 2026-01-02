@@ -30,8 +30,8 @@ export async function GET(request: NextRequest) {
     // Map to response format
     const impersonatableUsers = users.map(user => ({
       userName: user.userName,
-      name: `${user.firstName} ${user.lastName}`.trim(),
-      fullKnownAs: user.fullKnownAs || `${user.firstName} ${user.lastName}`.trim(),
+      name: user.fullName,
+      fullName: user.fullName,
       role: user.role,
       emailAddress: user.emailAddress,
       lastLoginDate: user.lastLoginDate,
