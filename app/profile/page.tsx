@@ -14,7 +14,7 @@ interface ProfileData {
   firstName: string;
   lastName: string;
   knownAs: string;
-  fullKnownAs: string;
+  fullName: string;
   buddyUserName: string;
   emailAddress: string;
   landline: string;

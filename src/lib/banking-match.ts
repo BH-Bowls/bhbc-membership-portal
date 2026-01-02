@@ -110,8 +110,8 @@ export function findMatchingRenewals(
     // Search fields: full name, last name, username
     let isMatch = false;
 
-    // Check full known name (e.g., "John Smith")
-    if (renewal.fullKnownAs && hasCommonWords(searchTerm, renewal.fullKnownAs)) {
+    // Check full name (e.g., "Celia Dasey")
+    if (renewal.fullName && hasCommonWords(searchTerm, renewal.fullName)) {
       isMatch = true;
     }
 
@@ -379,8 +379,8 @@ export function runGlobalAutoMatch(
       // Check if search term matches any field for this renewal
       let isMatch = false;
 
-      // Check full known name
-      if (renewal.fullKnownAs && hasCommonWords(searchTerm, renewal.fullKnownAs)) {
+      // Check full name
+      if (renewal.fullName && hasCommonWords(searchTerm, renewal.fullName)) {
         isMatch = true;
       }
 
