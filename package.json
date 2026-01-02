@@ -8,9 +8,9 @@
     "start": "next start",
     "lint": "next lint",
     "update-version": "node scripts/update-version.js",
-    "release:patch": "npm version patch && npm run update-version && git push --follow-tags",
-    "release:minor": "npm version minor && npm run update-version && git push --follow-tags",
-    "release:major": "npm version major && npm run update-version && git push --follow-tags"
+    "release:patch": "npm version patch && npm run update-version && git add src/config/version.ts && git commit --amend --no-edit && git tag -f $(node -p \"require('./package.json').version\") && git push --force-with-lease && git push --tags --force",
+    "release:minor": "npm version minor && npm run update-version && git add src/config/version.ts && git commit --amend --no-edit && git tag -f $(node -p \"require('./package.json').version\") && git push --force-with-lease && git push --tags --force",
+    "release:major": "npm version major && npm run update-version && git add src/config/version.ts && git commit --amend --no-edit && git tag -f $(node -p \"require('./package.json').version\") && git push --force-with-lease && git push --tags --force"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
