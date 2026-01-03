@@ -224,6 +224,29 @@ export default function ManageGamesPage() {
   }
 
   // ============================================================================
+  // Helper Functions
+  // ============================================================================
+
+  /**
+   * Parse DD/MM/YYYY date string to Date object
+   * Google Sheets dates come in DD/MM/YYYY format which JavaScript doesn't parse correctly
+   * @param dateStr Date string in DD/MM/YYYY format (e.g., "27/09/2025")
+   * @returns Date object or null if invalid
+   */
+  function parseDDMMYYYY(dateStr: string): Date | null {
+    if (!dateStr) return null;
+
+    const parts = dateStr.split('/');
+    if (parts.length !== 3) return null;
+
+    const day = parseInt(parts[0]);
+    const month = parseInt(parts[1]) - 1; // JavaScript months are 0-indexed
+    const year = parseInt(parts[2]);
+
+    return new Date(year, month, day);
+  }
+
+  // ============================================================================
   // Filtering and Display Logic
   // ============================================================================
 
@@ -324,22 +347,22 @@ export default function ManageGamesPage() {
               {/* Table header */}
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider">
                     Date/Time
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider">
                     Club
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider">
                     Details
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider">
                     Status
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider">
                     Players
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider">
                     Actions
                   </th>
                 </tr>
@@ -354,7 +377,7 @@ export default function ManageGamesPage() {
                   >
                     {/* Date and time column */}
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
-                      <div>{new Date(game.date).toLocaleDateString('en-GB')}</div>
+                      <div>{parseDDMMYYYY(game.date)?.toLocaleDateString('en-GB') || game.date}</div>
                       <div className="text-gray-500">{game.time}</div>
                     </td>
 

@@ -82,6 +82,7 @@ export async function GET(request: NextRequest) {
         ageDemographic: profile.ageDemographic,
         memberType: profile.memberType,
         fullTimeEducation: false, // TODO: Add this field to profile if needed
+        honorary: profile.honorary,
       },
       renewal
     );
@@ -107,6 +108,7 @@ export async function GET(request: NextRequest) {
         lastName: profile.lastName,
         ageDemographic: profile.ageDemographic,
         memberType: profile.memberType,
+        honorary: profile.honorary,
         friendliesLastYear: profile.friendliesLastYear,
         emailAddress: profile.emailAddress,
         title: profile.title,
@@ -224,6 +226,7 @@ export async function PUT(request: NextRequest) {
         ageDemographic: data.ageDemographic || profile.ageDemographic,
         memberType: data.memberType || profile.memberType,
         fullTimeEducation: false, // TODO: Add this field to profile if needed
+        honorary: profile.honorary,
       },
       renewalData
     );
@@ -302,8 +305,8 @@ export async function PUT(request: NextRequest) {
 
       renewalUpdates = {
         ...renewalData,
-        playingFees: effectiveMemberType === 'Playing' ? fees.membershipFee : 0,
-        socialFees: effectiveMemberType === 'Social' ? fees.membershipFee : 0,
+        playingFees: (effectiveMemberType === 'Playing Lady' || effectiveMemberType === 'Playing Man') ? fees.membershipFee : 0,
+        socialFees: (effectiveMemberType === 'Social Lady' || effectiveMemberType === 'Social Man') ? fees.membershipFee : 0,
         compsFee: fees.compsFee,
         fee200Club: fees.club200Fee,
         totalPayment: fees.total,

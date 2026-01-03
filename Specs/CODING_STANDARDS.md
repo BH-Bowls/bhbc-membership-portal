@@ -393,6 +393,115 @@ Use the Site theme.ts in src/components/
 
 ---
 
+## 11. Date Handling from Google Sheets
+
+Google Sheets stores dates in DD/MM/YYYY format, which JavaScript's `new Date()` does NOT parse correctly.
+
+### The Problem
+
+```typescript
+// ❌ BAD - Will parse incorrectly
+const date = "27/09/2025"; // From Google Sheet
+new Date(date).toLocaleDateString('en-GB'); // Shows as 2001 or 2000!
+```
+
+JavaScript expects dates in formats like:
+- ISO format: `"2025-09-27"` (YYYY-MM-DD)
+- US format: `"09/27/2025"` (MM/DD/YYYY)
+- NOT UK format: `"27/09/2025"` (DD/MM/YYYY) ❌
+
+### The Solution
+
+Always parse DD/MM/YYYY dates explicitly:
+
+```typescript
+/**
+ * Parse DD/MM/YYYY date string to Date object
+ * Google Sheets dates come in DD/MM/YYYY format which JavaScript doesn't parse correctly
+ * @param dateStr Date string in DD/MM/YYYY format (e.g., "27/09/2025")
+ * @returns Date object or null if invalid
+ */
+function parseDDMMYYYY(dateStr: string): Date | null {
+  if (!dateStr) return null;
+
+  const parts = dateStr.split('/');
+  if (parts.length !== 3) return null;
+
+  const day = parseInt(parts[0]);
+  const month = parseInt(parts[1]) - 1; // JavaScript months are 0-indexed
+  const year = parseInt(parts[2]);
+
+  return new Date(year, month, day);
+}
+
+// ✅ GOOD - Parses correctly
+const date = "27/09/2025";
+parseDDMMYYYY(date)?.toLocaleDateString('en-GB'); // Shows as 27/09/2025 ✓
+```
+
+### When to Use This
+
+- Any time you're displaying dates from Google Sheets
+- When sorting or comparing dates from Google Sheets
+- When passing dates to date libraries (date-fns, etc.)
+
+### Example in Components
+
+```typescript
+{/* Date column in table */}
+<td className="px-6 py-4 whitespace-nowrap text-sm">
+  <div>{parseDDMMYYYY(game.date)?.toLocaleDateString('en-GB') || game.date}</div>
+  <div className="text-gray-500">{game.time}</div>
+</td>
+```
+
+---
+
+## 12. Text Color and Accessibility
+
+Always use sufficient color contrast for text to ensure readability across all devices and screen types.
+
+### Text Color Guidelines
+
+**For Labels, Headers, and Important Text:**
+- Use `text-gray-900` (darkest) for maximum readability
+- Use `text-gray-800` or `text-gray-700` for slightly softer but still clear text
+- ❌ AVOID `text-gray-500` or lighter for table headers, labels, or critical UI elements
+
+**For Secondary/Supporting Text:**
+- Use `text-gray-600` or `text-gray-500` for less important information
+- Examples: timestamps, helper text, footnotes
+
+**Why This Matters:**
+- Different devices (Google Pixel, Samsung, iPhone, iPad) render colors differently
+- Some screens have lower contrast ratios
+- Lighter text colors (gray-500) may appear faint or unreadable on certain devices
+- Accessibility standards (WCAG) require sufficient contrast for readability
+
+### Examples
+
+**❌ Bad - Table Headers:**
+```tsx
+<th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase">
+  Date/Time
+</th>
+```
+
+**✅ Good - Table Headers:**
+```tsx
+<th className="px-6 py-3 text-xs font-medium text-gray-900 uppercase">
+  Date/Time
+</th>
+```
+
+**✅ Good - Secondary Text:**
+```tsx
+<div className="font-medium text-gray-900">John Smith</div>
+<div className="text-sm text-gray-500">Last login: 2 days ago</div>
+```
+
+---
+
 ## Summary Checklist
 
 Before submitting code, verify:
@@ -408,3 +517,6 @@ Before submitting code, verify:
 - [ ] All Google Sheets operations include context (row numbers, column letters, ranges)
 - [ ] All error handling explains what errors mean
 - [ ] All React hooks have comments explaining when they run
+- [ ] Dates from Google Sheets are parsed using parseDDMMYYYY() helper (not new Date() directly)
+- [ ] Table headers and labels use dark text colors (text-gray-900, text-gray-800, text-gray-700)
+- [ ] Secondary text appropriately uses lighter colors (text-gray-600, text-gray-500)

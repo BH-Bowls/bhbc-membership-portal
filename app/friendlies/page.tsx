@@ -11,6 +11,7 @@ import { GameWithUserStatus } from '@/lib/types/friendlies';
 import { Navbar } from '@/components/Navbar';
 import Link from 'next/link';
 import { getButtonClasses } from '@/config/theme-helpers';
+import { canEnterGame, type GameGender } from '@/lib/member-type-utils';
 
 // ============================================================================
 // Type Definitions
@@ -59,9 +60,33 @@ export default function FriendliesPage() {
   // State: Entering/updating indicator while submitting changes
   const [entering, setEntering] = useState(false);
 
+  // State: User's member type for filtering eligible games
+  const [memberType, setMemberType] = useState<string>('');
+
   // ============================================================================
   // Effects
   // ============================================================================
+
+  /**
+   * Effect: Fetch user's member type when page loads
+   * Needed to filter games by eligibility (member type + game gender)
+   */
+  useEffect(() => {
+    // Fetch user's profile to get member type
+    async function fetchMemberType() {
+      try {
+        const response = await fetch('/api/profile');
+        if (response.ok) {
+          const data = await response.json();
+          setMemberType(data.profile.memberType);
+        }
+      } catch (error) {
+        console.error('Failed to fetch member type:', error);
+      }
+    }
+
+    fetchMemberType();
+  }, []);
 
   /**
    * Effect: Fetch games when page first loads
@@ -220,13 +245,22 @@ export default function FriendliesPage() {
   /**
    * Filter games based on selected filter tab
    * Returns subset of games array that match current filter
+   * For "Open for entry" tab, also filters by member type and game gender eligibility
    */
   const filteredGames = games.filter(game => {
     // Check which filter is active
     switch (filter) {
       case 'O':
-        // Show only Open games
-        return game.status === 'O';
+        // Show only Open games that user is eligible to enter
+        // Check game status is Open
+        if (game.status !== 'O') return false;
+
+        // Check if user can enter based on member type and game gender
+        // If member type not loaded yet, show all games temporarily
+        if (!memberType) return true;
+
+        // Use canEnterGame helper to check eligibility
+        return canEnterGame(memberType, game.ladiesMen as GameGender);
 
       case 'entered':
         // Show only games user has entered
@@ -239,7 +273,7 @@ export default function FriendliesPage() {
         return game.userStatus && ['P', 'R', 'T', 'PW', 'RW', 'TW'].includes(game.userStatus);
 
       default:
-        // 'all' filter - show everything
+        // 'all' filter - show everything (don't filter by eligibility here)
         return true;
     }
   });
@@ -425,8 +459,8 @@ export default function FriendliesPage() {
                   )}
                 </div>
 
-                {/* For open games, show checkbox to enter/withdraw */}
-                {game.status === 'O' && (
+                {/* For open games, show checkbox to enter/withdraw (only if eligible) */}
+                {game.status === 'O' && memberType && canEnterGame(memberType, game.ladiesMen as GameGender) && (
                   <label className="flex items-center space-x-2 cursor-pointer">
                     <input
                       type="checkbox"

@@ -481,10 +481,10 @@ export async function updateRenewal(
 
 /**
  * Calculate fees based on renewal data
- * Determines total fees owed based on member type, age, and selections
+ * Determines total fees owed based on member type, age, honorary status, and selections
  *
  * Fee Structure:
- * - Membership fee: Based on member type (Playing/Social/Honorary) and age
+ * - Membership fee: Based on member type (Playing Lady/Man, Social Lady/Man), age, and honorary status
  * - 200 Club fee: £6 per entry
  * - Competition fee: £2 per competition entered
  *
@@ -496,7 +496,7 @@ export async function updateRenewal(
  * - 60+: £110
  * - 80+: £60
  *
- * @param profile User profile with age demographic and member type
+ * @param profile User profile with age demographic, member type, and honorary status
  * @param renewal Renewal selections (competitions, 200 Club entries, etc.)
  * @returns Fee breakdown with membership, 200 Club, competitions, and total
  */
@@ -505,6 +505,7 @@ export function calculateFees(
     ageDemographic: string;
     memberType: string;
     fullTimeEducation?: boolean;
+    honorary?: string | null;
   },
   renewal: Partial<Renewal>
 ): FeeBreakdown {
@@ -512,36 +513,35 @@ export function calculateFees(
   let membershipFee = 0;
 
   // Extract profile fields for easier access
-  const { ageDemographic, memberType, fullTimeEducation } = profile;
+  const { ageDemographic, memberType, fullTimeEducation, honorary } = profile;
 
-  // Calculate membership fee based on member type and age demographic
-  // Different fee structures for Playing vs Social vs Honorary members
-  switch (memberType) {
-    case 'Playing':
-      switch (ageDemographic) {
-        case 'U18':
-          membershipFee = MEMBERSHIP_FEES.U18;
-          break;
-        case '18-24':
-          membershipFee = fullTimeEducation ? MEMBERSHIP_FEES.YOUNG_ADULT_STUDENT : MEMBERSHIP_FEES.YOUNG_ADULT;
-          break;
-        case '25-59':
-          membershipFee = MEMBERSHIP_FEES.ADULT;
-          break;
-        case '60+':
-          membershipFee = MEMBERSHIP_FEES.ADULT;
-          break;
-        case '80+':
-          membershipFee = MEMBERSHIP_FEES.SENIOR;
-          break;
-      }
-      break;
-    case 'Social':
-      membershipFee = MEMBERSHIP_FEES.SOCIAL;
-      break;
-    case 'Honorary':
-      membershipFee = MEMBERSHIP_FEES.HONORARY;
-      break;
+  // Honorary members pay no fee regardless of member type or age
+  if (honorary === 'Y') {
+    membershipFee = MEMBERSHIP_FEES.HONORARY;
+  }
+  // Playing members (Playing Lady or Playing Man)
+  else if (memberType === 'Playing Lady' || memberType === 'Playing Man') {
+    switch (ageDemographic) {
+      case 'U18':
+        membershipFee = MEMBERSHIP_FEES.U18;
+        break;
+      case '18-24':
+        membershipFee = fullTimeEducation ? MEMBERSHIP_FEES.YOUNG_ADULT_STUDENT : MEMBERSHIP_FEES.YOUNG_ADULT;
+        break;
+      case '25-59':
+        membershipFee = MEMBERSHIP_FEES.ADULT;
+        break;
+      case '60+':
+        membershipFee = MEMBERSHIP_FEES.ADULT;
+        break;
+      case '80+':
+        membershipFee = MEMBERSHIP_FEES.SENIOR;
+        break;
+    }
+  }
+  // Social members (Social Lady or Social Man)
+  else if (memberType === 'Social Lady' || memberType === 'Social Man') {
+    membershipFee = MEMBERSHIP_FEES.SOCIAL;
   }
 
   // Calculate 200 Club fees

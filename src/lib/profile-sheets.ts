@@ -82,7 +82,6 @@ function getGoogleSheetsClient() {
  * - Year started (must be between 1900 and current year + 1)
  * - Age demographic (must be valid option)
  * - Member type (Playing or Social)
- * - Title (Mr, Mrs, Miss, Ms)
  * - Boolean fields (must be actual boolean)
  * - Volunteering preferences (Yes or No)
  */
@@ -121,21 +120,11 @@ function validateProfileField(field: string, value: any): string | undefined {
 
   // Validate member type
   if (field === 'memberType' && value) {
-    const validTypes = ['Playing', 'Social'];
+    const validTypes = ['Playing Lady', 'Social Lady', 'Playing Man', 'Social Man'];
 
-    // Check if value is either Playing or Social
+    // Check if value is one of the four valid member types
     if (!validTypes.includes(value)) {
       return `Invalid member type: must be one of ${validTypes.join(', ')}`;
-    }
-  }
-
-  // Validate title
-  if (field === 'title' && value) {
-    const validTitles = ['Mr', 'Mrs', 'Miss', 'Ms'];
-
-    // Check if value is in the allowed list
-    if (!validTitles.includes(value)) {
-      return `Invalid title: must be one of ${validTitles.join(', ')}`;
     }
   }
 
@@ -151,9 +140,9 @@ function validateProfileField(field: string, value: any): string | undefined {
   // Validate volunteering preferences
   const volunteeringFields = ['drivingAwayMatches', 'greenMaintenance', 'barDuty'];
   if (volunteeringFields.includes(field) && value) {
-    const validValues = ['Yes', 'No'];
+    const validValues = ['Y', 'N'];
 
-    // Check if value is either Yes or No
+    // Check if value is either Y or N
     if (!validValues.includes(value)) {
       return `${field} must be one of ${validValues.join(', ')}`;
     }
@@ -218,7 +207,6 @@ export async function updateUserProfile(
     // Define which fields users are allowed to update
     // Security: Password and other auth fields are NOT in this list
     const allowedFields = [
-      'title',
       'firstName',
       'lastName',
       'knownAs',

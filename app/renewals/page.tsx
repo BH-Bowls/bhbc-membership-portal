@@ -7,13 +7,15 @@ import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
+import { getMemberTypeDisplay, getMemberTypeOptions, isPlayer } from '@/lib/member-type-utils';
 
 interface UserProfile {
   userName: string;
   fullKnownAs: string;
   lastName: string;
   ageDemographic: string;
-  memberType: string;
+  memberType: string; // PL=Playing Lady, SL=Social Lady, PM=Playing Man, SM=Social Man
+  honorary: string | null; // "Y" or "N" or null
   friendliesLastYear: number | string; // Can be a number or "X" for manual override
   emailAddress: string;
   title: string | null;
@@ -108,6 +110,13 @@ export default function RenewalsPage() {
     }
   }, [profile, renewal, ageDemographic, memberType, fullTimeEducation]);
 
+  // Scroll to top when error is displayed
+  useEffect(() => {
+    if (error) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [error]);
+
   const loadRenewalData = async () => {
     try {
       setIsLoading(true);
@@ -185,34 +194,35 @@ export default function RenewalsPage() {
 
     const ageDem = profile.ageDemographic;
     const memType = profile.memberType;
+    const isHonorary = profile.honorary === 'Y';
 
-    // Fee calculation based on member type and age demographic
-    switch (memType) {
-      case 'Playing':
-        switch (ageDem) {
-          case 'U18':
-            membershipFee = 10;
-            break;
-          case '18-24':
-            membershipFee = fullTimeEdu ? 10 : 60;
-            break;
-          case '25-59':
-            membershipFee = 110;
-            break;
-          case '60+':
-            membershipFee = 110;
-            break;
-          case '80+':
-            membershipFee = 60;
-            break;
-        }
-        break;
-      case 'Social':
-        membershipFee = 25;
-        break;
-      case 'Honorary':
-        membershipFee = 0;
-        break;
+    // Honorary members pay no fee regardless of member type
+    if (isHonorary) {
+      membershipFee = 0;
+    }
+    // Playing members (Playing Lady or Playing Man)
+    else if (memType === 'Playing Lady' || memType === 'Playing Man') {
+      switch (ageDem) {
+        case 'U18':
+          membershipFee = 10;
+          break;
+        case '18-24':
+          membershipFee = fullTimeEdu ? 10 : 60;
+          break;
+        case '25-59':
+          membershipFee = 110;
+          break;
+        case '60+':
+          membershipFee = 110;
+          break;
+        case '80+':
+          membershipFee = 60;
+          break;
+      }
+    }
+    // Social members (Social Lady or Social Man)
+    else if (memType === 'Social Lady' || memType === 'Social Man') {
+      membershipFee = 25;
     }
 
     // Calculate 200 Club fees
@@ -246,17 +256,10 @@ export default function RenewalsPage() {
 
   const formatCurrency = (amount: number) => `£${amount.toFixed(2)}`;
 
-  // Get allowed member types based on current type
+  // Get allowed member types for dropdown
   const getAllowedMemberTypes = () => {
-    if (!profile) return [];
-    const currentType = profile.memberType;
-
-    if (currentType === 'Honorary') {
-      return ['Playing', 'Social', 'Honorary'];
-    } else if (currentType === 'Playing' || currentType === 'Social') {
-      return ['Playing', 'Social'];
-    }
-    return [currentType]; // Fallback: can only keep current type
+    // Return all member type options
+    return getMemberTypeOptions();
   };
 
   // Determine if user can enter a competition based on gender
@@ -454,12 +457,17 @@ export default function RenewalsPage() {
                         className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                       >
                         <option value="">-- Select Member Type --</option>
-                        {getAllowedMemberTypes().map((type) => (
-                          <option key={type} value={type}>
-                            {type}
+                        {getAllowedMemberTypes().map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
                           </option>
                         ))}
                       </select>
+                      {profile?.honorary === 'Y' && (
+                        <p className="mt-2 text-sm text-gray-600 italic">
+                          Honorary Member
+                        </p>
+                      )}
                     </div>
                   </div>
 
@@ -582,7 +590,7 @@ export default function RenewalsPage() {
                     </div>
 
                     {/* Driving - Only for Playing members */}
-                    {memberType === 'Playing' && (
+                    {isPlayer(memberType) && (
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
                           Driving to Away Matches (optional)
@@ -686,7 +694,7 @@ export default function RenewalsPage() {
                 </div>
 
                 {/* Club Competitions Section - Only for Playing members */}
-                {memberType === 'Playing' && (
+                {isPlayer(memberType) && (
                   <div className="mb-8 pb-8 border-b">
                     <h3 className="text-lg font-medium text-gray-900 mb-2">Club Competitions</h3>
 

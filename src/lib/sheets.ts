@@ -70,7 +70,8 @@ export interface User {
   lockerNo: string | null;
   birthdate: string | null;
   ageDemographic: string;
-  memberType: string;
+  memberType: string; // PL=Playing Lady, SL=Social Lady, PM=Playing Man, SM=Social Man
+  honorary: string | null; // "Y" or "N" or null - indicates if member is Honorary
   yearStarted: number | null;
   renewStatus: string | null;
   friendlies2023: number;
@@ -527,6 +528,7 @@ function parseUserRow(row: any[], rowNumber: number, colMap: { [key: string]: nu
     birthdate: get('birthdate'),
     ageDemographic: get('age_demographic') || '',
     memberType: get('member_type') || '',
+    honorary: get('honorary'),
     yearStarted: getInt('year_started') || null,
     renewStatus: get('renew_status'),
     friendlies2023: getInt('friendlies_2023'),

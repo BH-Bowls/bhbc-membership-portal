@@ -8,6 +8,7 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
 import { SearchableSelect } from '@/components/SearchableSelect';
+import { getMemberTypeDisplay, getMemberTypeOptions } from '@/lib/member-type-utils';
 
 interface ProfileData {
   title: string;
@@ -26,7 +27,8 @@ interface ProfileData {
   lockerNo: string;
   birthdate: string;
   ageDemographic: string;
-  memberType: string;
+  memberType: string; // PL=Playing Lady, SL=Social Lady, PM=Playing Man, SM=Social Man
+  honorary: string | null; // "Y" or "N" or null
   yearStarted: number;
   socialEmails: boolean;
   handbookEntry: boolean;
@@ -237,24 +239,6 @@ export default function ProfilePage() {
               <h3 className="text-lg font-medium text-gray-900 mb-4">Personal Information</h3>
               <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Title</label>
-                  {isEditing ? (
-                    <select
-                      value={editedProfile.title || ''}
-                      onChange={(e) => handleChange('title', e.target.value)}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border text-gray-900"
-                    >
-                      <option value="Mr">Mr</option>
-                      <option value="Mrs">Mrs</option>
-                      <option value="Miss">Miss</option>
-                      <option value="Ms">Ms</option>
-                    </select>
-                  ) : (
-                    <p className="mt-1 text-sm text-gray-900">{profile.title}</p>
-                  )}
-                </div>
-
-                <div>
                   <label className="block text-sm font-medium text-gray-700">First Name</label>
                   {isEditing ? (
                     <input
@@ -297,7 +281,7 @@ export default function ProfilePage() {
                   )}
                 </div>
 
-                <div className="sm:col-span-2">
+                <div>
                   <label className="block text-sm font-medium text-gray-700">
                     Display Name (for Membership book etc)
                   </label>
@@ -379,7 +363,7 @@ export default function ProfilePage() {
             {/* Address */}
             <div className="mb-8">
               <h3 className="text-lg font-medium text-gray-900 mb-4">Address</h3>
-              <div className="grid grid-cols-1 gap-6">
+              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Address Line 1</label>
                   {isEditing ? (
@@ -408,34 +392,32 @@ export default function ProfilePage() {
                   )}
                 </div>
 
-                <div className="grid grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Town/City</label>
-                    {isEditing ? (
-                      <input
-                        type="text"
-                        value={editedProfile.address3 || ''}
-                        onChange={(e) => handleChange('address3', e.target.value)}
-                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border text-gray-900"
-                      />
-                    ) : (
-                      <p className="mt-1 text-sm text-gray-900">{profile.address3 || '—'}</p>
-                    )}
-                  </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Town/City</label>
+                  {isEditing ? (
+                    <input
+                      type="text"
+                      value={editedProfile.address3 || ''}
+                      onChange={(e) => handleChange('address3', e.target.value)}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border text-gray-900"
+                    />
+                  ) : (
+                    <p className="mt-1 text-sm text-gray-900">{profile.address3 || '—'}</p>
+                  )}
+                </div>
 
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Post Code</label>
-                    {isEditing ? (
-                      <input
-                        type="text"
-                        value={editedProfile.postCode || ''}
-                        onChange={(e) => handleChange('postCode', e.target.value.toUpperCase())}
-                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border text-gray-900"
-                      />
-                    ) : (
-                      <p className="mt-1 text-sm text-gray-900">{profile.postCode || '—'}</p>
-                    )}
-                  </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Post Code</label>
+                  {isEditing ? (
+                    <input
+                      type="text"
+                      value={editedProfile.postCode || ''}
+                      onChange={(e) => handleChange('postCode', e.target.value.toUpperCase())}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border text-gray-900"
+                    />
+                  ) : (
+                    <p className="mt-1 text-sm text-gray-900">{profile.postCode || '—'}</p>
+                  )}
                 </div>
               </div>
             </div>
@@ -453,11 +435,16 @@ export default function ProfilePage() {
                       className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border text-gray-900"
                     >
                       <option value="">-- Select Member Type --</option>
-                      <option value="Playing">Playing</option>
-                      <option value="Social">Social</option>
+                      {getMemberTypeOptions().map(option => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
                     </select>
                   ) : (
-                    <p className="mt-1 text-sm text-gray-900">{profile.memberType}</p>
+                    <p className="mt-1 text-sm text-gray-900">
+                      {getMemberTypeDisplay(profile.memberType, profile.honorary)}
+                    </p>
                   )}
                 </div>
 
@@ -570,8 +557,8 @@ export default function ProfilePage() {
                       className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border mb-2 text-gray-900"
                     >
                       <option value="" disabled>Please select</option>
-                      <option value="Yes">Yes</option>
-                      <option value="No">No</option>
+                      <option value="Y">Y</option>
+                      <option value="N">N</option>
                     </select>
                     <textarea
                       value={editedProfile.drivingAdditionalInfo || ''}
@@ -611,8 +598,8 @@ export default function ProfilePage() {
                       className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border mb-2 text-gray-900"
                     >
                       <option value="" disabled>Please select</option>
-                      <option value="Yes">Yes</option>
-                      <option value="No">No</option>
+                      <option value="Y">Y</option>
+                      <option value="N">N</option>
                     </select>
                     <textarea
                       value={editedProfile.greenAdditionalInfo || ''}
@@ -652,8 +639,8 @@ export default function ProfilePage() {
                       className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border mb-2 text-gray-900"
                     >
                       <option value="" disabled>Please select</option>
-                      <option value="Yes">Yes</option>
-                      <option value="No">No</option>
+                      <option value="Y">Y</option>
+                      <option value="N">N</option>
                     </select>
                     <textarea
                       value={editedProfile.barAdditionalInfo || ''}
@@ -683,7 +670,7 @@ export default function ProfilePage() {
                   Other Skills
                 </label>
                 <p className="text-xs text-gray-500 mb-2">
-                  Any other skills that may benefit the club (plumbing, IT, legal, etc.)
+                  Any other skills that you could bring to the the club (plumbing, accounting, IT, legal, etc.)
                 </p>
                 {isEditing ? (
                   <textarea
