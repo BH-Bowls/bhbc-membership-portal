@@ -65,15 +65,41 @@ export default function HomePage() {
             </div>
           </div>
 
-          {/* Info Section - Placeholder for future content */}
+          {/* Info Section - Quick Start Guide */}
           <div className="mt-6 bg-white overflow-hidden shadow rounded-lg">
             <div className="px-4 py-5 sm:p-6">
               <h3 className="text-lg font-medium text-gray-900 mb-2">
                 Quick Start
               </h3>
-              <p className="text-sm text-gray-600">
-                Use the navigation menu above to access different sections of the portal. You can manage your profile, submit membership renewals, and sign up for friendly matches.
-              </p>
+
+              {/* Message for narrow screens (mobile) */}
+              <div className="md:hidden text-sm text-gray-600 space-y-2">
+                <p>
+                  Use the Hamburger Menu (<span className="inline-flex items-center font-medium text-gray-900">
+                    <svg className="h-4 w-4 mx-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                    </svg>
+                  </span>) in the top right to access different sections of the portal.
+                </p>
+                <p>
+                  You can manage your profile, submit membership renewals, and take a sneak preview at the new friendly match system.
+                </p>
+              </div>
+
+              {/* Message for wide screens (desktop) */}
+              <div className="hidden md:block text-sm text-gray-600 space-y-2">
+                <p>
+                  Use the navigation menu above to access different sections of the portal. Click the <span className="inline-flex items-center font-medium text-gray-900">
+                    <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-blue-500 text-white text-xs font-medium mx-1">
+                      {session.user.name?.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+                    </span>
+                    profile icon
+                  </span> in the top right for additional options.
+                </p>
+                <p>
+                  You can manage your profile, submit membership renewals, and take a sneak preview at the new friendly match system.
+                </p>
+              </div>
             </div>
           </div>
         </div>

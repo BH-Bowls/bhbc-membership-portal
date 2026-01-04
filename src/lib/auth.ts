@@ -34,6 +34,10 @@ export const authOptions: NextAuthOptions = {
        * @throws Error with message to display to user if authentication fails
        */
       async authorize(credentials, req) {
+        // Clear column map cache at start of login to ensure fresh column positions
+        // This ensures any Google Sheets column changes are picked up immediately
+        clearColumnMapCache();
+
         // Validate that both fields were provided
         if (!credentials) {
           throw new Error('Please enter your username and password');
@@ -108,10 +112,6 @@ export const authOptions: NextAuthOptions = {
         token.originalAdmin = undefined;
         token.impersonationStartTime = undefined;
         token.impersonationSessionId = undefined;
-
-        // Clear column map cache on login to ensure fresh data
-        // This ensures any Google Sheets column changes are picked up
-        clearColumnMapCache();
       }
 
       // Handle session updates triggered by impersonation API endpoints

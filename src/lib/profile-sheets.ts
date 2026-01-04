@@ -206,10 +206,12 @@ export async function updateUserProfile(
 
     // Define which fields users are allowed to update
     // Security: Password and other auth fields are NOT in this list
+    // Role is in this list but protected by canEditProfileField (admin-only)
     const allowedFields = [
       'firstName',
       'lastName',
       'knownAs',
+      'role',
       'buddyUserName',
       'emailAddress',
       'landline',

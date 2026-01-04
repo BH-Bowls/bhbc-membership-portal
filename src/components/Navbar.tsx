@@ -35,6 +35,7 @@ export function Navbar({ userName, userRole }: NavbarProps) {
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [impersonationModalOpen, setImpersonationModalOpen] = useState(false);
+  const [hasBuddies, setHasBuddies] = useState(false);
   const profileDropdownRef = useRef<HTMLDivElement>(null);
   const pathname = usePathname();
   const router = useRouter();
@@ -54,9 +55,27 @@ export function Navbar({ userName, userRole }: NavbarProps) {
   const canAccessBanking = isAdmin || isTreasurer;
   const canAccessCaptainTools = isAdmin || isCaptain;
 
-  // Show impersonation button to all users - the modal will load users when opened
-  // and handle empty state if user has no one to impersonate
-  const canShowImpersonation = true;
+  // Check if regular users have buddies to manage
+  useEffect(() => {
+    // Only check for non-admin users
+    if (!isAdmin && userName) {
+      fetch('/api/admin/impersonate/users')
+        .then(res => res.json())
+        .then(data => {
+          // If they have any users to impersonate, show the button
+          setHasBuddies(data.users && data.users.length > 0);
+        })
+        .catch(() => {
+          // On error, hide the button
+          setHasBuddies(false);
+        });
+    }
+  }, [isAdmin, userName]);
+
+  // Show impersonation/switch user only to:
+  // - Admins (can switch to anyone)
+  // - Regular users who have buddies (people who set them as buddy)
+  const canShowImpersonation = isAdmin || hasBuddies;
 
   // Navigation items - easy to add more here
   const navigationItems: NavItem[] = [
@@ -307,32 +326,23 @@ export function Navbar({ userName, userRole }: NavbarProps) {
                       </>
                     )}
 
-                    {/* Regular menu items */}
+                    {/* Change Password - available for own account and when managing buddies */}
                     <Link
-                      href="/profile"
+                      href="/change-password"
                       onClick={() => setProfileMenuOpen(false)}
                       className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
                     >
-                      Profile
+                      Change Password
                     </Link>
 
-                    {/* Hide these when impersonating */}
+                    {/* Hide logout when impersonating */}
                     {!isImpersonating && (
-                      <>
-                        <Link
-                          href="/change-password"
-                          onClick={() => setProfileMenuOpen(false)}
-                          className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                        >
-                          Change Password
-                        </Link>
-                        <button
-                          onClick={handleSignOut}
-                          className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                        >
-                          Logout
-                        </button>
-                      </>
+                      <button
+                        onClick={handleSignOut}
+                        className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                      >
+                        Logout
+                      </button>
                     )}
 
                     {/* Version info */}
@@ -516,31 +526,23 @@ export function Navbar({ userName, userRole }: NavbarProps) {
                   </>
                 )}
 
+                {/* Change Password - available for own account and when managing buddies */}
                 <Link
-                  href="/profile"
+                  href="/change-password"
                   onClick={() => setMobileMenuOpen(false)}
                   className="block px-3 py-2 text-base font-medium text-gray-700 hover:bg-gray-100 rounded-md"
                 >
-                  Profile
+                  Change Password
                 </Link>
 
-                {/* Hide these when impersonating */}
+                {/* Hide logout when impersonating */}
                 {!isImpersonating && (
-                  <>
-                    <Link
-                      href="/change-password"
-                      onClick={() => setMobileMenuOpen(false)}
-                      className="block px-3 py-2 text-base font-medium text-gray-700 hover:bg-gray-100 rounded-md"
-                    >
-                      Change Password
-                    </Link>
-                    <button
-                      onClick={handleSignOut}
-                      className="block w-full text-left px-3 py-2 text-base font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-md"
-                    >
-                      Logout
-                    </button>
-                  </>
+                  <button
+                    onClick={handleSignOut}
+                    className="block w-full text-left px-3 py-2 text-base font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-md"
+                  >
+                    Logout
+                  </button>
                 )}
               </div>
 

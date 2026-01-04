@@ -16,6 +16,7 @@ interface ProfileData {
   lastName: string;
   knownAs: string;
   fullName: string;
+  role: string;
   buddyUserName: string;
   emailAddress: string;
   landline: string;
@@ -45,6 +46,11 @@ interface ProfileData {
 export default function ProfilePage() {
   const { data: session, status } = useSession();
   const router = useRouter();
+
+  // Check if admin is managing another user
+  const isAdminManaging = session?.user?.isImpersonating &&
+                         session?.user?.originalAdmin?.role === 'Admin';
+
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [buddyName, setBuddyName] = useState<string | null>(null);
   const [users, setUsers] = useState<{ value: string; label: string }[]>([]);
@@ -292,13 +298,26 @@ export default function ProfilePage() {
                   <label className="block text-sm font-medium text-gray-700">Buddy Name</label>
                   {isEditing ? (
                     <>
-                      <SearchableSelect
-                        options={users}
-                        value={editedProfile.buddyUserName || ''}
-                        onChange={(value) => handleChange('buddyUserName', value)}
-                        placeholder="Search for a member..."
-                        className="mt-1"
-                      />
+                      <div className="flex gap-2 items-start">
+                        <div className="flex-1">
+                          <SearchableSelect
+                            options={users}
+                            value={editedProfile.buddyUserName || ''}
+                            onChange={(value) => handleChange('buddyUserName', value)}
+                            placeholder="Search for a member..."
+                            className="mt-1"
+                          />
+                        </div>
+                        {editedProfile.buddyUserName && (
+                          <button
+                            type="button"
+                            onClick={() => handleChange('buddyUserName', '')}
+                            className="mt-1 px-3 py-2 text-sm font-medium text-red-600 hover:text-red-700 hover:bg-red-50 rounded-md border border-red-300 hover:border-red-400"
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </div>
                       <p className="mt-1 text-xs text-gray-500">
                         Your buddy can help manage your profile and renewals
                       </p>
@@ -447,6 +466,27 @@ export default function ProfilePage() {
                     </p>
                   )}
                 </div>
+
+                {/* Role - only editable by admins managing others */}
+                {isAdminManaging && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Role</label>
+                    {isEditing ? (
+                      <select
+                        value={editedProfile.role || ''}
+                        onChange={(e) => handleChange('role', e.target.value)}
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border text-gray-900"
+                      >
+                        <option value="Member">Member</option>
+                        <option value="Captain">Captain</option>
+                        <option value="Treasurer">Treasurer</option>
+                        <option value="Admin">Admin</option>
+                      </select>
+                    ) : (
+                      <p className="mt-1 text-sm text-gray-900">{profile.role}</p>
+                    )}
+                  </div>
+                )}
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Year Started</label>

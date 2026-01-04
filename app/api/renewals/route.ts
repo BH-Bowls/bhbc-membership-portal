@@ -345,12 +345,20 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    // Send confirmation email if renewing (to target user, not current user)
+    // Send confirmation email if renewing
+    // Pass both target user and the person submitting (manager)
     if (data.renewingMembership) {
+      // Get the actual manager's userName
+      // If impersonating, use originalAdmin.userName, otherwise use current user
+      const managerUserName = session.user.isImpersonating
+        ? session.user.originalAdmin?.userName
+        : session.user.userName;
+
       const emailResult = await sendRenewalConfirmation(
         targetUserName,
         updatedRenewal,
-        fees
+        fees,
+        managerUserName
       );
 
       if (!emailResult.success) {

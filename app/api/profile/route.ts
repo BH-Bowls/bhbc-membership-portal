@@ -78,6 +78,15 @@ export async function PUT(request: NextRequest) {
     // Use session.user.userName directly (works with impersonation)
     const targetUserName = session.user.userName;
 
+    // Get the actual user making the request (for permission checks)
+    // If impersonating, use original admin's details, otherwise use current user
+    const requestingUserName = session.user.isImpersonating
+      ? session.user.originalAdmin?.userName || session.user.userName
+      : session.user.userName;
+    const requestingUserRole = session.user.isImpersonating
+      ? session.user.originalAdmin?.role || session.user.role
+      : session.user.role;
+
     // Filter updates based on field-level permissions
     const allowedUpdates: Partial<typeof updates> = {};
 
@@ -86,8 +95,8 @@ export async function PUT(request: NextRequest) {
       if (field === 'userName') continue;
 
       const canEdit = await canEditProfileField(
-        session.user.userName,
-        session.user.role,
+        requestingUserName,
+        requestingUserRole,
         targetUserName,
         field
       );
@@ -96,7 +105,7 @@ export async function PUT(request: NextRequest) {
         allowedUpdates[field] = value;
       } else {
         console.warn(
-          `[PUT /api/profile] User ${session.user.userName} attempted to edit restricted field: ${field} for ${targetUserName}`
+          `[PUT /api/profile] User ${requestingUserName} attempted to edit restricted field: ${field} for ${targetUserName}`
         );
       }
     }

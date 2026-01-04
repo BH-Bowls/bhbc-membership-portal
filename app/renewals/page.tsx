@@ -83,6 +83,8 @@ export default function RenewalsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [error, setError] = useState('');
+  const [emailSent, setEmailSent] = useState(true); // Track if confirmation email was sent
+  const [emailWarning, setEmailWarning] = useState(''); // Warning if email failed
   const [eligibility, setEligibility] = useState<{
     canEnterCompetitions: boolean;
     friendliesLastYear: number | string;
@@ -176,6 +178,11 @@ export default function RenewalsPage() {
 
       const data = await response.json();
       setFees(data.fees);
+
+      // Track email status
+      setEmailSent(data.emailSent !== false); // Default to true if not specified
+      setEmailWarning(data.warning || '');
+
       setIsSubmitted(true);
     } catch (err: any) {
       setError(err.message || 'Failed to save renewal');
@@ -262,12 +269,12 @@ export default function RenewalsPage() {
     return getMemberTypeOptions();
   };
 
-  // Determine if user can enter a competition based on gender
+  // Determine if user can enter a competition based on member type
   const canEnterCompetition = (competitionKey: string): boolean => {
-    if (!profile?.title) return true; // Default to allow if no title
+    if (!profile?.memberType) return true; // Default to allow if no member type
 
-    const isMale = profile.title === 'Mr';
-    const isFemale = ['Mrs', 'Miss', 'Ms'].includes(profile.title);
+    const isMale = profile.memberType === 'Playing Man' || profile.memberType === 'Social Man';
+    const isFemale = profile.memberType === 'Playing Lady' || profile.memberType === 'Social Lady';
 
     // Men's only competitions
     if (competitionKey === 'mensChampionship' || competitionKey === 'mensTwoWood') {
@@ -359,15 +366,25 @@ export default function RenewalsPage() {
                 </p>
               </div>
 
-              <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                <p className="text-sm text-gray-700">
-                  ✉️ A confirmation email has been sent to{' '}
-                  {isImpersonating && (
-                    <span className="font-medium">{profile?.fullKnownAs} at </span>
-                  )}
-                  <span className="font-medium">{profile?.emailAddress}</span>
-                </p>
-              </div>
+              {emailSent ? (
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                  <p className="text-sm text-gray-700">
+                    ✉️ A confirmation email has been sent{profile?.emailAddress ? ' to' : ''}{' '}
+                    {isImpersonating && profile?.emailAddress && (
+                      <span className="font-medium">{profile?.fullKnownAs} at </span>
+                    )}
+                    {profile?.emailAddress && (
+                      <span className="font-medium">{profile?.emailAddress}</span>
+                    )}
+                  </p>
+                </div>
+              ) : emailWarning && (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                  <p className="text-sm text-yellow-800">
+                    ⚠️ {emailWarning}
+                  </p>
+                </div>
+              )}
 
               <div className="mt-6 flex justify-center">
                 <button
@@ -605,8 +622,8 @@ export default function RenewalsPage() {
                           className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border mb-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                         >
                           <option value="">Please select</option>
-                          <option value="Yes">Yes</option>
-                          <option value="No">No</option>
+                          <option value="Y">Y</option>
+                          <option value="N">N</option>
                         </select>
                         <textarea
                           value={renewal.drivingAdditionalInfo || ''}
@@ -634,8 +651,8 @@ export default function RenewalsPage() {
                         className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border mb-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                       >
                         <option value="">Please select</option>
-                        <option value="Yes">Yes</option>
-                        <option value="No">No</option>
+                        <option value="Y">Y</option>
+                        <option value="N">N</option>
                       </select>
                       <textarea
                         value={renewal.greenAdditionalInfo || ''}
@@ -661,8 +678,8 @@ export default function RenewalsPage() {
                         className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border mb-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                       >
                         <option value="">Please select</option>
-                        <option value="Yes">Yes</option>
-                        <option value="No">No</option>
+                        <option value="Y">Y</option>
+                        <option value="N">N</option>
                       </select>
                       <textarea
                         value={renewal.barAdditionalInfo || ''}

@@ -602,22 +602,53 @@ export function calculateFees(
  * Send renewal confirmation email
  * - Uses SMTP (nodemailer)
  * - Includes: name, fees breakdown, bank details
+ * - If user has no email, sends to manager (person submitting) or their designated buddy
  */
 export async function sendRenewalConfirmation(
   userName: string,
   renewal: Renewal,
-  fees: FeeBreakdown
+  fees: FeeBreakdown,
+  managerUserName?: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
     // Get user profile for email address and name
     const user = await getUserByUsername(userName);
-    if (!user || !user.emailAddress) {
-      return { success: false, error: 'User email not found' };
+    if (!user) {
+      return { success: false, error: 'User not found' };
     }
 
     // Check if SMTP is configured
     if (!isEmailConfigured()) {
       return { success: false, error: 'SMTP not configured' };
+    }
+
+    // Determine recipient email - prioritize user's email, then manager, then buddy
+    let recipientEmail = user.emailAddress;
+    let memberName = user.fullKnownAs || user.firstName;
+
+    // If user has no email, send to the person managing this renewal (if different from user)
+    if (!recipientEmail && managerUserName && managerUserName !== userName) {
+      const manager = await getUserByUsername(managerUserName);
+      if (manager?.emailAddress) {
+        recipientEmail = manager.emailAddress;
+        // Note in template that this is being sent to the manager
+        memberName = `${memberName} (sent to manager: ${manager.fullKnownAs || manager.firstName})`;
+      }
+    }
+
+    // If still no email and user has a designated buddy, try sending to buddy
+    if (!recipientEmail && user.buddyUserName) {
+      const buddy = await getUserByUsername(user.buddyUserName);
+      if (buddy?.emailAddress) {
+        recipientEmail = buddy.emailAddress;
+        // Note in template that this is for their buddy
+        memberName = `${memberName} (sent to buddy: ${buddy.fullKnownAs || buddy.firstName})`;
+      }
+    }
+
+    // If still no email address, return error
+    if (!recipientEmail) {
+      return { success: false, error: 'No email address found for user, manager, or buddy' };
     }
 
     // Format currency
@@ -653,11 +684,11 @@ export async function sendRenewalConfirmation(
 
     // Send email using template
     const result = await sendTemplateEmail(
-      user.emailAddress,
+      recipientEmail,
       'BHBC Membership Renewal Confirmation',
       'renewal-confirmation',
       {
-        memberName: user.fullKnownAs || user.firstName,
+        memberName,
         membershipFee: formatCurrency(fees.membershipFee),
         compsFee: formatCurrency(fees.compsFee),
         club200Fee: formatCurrency(fees.club200Fee),
