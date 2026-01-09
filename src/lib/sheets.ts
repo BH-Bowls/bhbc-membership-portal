@@ -288,16 +288,16 @@ export async function getAllUsers(): Promise<User[]> {
 
 /**
  * Get user by username (exact match, case-insensitive)
- * Supports alternative format with periods (e.g., john.smith -> john_smith)
+ * Supports alternative format with underscores (e.g., john_smith -> john.smith)
  */
 export async function getUserByUsername(userName: string): Promise<User | null> {
   const users = await getAllUsers();
   const normalized = userName.toLowerCase();
-  const normalizedWithUnderscore = normalized.replace(/\./g, '_');
+  const normalizedWithDot = normalized.replace(/_/g, '.');
 
   return users.find(u =>
     u.userName.toLowerCase() === normalized ||
-    u.userName.toLowerCase() === normalizedWithUnderscore
+    u.userName.toLowerCase() === normalizedWithDot
   ) || null;
 }
 
@@ -588,6 +588,7 @@ export async function logLoginAttempt(attempt: {
   failureReason?: string | null;
   ipAddress?: string | null;
   userAgent?: string | null;
+  deviceType?: string | null;
 }): Promise<void> {
   try {
     const sheets = getGoogleSheetsClient();
@@ -595,13 +596,13 @@ export async function logLoginAttempt(attempt: {
       spreadsheetId: getSpreadsheetId(),
       range: 'LoginAttempts!A:A',
     });
-    
+
     const nextId = (response.data.values?.length || 1);
     const now = new Date().toISOString();
 
     await sheets.spreadsheets.values.append({
       spreadsheetId: getSpreadsheetId(),
-      range: 'LoginAttempts!A:H',
+      range: 'LoginAttempts!A:I',
       valueInputOption: 'USER_ENTERED',
       requestBody: {
         values: [[
@@ -612,6 +613,7 @@ export async function logLoginAttempt(attempt: {
           attempt.failureReason || '',
           attempt.ipAddress || '',
           attempt.userAgent || '',
+          attempt.deviceType || '',
           now
         ]]
       }
@@ -736,12 +738,12 @@ export async function generatePasswordResetToken(
     // Find user by username or email
     const users = await getAllUsers();
     const normalized = identifier.toLowerCase();
-    const normalizedWithUnderscore = normalized.replace(/\./g, '_');
+    const normalizedWithDot = normalized.replace(/_/g, '.');
 
     const user = users.find(
       (u) =>
         u.userName.toLowerCase() === normalized ||
-        u.userName.toLowerCase() === normalizedWithUnderscore ||
+        u.userName.toLowerCase() === normalizedWithDot ||
         (u.emailAddress && u.emailAddress.toLowerCase() === normalized)
     );
 

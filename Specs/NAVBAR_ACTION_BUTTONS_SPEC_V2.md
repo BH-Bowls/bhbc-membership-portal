@@ -55,10 +55,11 @@ Create a unified navbar action button system that:
 
 **Edit Mode (with buttons):**
 ```
-[Logo] [Save] [Cancel] .............. [👤]
+[Logo] [Save] [Cancel] .............. [☰]
 ```
 - Action buttons **replace** Home/Profile/Renewals links
-- Profile icon remains active
+- **Hamburger menu replaces profile icon** (cleaner UI)
+- Clicking hamburger opens slide-out menu with ALL navigation + profile items
 - Clean, focused UI
 
 **No scroll-aware behavior** - keep it simple
@@ -69,25 +70,34 @@ Create a unified navbar action button system that:
 
 ### User Flow
 
+**For pages with auto-save (Profile, Renewals):**
 1. User enters edit mode (nav items replaced with Save/Cancel)
 2. User makes changes (auto-saved to sessionStorage)
-3. User clicks hamburger or profile menu **→ Menu opens** ✓
-4. User selects menu item (e.g., "Renewals", "Logout")
-5. **Warning appears**: "You have unsaved changes. Leave without saving?"
-   - [Stay] [Leave Anyway]
-6. If **Stay** → menu closes, return to editing
-7. If **Leave Anyway** → navigate away, changes lost (draft removed)
+3. User clicks hamburger menu **→ Menu opens** ✓
+4. User selects menu item (e.g., "Renewals", "Home")
+5. **No warning** → drafts are preserved, user can return later
+6. User clicks "Switch User" or "Logout"
+7. **Warning appears**: "You have unsaved changes. Your work will be lost. Continue?"
+8. If **confirmed** → drafts cleared, switch/logout proceeds
+
+**For pages without auto-save (Change Password):**
+1. User fills in password fields
+2. User clicks navigation link
+3. **Warning appears**: "You have unsaved password changes. Please save or cancel before navigating away."
+4. User must Save or Cancel to proceed
 
 ### What Triggers Warnings
 
-**Show warning when:**
-- Clicking navigation menu items (Home, Profile, Renewals, etc.)
-- Clicking profile menu items (Profile, Change Password)
-- Clicking "Return to Own Account"
-- Clicking "Switch User"
-- Clicking "Logout"
+**Show warning for Switch/Logout when:**
+- Any FormDraft-* keys exist in sessionStorage (Profile, Renewals drafts)
+- Action: All drafts cleared if user confirms
+
+**Show warning for navigation when:**
+- Page-level `hasUnsavedChanges` is true (Change Password with filled fields)
+- Action: No draft clearing (page-level only)
 
 **No warning when:**
+- Navigating between Profile/Renewals (drafts auto-saved and preserved)
 - Opening menus (hamburger/profile) - just browsing
 - Clicking Save or Cancel (intentional actions)
 
@@ -241,6 +251,7 @@ const handleSwitchUser = async (targetUser: string) => {
 interface NavbarProps {
   userName?: string;
   userRole?: string;
+  hasUnsavedChanges?: boolean;  // Page-level changes only (e.g., Change Password)
   actionButtons?: {
     primary?: ActionButton;
     secondary?: ActionButton;
@@ -323,7 +334,15 @@ interface ActionButton {
 
 **Change Password:**
 ```typescript
+// Track if any fields have been filled
+const hasUnsavedChanges = !success && (
+  currentPassword.trim() !== '' ||
+  newPassword.trim() !== '' ||
+  confirmPassword.trim() !== ''
+);
+
 <Navbar
+  hasUnsavedChanges={hasUnsavedChanges}  // Enable navigation warnings
   actionButtons={{
     primary: {
       label: 'Change Password',
@@ -462,7 +481,8 @@ focus: ring-2 ring-red-500 ring-offset-2
 
 **New implementation:**
 - Form fields in page body
-- Navbar shows: `[Logo] [Change Password] [Cancel] ... [👤]`
+- Navbar shows: `[Logo] [Change Password] [Cancel] ... [☰]`
+- Hamburger menu replaces profile icon (contains all navigation + profile items)
 - No auto-save (short form, sensitive data)
 - Navigate away → warning if fields are filled
 
@@ -474,48 +494,57 @@ focus: ring-2 ring-red-500 ring-offset-2
 
 ```typescript
 // In Navbar component
-const handleNavClick = (e: React.MouseEvent, href: string) => {
-  // If there are unsaved changes in any form
-  if (hasUnsavedChanges()) {
+// IMPORTANT: Only check page-level hasUnsavedChanges, NOT sessionStorage drafts
+// Drafts are preserved across navigation (auto-save feature)
+const handleNavigation = (e: React.MouseEvent, href: string) => {
+  // Only check page-level unsaved changes (e.g., Change Password with filled fields)
+  if (hasUnsavedChanges) {
     e.preventDefault();
 
     const confirmed = window.confirm(
-      'You have unsaved changes. Leave without saving?'
+      'You have unsaved password changes. Please save or cancel before navigating away.'
     );
 
     if (confirmed) {
-      // Clear the current form's draft
-      clearCurrentDraft();
-      // Proceed with navigation
+      // Navigate away (no draft clearing - page-level only)
       router.push(href);
     }
     // If not confirmed, do nothing (stay on page)
   }
-  // If no unsaved changes, navigate normally
+  // If no unsaved changes, let Link handle navigation normally
 };
 
 // Apply to all navigation links
-<Link href="/profile" onClick={(e) => handleNavClick(e, '/profile')}>
+<Link href="/profile" onClick={(e) => handleNavigation(e, '/profile')}>
   Profile
 </Link>
 ```
 
-### Track Unsaved Changes
+### Track Unsaved Changes (Page-Level Only)
 
+**For Change Password (no auto-save):**
 ```typescript
-// In each form page
-const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+// Track if any fields have been filled
+const hasUnsavedChanges = !success && (
+  currentPassword.trim() !== '' ||
+  newPassword.trim() !== '' ||
+  confirmPassword.trim() !== ''
+);
 
-useEffect(() => {
-  // Track if form has been modified
-  const hasChanges = JSON.stringify(editedProfile) !== JSON.stringify(profile);
-  setHasUnsavedChanges(hasChanges);
-}, [editedProfile, profile]);
+// Pass to Navbar
+<Navbar
+  hasUnsavedChanges={hasUnsavedChanges}
+  actionButtons={...}
+/>
+```
 
-// Pass to Navbar or global context
+**For Profile/Renewals (auto-save enabled):**
+```typescript
+// Do NOT pass hasUnsavedChanges prop
+// These pages use auto-save, no navigation warnings needed
 <Navbar
   actionButtons={...}
-  hasUnsavedChanges={hasUnsavedChanges}
+  // hasUnsavedChanges NOT set (defaults to false)
 />
 ```
 
@@ -677,11 +706,104 @@ useEffect(() => {
 
 **V2 Approach (This Spec):**
 - ✅ Single navbar (buttons replace nav items)
+- ✅ Hamburger replaces profile icon in edit mode (desktop)
 - ✅ Auto-save with warnings (better UX)
 - ✅ Simpler implementation (no scroll detection)
-- ✅ Keep navigation accessible (hamburger/profile active)
+- ✅ Keep navigation accessible (hamburger menu active)
 - ✅ Consistent across all forms
 - ✅ View/Edit modes for all forms (including Renewals)
+
+---
+
+## Critical Implementation Notes
+
+### Race Condition Prevention (IMPORTANT!)
+
+When switching users or logging out, there's a critical race condition that MUST be prevented:
+
+**The Problem:**
+1. User edits Profile/Renewals → auto-save creates `FormDraft-Profile-admin`
+2. User clicks Switch User → confirms data loss
+3. Session changes to new user → triggers React re-renders
+4. **Auto-save runs ONE MORE TIME** with old data + new username
+5. Creates `FormDraft-Profile-john` with admin's data!
+6. New user sees wrong data
+
+**The Solution (3-part fix):**
+
+**1. Clear drafts IMMEDIATELY after confirmation:**
+```typescript
+const handleSwitchUser = () => {
+  if (checkForUnsavedChanges()) {
+    const confirmed = window.confirm('...');
+    if (!confirmed) return;
+    clearAllDrafts(); // ← Clear RIGHT AWAY
+  }
+  // Continue...
+};
+```
+
+**2. Navigate to home IMMEDIATELY to unmount the page:**
+```typescript
+const handleSwitchUser = () => {
+  // ... confirmation ...
+  clearAllDrafts();
+  // Set flag to reopen modal after navigation
+  sessionStorage.setItem('openImpersonationModal', 'true');
+  // Navigate IMMEDIATELY (unmounts Profile/Renewals page)
+  router.push('/');
+  setProfileMenuOpen(false);
+};
+```
+
+**3. Reopen modal after navigation using flag:**
+```typescript
+// In Navbar useEffect
+useEffect(() => {
+  const shouldOpen = sessionStorage.getItem('openImpersonationModal');
+  if (shouldOpen === 'true') {
+    sessionStorage.removeItem('openImpersonationModal');
+    setImpersonationModalOpen(true);
+  }
+}, [pathname]); // Run when pathname changes
+```
+
+**4. Clear React state when user changes:**
+```typescript
+// In Profile/Renewals pages
+useEffect(() => {
+  setIsEditing(false);
+  setEditedProfile({}); // or setEditedRenewal(null)
+}, [session?.user?.userName]);
+```
+
+This ensures:
+- ✅ Drafts cleared before any re-renders
+- ✅ Page unmounted immediately (no auto-save possible)
+- ✅ Modal reopens on home page
+- ✅ React state cleared to prevent stale data
+
+### Desktop Navigation in Edit Mode
+
+**Implementation:**
+```typescript
+// In Navbar desktop section
+{actionButtons ? (
+  // Replace profile icon with hamburger when editing
+  <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)}>
+    [Hamburger Icon]
+  </button>
+) : (
+  // Show profile icon in view mode
+  <button onClick={() => setProfileMenuOpen(!profileMenuOpen)}>
+    {getUserInitials(userName)}
+  </button>
+)}
+```
+
+**Menu panel must work on both mobile and desktop:**
+- Remove `md:hidden` classes from menu overlay and panel
+- Menu contains both navigation AND profile items when in edit mode
 
 ---
 

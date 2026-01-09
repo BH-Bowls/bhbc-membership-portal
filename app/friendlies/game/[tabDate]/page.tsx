@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useParams, useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import Link from 'next/link';
 
 // ============================================================================
@@ -104,6 +105,19 @@ export default function GameDetailsPage() {
   // State: Action loading indicator for confirm/withdraw buttons
   const [actionLoading, setActionLoading] = useState(false);
 
+  // State: Confirmation dialog
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+  });
+
   // ============================================================================
   // Effects
   // ============================================================================
@@ -161,14 +175,39 @@ export default function GameDetailsPage() {
   }
 
   /**
+   * Helper to close confirmation dialog
+   */
+  const closeConfirmDialog = () => {
+    setConfirmDialog({
+      isOpen: false,
+      title: '',
+      message: '',
+      onConfirm: () => {},
+    });
+  };
+
+  /**
    * Handle confirm participation button click
    * Updates user's status to confirmed in Google Sheets
    * Only available for selected players who haven't confirmed yet
    */
   async function handleConfirm() {
     // Show confirmation dialog to user
-    if (!confirm('Confirm your participation in this game?')) return;
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Confirm Participation',
+      message: 'Confirm your participation in this game?',
+      onConfirm: () => {
+        closeConfirmDialog();
+        performConfirm();
+      },
+    });
+  }
 
+  /**
+   * Perform the actual confirm operation
+   */
+  async function performConfirm() {
     // Show action loading indicator
     setActionLoading(true);
 
@@ -213,8 +252,21 @@ export default function GameDetailsPage() {
    */
   async function handleWithdraw() {
     // Show confirmation dialog with warning about captain notification
-    if (!confirm('Are you sure you want to withdraw from this game? The captains will be notified.')) return;
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Withdraw from Game',
+      message: 'Are you sure you want to withdraw from this game? The captains will be notified.',
+      onConfirm: () => {
+        closeConfirmDialog();
+        performWithdraw();
+      },
+    });
+  }
 
+  /**
+   * Perform the actual withdraw operation
+   */
+  async function performWithdraw() {
     // Show action loading indicator
     setActionLoading(true);
 
@@ -537,6 +589,15 @@ export default function GameDetailsPage() {
           </Link>
         </div>
       </div>
+
+      {/* Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={closeConfirmDialog}
+      />
     </div>
   );
 }

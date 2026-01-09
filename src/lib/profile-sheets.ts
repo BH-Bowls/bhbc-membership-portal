@@ -298,6 +298,12 @@ export async function updateUserProfile(
             cellValue = '';
           }
 
+          // Prefix phone numbers with apostrophe to force text format
+          // This prevents Google Sheets from stripping leading zeros
+          if ((field === 'mobile' || field === 'landline') && cellValue && cellValue !== '') {
+            cellValue = `'${cellValue}`;
+          }
+
           // Add this cell update to the batch
           // Format: Members!A5 (sheet name, column letter, row number)
           updateData.push({

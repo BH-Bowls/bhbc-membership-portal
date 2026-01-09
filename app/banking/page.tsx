@@ -7,6 +7,7 @@ import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import {
   initializeRenewalState,
   initializePaymentState,
@@ -36,6 +37,17 @@ export default function BankingPage() {
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [editingPayment, setEditingPayment] = useState<PaymentWithState | null>(null);
   const [editingRenewal, setEditingRenewal] = useState<RenewalWithState | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+  });
 
   // Payment dialog fields
   const [paymentDate, setPaymentDate] = useState('');
@@ -221,11 +233,34 @@ export default function BankingPage() {
     }
   };
 
+  // Helper to close confirmation dialog
+  const closeConfirmDialog = () => {
+    setConfirmDialog({
+      isOpen: false,
+      title: '',
+      message: '',
+      onConfirm: () => {},
+    });
+  };
+
   // Delete payment
   const handleDeletePayment = async () => {
     if (!editingPayment) return;
 
-    if (!confirm('Are you sure you want to delete this payment?')) return;
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete Payment',
+      message: 'Are you sure you want to delete this payment?',
+      onConfirm: () => {
+        closeConfirmDialog();
+        performDeletePayment();
+      },
+    });
+  };
+
+  // Perform the actual delete operation
+  const performDeletePayment = async () => {
+    if (!editingPayment) return;
 
     try {
       const res = await fetch('/api/banking/payment', {
@@ -973,6 +1008,17 @@ export default function BankingPage() {
           </div>
         )}
       </main>
+
+      {/* Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        confirmLabel="Delete"
+        confirmVariant="danger"
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={closeConfirmDialog}
+      />
     </div>
   );
 }

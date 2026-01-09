@@ -9,6 +9,7 @@ import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
 import { SearchableSelect } from '@/components/SearchableSelect';
 import { getMemberTypeDisplay, getMemberTypeOptions } from '@/lib/member-type-utils';
+import { saveDraft, restoreDraft, clearDraft } from '@/lib/form-draft-utils';
 
 interface ProfileData {
   title: string;
@@ -60,13 +61,19 @@ export default function ProfilePage() {
   const [successMessage, setSuccessMessage] = useState('');
   const [editedProfile, setEditedProfile] = useState<Partial<ProfileData>>({});
 
-  // Load profile on mount (uses session.user.userName automatically)
+  // Load profile on mount and when session changes (uses session.user.userName automatically)
   useEffect(() => {
     if (status === 'authenticated' && session?.user?.userName) {
       loadProfile();
       loadUsers();
     }
-  }, [status, session?.user?.userName]);
+  }, [status, session?.user?.userName, session?.user?.isImpersonating]);
+
+  // Reset editing state when user changes (prevents stale state after switching users)
+  useEffect(() => {
+    setIsEditing(false);
+    setEditedProfile({}); // Clear edited data to prevent auto-save race condition
+  }, [session?.user?.userName]);
 
   const loadProfile = async () => {
     try {
@@ -77,7 +84,22 @@ export default function ProfilePage() {
       const data = await response.json();
       setProfile(data.profile);
       setBuddyName(data.buddyName);
-      setEditedProfile(data.profile);
+
+      // Check for draft and restore if found
+      if (session?.user?.userName) {
+        const draft = restoreDraft<ProfileData>('Profile', session.user.userName);
+        if (draft) {
+          setEditedProfile(draft);
+          setIsEditing(true);
+          // Show notification that draft was restored
+          setSuccessMessage('Draft restored from previous session');
+          setTimeout(() => setSuccessMessage(''), 3000);
+        } else {
+          setEditedProfile(data.profile);
+        }
+      } else {
+        setEditedProfile(data.profile);
+      }
     } catch (err) {
       setError('Failed to load profile');
     }
@@ -99,6 +121,18 @@ export default function ProfilePage() {
     }
   };
 
+  // Auto-save drafts when editing
+  useEffect(() => {
+    if (!profile || !session?.user?.userName || !isEditing) return;
+
+    const hasChanges = JSON.stringify(editedProfile) !== JSON.stringify(profile);
+
+    // Auto-save draft when in edit mode and changes exist
+    if (hasChanges) {
+      saveDraft('Profile', session.user.userName, editedProfile);
+    }
+  }, [editedProfile, profile, isEditing, session?.user?.userName]);
+
   const handleEdit = () => {
     setIsEditing(true);
     setError('');
@@ -106,6 +140,9 @@ export default function ProfilePage() {
   };
 
   const handleCancel = () => {
+    if (session?.user?.userName) {
+      clearDraft('Profile', session.user.userName);
+    }
     setIsEditing(false);
     setEditedProfile(profile || {});
     setError('');
@@ -134,6 +171,11 @@ export default function ProfilePage() {
       if (!response.ok) {
         const data = await response.json();
         throw new Error(data.error || 'Failed to update profile');
+      }
+
+      // Clear draft on successful save
+      if (session?.user?.userName) {
+        clearDraft('Profile', session.user.userName);
       }
 
       setSuccessMessage('Profile updated successfully!');
@@ -192,7 +234,24 @@ export default function ProfilePage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={session?.user?.name ?? undefined} userRole={session?.user?.role ?? undefined} />
+      <Navbar
+        userName={session?.user?.name ?? undefined}
+        userRole={session?.user?.role ?? undefined}
+        actionButtons={isEditing ? {
+          primary: {
+            label: 'Save',
+            onClick: handleSave,
+            loading: isSaving,
+            variant: 'primary' as const,
+          },
+          secondary: {
+            label: 'Cancel',
+            onClick: handleCancel,
+            disabled: isSaving,
+            variant: 'secondary' as const,
+          },
+        } : undefined}
+      />
 
       {/* Main Content */}
       <main className="max-w-4xl mx-auto py-6 sm:px-6 lg:px-8">
@@ -211,34 +270,17 @@ export default function ProfilePage() {
         {/* Profile Card */}
         <div className="bg-white shadow rounded-lg">
           <div className="px-4 py-5 sm:p-6">
-            {/* Action Buttons */}
-            <div className="flex justify-end space-x-3 mb-6">
-              {!isEditing ? (
+            {/* Edit Button (View Mode Only) - Save/Cancel are in navbar when editing */}
+            {!isEditing && (
+              <div className="flex justify-end space-x-3 mb-6">
                 <button
                   onClick={handleEdit}
-                  className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600"
+                  className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors cursor-pointer"
                 >
                   Edit Profile
                 </button>
-              ) : (
-                <>
-                  <button
-                    onClick={handleCancel}
-                    className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50"
-                    disabled={isSaving}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleSave}
-                    className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50"
-                    disabled={isSaving}
-                  >
-                    {isSaving ? 'Saving...' : 'Save Changes'}
-                  </button>
-                </>
-              )}
-            </div>
+              </div>
+            )}
 
             {/* Personal Information */}
             <div className="mb-8">
@@ -390,6 +432,7 @@ export default function ProfilePage() {
                       type="text"
                       value={editedProfile.address1 || ''}
                       onChange={(e) => handleChange('address1', e.target.value)}
+                      autoComplete="off"
                       className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border text-gray-900"
                     />
                   ) : (
@@ -404,6 +447,7 @@ export default function ProfilePage() {
                       type="text"
                       value={editedProfile.address2 || ''}
                       onChange={(e) => handleChange('address2', e.target.value)}
+                      autoComplete="off"
                       className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border text-gray-900"
                     />
                   ) : (
@@ -418,6 +462,7 @@ export default function ProfilePage() {
                       type="text"
                       value={editedProfile.address3 || ''}
                       onChange={(e) => handleChange('address3', e.target.value)}
+                      autoComplete="off"
                       className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border text-gray-900"
                     />
                   ) : (
@@ -432,6 +477,7 @@ export default function ProfilePage() {
                       type="text"
                       value={editedProfile.postCode || ''}
                       onChange={(e) => handleChange('postCode', e.target.value.toUpperCase())}
+                      autoComplete="off"
                       className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border text-gray-900"
                     />
                   ) : (

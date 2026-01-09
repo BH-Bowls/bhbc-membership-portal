@@ -708,6 +708,7 @@ export async function sendRenewalConfirmation(
         barDuty: user.barDuty || null,
         barAdditionalInfo: user.barAdditionalInfo || null,
         otherSkills: user.otherSkills || null,
+        showTriplesWarning: renewal.drawnTriples || false,
       }
     );
 

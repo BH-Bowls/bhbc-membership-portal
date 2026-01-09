@@ -21,6 +21,34 @@ export class SharedEmailError extends Error {
   }
 }
 
+/**
+ * Detect device type from user agent string
+ * Returns "Mobile" or "Wide" based on screen size indicators
+ */
+function detectDeviceType(userAgent: string | undefined): string {
+  if (!userAgent) return '';
+
+  const ua = userAgent.toLowerCase();
+
+  // Check for mobile indicators
+  if (ua.includes('mobile') ||
+      ua.includes('android') ||
+      ua.includes('iphone') ||
+      ua.includes('ipod') ||
+      ua.includes('blackberry') ||
+      ua.includes('windows phone')) {
+    return 'Mobile';
+  }
+
+  // Check for tablet indicators (treat as wide)
+  if (ua.includes('ipad') || ua.includes('tablet')) {
+    return 'Wide';
+  }
+
+  // Default to wide for desktop/laptop
+  return 'Wide';
+}
+
 // ============================================================================
 // PASSWORD HASHING
 // ============================================================================
@@ -132,7 +160,9 @@ export interface AuthResult {
  */
 export async function authenticateUser(
   identifier: string,
-  password: string
+  password: string,
+  ipAddress?: string,
+  userAgent?: string
 ): Promise<{
   success: boolean;
   user?: {
@@ -170,8 +200,9 @@ export async function authenticateUser(
           userName: null,
           success: false,
           failureReason: error.message,
-          ipAddress: '',
-          userAgent: '',
+          ipAddress: ipAddress || '',
+          userAgent: userAgent || '',
+          deviceType: detectDeviceType(userAgent),
         });
 
         // Return error message asking user to login with username instead
@@ -193,8 +224,9 @@ export async function authenticateUser(
         userName: null,
         success: false,
         failureReason: 'User not found',
-        ipAddress: '',
-        userAgent: '',
+        ipAddress: ipAddress || '',
+        userAgent: userAgent || '',
+        deviceType: detectDeviceType(userAgent),
       });
 
       // Return generic error (don't reveal whether username exists)
@@ -215,8 +247,9 @@ export async function authenticateUser(
         userName: user.userName,
         success: false,
         failureReason: 'Invalid password',
-        ipAddress: '',
-        userAgent: '',
+        ipAddress: ipAddress || '',
+        userAgent: userAgent || '',
+        deviceType: detectDeviceType(userAgent),
       });
 
       // Return generic error (don't reveal that username was correct)
@@ -232,8 +265,9 @@ export async function authenticateUser(
       userName: user.userName,
       success: true,
       failureReason: null,
-      ipAddress: '',
-      userAgent: '',
+      ipAddress: ipAddress || '',
+      userAgent: userAgent || '',
+      deviceType: detectDeviceType(userAgent),
     });
 
     // Use Full Name from sheet (e.g., "Celia Dasey" - uses preferred name + last name)
@@ -288,9 +322,9 @@ export async function findUserByIdentifier(
       return user;
     }
 
-    // Strategy 2: Try username with dots converted to underscores
-    // Some users might type "john.smith" when their username is "john_smith"
-    const usernameVariant = identifier.replace(/\./g, '_');
+    // Strategy 2: Try username with underscores converted to dots
+    // Some users might type "john_smith" when their username is "john.smith"
+    const usernameVariant = identifier.replace(/_/g, '.');
 
     // Only try variant if it's different from original
     if (usernameVariant !== identifier) {

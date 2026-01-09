@@ -8,6 +8,7 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
 import { getMemberTypeDisplay, getMemberTypeOptions, isPlayer } from '@/lib/member-type-utils';
+import { saveDraft, restoreDraft, clearDraft } from '@/lib/form-draft-utils';
 
 interface UserProfile {
   userName: string;
@@ -67,6 +68,7 @@ export default function RenewalsPage() {
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [renewal, setRenewal] = useState<Renewal | null>(null);
+  const [editedRenewal, setEditedRenewal] = useState<Renewal | null>(null);
   const [fees, setFees] = useState<FeeBreakdown>({
     membershipFee: 0,
     club200Fee: 0,
@@ -77,12 +79,16 @@ export default function RenewalsPage() {
   // Editable fields for renewal (not saved to profile)
   const [ageDemographic, setAgeDemographic] = useState<string>('');
   const [memberType, setMemberType] = useState<string>('');
+  const [editedAgeDemographic, setEditedAgeDemographic] = useState<string>('');
+  const [editedMemberType, setEditedMemberType] = useState<string>('');
   const [fullTimeEducation, setFullTimeEducation] = useState<boolean>(false);
 
+  const [isEditing, setIsEditing] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
   const [emailSent, setEmailSent] = useState(true); // Track if confirmation email was sent
   const [emailWarning, setEmailWarning] = useState(''); // Warning if email failed
   const [eligibility, setEligibility] = useState<{
@@ -93,24 +99,36 @@ export default function RenewalsPage() {
     friendliesLastYear: 0,
   });
 
-  // Load renewal data on mount (uses session.user.userName automatically)
+  // Load renewal data on mount and when session changes (uses session.user.userName automatically)
   useEffect(() => {
     if (status === 'authenticated' && session?.user?.userName) {
       loadRenewalData();
     }
-  }, [status, session?.user?.userName]);
+  }, [status, session?.user?.userName, session?.user?.isImpersonating]);
+
+  // Reset editing state when user changes (prevents stale state after switching users)
+  useEffect(() => {
+    setIsEditing(false);
+    setEditedRenewal(null); // Clear edited data to prevent auto-save race condition
+  }, [session?.user?.userName]);
 
   // Recalculate fees whenever renewal data or demographics change
   useEffect(() => {
-    if (profile && renewal && ageDemographic && memberType) {
-      const newFees = calculateFeesClient(
-        { ...profile, ageDemographic, memberType },
-        renewal,
-        fullTimeEducation
-      );
-      setFees(newFees);
+    if (profile) {
+      const currentRenewal = isEditing ? editedRenewal : renewal;
+      const currentAgeDemographic = isEditing ? editedAgeDemographic : ageDemographic;
+      const currentMemberType = isEditing ? editedMemberType : memberType;
+
+      if (currentRenewal && currentAgeDemographic && currentMemberType) {
+        const newFees = calculateFeesClient(
+          { ...profile, ageDemographic: currentAgeDemographic, memberType: currentMemberType },
+          currentRenewal,
+          fullTimeEducation
+        );
+        setFees(newFees);
+      }
     }
-  }, [profile, renewal, ageDemographic, memberType, fullTimeEducation]);
+  }, [profile, renewal, editedRenewal, ageDemographic, editedAgeDemographic, memberType, editedMemberType, fullTimeEducation, isEditing]);
 
   // Scroll to top when error is displayed
   useEffect(() => {
@@ -123,6 +141,7 @@ export default function RenewalsPage() {
     try {
       setIsLoading(true);
       setError('');
+      setSuccessMessage('');
       // No userName parameter needed - API uses session.user.userName
       const response = await fetch('/api/renewals');
       if (!response.ok) throw new Error('Failed to load renewal data');
@@ -133,9 +152,36 @@ export default function RenewalsPage() {
       setFees(data.fees);
       setEligibility(data.eligibility);
 
-      // Initialize editable fields from profile
+      // Initialize fields from profile
       setAgeDemographic(data.profile.ageDemographic);
       setMemberType(data.profile.memberType);
+
+      // Check for draft and restore if found
+      if (session?.user?.userName) {
+        const draft = restoreDraft<{
+          renewal: Renewal;
+          ageDemographic: string;
+          memberType: string;
+        }>('Renewals', session.user.userName);
+
+        if (draft) {
+          setEditedRenewal(draft.renewal);
+          setEditedAgeDemographic(draft.ageDemographic);
+          setEditedMemberType(draft.memberType);
+          setIsEditing(true);
+          // Show notification that draft was restored
+          setSuccessMessage('Draft restored from previous session');
+          setTimeout(() => setSuccessMessage(''), 3000);
+        } else {
+          setEditedRenewal(data.renewal);
+          setEditedAgeDemographic(data.profile.ageDemographic);
+          setEditedMemberType(data.profile.memberType);
+        }
+      } else {
+        setEditedRenewal(data.renewal);
+        setEditedAgeDemographic(data.profile.ageDemographic);
+        setEditedMemberType(data.profile.memberType);
+      }
     } catch (err) {
       setError('Failed to load renewal data. Please try again.');
     } finally {
@@ -143,31 +189,72 @@ export default function RenewalsPage() {
     }
   };
 
+  // Auto-save drafts when editing
+  useEffect(() => {
+    if (!renewal || !session?.user?.userName || !isEditing) return;
+
+    const draftData = {
+      renewal: editedRenewal,
+      ageDemographic: editedAgeDemographic,
+      memberType: editedMemberType,
+    };
+
+    const hasChanges = JSON.stringify(draftData) !== JSON.stringify({
+      renewal,
+      ageDemographic,
+      memberType,
+    });
+
+    // Auto-save draft when in edit mode and changes exist
+    if (hasChanges) {
+      saveDraft('Renewals', session.user.userName, draftData);
+    }
+  }, [editedRenewal, editedAgeDemographic, editedMemberType, renewal, ageDemographic, memberType, isEditing, session?.user?.userName]);
+
+  const handleEdit = () => {
+    setIsEditing(true);
+    setError('');
+    setSuccessMessage('');
+  };
+
+  const handleCancel = () => {
+    if (session?.user?.userName) {
+      clearDraft('Renewals', session.user.userName);
+    }
+    setIsEditing(false);
+    setEditedRenewal(renewal);
+    setEditedAgeDemographic(ageDemographic);
+    setEditedMemberType(memberType);
+    setError('');
+    setSuccessMessage('');
+  };
+
   const handleChange = (field: keyof Renewal, value: any) => {
-    if (!renewal) return;
-    setRenewal({ ...renewal, [field]: value });
+    if (!editedRenewal) return;
+    setEditedRenewal({ ...editedRenewal, [field]: value });
   };
 
   const handleSave = async () => {
-    if (!renewal) return;
+    if (!editedRenewal) return;
 
     // Validation: Check if required fields are set
-    if (!ageDemographic || !memberType) {
+    if (!editedAgeDemographic || !editedMemberType) {
       setError('Please select both Age Demographic and Member Type before saving.');
       return;
     }
 
     setIsSaving(true);
     setError('');
+    setSuccessMessage('');
 
     try {
       const response = await fetch('/api/renewals', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          ...renewal,
-          ageDemographic, // Include age demographic for Members sheet update
-          memberType, // Include member type for Members sheet update
+          ...editedRenewal,
+          ageDemographic: editedAgeDemographic, // Include age demographic for Members sheet update
+          memberType: editedMemberType, // Include member type for Members sheet update
         }),
       });
 
@@ -183,6 +270,16 @@ export default function RenewalsPage() {
       setEmailSent(data.emailSent !== false); // Default to true if not specified
       setEmailWarning(data.warning || '');
 
+      // Clear draft on successful save
+      if (session?.user?.userName) {
+        clearDraft('Renewals', session.user.userName);
+      }
+
+      // Update main state with saved values
+      setRenewal(editedRenewal);
+      setAgeDemographic(editedAgeDemographic);
+      setMemberType(editedMemberType);
+      setIsEditing(false);
       setIsSubmitted(true);
     } catch (err: any) {
       setError(err.message || 'Failed to save renewal');
@@ -306,6 +403,12 @@ export default function RenewalsPage() {
   const isAdmin = session?.user?.role === 'Admin' || session?.user?.role === 'Super Admin';
   const paymentReceived = (renewal.banking !== null && renewal.banking !== undefined) && !isAdmin;
 
+  // Helper variables: use edited values when editing, otherwise use saved values
+  const currentRenewal = isEditing ? editedRenewal : renewal;
+  const currentAgeDemographic = isEditing ? editedAgeDemographic : ageDemographic;
+  const currentMemberType = isEditing ? editedMemberType : memberType;
+  const isFormDisabled = !isEditing || paymentReceived;
+
   // Success message after submission
   if (isSubmitted && renewal.renewingMembership) {
     const isImpersonating = session?.user?.isImpersonating || false;
@@ -366,6 +469,22 @@ export default function RenewalsPage() {
                 </p>
               </div>
 
+              {renewal.drawnTriples && (
+                <div className="bg-yellow-50 border border-yellow-300 rounded-lg p-4 mb-6">
+                  <div className="flex items-start">
+                    <svg className="h-5 w-5 text-yellow-600 mr-2 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                    </svg>
+                    <div>
+                      <p className="text-sm font-medium text-yellow-900 mb-1">Important: Drawn Triples Competition</p>
+                      <p className="text-sm text-yellow-800">
+                        The 1st round of TRIPLES is to be played at 10 a.m. on Sunday 24th May, unless an earlier date is agreed by all 6 players.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {emailSent ? (
                 <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
                   <p className="text-sm text-gray-700">
@@ -403,7 +522,24 @@ export default function RenewalsPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={session?.user?.name ?? undefined} userRole={session?.user?.role ?? undefined} />
+      <Navbar
+        userName={session?.user?.name ?? undefined}
+        userRole={session?.user?.role ?? undefined}
+        actionButtons={isEditing ? {
+          primary: {
+            label: editedRenewal?.renewingMembership ? 'Submit Renewal' : 'Save',
+            onClick: handleSave,
+            loading: isSaving,
+            variant: 'primary' as const,
+          },
+          secondary: {
+            label: 'Cancel',
+            onClick: handleCancel,
+            disabled: isSaving,
+            variant: 'secondary' as const,
+          },
+        } : undefined}
+      />
 
       {/* Main Content */}
       <main className="max-w-4xl mx-auto py-6 sm:px-6 lg:px-8">
@@ -411,6 +547,13 @@ export default function RenewalsPage() {
         {error && (
           <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
             {error}
+          </div>
+        )}
+
+        {/* Success Message */}
+        {successMessage && (
+          <div className="mb-4 bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded">
+            {successMessage}
           </div>
         )}
 
@@ -424,14 +567,26 @@ export default function RenewalsPage() {
         {/* Renewal Form */}
         <div className="bg-white shadow rounded-lg">
           <div className="px-4 py-5 sm:p-6">
+            {/* Edit Button (View Mode Only) - Submit/Cancel are in navbar when editing */}
+            {!isEditing && !paymentReceived && (
+              <div className="flex justify-end space-x-3 mb-6">
+                <button
+                  onClick={handleEdit}
+                  className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors cursor-pointer"
+                >
+                  Edit Renewal
+                </button>
+              </div>
+            )}
+
             {/* Membership Renewal Section */}
             <div className="mb-8">
               <div className="flex items-center">
                 <input
                   type="checkbox"
-                  checked={renewal.renewingMembership}
+                  checked={currentRenewal?.renewingMembership || false}
                   onChange={(e) => handleChange('renewingMembership', e.target.checked)}
-                  disabled={paymentReceived}
+                  disabled={isFormDisabled}
                   className="h-5 w-5 text-blue-500 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                 />
                 <label className="ml-3 text-lg font-medium text-gray-900">
@@ -439,7 +594,7 @@ export default function RenewalsPage() {
                 </label>
               </div>
 
-              {renewal.renewingMembership && (
+              {currentRenewal?.renewingMembership && (
                 <div className="mt-6 p-4 bg-gray-50 rounded-md">
                   <p className="text-sm text-gray-600 mb-4">
                     Please ensure you select the correct age demographic as that affects the membership level.
@@ -450,9 +605,9 @@ export default function RenewalsPage() {
                         Age Demographic
                       </label>
                       <select
-                        value={ageDemographic}
-                        onChange={(e) => setAgeDemographic(e.target.value)}
-                        disabled={paymentReceived}
+                        value={currentAgeDemographic}
+                        onChange={(e) => isEditing ? setEditedAgeDemographic(e.target.value) : setAgeDemographic(e.target.value)}
+                        disabled={isFormDisabled}
                         className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                       >
                         <option value="">-- Select Age Demographic --</option>
@@ -468,9 +623,9 @@ export default function RenewalsPage() {
                         Member Type
                       </label>
                       <select
-                        value={memberType}
-                        onChange={(e) => setMemberType(e.target.value)}
-                        disabled={paymentReceived}
+                        value={currentMemberType}
+                        onChange={(e) => isEditing ? setEditedMemberType(e.target.value) : setMemberType(e.target.value)}
+                        disabled={isFormDisabled}
                         className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                       >
                         <option value="">-- Select Member Type --</option>
@@ -496,7 +651,7 @@ export default function RenewalsPage() {
                           type="checkbox"
                           checked={fullTimeEducation}
                           onChange={(e) => setFullTimeEducation(e.target.checked)}
-                          disabled={paymentReceived}
+                          disabled={isFormDisabled}
                           className="h-4 w-4 text-blue-500 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                         />
                         <label className="ml-2 text-sm text-gray-700">
@@ -519,7 +674,7 @@ export default function RenewalsPage() {
               )}
             </div>
 
-            {renewal.renewingMembership && (
+            {currentRenewal?.renewingMembership && (
               <>
                 {/* 200 Club Section */}
                 <div className="mb-8 pb-8 border-b">
@@ -536,23 +691,23 @@ export default function RenewalsPage() {
                         type="number"
                         min="0"
                         max="10"
-                        value={renewal.number200ClubEntries}
+                        value={currentRenewal?.number200ClubEntries}
                         onChange={(e) => handleChange('number200ClubEntries', parseInt(e.target.value) || 0)}
-                        disabled={paymentReceived}
+                        disabled={isFormDisabled}
                         className="block w-32 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                       />
                     </div>
-                    {renewal.number200ClubEntries > 0 && (
+                    {currentRenewal?.number200ClubEntries > 0 && (
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">
                           Preferred numbers (optional)
                         </label>
                         <input
                           type="text"
-                          value={renewal.pref200Club || ''}
+                          value={currentRenewal?.pref200Club || ''}
                           onChange={(e) => handleChange('pref200Club', e.target.value)}
                           placeholder="e.g., 7, 23, 45"
-                          disabled={paymentReceived}
+                          disabled={isFormDisabled}
                           className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                         />
                       </div>
@@ -581,11 +736,11 @@ export default function RenewalsPage() {
                         All FULL members are expected to take their turn with tea duty throughout the season. Please indicate any days or dates you are not available, or if you are willing to do additional duties.
                       </p>
                       <textarea
-                        value={renewal.teaDatesToAvoid || ''}
+                        value={currentRenewal?.teaDatesToAvoid || ''}
                         onChange={(e) => handleChange('teaDatesToAvoid', e.target.value)}
                         rows={2}
                         placeholder="e.g., July 15, August 10-20"
-                        disabled={paymentReceived}
+                        disabled={isFormDisabled}
                         className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                       />
                     </div>
@@ -597,11 +752,11 @@ export default function RenewalsPage() {
                         All FULL members are expected to take their turn with cleaning duty on a Saturday morning. Please indicate any dates you are not available.
                       </p>
                       <textarea
-                        value={renewal.cleaningDatesToAvoid || ''}
+                        value={currentRenewal?.cleaningDatesToAvoid || ''}
                         onChange={(e) => handleChange('cleaningDatesToAvoid', e.target.value)}
                         rows={2}
                         placeholder="e.g., December, summer holidays"
-                        disabled={paymentReceived}
+                        disabled={isFormDisabled}
                         className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                       />
                     </div>
@@ -616,9 +771,9 @@ export default function RenewalsPage() {
                           Please indicate if you are willing to drive other members to away matches occasionally.
                         </p>
                         <select
-                          value={renewal.drivingAwayMatches || ''}
+                          value={currentRenewal?.drivingAwayMatches || ''}
                           onChange={(e) => handleChange('drivingAwayMatches', e.target.value)}
-                          disabled={paymentReceived}
+                          disabled={isFormDisabled}
                           className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border mb-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                         >
                           <option value="">Please select</option>
@@ -626,11 +781,11 @@ export default function RenewalsPage() {
                           <option value="N">N</option>
                         </select>
                         <textarea
-                          value={renewal.drivingAdditionalInfo || ''}
+                          value={currentRenewal?.drivingAdditionalInfo || ''}
                           onChange={(e) => handleChange('drivingAdditionalInfo', e.target.value)}
                           rows={2}
                           placeholder="Additional information (e.g., limited space, certain days only)"
-                          disabled={paymentReceived}
+                          disabled={isFormDisabled}
                           className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                         />
                       </div>
@@ -645,9 +800,9 @@ export default function RenewalsPage() {
                         Please indicate if you are willing to help keeping up with the many things that need to be done outside, for instance sweeping, mowing surrounds, hedges &amp; general maintenance.
                       </p>
                       <select
-                        value={renewal.greenMaintenance || ''}
+                        value={currentRenewal?.greenMaintenance || ''}
                         onChange={(e) => handleChange('greenMaintenance', e.target.value)}
-                        disabled={paymentReceived}
+                        disabled={isFormDisabled}
                         className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border mb-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                       >
                         <option value="">Please select</option>
@@ -655,11 +810,11 @@ export default function RenewalsPage() {
                         <option value="N">N</option>
                       </select>
                       <textarea
-                        value={renewal.greenAdditionalInfo || ''}
+                        value={currentRenewal?.greenAdditionalInfo || ''}
                         onChange={(e) => handleChange('greenAdditionalInfo', e.target.value)}
                         rows={2}
                         placeholder="Additional information"
-                        disabled={paymentReceived}
+                        disabled={isFormDisabled}
                         className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                       />
                     </div>
@@ -672,9 +827,9 @@ export default function RenewalsPage() {
                         Please indicate if you are willing to help with running the bar. This can involve one or two voluntary evening shifts per month or opening the bar after a home game.
                       </p>
                       <select
-                        value={renewal.barDuty || ''}
+                        value={currentRenewal?.barDuty || ''}
                         onChange={(e) => handleChange('barDuty', e.target.value)}
-                        disabled={paymentReceived}
+                        disabled={isFormDisabled}
                         className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border mb-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                       >
                         <option value="">Please select</option>
@@ -682,11 +837,11 @@ export default function RenewalsPage() {
                         <option value="N">N</option>
                       </select>
                       <textarea
-                        value={renewal.barAdditionalInfo || ''}
+                        value={currentRenewal?.barAdditionalInfo || ''}
                         onChange={(e) => handleChange('barAdditionalInfo', e.target.value)}
                         rows={2}
                         placeholder="Additional information"
-                        disabled={paymentReceived}
+                        disabled={isFormDisabled}
                         className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                       />
                     </div>
@@ -699,11 +854,11 @@ export default function RenewalsPage() {
                         If you have any other skills which may benefit the club, or other ways in which you may be able to help, please give details here. (e.g. plumbing, electrics, decorating, bookkeeping, legal, IT, local councillor, grant applications etc)
                       </p>
                       <textarea
-                        value={renewal.otherSkills || ''}
+                        value={currentRenewal?.otherSkills || ''}
                         onChange={(e) => handleChange('otherSkills', e.target.value)}
                         rows={3}
                         placeholder="e.g., plumbing, IT support, legal advice..."
-                        disabled={paymentReceived}
+                        disabled={isFormDisabled}
                         className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                       />
                     </div>
@@ -725,7 +880,7 @@ export default function RenewalsPage() {
                       <p className="text-xs">New members shall not be eligible to enter any Club competition in their first full playing season. Exceptions will be made for experienced bowlers by the Tournament Committee.</p>
                       <p className="text-xs">The OLDLAND competition is open only to those members who have NOT won a BHBC singles competition.</p>
                       <p className="text-xs font-medium">The FINALS are on Sat 5th and Sun 6th Sep. PLEASE DO NOT enter competitions unless you can participate on those days.</p>
-                      <p className="text-xs font-bold text-red-600">The 1st round of TRIPLES is to be played at 10 a.m. on Saturday 30th May, unless an earlier date is agreed by all 6 players.</p>
+                      <p className="text-xs font-bold text-red-600">The 1st round of TRIPLES is to be played at 10 a.m. on Sunday 24th May, unless an earlier date is agreed by all 6 players.</p>
                       <p className="text-xs">To be eligible to play in the Veterans Mixed, you must be 60 or over on the 1st March.</p>
                       <p className="mt-3 font-medium">Please select each competition you are entering. There is an entry fee of £2.00 per competition.</p>
                     </div>
@@ -751,7 +906,7 @@ export default function RenewalsPage() {
                             <div key={key} className="flex items-center">
                               <input
                                 type="checkbox"
-                                checked={renewal[key as keyof Renewal] as boolean}
+                                checked={currentRenewal[key as keyof Renewal] as boolean}
                                 onChange={(e) => handleChange(key as keyof Renewal, e.target.checked)}
                                 disabled={!eligibility.canEnterCompetitions || paymentReceived}
                                 className="h-4 w-4 text-blue-500 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
@@ -779,7 +934,7 @@ export default function RenewalsPage() {
                             <div key={key} className="flex items-center">
                               <input
                                 type="checkbox"
-                                checked={renewal[key as keyof Renewal] as boolean}
+                                checked={currentRenewal[key as keyof Renewal] as boolean}
                                 onChange={(e) => handleChange(key as keyof Renewal, e.target.checked)}
                                 disabled={!eligibility.canEnterCompetitions || paymentReceived}
                                 className="h-4 w-4 text-blue-500 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
@@ -807,7 +962,7 @@ export default function RenewalsPage() {
             )}
 
             {/* Total Fee Section */}
-            {renewal.renewingMembership && (
+            {currentRenewal?.renewingMembership && (
               <div className="mb-8 bg-blue-50 border-2 border-blue-500 rounded-lg p-6">
                 <div className="flex justify-between items-center">
                   <span className="text-xl font-bold text-gray-900">Total Fee Payable:</span>
@@ -818,8 +973,8 @@ export default function RenewalsPage() {
               </div>
             )}
 
-            {/* Action Buttons */}
-            {paymentReceived ? (
+            {/* Payment Received Message */}
+            {paymentReceived && (
               <div className="bg-green-50 border border-green-200 rounded-lg p-6">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center">
@@ -835,28 +990,11 @@ export default function RenewalsPage() {
                   </div>
                   <button
                     onClick={() => router.push('/')}
-                    className="ml-4 px-6 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600"
+                    className="ml-4 px-6 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors cursor-pointer"
                   >
                     Return to Home
                   </button>
                 </div>
-              </div>
-            ) : (
-              <div className="flex justify-end space-x-3">
-                <button
-                  onClick={() => router.push('/')}
-                  className="px-6 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50"
-                  disabled={isSaving}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleSave}
-                  className="px-6 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                  disabled={isSaving}
-                >
-                  {isSaving ? 'Saving...' : renewal.renewingMembership ? 'Submit Renewal' : 'Save'}
-                </button>
               </div>
             )}
           </div>

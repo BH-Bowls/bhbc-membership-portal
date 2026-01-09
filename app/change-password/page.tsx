@@ -29,10 +29,15 @@ export default function ChangePasswordPage() {
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
-  // Handle form submission
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Track if any fields have been filled (for unsaved changes warning)
+  const hasUnsavedChanges = !success && (
+    currentPassword.trim() !== '' ||
+    newPassword.trim() !== '' ||
+    confirmPassword.trim() !== ''
+  );
 
+  // Handle form submission (called from navbar button)
+  const handleSubmit = async () => {
     // Clear previous errors
     setError('');
     setSuccess(false);
@@ -95,6 +100,11 @@ export default function ChangePasswordPage() {
     }
   };
 
+  // Handle cancel - navigate back to home
+  const handleCancel = () => {
+    router.push('/');
+  };
+
   // Show loading state while checking session
   if (status === 'loading') {
     return (
@@ -115,7 +125,26 @@ export default function ChangePasswordPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={session.user.name ?? undefined} userRole={session.user.role ?? undefined} />
+      <Navbar
+        userName={session.user.name ?? undefined}
+        userRole={session.user.role ?? undefined}
+        hasUnsavedChanges={hasUnsavedChanges}
+        actionButtons={{
+          primary: {
+            label: isAdminManaging ? 'Set Password' : 'Change Password',
+            onClick: handleSubmit,
+            loading: isSubmitting,
+            disabled: success,
+            variant: 'primary' as const,
+          },
+          secondary: {
+            label: 'Cancel',
+            onClick: handleCancel,
+            disabled: isSubmitting,
+            variant: 'secondary' as const,
+          },
+        }}
+      />
 
       <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         <div className="px-4 py-6 sm:px-0">
@@ -134,7 +163,7 @@ export default function ChangePasswordPage() {
 
             {/* Change Password Form */}
             <div className="bg-white shadow rounded-lg p-6">
-              <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="space-y-4">
                 {/* Current Password - only show if NOT admin managing someone */}
                 {!isAdminManaging && (
                   <div>
@@ -278,28 +307,7 @@ export default function ChangePasswordPage() {
                     </div>
                   </div>
                 )}
-
-                {/* Submit Button */}
-                <div className="flex gap-3">
-                  <button
-                    type="submit"
-                    disabled={isSubmitting || success}
-                    className="flex-1 bg-blue-500 text-white py-2 px-4 rounded-md hover:bg-blue-600 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
-                  >
-                    {isSubmitting
-                      ? (isAdminManaging ? 'Setting Password...' : 'Changing Password...')
-                      : (isAdminManaging ? 'Set Password' : 'Change Password')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => router.push('/')}
-                    disabled={isSubmitting}
-                    className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors disabled:bg-gray-100 disabled:cursor-not-allowed"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </form>
+              </div>
             </div>
 
             {/* Help Text */}

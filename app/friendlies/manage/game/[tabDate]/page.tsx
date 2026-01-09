@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useParams, useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { SearchableSelect } from '@/components/SearchableSelect';
 import Link from 'next/link';
 import { GameSheetPlayer } from '@/lib/types/friendlies';
@@ -91,6 +92,19 @@ export default function TeamSelectionPage() {
   // State: List of all available players for add player dropdown
   const [availablePlayers, setAvailablePlayers] = useState<{ userName: string; fullName: string }[]>([]);
 
+  // State: Confirmation dialog
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+  });
+
   // ============================================================================
   // Effects
   // ============================================================================
@@ -170,15 +184,42 @@ export default function TeamSelectionPage() {
   }
 
   /**
+   * Helper to close confirmation dialog
+   */
+  const closeConfirmDialog = () => {
+    setConfirmDialog({
+      isOpen: false,
+      title: '',
+      message: '',
+      onConfirm: () => {},
+    });
+  };
+
+  /**
    * Handle Get Stats button click
    * Fetches latest stats from Players sheet for all players
    * Updates name down, picked, percent played, and last 8 games
    */
   async function handleGetStats() {
-    // Show confirmation dialog
-    if (!confirm('Update all player stats from the Players sheet?')) return;
-
     // Check if game data is loaded
+    if (!gameData) return;
+
+    // Show confirmation dialog
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Update Stats',
+      message: 'Update all player stats from the Players sheet?',
+      onConfirm: () => {
+        closeConfirmDialog();
+        performGetStats();
+      },
+    });
+  }
+
+  /**
+   * Perform the actual get stats operation
+   */
+  async function performGetStats() {
     if (!gameData) return;
 
     // Show getting stats indicator
@@ -280,10 +321,25 @@ export default function TeamSelectionPage() {
    * Updates player entry status codes (P, R, T, PW, RW, TW)
    */
   async function handleUpdateStats() {
-    // Show confirmation dialog
-    if (!confirm('Update the Players sheet with current selections?')) return;
-
     // Check if game data is loaded
+    if (!gameData) return;
+
+    // Show confirmation dialog
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Update Player Stats',
+      message: 'Update the Players sheet with current selections?',
+      onConfirm: () => {
+        closeConfirmDialog();
+        performUpdateStats();
+      },
+    });
+  }
+
+  /**
+   * Perform the actual update stats operation
+   */
+  async function performUpdateStats() {
     if (!gameData) return;
 
     try {
@@ -669,6 +725,15 @@ export default function TeamSelectionPage() {
           </ul>
         </div>
       </div>
+
+      {/* Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={closeConfirmDialog}
+      />
     </div>
   );
 }

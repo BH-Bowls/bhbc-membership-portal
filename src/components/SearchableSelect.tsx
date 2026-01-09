@@ -27,15 +27,21 @@ export function SearchableSelect({
   // Filter options based on search term
   // Google Sheets-style matching: check if any word in the label starts with the search term
   // Example: typing "app" matches "Daniel Appleton" because "Appleton" starts with "app"
+  // Multi-word search: "Paul B" matches "Paul Bloggs" because "Paul" starts with "paul" and "Bloggs" starts with "b"
   const filteredOptions = options.filter(option => {
     if (!searchTerm) return true;
 
-    const searchLower = searchTerm.toLowerCase();
+    const searchLower = searchTerm.toLowerCase().trim();
     const labelLower = option.label.toLowerCase();
 
-    // Split label into words and check if any word starts with the search term
-    const words = labelLower.split(/\s+/);
-    return words.some(word => word.startsWith(searchLower));
+    // Split both search term and label into words
+    const searchWords = searchLower.split(/\s+/).filter(w => w.length > 0);
+    const labelWords = labelLower.split(/\s+/);
+
+    // Check if all search words match the start of some label word
+    return searchWords.every(searchWord =>
+      labelWords.some(labelWord => labelWord.startsWith(searchWord))
+    );
   });
 
   // Close dropdown when clicking outside

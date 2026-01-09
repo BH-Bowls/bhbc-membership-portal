@@ -10,6 +10,7 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Navbar } from '@/components/Navbar';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Game, GameStatus } from '@/lib/types/friendlies';
 
 // ============================================================================
@@ -44,6 +45,19 @@ export default function ManageGamesPage() {
 
   // State: Action loading indicator (stores tabName of game being updated)
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+
+  // State: Confirmation dialog
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+  });
 
   // ============================================================================
   // Effects
@@ -144,16 +158,33 @@ export default function ManageGamesPage() {
   // ============================================================================
 
   /**
+   * Helper to close confirmation dialog
+   */
+  const closeConfirmDialog = () => {
+    setConfirmDialog({
+      isOpen: false,
+      title: '',
+      message: '',
+      onConfirm: () => {},
+    });
+  };
+
+  /**
    * Handle Open Game button click
    * Changes status from blank to 'O' (Open)
    * Allows players to start entering the game
    */
   function handleOpenGame(tabName: string) {
     // Show confirmation dialog
-    if (!confirm('Open this game for player entry?')) return;
-
-    // Call API to open game
-    changeStatus(tabName, 'open');
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Open Game',
+      message: 'Open this game for player entry?',
+      onConfirm: () => {
+        closeConfirmDialog();
+        changeStatus(tabName, 'open');
+      },
+    });
   }
 
   /**
@@ -163,10 +194,15 @@ export default function ManageGamesPage() {
    */
   function handleCloseGame(tabName: string) {
     // Show confirmation dialog
-    if (!confirm('Close this game and create team selection sheet?')) return;
-
-    // Call API to close game
-    changeStatus(tabName, 'close');
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Close Game',
+      message: 'Close this game and create team selection sheet?',
+      onConfirm: () => {
+        closeConfirmDialog();
+        changeStatus(tabName, 'close');
+      },
+    });
   }
 
   /**
@@ -176,10 +212,15 @@ export default function ManageGamesPage() {
    */
   function handlePublishSelection(tabName: string) {
     // Show confirmation dialog
-    if (!confirm('Publish team selection to players?')) return;
-
-    // Call API to publish selection
-    changeStatus(tabName, 'publish');
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Publish Selection',
+      message: 'Publish team selection to players?',
+      onConfirm: () => {
+        closeConfirmDialog();
+        changeStatus(tabName, 'publish');
+      },
+    });
   }
 
   /**
@@ -483,6 +524,15 @@ export default function ManageGamesPage() {
           </div>
         )}
       </div>
+
+      {/* Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={closeConfirmDialog}
+      />
     </div>
   );
 }

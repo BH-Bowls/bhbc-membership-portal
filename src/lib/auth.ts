@@ -51,10 +51,21 @@ export const authOptions: NextAuthOptions = {
           throw new Error('Please enter your username and password');
         }
 
+        // Extract IP address and user agent from request
+        const ipAddress = req?.headers?.['x-forwarded-for'] as string ||
+                         req?.headers?.['x-real-ip'] as string ||
+                         req?.body?.headers?.['x-forwarded-for'] ||
+                         '';
+        const userAgent = req?.headers?.['user-agent'] as string ||
+                         req?.body?.headers?.['user-agent'] ||
+                         '';
+
         // Authenticate against Google Sheets database
         const result = await authenticateUser(
           credentials.identifier,
-          credentials.password
+          credentials.password,
+          ipAddress,
+          userAgent
         );
 
         // Check if authentication succeeded

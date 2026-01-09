@@ -11,6 +11,8 @@ import { useImpersonation } from '@/hooks/useImpersonation';
 import { ImpersonationModal } from './ImpersonationModal';
 import { getNavItemClasses, getProfileIconClasses, getButtonClasses } from '@/config/theme-helpers';
 import { VersionDisplay } from './VersionDisplay';
+import { checkForUnsavedChanges, clearAllDrafts } from '@/lib/form-draft-utils';
+import { ConfirmDialog } from './ConfirmDialog';
 
 interface SubMenuItem {
   name: string;
@@ -25,12 +27,26 @@ interface NavItem {
   subItems?: SubMenuItem[];
 }
 
+interface ActionButton {
+  label: string;
+  onClick: () => void;
+  icon?: string;
+  loading?: boolean;
+  disabled?: boolean;
+  variant?: 'primary' | 'secondary' | 'danger';
+}
+
 interface NavbarProps {
   userName?: string;
   userRole?: string;
+  hasUnsavedChanges?: boolean;
+  actionButtons?: {
+    primary?: ActionButton;
+    secondary?: ActionButton;
+  };
 }
 
-export function Navbar({ userName, userRole }: NavbarProps) {
+export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionButtons }: NavbarProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
@@ -39,6 +55,21 @@ export function Navbar({ userName, userRole }: NavbarProps) {
   const profileDropdownRef = useRef<HTMLDivElement>(null);
   const pathname = usePathname();
   const router = useRouter();
+
+  // Confirmation dialog state
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    confirmLabel?: string;
+    confirmVariant?: 'primary' | 'danger';
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+  });
 
   // Get session for impersonation state
   const { data: session } = useSession();
@@ -203,6 +234,184 @@ export function Navbar({ userName, userRole }: NavbarProps) {
     };
   }, [profileMenuOpen]);
 
+  // Check if we need to open impersonation modal after navigation
+  useEffect(() => {
+    const shouldOpen = sessionStorage.getItem('openImpersonationModal');
+    if (shouldOpen === 'true') {
+      sessionStorage.removeItem('openImpersonationModal');
+      setImpersonationModalOpen(true);
+    }
+  }, [pathname]); // Run when pathname changes (after navigation)
+
+  // Helper to close confirmation dialog
+  const closeConfirmDialog = () => {
+    setConfirmDialog({
+      isOpen: false,
+      title: '',
+      message: '',
+      onConfirm: () => {},
+    });
+  };
+
+  // Handle logout with unsaved changes warning
+  const handleLogout = () => {
+    if (checkForUnsavedChanges()) {
+      setConfirmDialog({
+        isOpen: true,
+        title: 'Unsaved Changes',
+        message: 'You have unsaved changes. Your work will be lost. Continue?',
+        confirmLabel: 'Logout Anyway',
+        confirmVariant: 'danger',
+        onConfirm: () => {
+          closeConfirmDialog();
+          clearAllDrafts();
+          handleSignOut();
+        },
+      });
+      return;
+    }
+    handleSignOut();
+  };
+
+  // Handle switch user with unsaved changes warning
+  const handleSwitchUser = () => {
+    if (checkForUnsavedChanges()) {
+      setConfirmDialog({
+        isOpen: true,
+        title: 'Unsaved Changes',
+        message: 'You have unsaved changes. Your work will be lost. Continue?',
+        confirmLabel: 'Switch Anyway',
+        confirmVariant: 'danger',
+        onConfirm: () => {
+          closeConfirmDialog();
+          // Clear drafts IMMEDIATELY after confirmation (prevents auto-save race condition)
+          clearAllDrafts();
+          // If already on home page, open modal directly
+          if (pathname === '/') {
+            setImpersonationModalOpen(true);
+          } else {
+            // Set flag to open modal after navigation
+            sessionStorage.setItem('openImpersonationModal', 'true');
+            // Navigate to home IMMEDIATELY to unmount current page and prevent auto-save
+            router.push('/');
+          }
+          setProfileMenuOpen(false);
+        },
+      });
+      return;
+    }
+    // If already on home page, open modal directly
+    if (pathname === '/') {
+      setImpersonationModalOpen(true);
+    } else {
+      // Set flag to open modal after navigation
+      sessionStorage.setItem('openImpersonationModal', 'true');
+      // Navigate to home IMMEDIATELY to unmount current page and prevent auto-save
+      router.push('/');
+    }
+    setProfileMenuOpen(false);
+  };
+
+  // Wrapper for impersonation that clears drafts and navigates to home after switching
+  const handleImpersonateUser = async (userName: string) => {
+    // Clear drafts again just before impersonation (belt and suspenders approach)
+    clearAllDrafts();
+    await startImpersonation(userName);
+    // Navigate to home to force clean state after switching users
+    router.push('/');
+  };
+
+  // Handle exit switch with unsaved changes warning
+  const handleExitSwitch = () => {
+    if (checkForUnsavedChanges()) {
+      setConfirmDialog({
+        isOpen: true,
+        title: 'Unsaved Changes',
+        message: 'You have unsaved changes. Your work will be lost. Continue?',
+        confirmLabel: 'Exit Anyway',
+        confirmVariant: 'danger',
+        onConfirm: () => {
+          closeConfirmDialog();
+          clearAllDrafts();
+          // Navigate to home IMMEDIATELY to unmount current page and prevent auto-save
+          router.push('/');
+          stopImpersonation();
+          setProfileMenuOpen(false);
+        },
+      });
+      return;
+    }
+    // Navigate to home IMMEDIATELY to unmount current page and prevent auto-save
+    router.push('/');
+    stopImpersonation();
+    setProfileMenuOpen(false);
+  };
+
+  // Handle navigation with unsaved changes warning
+  // Only warns for page-level changes (e.g., Change Password with filled fields)
+  // Does NOT warn for auto-saved drafts (Profile/Renewals) - those persist across navigation
+  const handleNavigation = (e: React.MouseEvent, href: string) => {
+    // Only check page-level unsaved changes, NOT sessionStorage drafts
+    // Drafts are preserved and will be restored when user returns to the page
+    if (hasUnsavedChanges) {
+      e.preventDefault();
+
+      setConfirmDialog({
+        isOpen: true,
+        title: 'Unsaved Changes',
+        message: 'You have unsaved password changes. Please save or cancel before navigating away.',
+        confirmLabel: 'Leave Anyway',
+        confirmVariant: 'primary',
+        onConfirm: () => {
+          closeConfirmDialog();
+          // Navigate away (no need to clear drafts since this is page-level only)
+          router.push(href);
+        },
+      });
+      // If not confirmed, do nothing (stay on page)
+    }
+    // If no unsaved changes, let the Link handle navigation normally
+  };
+
+  // Get button styling based on variant
+  const getActionButtonClasses = (variant: ActionButton['variant'] = 'primary', disabled?: boolean, loading?: boolean) => {
+    const baseClasses = 'inline-flex items-center px-4 py-2 border rounded-md text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 transition-colors cursor-pointer';
+
+    if (disabled || loading) {
+      return `${baseClasses} bg-gray-400 text-white cursor-not-allowed`;
+    }
+
+    switch (variant) {
+      case 'primary':
+        return `${baseClasses} bg-blue-500 text-white hover:bg-blue-600 focus:ring-blue-500`;
+      case 'secondary':
+        return `${baseClasses} bg-white border-gray-300 text-gray-700 hover:bg-gray-50 focus:ring-gray-500`;
+      case 'danger':
+        return `${baseClasses} bg-red-500 text-white hover:bg-red-600 focus:ring-red-500`;
+      default:
+        return `${baseClasses} bg-blue-500 text-white hover:bg-blue-600 focus:ring-blue-500`;
+    }
+  };
+
+  // Render action button
+  const renderActionButton = (button: ActionButton, key: string) => (
+    <button
+      key={key}
+      onClick={button.onClick}
+      disabled={button.disabled || button.loading}
+      className={getActionButtonClasses(button.variant, button.disabled, button.loading)}
+    >
+      {button.loading && (
+        <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+      )}
+      {button.icon && <span className="mr-2">{button.icon}</span>}
+      {button.label}
+    </button>
+  );
+
   return (
     <nav className="sticky top-0 z-50 bg-white shadow-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -220,7 +429,14 @@ export function Navbar({ userName, userRole }: NavbarProps) {
 
           {/* Desktop Navigation */}
           <div className="hidden md:flex md:items-center md:space-x-4">
-            {navigationItems.map((item) => (
+            {/* Show action buttons if provided, otherwise show normal navigation */}
+            {actionButtons ? (
+              <div className="flex items-center space-x-3">
+                {actionButtons.secondary && renderActionButton(actionButtons.secondary, 'secondary')}
+                {actionButtons.primary && renderActionButton(actionButtons.primary, 'primary')}
+              </div>
+            ) : (
+              navigationItems.map((item) => (
               item.subItems ? (
                 // Dropdown menu item
                 <div key={item.name} className="relative">
@@ -241,7 +457,10 @@ export function Navbar({ userName, userRole }: NavbarProps) {
                           <Link
                             key={subItem.name}
                             href={subItem.href}
-                            onClick={() => setOpenDropdown(null)}
+                            onClick={(e) => {
+                              handleNavigation(e, subItem.href);
+                              setOpenDropdown(null);
+                            }}
                             className={`block px-4 py-2 text-sm ${
                               isActive(subItem.href)
                                 ? 'bg-blue-100 text-blue-700'
@@ -260,23 +479,47 @@ export function Navbar({ userName, userRole }: NavbarProps) {
                 <Link
                   key={item.name}
                   href={item.href!}
+                  onClick={(e) => handleNavigation(e, item.href!)}
                   className={getNavItemClasses(isActive(item.href!))}
                 >
                   {item.icon && <span className="mr-2">{item.icon}</span>}
                   {item.name}
                 </Link>
               )
-            ))}
+            )))}
 
-            {/* Profile Icon Dropdown */}
+            {/* Profile Icon Dropdown (or Hamburger Menu when editing) */}
             <div ref={profileDropdownRef} className="relative ml-4 pl-4 border-l border-gray-200">
-              <button
-                onClick={() => setProfileMenuOpen(!profileMenuOpen)}
-                className={getProfileIconClasses(isImpersonating || false)}
-                title={isImpersonating ? `Impersonating ${userName}` : userName || 'User Profile'}
-              >
-                {getUserInitials(userName)}
-              </button>
+              {actionButtons ? (
+                // Hamburger menu when editing
+                <button
+                  onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+                  className={`relative inline-flex items-center justify-center p-2 rounded-md focus:outline-none focus:ring-2 focus:ring-inset ${
+                    isImpersonating
+                      ? 'text-orange-600 hover:text-orange-700 hover:bg-orange-50 focus:ring-orange-500'
+                      : 'text-gray-700 hover:text-gray-900 hover:bg-gray-100 focus:ring-blue-500'
+                  }`}
+                  aria-expanded="false"
+                  title="Open menu"
+                >
+                  <span className="sr-only">Open menu</span>
+                  <svg className="block h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                  </svg>
+                  {isImpersonating && (
+                    <span className="absolute top-1 right-1 block h-2 w-2 rounded-full bg-orange-500 ring-2 ring-white"></span>
+                  )}
+                </button>
+              ) : (
+                // Profile icon in view mode
+                <button
+                  onClick={() => setProfileMenuOpen(!profileMenuOpen)}
+                  className={getProfileIconClasses(isImpersonating || false)}
+                  title={isImpersonating ? `Impersonating ${userName}` : userName || 'User Profile'}
+                >
+                  {getUserInitials(userName)}
+                </button>
+              )}
               {profileMenuOpen && (
                 <div className="absolute right-0 mt-2 w-56 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-50">
                   <div className="py-1">
@@ -304,20 +547,14 @@ export function Navbar({ userName, userRole }: NavbarProps) {
                       <>
                         {isImpersonating ? (
                           <button
-                            onClick={() => {
-                              stopImpersonation();
-                              setProfileMenuOpen(false);
-                            }}
+                            onClick={handleExitSwitch}
                             className="block w-full text-left px-4 py-2 text-sm text-orange-700 hover:bg-orange-50 border-b border-gray-200"
                           >
                             Exit Switch
                           </button>
                         ) : (
                           <button
-                            onClick={() => {
-                              setImpersonationModalOpen(true);
-                              setProfileMenuOpen(false);
-                            }}
+                            onClick={handleSwitchUser}
                             className="block w-full text-left px-4 py-2 text-sm text-blue-500 hover:bg-blue-50 border-b border-gray-200"
                           >
                             Switch User
@@ -329,7 +566,10 @@ export function Navbar({ userName, userRole }: NavbarProps) {
                     {/* Change Password - available for own account and when managing buddies */}
                     <Link
                       href="/change-password"
-                      onClick={() => setProfileMenuOpen(false)}
+                      onClick={(e) => {
+                        handleNavigation(e, '/change-password');
+                        setProfileMenuOpen(false);
+                      }}
                       className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
                     >
                       Change Password
@@ -338,7 +578,7 @@ export function Navbar({ userName, userRole }: NavbarProps) {
                     {/* Hide logout when impersonating */}
                     {!isImpersonating && (
                       <button
-                        onClick={handleSignOut}
+                        onClick={handleLogout}
                         className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
                       >
                         Logout
@@ -355,8 +595,17 @@ export function Navbar({ userName, userRole }: NavbarProps) {
             </div>
           </div>
 
-          {/* Mobile menu button */}
+          {/* Mobile Action Buttons or Menu Button */}
           <div className="flex items-center md:hidden">
+            {/* Show action buttons in center space if provided */}
+            {actionButtons && (
+              <div className="flex items-center space-x-2 mr-4">
+                {actionButtons.secondary && renderActionButton(actionButtons.secondary, 'secondary-mobile')}
+                {actionButtons.primary && renderActionButton(actionButtons.primary, 'primary-mobile')}
+              </div>
+            )}
+
+            {/* Hamburger menu button */}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               className={`relative inline-flex items-center justify-center p-2 rounded-md focus:outline-none focus:ring-2 focus:ring-inset ${
@@ -386,17 +635,17 @@ export function Navbar({ userName, userRole }: NavbarProps) {
         </div>
       </div>
 
-      {/* Mobile menu overlay */}
+      {/* Navigation menu overlay (used on mobile always, and on desktop when editing) */}
       {mobileMenuOpen && (
         <>
           {/* Backdrop */}
           <div
-            className="fixed inset-0 bg-black bg-opacity-50 z-40 md:hidden"
+            className="fixed inset-0 bg-black bg-opacity-50 z-40"
             onClick={() => setMobileMenuOpen(false)}
           ></div>
 
           {/* Menu panel */}
-          <div className="fixed right-0 top-0 bottom-0 w-80 bg-white shadow-xl z-50 md:hidden overflow-y-auto">
+          <div className="fixed right-0 top-0 bottom-0 w-80 bg-white shadow-xl z-50 overflow-y-auto">
             {/* Menu header with close button */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50">
               <h2 className="text-lg font-semibold text-gray-900">Menu</h2>
@@ -443,7 +692,8 @@ export function Navbar({ userName, userRole }: NavbarProps) {
                           <Link
                             key={subItem.name}
                             href={subItem.href}
-                            onClick={() => {
+                            onClick={(e) => {
+                              handleNavigation(e, subItem.href);
                               setMobileMenuOpen(false);
                               setOpenDropdown(null);
                             }}
@@ -464,7 +714,10 @@ export function Navbar({ userName, userRole }: NavbarProps) {
                   <Link
                     key={item.name}
                     href={item.href!}
-                    onClick={() => setMobileMenuOpen(false)}
+                    onClick={(e) => {
+                      handleNavigation(e, item.href!);
+                      setMobileMenuOpen(false);
+                    }}
                     className={`flex items-center px-3 py-2 rounded-md text-base font-medium ${
                       isActive(item.href!)
                         ? 'bg-blue-100 text-blue-700'
@@ -505,7 +758,7 @@ export function Navbar({ userName, userRole }: NavbarProps) {
                     {isImpersonating ? (
                       <button
                         onClick={() => {
-                          stopImpersonation();
+                          handleExitSwitch();
                           setMobileMenuOpen(false);
                         }}
                         className="block w-full text-left px-3 py-2 text-base font-medium text-orange-700 bg-orange-50 hover:bg-orange-100 rounded-md"
@@ -515,7 +768,7 @@ export function Navbar({ userName, userRole }: NavbarProps) {
                     ) : (
                       <button
                         onClick={() => {
-                          setImpersonationModalOpen(true);
+                          handleSwitchUser();
                           setMobileMenuOpen(false);
                         }}
                         className="block w-full text-left px-3 py-2 text-base font-medium text-blue-600 hover:bg-blue-50 rounded-md"
@@ -529,7 +782,10 @@ export function Navbar({ userName, userRole }: NavbarProps) {
                 {/* Change Password - available for own account and when managing buddies */}
                 <Link
                   href="/change-password"
-                  onClick={() => setMobileMenuOpen(false)}
+                  onClick={(e) => {
+                    handleNavigation(e, '/change-password');
+                    setMobileMenuOpen(false);
+                  }}
                   className="block px-3 py-2 text-base font-medium text-gray-700 hover:bg-gray-100 rounded-md"
                 >
                   Change Password
@@ -538,7 +794,7 @@ export function Navbar({ userName, userRole }: NavbarProps) {
                 {/* Hide logout when impersonating */}
                 {!isImpersonating && (
                   <button
-                    onClick={handleSignOut}
+                    onClick={handleLogout}
                     className="block w-full text-left px-3 py-2 text-base font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-md"
                   >
                     Logout
@@ -559,7 +815,18 @@ export function Navbar({ userName, userRole }: NavbarProps) {
       <ImpersonationModal
         isOpen={impersonationModalOpen}
         onClose={() => setImpersonationModalOpen(false)}
-        onImpersonate={startImpersonation}
+        onImpersonate={handleImpersonateUser}
+      />
+
+      {/* Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        confirmLabel={confirmDialog.confirmLabel}
+        confirmVariant={confirmDialog.confirmVariant}
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={closeConfirmDialog}
       />
     </nav>
   );
