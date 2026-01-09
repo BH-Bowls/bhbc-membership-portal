@@ -14,7 +14,10 @@
       "Bash(netstat:*)",
       "Bash(findstr:*)",
       "Bash(taskkill:*)",
-      "WebFetch(domain:www.burgesshillbowlsclub.com)"
+      "WebFetch(domain:www.burgesshillbowlsclub.com)",
+      "Bash(git checkout:*)",
+      "Bash(git merge:*)",
+      "Bash(git push:*)"
     ]
   }
 }
