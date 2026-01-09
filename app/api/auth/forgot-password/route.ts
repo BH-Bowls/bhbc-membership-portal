@@ -6,26 +6,31 @@ import {
   generatePasswordResetToken,
   countRecentResetRequests,
   getUserByUsername,
+  updateEmailSentStatus,
+  logMemberEmail,
 } from '@/lib/sheets';
 import { sendTemplateEmail, isEmailConfigured } from '@/lib/email/mailer';
 
 async function sendPasswordResetEmail(
   email: string,
   name: string,
+  userName: string,
   token: string,
   baseUrl: string
-): Promise<boolean> {
+): Promise<{ success: boolean; error?: string }> {
   try {
     if (!isEmailConfigured()) {
-      console.error('SMTP not configured');
-      return false;
+      const error = 'SMTP not configured';
+      console.error(error);
+      return { success: false, error };
     }
 
     const resetUrl = `${baseUrl}/reset-password?token=${token}`;
+    const subject = 'BHBC Password Reset Request';
 
     const result = await sendTemplateEmail(
       email,
-      'BHBC Password Reset Request',
+      subject,
       'password-reset',
       {
         memberName: name,
@@ -33,10 +38,42 @@ async function sendPasswordResetEmail(
       }
     );
 
-    return result.success;
+    // Log to MemberEmails sheet
+    await logMemberEmail({
+      userName,
+      emailAddress: email,
+      templateName: 'Password Reset',
+      subject,
+      success: result.success,
+      errorMessage: result.error,
+      sentBy: 'System',
+      attachments: [],
+    });
+
+    // Update Member Email Sent Status in Members sheet
+    await updateEmailSentStatus(userName, result.success, result.error);
+
+    return result;
   } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
     console.error('Error sending password reset email:', error);
-    return false;
+
+    // Log failed attempt to MemberEmails sheet
+    await logMemberEmail({
+      userName,
+      emailAddress: email,
+      templateName: 'Password Reset',
+      subject: 'BHBC Password Reset Request',
+      success: false,
+      errorMessage: errorMsg,
+      sentBy: 'System',
+      attachments: [],
+    });
+
+    // Update Member Email Sent Status in Members sheet
+    await updateEmailSentStatus(userName, false, errorMsg);
+
+    return { success: false, error: errorMsg };
   }
 }
 
@@ -90,6 +127,7 @@ export async function POST(request: NextRequest) {
         await sendPasswordResetEmail(
           user.emailAddress,
           user.fullKnownAs || user.firstName || 'Member',
+          user.userName,
           token,
           baseUrl
         );

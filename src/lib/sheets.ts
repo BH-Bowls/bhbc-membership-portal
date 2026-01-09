@@ -348,19 +348,28 @@ export async function updateLastLogin(userName: string, success: boolean): Promi
 }
 
 /**
- * Update renewal email sent status
+ * Update email sent status in Members sheet
  * Records success with date or error message
+ * @param userName Username of the member
+ * @param success Whether email was sent successfully
+ * @param errorMessage Error message if failed
+ * @param columnName Column to update (defaults to 'member_email_sent_status')
  */
-export async function updateEmailSentStatus(userName: string, success: boolean, errorMessage?: string): Promise<void> {
+export async function updateEmailSentStatus(
+  userName: string,
+  success: boolean,
+  errorMessage?: string,
+  columnName: string = 'member_email_sent_status'
+): Promise<void> {
   try {
     const user = await getUserByUsername(userName);
     if (!user || !user._rowNumber) return;
 
     const colMap = await getColumnMap('Members');
-    const colIndex = colMap['renewal_email_sent_status'];
+    const colIndex = colMap[columnName];
 
     if (colIndex === undefined) {
-      console.error('Column renewal_email_sent_status not found in sheet');
+      console.error(`Column ${columnName} not found in sheet`);
       return;
     }
 
@@ -620,6 +629,59 @@ export async function logLoginAttempt(attempt: {
     });
   } catch (error) {
     console.error('Error logging login attempt:', error);
+  }
+}
+
+/**
+ * Log a member email attempt to MemberEmails sheet
+ * Tracks email campaign history with full audit trail
+ */
+export async function logMemberEmail(email: {
+  userName: string;
+  emailAddress: string | null;
+  templateName: string;
+  subject: string;
+  success: boolean;
+  errorMessage?: string | null;
+  sentBy: string;
+  attachments?: string[];
+}): Promise<void> {
+  try {
+    const sheets = getGoogleSheetsClient();
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: getSpreadsheetId(),
+      range: 'MemberEmails!A:A',
+    });
+
+    const nextId = (response.data.values?.length || 1);
+    const now = new Date().toISOString();
+
+    // Format attachments as comma-separated list
+    const attachmentsList = email.attachments && email.attachments.length > 0
+      ? email.attachments.join(', ')
+      : '';
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: getSpreadsheetId(),
+      range: 'MemberEmails!A:J',
+      valueInputOption: 'USER_ENTERED',
+      requestBody: {
+        values: [[
+          nextId,
+          email.userName,
+          email.emailAddress || '',
+          email.templateName,
+          email.subject,
+          email.success ? 'Y' : 'N',
+          email.errorMessage || '',
+          email.sentBy,
+          attachmentsList,
+          now
+        ]]
+      }
+    });
+  } catch (error) {
+    console.error('Error logging member email:', error);
   }
 }
 

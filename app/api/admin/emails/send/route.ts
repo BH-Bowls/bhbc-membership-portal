@@ -4,8 +4,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getAllUsers, updateEmailSentStatus } from '@/lib/sheets';
+import { getAllUsers, updateEmailSentStatus, logMemberEmail } from '@/lib/sheets';
 import { sendMemberEmail } from '@/lib/email/member-mailer';
+import { getEmailTemplates } from '@/lib/email/template-reader';
 
 // ============================================================================
 // Type Definitions
@@ -120,6 +121,18 @@ export async function POST(request: NextRequest) {
             }
           }
 
+          // Get template information for logging
+          const templates = getEmailTemplates();
+          const template = templates.find(t => t.id === templateId);
+          const templateName = template?.name || templateId;
+          const templateSubject = template?.subject || 'Message from Burgess Hill Bowls Club';
+
+          // Get attachment names for logging
+          const attachmentNames = attachmentIds.length > 0 ? attachmentIds : [];
+
+          // Get admin username for logging
+          const adminUserName = session.user?.userName || 'Unknown';
+
           // Get total count for progress tracking
           const total = membersToEmail.length;
 
@@ -176,7 +189,18 @@ export async function POST(request: NextRequest) {
                 // Increment success counter
                 succeeded++;
 
-                // Update Google Sheets with success status
+                // Log to MemberEmails sheet (full audit trail)
+                await logMemberEmail({
+                  userName: member.userName,
+                  emailAddress: member.emailAddress,
+                  templateName,
+                  subject: templateSubject,
+                  success: true,
+                  sentBy: adminUserName,
+                  attachments: attachmentNames,
+                });
+
+                // Update Members sheet column (quick reference)
                 await updateEmailSentStatus(member.userName, true);
 
                 // Send success event
@@ -188,7 +212,19 @@ export async function POST(request: NextRequest) {
                 // Increment failure counter
                 failed++;
 
-                // Update Google Sheets with error status
+                // Log to MemberEmails sheet (full audit trail)
+                await logMemberEmail({
+                  userName: member.userName,
+                  emailAddress: member.emailAddress,
+                  templateName,
+                  subject: templateSubject,
+                  success: false,
+                  errorMessage: result.error,
+                  sentBy: adminUserName,
+                  attachments: attachmentNames,
+                });
+
+                // Update Members sheet column (quick reference)
                 await updateEmailSentStatus(member.userName, false, result.error);
 
                 // Send error event
@@ -205,7 +241,19 @@ export async function POST(request: NextRequest) {
               // Get error message
               const errorMsg = error instanceof Error ? error.message : 'Unknown error';
 
-              // Update Google Sheets with error status
+              // Log to MemberEmails sheet (full audit trail)
+              await logMemberEmail({
+                userName: member.userName,
+                emailAddress: member.emailAddress,
+                templateName,
+                subject: templateSubject,
+                success: false,
+                errorMessage: errorMsg,
+                sentBy: adminUserName,
+                attachments: attachmentNames,
+              });
+
+              // Update Members sheet column (quick reference)
               await updateEmailSentStatus(member.userName, false, errorMsg);
 
               // Send error event

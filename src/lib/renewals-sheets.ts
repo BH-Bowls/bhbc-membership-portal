@@ -6,6 +6,8 @@ import {
   type User,
   getColumnMap,
   getColumnLetter,
+  updateEmailSentStatus,
+  logMemberEmail,
 } from './sheets';
 import {
   createRowFieldGetter,
@@ -713,21 +715,66 @@ export async function sendRenewalConfirmation(
     );
 
     if (!result.success) {
+      // Log to MemberEmails sheet (full audit trail)
+      await logMemberEmail({
+        userName,
+        emailAddress: user.emailAddress,
+        templateName: 'Renewal Confirmation',
+        subject: 'BHBC Membership Renewal Confirmation',
+        success: false,
+        errorMessage: result.error,
+        sentBy: managerUserName || userName,
+        attachments: [],
+      });
+
+      // Update Members sheet with failure status
+      await updateEmailSentStatus(userName, false, result.error);
       return result;
     }
 
-    // Update confirmation_email_date in the sheet
+    // Log to MemberEmails sheet (full audit trail)
+    await logMemberEmail({
+      userName,
+      emailAddress: user.emailAddress,
+      templateName: 'Renewal Confirmation',
+      subject: 'BHBC Membership Renewal Confirmation',
+      success: true,
+      sentBy: managerUserName || userName,
+      attachments: [],
+    });
+
+    // Update confirmation_email_date in Renewals sheet
     const emailSentDate = new Date().toISOString();
     await updateRenewal(userName, {
       confirmationEmailDate: emailSentDate,
     });
 
+    // Update Member Email Sent Status in Members sheet (quick reference)
+    await updateEmailSentStatus(userName, true);
+
     return { success: true };
   } catch (error) {
     console.error(`[sendRenewalConfirmation] Failed to send confirmation for ${userName}:`, error);
+    const errorMsg = error instanceof Error ? error.message : 'Failed to send confirmation email';
+
+    // Log to MemberEmails sheet (full audit trail)
+    await logMemberEmail({
+      userName,
+      emailAddress: null,
+      templateName: 'Renewal Confirmation',
+      subject: 'BHBC Membership Renewal Confirmation',
+      success: false,
+      errorMessage: errorMsg,
+      sentBy: managerUserName || userName,
+      attachments: [],
+    });
+
+    // Update Members sheet with failure status
+    await updateEmailSentStatus(userName, false, errorMsg);
+
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Failed to send confirmation email',
+      error: errorMsg,
     };
   }
 }

@@ -6,30 +6,70 @@ import {
   validateResetToken,
   updatePasswordHash,
   clearResetToken,
+  logMemberEmail,
+  updateEmailSentStatus,
 } from '@/lib/sheets';
 import bcrypt from 'bcryptjs';
 import { sendTemplateEmail, isEmailConfigured } from '@/lib/email/mailer';
 
 async function sendPasswordChangedEmail(
   email: string,
-  name: string
-): Promise<void> {
+  name: string,
+  userName: string
+): Promise<{ success: boolean; error?: string }> {
   try {
     if (!isEmailConfigured()) {
-      console.error('SMTP not configured');
-      return;
+      const error = 'SMTP not configured';
+      console.error(error);
+      return { success: false, error };
     }
 
-    await sendTemplateEmail(
+    const subject = 'BHBC Password Changed Successfully';
+    const result = await sendTemplateEmail(
       email,
-      'BHBC Password Changed Successfully',
+      subject,
       'password-changed',
       {
         memberName: name,
       }
     );
+
+    // Log to MemberEmails sheet
+    await logMemberEmail({
+      userName,
+      emailAddress: email,
+      templateName: 'Password Changed',
+      subject,
+      success: result.success,
+      errorMessage: result.error,
+      sentBy: 'System',
+      attachments: [],
+    });
+
+    // Update Member Email Sent Status in Members sheet
+    await updateEmailSentStatus(userName, result.success, result.error);
+
+    return result;
   } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
     console.error('Error sending password changed email:', error);
+
+    // Log failed attempt to MemberEmails sheet
+    await logMemberEmail({
+      userName,
+      emailAddress: email,
+      templateName: 'Password Changed',
+      subject: 'BHBC Password Changed Successfully',
+      success: false,
+      errorMessage: errorMsg,
+      sentBy: 'System',
+      attachments: [],
+    });
+
+    // Update Member Email Sent Status in Members sheet
+    await updateEmailSentStatus(userName, false, errorMsg);
+
+    return { success: false, error: errorMsg };
   }
 }
 
@@ -86,7 +126,8 @@ export async function POST(request: NextRequest) {
     if (user.emailAddress) {
       await sendPasswordChangedEmail(
         user.emailAddress,
-        user.fullKnownAs || user.firstName || 'Member'
+        user.fullKnownAs || user.firstName || 'Member',
+        user.userName
       );
     }
 
