@@ -11,10 +11,11 @@ import { processEmailTemplate } from './template-processor';
  * Get configured email transporter for sending emails
  * Creates a nodemailer SMTP transport using credentials from environment variables
  * Uses TLS on port 587 (standard submission port) for secure email transmission
+ * @param usePool Whether to use connection pooling (default: false)
  * @returns Configured nodemailer transporter ready to send emails
  */
-export function getEmailTransporter() {
-  return nodemailer.createTransport({
+export function getEmailTransporter(usePool: boolean = false) {
+  const config: any = {
     host: process.env.SMTP_HOST || 'smtp.gmail.com',
     port: parseInt(process.env.SMTP_PORT || '587'),
     secure: false,
@@ -22,7 +23,22 @@ export function getEmailTransporter() {
       user: process.env.SMTP_USER,
       pass: process.env.SMTP_PASSWORD,
     },
-  });
+  };
+
+  // Add pooling options for bulk operations
+  if (usePool) {
+    // Enable connection pooling for bulk operations
+    // This reuses SMTP connections instead of creating new ones
+    config.pool = true;
+    // Maximum number of simultaneous connections (Gmail limit is 100)
+    config.maxConnections = 1;  // Use single connection for sequential sends
+    // Maximum number of messages per connection (unlimited)
+    config.maxMessages = Infinity;
+    // Keep connection alive between sends
+    config.keepAlive = true;
+  }
+
+  return nodemailer.createTransport(config);
 }
 
 /**
@@ -172,16 +188,18 @@ export async function sendTemplateEmail(
     const textContent = htmlToPlainText(htmlContent);
 
     // Send email with both HTML and plain text versions
-    await transporter.sendMail({
+    const mailOptions: any = {
       from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
       to,
       subject,
       text: textContent,
       html: htmlContent,
-    });
+      // REMOVED custom headers temporarily to test if they're causing Gmail to drop emails
+    };
+    const info = await transporter.sendMail(mailOptions);
 
     // Log successful send for monitoring
-    console.log(`✓ Email sent to ${to}: ${subject}`);
+    console.log(`✓ Email sent to ${to}: ${subject} [MessageId: ${info.messageId}]`);
     return { success: true };
   } catch (error) {
     // Log error details for debugging
@@ -230,13 +248,15 @@ export async function sendEmail(
     }
 
     // Send email with both text and HTML versions
-    await transporter.sendMail({
+    const mailOptions: any = {
       from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
       to,
       subject,
       text,
       html: htmlContent,
-    });
+      // REMOVED custom headers temporarily to test if they're causing Gmail to drop emails
+    };
+    await transporter.sendMail(mailOptions);
 
     // Log successful send for monitoring
     console.log(`✓ Email sent to ${to}: ${subject}`);
@@ -262,13 +282,15 @@ export async function sendEmail(
  * @param subject Email subject line
  * @param htmlContent HTML content for email body
  * @param attachments Array of file attachments with filename and buffer
+ * @param transporter Optional existing transporter (for connection pooling in bulk operations)
  * @returns Promise with success status and error message if failed
  */
 export async function sendEmailWithAttachments(
   to: string,
   subject: string,
   htmlContent: string,
-  attachments: Array<{ filename: string; content: Buffer }>
+  attachments: Array<{ filename: string; content: Buffer }>,
+  transporter?: any
 ): Promise<{ success: boolean; error?: string }> {
   try {
     // Verify SMTP credentials are configured before attempting to send
@@ -277,8 +299,8 @@ export async function sendEmailWithAttachments(
       return { success: false, error: 'Email service not configured' };
     }
 
-    // Get authenticated email transporter
-    const transporter = getEmailTransporter();
+    // Use provided transporter or create a new one
+    const emailTransporter = transporter || getEmailTransporter();
 
     // Process theme placeholders in HTML content
     const processedHtml = processEmailTemplate(htmlContent);
@@ -287,17 +309,19 @@ export async function sendEmailWithAttachments(
     const textContent = htmlToPlainText(processedHtml);
 
     // Send email with both HTML and plain text versions plus attachments
-    await transporter.sendMail({
+    const mailOptions: any = {
       from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
       to,
       subject,
       text: textContent,
       html: processedHtml,
       attachments, // Array of {filename, content} objects
-    });
+      // REMOVED custom headers temporarily to test if they're causing Gmail to drop emails
+    };
+    const info = await emailTransporter.sendMail(mailOptions);
 
     // Log successful send for monitoring
-    console.log(`✓ Email sent to ${to}: ${subject} (${attachments.length} attachments)`);
+    console.log(`✓ Email sent to ${to}: ${subject} (${attachments.length} attachments) [MessageId: ${info.messageId}]`);
     return { success: true };
   } catch (error) {
     // Log error details for debugging

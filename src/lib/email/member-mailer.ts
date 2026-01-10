@@ -51,12 +51,14 @@ export interface EmailResult {
  * @param member Member data from Google Sheets
  * @param templateId Email template ID (filename without extension)
  * @param attachmentIds Array of attachment template IDs to include
+ * @param transporter Optional existing transporter (for connection pooling in bulk operations)
  * @returns Result indicating success or failure
  */
 export async function sendMemberEmail(
   member: MemberData,
   templateId: string,
-  attachmentIds: string[]
+  attachmentIds: string[],
+  transporter?: any
 ): Promise<EmailResult> {
   try {
     // Get recipient email address
@@ -246,11 +248,13 @@ export async function sendMemberEmail(
     console.log(`[member-mailer] Sending email with ${attachments.length} attachments`);
 
     // Send email using mail transport
+    // Pass through transporter if provided (for connection pooling)
     const emailResult = await sendEmailWithAttachments(
       recipientEmail,
       subject,
       cleanedEmailBody,
-      attachments
+      attachments,
+      transporter
     );
 
     // Return result

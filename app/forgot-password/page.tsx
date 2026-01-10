@@ -77,7 +77,7 @@ export default function ForgotPasswordPage() {
                     receive a password reset link shortly.
                   </p>
                   <p className="mt-2">
-                    The link will expire in 1 hour for security reasons.
+                    The link will expire in 24 hours for security reasons.
                   </p>
                 </div>
               </div>

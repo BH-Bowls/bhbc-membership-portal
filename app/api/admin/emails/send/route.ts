@@ -7,6 +7,7 @@ import { authOptions } from '@/lib/auth';
 import { getAllUsers, updateEmailSentStatus, logMemberEmail } from '@/lib/sheets';
 import { sendMemberEmail } from '@/lib/email/member-mailer';
 import { getEmailTemplates } from '@/lib/email/template-reader';
+import { getEmailTransporter } from '@/lib/email/mailer';
 
 // ============================================================================
 // Type Definitions
@@ -155,6 +156,26 @@ export async function POST(request: NextRequest) {
           let succeeded = 0;
           let failed = 0;
 
+          // Create persistent transporter for bulk sending
+          // This keeps one SMTP connection open for all sends (maxConnections: 1)
+          // Prevents "Too many login attempts" errors from Gmail
+          // We send sequentially and await each send before proceeding
+          const transporter = getEmailTransporter(true);
+
+          // Verify SMTP connection before starting
+          try {
+            await transporter.verify();
+            console.log('[send-emails] SMTP connection verified successfully');
+          } catch (verifyError) {
+            console.error('[send-emails] SMTP verification failed:', verifyError);
+            sendEvent({
+              type: 'error',
+              error: 'SMTP connection failed: ' + (verifyError instanceof Error ? verifyError.message : 'Unknown error'),
+            });
+            controller.close();
+            return;
+          }
+
           // Send initial progress event to set total count
           sendEvent({
             type: 'progress',
@@ -163,26 +184,28 @@ export async function POST(request: NextRequest) {
             userName: '',
           });
 
-          // Loop through each member and send email
-          // Process sequentially to avoid overwhelming email server
-          for (let i = 0; i < membersToEmail.length; i++) {
-            const member = membersToEmail[i];
+          try {
+            // Loop through each member and send email
+            // Process sequentially to avoid overwhelming email server
+            for (let i = 0; i < membersToEmail.length; i++) {
+              const member = membersToEmail[i];
 
-            // Get user name for progress display
-            const userName = `${member.firstName} ${member.lastName}`.trim() || member.userName || 'Unknown';
+              // Get user name for progress display
+              const userName = `${member.firstName} ${member.lastName}`.trim() || member.userName || 'Unknown';
 
-            // Send progress event
-            sendEvent({
-              type: 'progress',
-              current: i + 1,
-              total,
-              userName,
-            });
+              // Send progress event
+              sendEvent({
+                type: 'progress',
+                current: i + 1,
+                total,
+                userName,
+              });
 
-            try {
-              // Send email to this member using selected template and attachments
-              // WAIT for completion before proceeding to next member
-              const result = await sendMemberEmail(member, templateId, attachmentIds);
+              try {
+                // Send email to this member using selected template and attachments
+                // WAIT for completion before proceeding to next member
+                // Pass transporter to reuse connection (prevents rate limiting)
+                const result = await sendMemberEmail(member, templateId, attachmentIds, transporter);
 
               // Check if email send was successful
               if (result.success) {
@@ -268,13 +291,20 @@ export async function POST(request: NextRequest) {
             }
           }
 
-          // Send completion event with summary
-          sendEvent({
-            type: 'complete',
-            sent: total,
-            succeeded,
-            failed,
-          });
+            // Send completion event with summary
+            sendEvent({
+              type: 'complete',
+              sent: total,
+              succeeded,
+              failed,
+            });
+          } finally {
+            // Close transporter to release SMTP connections
+            // transporter.close() waits for pending messages to be sent
+            console.log('[send-emails] Closing transporter (waiting for pending messages)...');
+            transporter.close();
+            console.log('[send-emails] Transporter closed');
+          }
 
           // Close stream
           controller.close();

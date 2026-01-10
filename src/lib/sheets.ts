@@ -822,8 +822,10 @@ export async function generatePasswordResetToken(
     const crypto = require('crypto');
     const token = crypto.randomBytes(32).toString('hex');
 
-    // Set expiry to 1 hour from now
-    const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    // Set expiry to 24 hours from now (extended due to Gmail delivery delays)
+    // Gmail may delay automated emails by 4-5 hours
+    // 24 hours allows for overnight requests and delayed delivery
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
     const colMap = await getColumnMap('Members');
     const sheets = getGoogleSheetsClient();
