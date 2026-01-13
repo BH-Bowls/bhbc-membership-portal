@@ -9,6 +9,7 @@ interface SearchableSelectProps {
   onChange: (value: string) => void;
   placeholder?: string;
   className?: string;
+  disabled?: boolean;
 }
 
 export function SearchableSelect({
@@ -17,6 +18,7 @@ export function SearchableSelect({
   onChange,
   placeholder = 'Type to search...',
   className = '',
+  disabled = false,
 }: SearchableSelectProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [isOpen, setIsOpen] = useState(false);
@@ -58,6 +60,7 @@ export function SearchableSelect({
 
   // Handle input change
   function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    if (disabled) return;
     const newValue = e.target.value;
     setSearchTerm(newValue);
     setIsOpen(true);
@@ -66,6 +69,7 @@ export function SearchableSelect({
 
   // Handle option selection
   function handleSelect(option: { value: string; label: string }) {
+    if (disabled) return;
     onChange(option.value);
     setSearchTerm('');
     setIsOpen(false);
@@ -74,6 +78,8 @@ export function SearchableSelect({
 
   // Handle keyboard navigation
   function handleKeyDown(e: React.KeyboardEvent) {
+    if (disabled) return;
+
     if (!isOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
       setIsOpen(true);
       return;
@@ -118,16 +124,19 @@ export function SearchableSelect({
         value={isOpen ? searchTerm : displayValue}
         onChange={handleInputChange}
         onFocus={() => {
-          setIsOpen(true);
-          setSearchTerm('');
+          if (!disabled) {
+            setIsOpen(true);
+            setSearchTerm('');
+          }
         }}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
-        className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+        disabled={disabled}
+        className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
       />
 
       {/* Dropdown */}
-      {isOpen && (
+      {isOpen && !disabled && (
         <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-auto">
           {filteredOptions.length === 0 ? (
             <div className="px-3 py-2 text-sm text-gray-500">No matches found</div>
