@@ -526,6 +526,7 @@ export default function ProfilePage() {
                         <option value="Member">Member</option>
                         <option value="Captain">Captain</option>
                         <option value="Treasurer">Treasurer</option>
+                        <option value="GMC">GMC</option>
                         <option value="Admin">Admin</option>
                       </select>
                     ) : (
