@@ -10,6 +10,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { SearchableSelect } from '@/components/SearchableSelect';
+import { AddOfflinePlayersDialog } from '@/components/AddOfflinePlayersDialog';
 import Link from 'next/link';
 import { GameSheetPlayer } from '@/lib/types/friendlies';
 
@@ -86,11 +87,14 @@ export default function TeamSelectionPage() {
   // State: Getting stats indicator while fetching from Players sheet
   const [gettingStats, setGettingStats] = useState(false);
 
-  // State: Player name selected in add player dropdown
-  const [addPlayerName, setAddPlayerName] = useState('');
+  // State: Add players dialog visibility
+  const [showAddPlayersDialog, setShowAddPlayersDialog] = useState(false);
 
   // State: List of all available players for add player dropdown
   const [availablePlayers, setAvailablePlayers] = useState<{ userName: string; fullName: string }[]>([]);
+
+  // State: Success/error messages
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // State: Confirmation dialog
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -116,10 +120,19 @@ export default function TeamSelectionPage() {
   useEffect(() => {
     // Fetch game details and player list for this game
     fetchGameData();
-
     // Fetch list of all players for add player dropdown
     fetchAvailablePlayers();
   }, [tabDate]);
+
+  // Auto-dismiss messages after 5 seconds
+  useEffect(() => {
+    if (message) {
+      const timer = setTimeout(() => {
+        setMessage(null);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [message]);
 
   // ============================================================================
   // API Functions
@@ -372,44 +385,67 @@ export default function TeamSelectionPage() {
    * Adds a player who didn't enter online (offline player)
    * Useful for adding players who called/texted to enter
    */
-  async function handleAddPlayer() {
-    // Check if player name is selected
-    if (!addPlayerName.trim()) return;
-
+  /**
+   * Handle adding multiple offline players
+   * Called when user confirms players in dialog
+   */
+  async function handleAddPlayers(playerUserNames: string[]) {
     // Check if game data is loaded
-    if (!gameData) return;
+    if (!gameData) {
+      throw new Error('Game data not loaded');
+    }
 
-    try {
-      // Call API to add player to game sheet
-      const response = await fetch('/api/friendlies/manage/add-player', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tab_name: gameData.game.tabName,
-          user_name: addPlayerName.trim(),
-        }),
-      });
+    if (playerUserNames.length === 0) {
+      throw new Error('No players selected');
+    }
 
-      const data = await response.json();
+    // Add each player sequentially
+    const errors: string[] = [];
+    const successes: string[] = [];
 
-      // Check if add was successful
-      if (response.ok) {
-        // Show success message
-        alert(`Player ${addPlayerName} added`);
+    for (const userName of playerUserNames) {
+      try {
+        // Call API to add player to game sheet
+        const response = await fetch('/api/friendlies/manage/add-player', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tab_name: gameData.game.tabName,
+            user_name: userName,
+          }),
+        });
 
-        // Clear dropdown selection
-        setAddPlayerName('');
+        const data = await response.json();
 
-        // Refresh game data to show new player
-        await fetchGameData();
-      } else {
-        // Show error message
-        alert(data.error || 'Failed to add player');
+        // Check if add was successful
+        if (response.ok) {
+          successes.push(userName);
+        } else {
+          errors.push(`${userName}: ${data.error || 'Failed to add'}`);
+        }
+      } catch (error) {
+        // Network or other error
+        console.error(`Error adding player ${userName}:`, error);
+        errors.push(`${userName}: Network error`);
       }
-    } catch (error) {
-      // Network or other error
-      console.error('Error adding player:', error);
-      alert('Failed to add player');
+    }
+
+    // Refresh game data to show new players
+    await fetchGameData();
+
+    // Show summary message
+    if (errors.length === 0) {
+      setMessage({
+        type: 'success',
+        text: `Successfully added ${successes.length} player${successes.length === 1 ? '' : 's'}`,
+      });
+    } else if (successes.length === 0) {
+      throw new Error(`Failed to add all players: ${errors.join(', ')}`);
+    } else {
+      setMessage({
+        type: 'success',
+        text: `Added ${successes.length} player${successes.length === 1 ? '' : 's'}. Failed: ${errors.length}`,
+      });
     }
   }
 
@@ -477,6 +513,29 @@ export default function TeamSelectionPage() {
       <Navbar userName={session?.user.name ?? undefined} userRole={session?.user.role ?? undefined} />
 
       <div className="container mx-auto px-4 py-8 max-w-7xl">
+        {/* Success/Error Message Banner */}
+        {message && (
+          <div
+            className={`mb-6 p-4 rounded-lg ${
+              message.type === 'success'
+                ? 'bg-green-50 border border-green-200 text-green-700'
+                : 'bg-red-50 border border-red-200 text-red-700'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span>{message.text}</span>
+              <button
+                onClick={() => setMessage(null)}
+                className="text-gray-500 hover:text-gray-700 ml-4"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Header with back link and game details */}
         <div className="mb-6">
           {/* Back to Manage Games link */}
@@ -506,6 +565,22 @@ export default function TeamSelectionPage() {
 
         {/* Action buttons panel */}
         <div className="bg-white rounded-lg shadow p-4 mb-6 flex flex-wrap gap-3">
+          {/* Add Players button - add offline players who didn't enter online */}
+          <button
+            onClick={() => setShowAddPlayersDialog(true)}
+            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors flex items-center gap-2"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 4v16m8-8H4"
+              />
+            </svg>
+            Add Players
+          </button>
+
           {/* Get Stats button - refresh player stats from Players sheet */}
           <button
             onClick={handleGetStats}
@@ -529,7 +604,7 @@ export default function TeamSelectionPage() {
             onClick={handleUpdateStats}
             className="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 transition-colors"
           >
-            Update Stats to Players Sheet
+            Update Stats
           </button>
 
           {/* Print Match Card link - navigate to match card page */}
@@ -539,37 +614,6 @@ export default function TeamSelectionPage() {
           >
             Print Match Card
           </Link>
-        </div>
-
-        {/* Add offline player panel */}
-        <div className="bg-white rounded-lg shadow p-4 mb-6">
-          <h3 className="font-semibold mb-3">Add Offline Player</h3>
-
-          <div className="flex gap-2">
-            {/* Searchable dropdown of all players */}
-            {/* Filters out players already in the game */}
-            <SearchableSelect
-              options={availablePlayers
-                .filter(player => !players.some(p => p.name === player.fullName || p.name === player.userName))
-                .map(player => ({
-                  value: player.userName,
-                  label: player.fullName,
-                }))}
-              value={addPlayerName}
-              onChange={setAddPlayerName}
-              placeholder="Type to search players..."
-              className="flex-1"
-            />
-
-            {/* Add Player button */}
-            <button
-              onClick={handleAddPlayer}
-              disabled={!addPlayerName}
-              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Add Player
-            </button>
-          </div>
         </div>
 
         {/* Selection table - main UI for selecting players and assigning teams */}
@@ -733,6 +777,15 @@ export default function TeamSelectionPage() {
         message={confirmDialog.message}
         onConfirm={confirmDialog.onConfirm}
         onCancel={closeConfirmDialog}
+      />
+
+      {/* Add Offline Players Dialog */}
+      <AddOfflinePlayersDialog
+        isOpen={showAddPlayersDialog}
+        onClose={() => setShowAddPlayersDialog(false)}
+        onConfirm={handleAddPlayers}
+        availablePlayers={availablePlayers}
+        existingPlayers={players.map(p => p.name)}
       />
     </div>
   );
