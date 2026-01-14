@@ -32,6 +32,8 @@ const HEADER_ROW_OFFSET = 2; // Row 1 is header, data starts at row 2
 
 /**
  * Parse a Google Sheets row into a MemberSuggestion object
+ * Note: createdByFullName and coordinatorFullName are NOT stored in the sheet
+ * They will be looked up dynamically from the Members sheet
  */
 function parseSuggestionRow(
   row: any[],
@@ -49,7 +51,7 @@ function parseSuggestionRow(
     description: get('description') || '',
     reasonForImprovement: get('reason_for_improvement') || '',
     createdByUsername: get('created_by_username') || '',
-    createdByFullName: get('created_by_full_name') || '',
+    createdByFullName: '', // Will be populated by enrichSuggestionsWithNames
     createdAt: get('created_at') || '',
 
     // Admin fields
@@ -58,7 +60,7 @@ function parseSuggestionRow(
     committeeAcceptanceReason: get('committee_acceptance_reason') || null,
     priority: (get('priority') || null) as Priority | null,
     coordinatorUsername: get('coordinator_username') || null,
-    coordinatorFullName: get('coordinator_full_name') || null,
+    coordinatorFullName: null, // Will be populated by enrichSuggestionsWithNames
     estimatedCost: getNumber('estimated_cost') || null,
     fundingSource: (get('funding_source') || null) as FundingSource | null,
     costQuotesDetails: get('cost_quotes_details') || null,
@@ -77,6 +79,36 @@ function parseSuggestionRow(
     // Internal
     _rowNumber: rowNumber,
   };
+}
+
+/**
+ * Enrich suggestions with current full names from Members sheet
+ * This ensures names are always up-to-date even if members change their knownAs
+ */
+async function enrichSuggestionsWithNames(suggestions: MemberSuggestion[]): Promise<MemberSuggestion[]> {
+  try {
+    // Get all members
+    const members = await getAllMembersForCoordinator();
+
+    // Create username -> fullName map
+    const nameMap = new Map<string, string>();
+    for (const member of members) {
+      nameMap.set(member.userName, member.fullName);
+    }
+
+    // Enrich each suggestion
+    return suggestions.map(suggestion => ({
+      ...suggestion,
+      createdByFullName: nameMap.get(suggestion.createdByUsername) || suggestion.createdByUsername || 'Unknown',
+      coordinatorFullName: suggestion.coordinatorUsername
+        ? (nameMap.get(suggestion.coordinatorUsername) || suggestion.coordinatorUsername)
+        : null,
+    }));
+  } catch (error) {
+    console.error('[enrichSuggestionsWithNames] Error enriching suggestions:', error);
+    // Return suggestions as-is if enrichment fails
+    return suggestions;
+  }
 }
 
 /**
@@ -132,9 +164,12 @@ export async function getAllSuggestions(): Promise<MemberSuggestion[]> {
 
     const rows = response.data.values || [];
 
-    return rows.map((row, index) =>
+    const suggestions = rows.map((row, index) =>
       parseSuggestionRow(row, index + HEADER_ROW_OFFSET, colMap)
     );
+
+    // Enrich with current names from Members sheet
+    return await enrichSuggestionsWithNames(suggestions);
   } catch (error) {
     console.error('[getAllSuggestions] Error fetching suggestions:', error);
     throw wrapError('Failed to fetch suggestions', error);
@@ -143,6 +178,7 @@ export async function getAllSuggestions(): Promise<MemberSuggestion[]> {
 
 /**
  * Get suggestion by ID
+ * Names are automatically enriched via getAllSuggestions
  */
 export async function getSuggestionById(suggestionId: string): Promise<MemberSuggestion | null> {
   try {
@@ -168,7 +204,7 @@ export async function createSuggestion(data: {
     const colMap = await getColumnMap('MemberSuggestions');
     const sheets = getGoogleSheetsClient();
 
-    // Get creator details
+    // Verify user exists
     const user = await getUserByUsername(data.createdByUsername);
     if (!user) {
       return { success: false, error: 'User not found' };
@@ -183,13 +219,13 @@ export async function createSuggestion(data: {
     const newRow: any[] = new Array(maxCol + 1).fill('');
 
     // Set values by column index
+    // Note: created_by_full_name is NOT stored - it's looked up dynamically
     newRow[colMap['suggestion_id']] = suggestionId;
     newRow[colMap['title']] = data.title;
     newRow[colMap['category']] = data.category;
     newRow[colMap['description']] = data.description;
     newRow[colMap['reason_for_improvement']] = data.reasonForImprovement;
     newRow[colMap['created_by_username']] = data.createdByUsername;
-    newRow[colMap['created_by_full_name']] = user.fullName;
     newRow[colMap['created_at']] = now;
     newRow[colMap['updated_at']] = now;
     newRow[colMap['updated_by_username']] = data.createdByUsername;
@@ -236,6 +272,7 @@ export async function updateSuggestion(
     const updateData: any[] = [];
 
     // Field mapping (camelCase to snake_case)
+    // Note: coordinatorFullName and createdByFullName are NOT stored - they're computed fields
     const fieldToColumnMap: Record<string, string> = {
       title: 'title',
       category: 'category',
@@ -246,7 +283,6 @@ export async function updateSuggestion(
       committeeAcceptanceReason: 'committee_acceptance_reason',
       priority: 'priority',
       coordinatorUsername: 'coordinator_username',
-      coordinatorFullName: 'coordinator_full_name',
       estimatedCost: 'estimated_cost',
       fundingSource: 'funding_source',
       costQuotesDetails: 'cost_quotes_details',

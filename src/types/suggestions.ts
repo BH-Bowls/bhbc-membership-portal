@@ -44,7 +44,7 @@ export interface MemberSuggestion {
   description: string;
   reasonForImprovement: string;
   createdByUsername: string;
-  createdByFullName: string;
+  createdByFullName: string; // Computed from Members sheet (not stored)
   createdAt: string;
 
   // Admin/Committee fields
@@ -53,7 +53,7 @@ export interface MemberSuggestion {
   committeeAcceptanceReason?: string | null;
   priority?: Priority | null;
   coordinatorUsername?: string | null;
-  coordinatorFullName?: string | null;
+  coordinatorFullName?: string | null; // Computed from Members sheet (not stored)
   estimatedCost?: number | null;
   fundingSource?: FundingSource | null;
   costQuotesDetails?: string | null;

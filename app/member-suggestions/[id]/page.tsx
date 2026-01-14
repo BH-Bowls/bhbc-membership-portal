@@ -13,6 +13,9 @@ import { SearchableSelect } from '@/components/SearchableSelect';
 import type { MemberSuggestion } from '@/types/suggestions';
 import { getSuggestionStatus, getStatusLabel, getStatusColor } from '@/types/suggestions';
 import { saveDraft, restoreDraft, clearDraft } from '@/lib/form-draft-utils';
+import type { SuggestionAttachment } from '@/types/attachments';
+import { AttachmentUpload } from '@/components/AttachmentUpload';
+import { AttachmentsList } from '@/components/AttachmentsList';
 
 // ============================================================================
 // Main Component
@@ -47,10 +50,16 @@ export default function SuggestionDetailPage({ params }: { params: Promise<{ id:
   // State: Permissions
   const [canEdit, setCanEdit] = useState(false);
   const [canEditAdminFields, setCanEditAdminFields] = useState(false);
+  const [canEditBasicFields, setCanEditBasicFields] = useState(false);
   const [isCommittee, setIsCommittee] = useState(false);
 
   // State: Committee members for coordinator dropdown
   const [committeeMembers, setCommitteeMembers] = useState<Array<{ userName: string; fullName: string }>>([]);
+
+  // State: Attachments
+  const [attachments, setAttachments] = useState<SuggestionAttachment[]>([]);
+  const [showUploadForm, setShowUploadForm] = useState(false);
+  const [canAddAttachment, setCanAddAttachment] = useState(false);
 
   // State: Success/error messages
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -76,11 +85,12 @@ export default function SuggestionDetailPage({ params }: { params: Promise<{ id:
   // ============================================================================
 
   /**
-   * Effect: Fetch suggestion on mount
+   * Effect: Fetch suggestion and attachments on mount
    */
   useEffect(() => {
     if (suggestionId) {
       fetchSuggestion();
+      fetchAttachments();
     }
   }, [suggestionId]);
 
@@ -127,8 +137,18 @@ export default function SuggestionDetailPage({ params }: { params: Promise<{ id:
         setSuggestion(data.suggestion);
         setCanEdit(data.canEdit);
         setCanEditAdminFields(data.canEditAdminFields);
+        setCanEditBasicFields(data.canEditBasicFields);
         setIsCommittee(data.isCommittee);
         setCommitteeMembers(data.committeeMembers || []);
+
+        // Check if user can add attachments
+        const isOwner = data.suggestion.createdByUsername === session?.user?.userName;
+        const isCoordinator = data.suggestion.coordinatorUsername === session?.user?.userName;
+        const canAdd =
+          data.isCommittee ||
+          isCoordinator ||
+          (isOwner && data.suggestion.committeeAcceptance !== 'Yes');
+        setCanAddAttachment(canAdd);
 
         // Restore draft if exists (using suggestion-specific key)
         if (session?.user?.userName && suggestionId) {
@@ -149,6 +169,35 @@ export default function SuggestionDetailPage({ params }: { params: Promise<{ id:
     } finally {
       setLoading(false);
     }
+  }
+
+  /**
+   * Fetch attachments for this suggestion
+   */
+  async function fetchAttachments() {
+    if (!suggestionId) return;
+
+    try {
+      const response = await fetch(`/api/suggestions/${suggestionId}/attachments`);
+      const data = await response.json();
+
+      if (response.ok) {
+        setAttachments(data.attachments || []);
+      } else {
+        console.error('Failed to fetch attachments:', data.error);
+      }
+    } catch (error) {
+      console.error('Error fetching attachments:', error);
+    }
+  }
+
+  /**
+   * Handle upload complete - refresh attachments and close form
+   */
+  function handleUploadComplete() {
+    fetchAttachments();
+    setShowUploadForm(false);
+    setMessage({ type: 'success', text: 'Attachment added successfully' });
   }
 
   /**
@@ -237,6 +286,8 @@ export default function SuggestionDetailPage({ params }: { params: Promise<{ id:
 
   /**
    * Handle coordinator selection
+   * Note: coordinatorFullName is computed from coordinatorUsername on the server
+   * We update it locally for immediate UI feedback, but it's not saved to the sheet
    */
   function handleCoordinatorChange(userName: string) {
     if (!editedSuggestion) return;
@@ -246,7 +297,7 @@ export default function SuggestionDetailPage({ params }: { params: Promise<{ id:
     setEditedSuggestion({
       ...editedSuggestion,
       coordinatorUsername: userName || null,
-      coordinatorFullName: member?.fullName || null,
+      coordinatorFullName: member?.fullName || null, // For local display only
     });
   }
 
@@ -329,7 +380,7 @@ export default function SuggestionDetailPage({ params }: { params: Promise<{ id:
         userName={session?.user?.name ?? undefined}
         userRole={session?.user?.role ?? undefined}
         actionButtons={
-          canEdit && isEditing
+          (canEdit || canEditBasicFields) && isEditing
             ? {
                 primary: {
                   label: 'Save',
@@ -373,8 +424,19 @@ export default function SuggestionDetailPage({ params }: { params: Promise<{ id:
         {/* Page header */}
         <div className="bg-white rounded-lg shadow p-6 mb-6">
           <div className="flex justify-between items-start mb-4">
-            <div>
-              <h1 className="text-2xl font-bold mb-2">{current.title}</h1>
+            <div className="flex-1 mr-4">
+              {isEditing && (canEditAdminFields || canEditBasicFields) ? (
+                <input
+                  type="text"
+                  value={current.title}
+                  onChange={(e) => handleChange('title', e.target.value)}
+                  disabled={isFormDisabled}
+                  className="text-2xl font-bold mb-2 w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  placeholder="Suggestion title"
+                />
+              ) : (
+                <h1 className="text-2xl font-bold mb-2">{current.title}</h1>
+              )}
               <div className="flex items-center gap-4 text-sm text-gray-600">
                 <span className="font-mono">{current.suggestionId}</span>
                 <span>•</span>
@@ -385,7 +447,7 @@ export default function SuggestionDetailPage({ params }: { params: Promise<{ id:
               <span className={`inline-block px-3 py-1 text-sm font-semibold text-white rounded ${statusColor}`}>
                 {statusLabel}
               </span>
-              {canEdit && !isEditing && (
+              {(canEdit || canEditBasicFields) && !isEditing && (
                 <button
                   onClick={handleEdit}
                   className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium"
@@ -407,7 +469,18 @@ export default function SuggestionDetailPage({ params }: { params: Promise<{ id:
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Description
               </label>
-              <div className="text-gray-900 whitespace-pre-wrap">{current.description}</div>
+              {isEditing && (canEditAdminFields || canEditBasicFields) ? (
+                <textarea
+                  value={current.description}
+                  onChange={(e) => handleChange('description', e.target.value)}
+                  disabled={isFormDisabled}
+                  rows={4}
+                  className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  placeholder="Describe your suggestion in detail"
+                />
+              ) : (
+                <div className="text-gray-900 whitespace-pre-wrap">{current.description}</div>
+              )}
             </div>
 
             {/* Reason for Improvement */}
@@ -415,7 +488,18 @@ export default function SuggestionDetailPage({ params }: { params: Promise<{ id:
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Reason Why This Would Improve the Club
               </label>
-              <div className="text-gray-900 whitespace-pre-wrap">{current.reasonForImprovement}</div>
+              {isEditing && (canEditAdminFields || canEditBasicFields) ? (
+                <textarea
+                  value={current.reasonForImprovement}
+                  onChange={(e) => handleChange('reasonForImprovement', e.target.value)}
+                  disabled={isFormDisabled}
+                  rows={4}
+                  className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  placeholder="Explain why this would improve the club"
+                />
+              ) : (
+                <div className="text-gray-900 whitespace-pre-wrap">{current.reasonForImprovement}</div>
+              )}
             </div>
 
             {/* Created By */}
@@ -804,6 +888,48 @@ export default function SuggestionDetailPage({ params }: { params: Promise<{ id:
             </div>
           </div>
         )}
+
+        {/* Attachments Section */}
+        <div className="bg-white rounded-lg shadow p-6">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-bold">Attachments</h2>
+            {canAddAttachment && !showUploadForm && !isEditing && (
+              <button
+                onClick={() => setShowUploadForm(true)}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium text-sm flex items-center gap-2"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 4v16m8-8H4"
+                  />
+                </svg>
+                Add Attachment
+              </button>
+            )}
+          </div>
+
+          {/* Upload Form */}
+          {showUploadForm && (
+            <div className="mb-6">
+              <AttachmentUpload
+                suggestionId={suggestionId}
+                onUploadComplete={handleUploadComplete}
+                onCancel={() => setShowUploadForm(false)}
+              />
+            </div>
+          )}
+
+          {/* Attachments List */}
+          <AttachmentsList
+            suggestionId={suggestionId}
+            attachments={attachments}
+            canDelete={canAddAttachment}
+            onDelete={fetchAttachments}
+          />
+        </div>
 
         {/* Last Updated */}
         {current.updatedAt && (

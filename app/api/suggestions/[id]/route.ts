@@ -65,6 +65,8 @@ export async function GET(
     const canEdit = isCommittee || isCoordinator;
     const canEditAdminFields = isCommittee; // Only committee can edit admin fields
     const canEditCoordinatorFields = isCoordinator; // Coordinator can edit specific fields
+    // Owner can edit basic fields (title, description, why) until committee accepts
+    const canEditBasicFields = isOwner && suggestion.committeeAcceptance !== 'Yes';
 
     // Get all members for coordinator dropdown (committee only)
     let allMembers: Array<{ userName: string; fullName: string }> = [];
@@ -77,6 +79,7 @@ export async function GET(
       canEdit,
       canEditAdminFields,
       canEditCoordinatorFields,
+      canEditBasicFields,
       isCommittee,
       committeeMembers: allMembers,
     });
@@ -124,11 +127,13 @@ export async function PUT(
     }
 
     // Check permissions
+    const isOwner = suggestion.createdByUsername === userName;
     const isCoordinator = suggestion.coordinatorUsername === userName;
+    const canEditBasicFields = isOwner && suggestion.committeeAcceptance !== 'Yes';
 
-    if (!isCommittee && !isCoordinator) {
+    if (!isCommittee && !isCoordinator && !canEditBasicFields) {
       return NextResponse.json(
-        { error: 'Access denied - only committee members and assigned coordinators can edit suggestions' },
+        { error: 'Access denied - only committee members, assigned coordinators, and suggestion owners (before acceptance) can edit suggestions' },
         { status: 403 }
       );
     }
@@ -136,33 +141,39 @@ export async function PUT(
     const body = await request.json();
 
     // Define allowed fields based on role
-    const allowedFields = isCommittee
-      ? [
-          // Committee can edit all admin fields
-          'category',
-          'dateReceived',
-          'committeeAcceptance',
-          'committeeAcceptanceReason',
-          'priority',
-          'coordinatorUsername',
-          'coordinatorFullName',
-          'estimatedCost',
-          'fundingSource',
-          'costQuotesDetails',
-          'decision',
-          'decisionReason',
-          'targetCompletionDate',
-          'progressNotes',
-          'reviewDate',
-          'finalOutcome',
-          'dateCompleted',
-        ]
-      : [
-          // Coordinator can only edit specific progress fields
-          'progressNotes',
-          'estimatedCost',
-          'costQuotesDetails',
-        ];
+    let allowedFields: string[] = [];
+
+    if (isCommittee) {
+      // Committee can edit all admin fields
+      // Note: coordinatorFullName is computed from coordinatorUsername, not stored
+      allowedFields = [
+        'title',
+        'description',
+        'reasonForImprovement',
+        'category',
+        'dateReceived',
+        'committeeAcceptance',
+        'committeeAcceptanceReason',
+        'priority',
+        'coordinatorUsername',
+        'estimatedCost',
+        'fundingSource',
+        'costQuotesDetails',
+        'decision',
+        'decisionReason',
+        'targetCompletionDate',
+        'progressNotes',
+        'reviewDate',
+        'finalOutcome',
+        'dateCompleted',
+      ];
+    } else if (canEditBasicFields) {
+      // Owner can only edit basic fields before acceptance
+      allowedFields = ['title', 'description', 'reasonForImprovement'];
+    } else if (isCoordinator) {
+      // Coordinator can only edit specific progress fields
+      allowedFields = ['progressNotes', 'estimatedCost', 'costQuotesDetails'];
+    }
 
     // Filter updates to only allowed fields
     const filteredUpdates: any = {};
