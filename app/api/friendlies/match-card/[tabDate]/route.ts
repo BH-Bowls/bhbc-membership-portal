@@ -102,7 +102,7 @@ export async function GET(
       teams.push({
         team: teamNum,
         players: teamPlayers.map(p => ({
-          name: p.name,
+          name: p.fullName,  // Use fullName for display
           position: p.position,
           status: p.status,
           driving: game.homeAway === 'A' ? p.driving : undefined,
@@ -143,7 +143,7 @@ export async function GET(
       reserveTeams.push({
         team: teamNum,
         players: teamPlayers.map(p => ({
-          name: p.name,
+          name: p.fullName,  // Use fullName for display
           position: p.position,
           status: p.status,
         })),
@@ -152,7 +152,7 @@ export async function GET(
 
     // Map reserves to list
     const reservesList: ReservePlayer[] = reserves.map(r => ({
-      name: r.name,
+      name: r.fullName,  // Use fullName for display
       team: r.team,
       position: r.position,
       status: r.status,
@@ -169,7 +169,7 @@ export async function GET(
 
     let captainName = '';
     if (captainPlayer) {
-      captainName = captainPlayer.name;
+      captainName = captainPlayer.fullName;  // Use fullName for display
     }
 
     // Build match card data

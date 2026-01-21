@@ -12,6 +12,7 @@ import Link from 'next/link';
 import { Navbar } from '@/components/Navbar';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Game, GameStatus } from '@/lib/types/friendlies';
+import { getButtonClasses } from '@/config/theme-helpers';
 
 // ============================================================================
 // Main Component
@@ -114,9 +115,9 @@ export default function ManageGamesPage() {
    * @param action Action to perform (open, close, publish, played, cancel)
    * @param additionalData Optional data for action (e.g., scores for played)
    */
-  async function changeStatus(tabName: string, action: string, additionalData?: any) {
-    // Show loading indicator for this specific game
-    setActionLoading(tabName);
+  async function changeStatus(tabName: string, action: string, additionalData?: any, rowNumber?: number) {
+    // Show loading indicator for this specific game (use rowNumber as key if tabName is empty)
+    setActionLoading(tabName || `row-${rowNumber}`);
 
     try {
       // Call status change API
@@ -125,6 +126,7 @@ export default function ManageGamesPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tab_name: tabName,
+          row_number: rowNumber,
           action,
           ...additionalData,
         }),
@@ -134,9 +136,6 @@ export default function ManageGamesPage() {
 
       // Check if status change was successful
       if (response.ok) {
-        // Show success message with new status
-        alert(`Game status updated to ${data.new_status}`);
-
         // Refresh games list to show updated status
         await fetchGames();
       } else {
@@ -174,7 +173,7 @@ export default function ManageGamesPage() {
    * Changes status from blank to 'O' (Open)
    * Allows players to start entering the game
    */
-  function handleOpenGame(tabName: string) {
+  function handleOpenGame(tabName: string, rowNumber: number) {
     // Show confirmation dialog
     setConfirmDialog({
       isOpen: true,
@@ -182,7 +181,7 @@ export default function ManageGamesPage() {
       message: 'Open this game for player entry?',
       onConfirm: () => {
         closeConfirmDialog();
-        changeStatus(tabName, 'open');
+        changeStatus(tabName, 'open', undefined, rowNumber);
       },
     });
   }
@@ -192,7 +191,7 @@ export default function ManageGamesPage() {
    * Changes status from 'O' (Open) to 'X' (Selecting)
    * Closes entries and creates game sheet for team selection
    */
-  function handleCloseGame(tabName: string) {
+  function handleCloseGame(tabName: string, rowNumber: number) {
     // Show confirmation dialog
     setConfirmDialog({
       isOpen: true,
@@ -200,7 +199,7 @@ export default function ManageGamesPage() {
       message: 'Close this game and create team selection sheet?',
       onConfirm: () => {
         closeConfirmDialog();
-        changeStatus(tabName, 'close');
+        changeStatus(tabName, 'close', undefined, rowNumber);
       },
     });
   }
@@ -301,6 +300,58 @@ export default function ManageGamesPage() {
 
     // Otherwise, only show games with matching status
     return game.status === filter;
+  }).sort((a, b) => {
+    // Sort by date (ascending) - earliest dates first
+    const parseDate = (dateStr: string) => {
+      if (!dateStr) return new Date(0);
+
+      // Try format: "Day, DD Month" (e.g., "Sun, 26 April")
+      const dayMonthMatch = dateStr.match(/(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),?\s+(\d{1,2})\s+(\w+)/i);
+      if (dayMonthMatch) {
+        const day = parseInt(dayMonthMatch[1], 10);
+        const monthName = dayMonthMatch[2];
+        const monthNames = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+        const monthIndex = monthNames.findIndex(m => m.startsWith(monthName.toLowerCase()));
+
+        if (monthIndex === -1) return new Date(0);
+
+        // Determine year based on current month
+        const now = new Date();
+        const currentMonth = now.getMonth();
+        let year = now.getFullYear();
+
+        // If the month has passed, assume next year
+        if (monthIndex < currentMonth - 1) {
+          year++;
+        }
+
+        return new Date(year, monthIndex, day);
+      }
+
+      // Try format: "DD/MM/YYYY" or "DD/MM/YY"
+      const parts = dateStr.split('/');
+      if (parts.length === 3) {
+        const day = parseInt(parts[0], 10);
+        const month = parseInt(parts[1], 10);
+        let year = parseInt(parts[2], 10);
+
+        // Handle 2-digit years: if year < 100, assume 20xx
+        if (year < 100) {
+          year += 2000;
+        }
+
+        if (isNaN(day) || isNaN(month) || isNaN(year)) return new Date(0);
+        return new Date(year, month - 1, day);
+      }
+
+      return new Date(0);
+    };
+
+    const dateA = parseDate(a.date);
+    const dateB = parseDate(b.date);
+
+    // Ascending order: earlier dates first
+    return dateA.getTime() - dateB.getTime();
   });
 
   /**
@@ -349,9 +400,9 @@ export default function ManageGamesPage() {
           {/* Link to player view of friendlies */}
           <Link
             href="/friendlies"
-            className="text-blue-600 hover:text-blue-800"
+            className={getButtonClasses('secondary', 'md')}
           >
-            Player View →
+            Player View
           </Link>
         </div>
 
@@ -411,9 +462,9 @@ export default function ManageGamesPage() {
 
               {/* Table body - list of games */}
               <tbody className="bg-white divide-y divide-gray-200">
-                {filteredGames.map(game => (
+                {filteredGames.map((game, index) => (
                   <tr
-                    key={game.tabName}
+                    key={game.tabName && game.tabName.trim() ? game.tabName : `${game.date}-${game.clubName}-${game.time}-${index}`}
                     className={actionLoading === game.tabName ? 'opacity-50' : ''}
                   >
                     {/* Date and time column */}
@@ -449,9 +500,9 @@ export default function ManageGamesPage() {
                       {/* Upcoming games (blank status) - show Open button */}
                       {game.status === '' && (
                         <button
-                          onClick={() => handleOpenGame(game.tabName)}
-                          disabled={actionLoading === game.tabName}
-                          className="text-green-600 hover:text-green-800 font-medium disabled:opacity-50"
+                          onClick={() => handleOpenGame(game.tabName, game.rowNumber)}
+                          disabled={actionLoading === game.tabName || actionLoading === `row-${game.rowNumber}`}
+                          className="text-green-600 hover:text-green-800 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           Open
                         </button>
@@ -460,9 +511,9 @@ export default function ManageGamesPage() {
                       {/* Open games - show Close button */}
                       {game.status === 'O' && (
                         <button
-                          onClick={() => handleCloseGame(game.tabName)}
-                          disabled={actionLoading === game.tabName}
-                          className="text-yellow-600 hover:text-yellow-800 font-medium disabled:opacity-50"
+                          onClick={() => handleCloseGame(game.tabName, game.rowNumber)}
+                          disabled={actionLoading === game.tabName || actionLoading === `row-${game.rowNumber}`}
+                          className="text-yellow-600 hover:text-yellow-800 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           Close
                         </button>
@@ -480,7 +531,7 @@ export default function ManageGamesPage() {
                           <button
                             onClick={() => handlePublishSelection(game.tabName)}
                             disabled={actionLoading === game.tabName}
-                            className="text-blue-600 hover:text-blue-800 font-medium disabled:opacity-50"
+                            className="text-blue-600 hover:text-blue-800 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             Publish
                           </button>
@@ -499,7 +550,7 @@ export default function ManageGamesPage() {
                           <button
                             onClick={() => handleMarkPlayed(game.tabName)}
                             disabled={actionLoading === game.tabName}
-                            className="text-purple-600 hover:text-purple-800 font-medium disabled:opacity-50"
+                            className="text-purple-600 hover:text-purple-800 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             Mark Played
                           </button>
@@ -511,7 +562,7 @@ export default function ManageGamesPage() {
                         <button
                           onClick={() => handleCancelGame(game.tabName)}
                           disabled={actionLoading === game.tabName}
-                          className="text-red-600 hover:text-red-800 font-medium disabled:opacity-50"
+                          className="text-red-600 hover:text-red-800 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           Cancel
                         </button>

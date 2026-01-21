@@ -572,9 +572,22 @@ function parseRenewalForBanking(
   const get = createRowFieldGetter(row, colMap);
   const getNumber = createRowNumberGetter(get);
 
+  // Try multiple column names for full name
+  const userName = get('user_name');
+  let fullName = get('full_name');
+  if (!fullName) {
+    fullName = get('full_known_as');
+  }
+  if (!fullName) {
+    fullName = get('name');
+  }
+  if (!fullName) {
+    fullName = userName; // Fallback to userName
+  }
+
   return {
-    userName: get('user_name'),
-    fullName: get('full_name'),
+    userName,
+    fullName,
     lastName: get('last_name'),
     buddyUserName: get('buddy_user_name') || null,
     outstanding: getNumber('outstanding'),
@@ -608,7 +621,7 @@ export async function getRenewalsWithOutstanding(): Promise<RenewalForBanking[]>
 
     const rows = response.data.values || [];
 
-    // Also get Members sheet to lookup buddy information
+    // Also get Members sheet to lookup full names, last names, and buddy information
     const membersColMap = await getColumnMap('Members');
     const membersResponse = await sheets.spreadsheets.values.get({
       spreadsheetId: getSpreadsheetId(),
@@ -616,27 +629,43 @@ export async function getRenewalsWithOutstanding(): Promise<RenewalForBanking[]>
     });
     const membersRows = membersResponse.data.values || [];
 
-    // Build buddy lookup map: userName → buddyUserName
-    const buddyMap = new Map<string, string | null>();
+    // Build member lookup map: userName → { fullName, lastName, buddyUserName }
+    interface MemberInfo {
+      fullName: string;
+      lastName: string;
+      buddyUserName: string | null;
+    }
+    const memberMap = new Map<string, MemberInfo>();
     const userNameCol = membersColMap['user_name'];
     const buddyCol = membersColMap['buddy_user_name'];
+    // Try multiple column names for full name (different sheets use different names)
+    // Members sheet typically uses 'full_name' column
+    const fullNameCol = membersColMap['full_name'] ?? membersColMap['full_known_as'] ?? membersColMap['name'];
+    const lastNameCol = membersColMap['last_name'] ?? membersColMap['surname'];
 
     for (const memberRow of membersRows) {
       const userName = memberRow[userNameCol];
-      const buddyUserName = memberRow[buddyCol] || null;
       if (userName) {
-        buddyMap.set(userName.toLowerCase(), buddyUserName);
+        const fullName = (fullNameCol !== undefined ? memberRow[fullNameCol] : '') || userName;
+        const lastName = (lastNameCol !== undefined ? memberRow[lastNameCol] : '') || '';
+        const buddyUserName = memberRow[buddyCol] || null;
+        memberMap.set(userName.toLowerCase(), { fullName, lastName, buddyUserName });
       }
     }
 
-    // Parse renewals and enrich with buddy information from Members sheet
+    // Parse renewals and enrich with member information from Members sheet
     const renewals = rows
       .map((row, index) => {
         const renewal = parseRenewalForBanking(row, index + HEADER_ROW_OFFSET, colMap);
 
-        // Override buddyUserName from Members sheet (Renewals sheet doesn't have this field)
-        const buddyFromMembers = buddyMap.get(renewal.userName.toLowerCase());
-        renewal.buddyUserName = buddyFromMembers || null;
+        // Override fullName, lastName, and buddyUserName from Members sheet
+        // (Renewals sheet only has userName, not full member details)
+        const memberInfo = memberMap.get(renewal.userName.toLowerCase());
+        if (memberInfo) {
+          renewal.fullName = memberInfo.fullName;
+          renewal.lastName = memberInfo.lastName;
+          renewal.buddyUserName = memberInfo.buddyUserName;
+        }
 
         return renewal;
       })

@@ -3,7 +3,7 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
@@ -65,6 +65,7 @@ export default function BankingPage() {
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [csvData, setCsvData] = useState<any[]>([]);
   const [isImporting, setIsImporting] = useState(false);
+  const csvInputRef = useRef<HTMLInputElement>(null);
 
   // Check authorization
   const canAccess = session?.user?.role === 'Admin' || session?.user?.role === 'T';
@@ -394,20 +395,16 @@ export default function BankingPage() {
           };
         });
 
-      setCsvData(data);
+      // Filter out header rows (where Date is "Date") and empty rows
+      const filteredData = data.filter(d => d.Date && d.Date !== 'Date');
 
-      // Filter for SUBS transactions (done on backend now)
-      const subsCount = data.filter(d =>
-        d.Description?.toLowerCase().includes('subs')
-      ).length;
+      setCsvData(filteredData);
 
-      // Show confirmation dialog
-      setShowImportDialog(true);
-
-      // Update success message to show how many SUBS transactions found
-      if (subsCount === 0) {
-        setError('No SUBS transactions found in CSV');
-        setShowImportDialog(false);
+      // Show confirmation dialog if there are transactions
+      if (filteredData.length === 0) {
+        setError('No transactions found in CSV');
+      } else {
+        setShowImportDialog(true);
       }
     };
 
@@ -558,6 +555,7 @@ export default function BankingPage() {
               <span className="mr-2">📥</span>
               Import CSV
               <input
+                ref={csvInputRef}
                 type="file"
                 accept=".csv"
                 className="hidden"
@@ -619,10 +617,7 @@ export default function BankingPage() {
                       onClick={(e) => e.stopPropagation()}
                     />
                   </div>
-                  <div>
-                    <div className="font-medium">{renewal.fullName}</div>
-                    <div className="text-sm text-gray-500">{renewal.userName}</div>
-                  </div>
+                  <div className="font-medium">{renewal.fullName}</div>
                   <div className="text-right font-semibold text-blue-500">
                     £{renewal.outstanding.toFixed(2)}
                   </div>
@@ -955,14 +950,11 @@ export default function BankingPage() {
         {showImportDialog && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white rounded-lg p-6 w-96">
-              <h3 className="text-lg font-semibold mb-4">Import SUBS Payments</h3>
+              <h3 className="text-lg font-semibold mb-4">Import Payments</h3>
 
               <div className="mb-4">
-                <p className="text-sm text-gray-600 mb-2">
-                  Only transactions containing "SUBS" in the description will be imported.
-                </p>
                 <p className="text-sm font-medium text-gray-900">
-                  Found: {csvData.filter(d => d.Description?.toLowerCase().includes('subs')).length} SUBS transactions
+                  Found: {csvData.length} transactions
                 </p>
                 <p className="text-xs text-gray-500 mt-1">
                   All transactions will be imported as TRF (Bank Transfer)
@@ -984,6 +976,11 @@ export default function BankingPage() {
                   onClick={() => {
                     setShowImportDialog(false);
                     setCsvFile(null);
+                    setCsvData([]);
+                    // Reset file input so same file can be selected again
+                    if (csvInputRef.current) {
+                      csvInputRef.current.value = '';
+                    }
                   }}
                   disabled={isImporting}
                   className="px-4 py-2 border rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"

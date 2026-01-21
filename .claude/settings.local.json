@@ -17,7 +17,9 @@
       "WebFetch(domain:www.burgesshillbowlsclub.com)",
       "Bash(git checkout:*)",
       "Bash(git merge:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(git add:*)",
+      "Bash(npx tsc:*)"
     ]
   }
 }

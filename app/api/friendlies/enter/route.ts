@@ -7,6 +7,7 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getGames, updatePlayerEntry } from '@/lib/friendlies-sheets';
 import { EnterGamesRequest, EnterGamesResponse } from '@/lib/types/friendlies';
+import { canEnterGame } from '@/lib/game-management/capacity';
 
 // POST handler - Enters user into one or more games
 export async function POST(request: NextRequest) {
@@ -62,6 +63,19 @@ export async function POST(request: NextRequest) {
         if (game.status !== 'O') {
           results.push({ game_id: tabName, entered: false, error: 'Game not open for entry' });
           continue;
+        }
+
+        // Check capacity limits (if maxPlayers is set)
+        if (game.maxPlayers && game.maxPlayers > 0) {
+          const capacityCheck = canEnterGame(game, false); // Friendlies don't allow waitlist
+          if (!capacityCheck.canEnter) {
+            results.push({
+              game_id: tabName,
+              entered: false,
+              error: capacityCheck.reason || 'Cannot enter game'
+            });
+            continue;
+          }
         }
 
         // Update this user's entry in Players sheet to 'E' (Entered)
