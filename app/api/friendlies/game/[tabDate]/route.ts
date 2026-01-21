@@ -112,7 +112,7 @@ export async function GET(
       teams.push({
         team: teamNum,
         players: teamPlayers.map(p => ({
-          name: p.name,
+          name: p.fullName,  // Use fullName for display
           position: p.position,
           status: p.status,
           isCaptain: p.captain === 'Y',
@@ -151,7 +151,7 @@ export async function GET(
       reserveTeamsList.push({
         team: teamNum,
         players: teamPlayers.map(p => ({
-          name: p.name,
+          name: p.fullName,  // Use fullName for display
           position: p.position,
           status: p.status,
         })),
@@ -190,7 +190,7 @@ export async function GET(
 
     let captainOfDay = '';
     if (captain) {
-      captainOfDay = captain.name;
+      captainOfDay = captain.fullName;  // Use fullName for display
     }
 
     return NextResponse.json({
@@ -209,7 +209,7 @@ export async function GET(
       },
       teams,
       reserves: reserves.map(r => ({
-        name: r.name,
+        name: r.fullName,  // Use fullName for display
         team: r.team,
         position: r.position,
         status: r.status,

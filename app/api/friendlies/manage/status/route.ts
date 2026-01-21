@@ -33,24 +33,89 @@ export async function POST(request: NextRequest) {
 
     // Parse request body
     const body: ChangeStatusRequest = await request.json();
-    const { tab_name, action, bhbc_score, opponent_score, reason, who } = body;
+    const { tab_name, row_number, action, bhbc_score, opponent_score, reason, who } = body;
 
     // Fetch all games from Games sheet
     const games = await getGames();
 
-    // Search for the game by tabName
+    // Search for the game by tabName or rowNumber
     let game = null;
-    for (const g of games) {
-      if (g.tabName === tab_name) {
-        game = g;
-        break;
-      }
+
+    // First try to find by tabName if provided and not empty
+    if (tab_name && tab_name.trim() !== '') {
+      game = games.find(g => g.tabName === tab_name) || null;
+    }
+
+    // If not found and rowNumber provided, find by rowNumber
+    if (!game && row_number) {
+      game = games.find(g => g.rowNumber === row_number) || null;
+      console.log('[Status API] Looking up game by rowNumber:', row_number, 'found:', !!game);
     }
 
     // Return 404 if game doesn't exist
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
+
+    // Generate effectiveTabName - this will be used for all operations
+    // Format: "ClubName DD MMM YY" (e.g., "West Hoathly 13 Jan 25")
+    console.log('[Status API] Game data - date:', game.date, 'tabDate:', game.tabDate, 'clubName:', game.clubName);
+
+    // Use tabDate field if available, otherwise format the date field
+    let tabDatePart = game.tabDate || '';
+
+    if (!tabDatePart || tabDatePart.trim() === '') {
+      // Parse date from various formats
+      const formatTabDate = (dateStr: string): string => {
+        if (!dateStr) return '';
+
+        // Try format: "Day, DD Month" (e.g., "Sun, 26 April")
+        // This is your spreadsheet format
+        const dayMonthMatch = dateStr.match(/(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),?\s+(\d{1,2})\s+(\w+)/i);
+        if (dayMonthMatch) {
+          const day = dayMonthMatch[1].padStart(2, '0');
+          const monthName = dayMonthMatch[2];
+
+          // Get current year or next year based on month
+          const now = new Date();
+          const currentMonth = now.getMonth();
+          const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+          const monthIndex = monthNames.findIndex(m => monthName.toLowerCase().startsWith(m.toLowerCase()));
+
+          // If month has passed this year, assume next year
+          let year = now.getFullYear();
+          if (monthIndex !== -1 && monthIndex < currentMonth - 1) {
+            year++;
+          }
+
+          const shortYear = year.toString().slice(-2);
+          const shortMonth = monthNames[monthIndex] || monthName.slice(0, 3);
+          return `${day} ${shortMonth} ${shortYear}`;
+        }
+
+        // Try format: "DD/MM/YYYY" or "DD/MM/YY"
+        const parts = dateStr.split('/');
+        if (parts.length === 3) {
+          const day = parts[0].padStart(2, '0');
+          const month = parts[1];
+          let year = parts[2];
+          if (year.length === 4) {
+            year = year.slice(-2);
+          }
+          const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+          const monthIndex = parseInt(month, 10) - 1;
+          const monthName = monthNames[monthIndex] || month;
+          return `${day} ${monthName} ${year}`;
+        }
+
+        return '';
+      };
+
+      tabDatePart = formatTabDate(game.date);
+    }
+
+    const effectiveTabName = `${game.clubName} ${tabDatePart}`.trim();
+    console.log('[Status API] Generated effectiveTabName:', effectiveTabName, 'for game at row', game.rowNumber);
 
     // Get current status (empty string if not set)
     let currentStatus = game.status;
@@ -79,7 +144,8 @@ export async function POST(request: NextRequest) {
 
         // Create a new column in Players sheet for this game
         // Players will use this column to mark their entry status (E, P, R, etc.)
-        await createGameColumn(game.tabName);
+        // Use effectiveTabName to ensure we have a valid name
+        await createGameColumn(effectiveTabName);
         break;
 
       // CLOSE: Transition from 'O' (Open) to 'X' (Selecting/Closed for entries)
@@ -97,7 +163,8 @@ export async function POST(request: NextRequest) {
 
         // Create dedicated game sheet (tab) for team selection
         // This sheet will hold all entered players with teams, positions, etc.
-        await createGameSheet(game.tabName);
+        // Use effectiveTabName to ensure we have a valid name
+        await createGameSheet(effectiveTabName);
         gameSheetCreated = true;
         break;
 
@@ -180,12 +247,15 @@ export async function POST(request: NextRequest) {
     }
 
     // Update the game status in the Games sheet along with any additional data
-    await updateGameStatus(game.tabName, newStatus, {
+    // Use effectiveTabName to ensure we have a valid name for all operations
+    // Pass rowNumber to identify unopened games that don't have tabName yet
+    await updateGameStatus(effectiveTabName, newStatus, {
       bhbcScore: bhbc_score,        // Our score (for played/abandoned games)
       opponentScore: opponent_score, // Opponent score (for played/abandoned games)
       reason,                        // Reason for cancellation/abandonment
       who,                          // Who initiated cancellation
       modifiedBy: session.user.userName, // Track who made this status change
+      rowNumber: game.rowNumber,    // Row number to find game if tabName is empty
     });
 
     // Build success response with new status and whether game sheet was created

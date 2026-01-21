@@ -68,8 +68,10 @@ export function ImpersonationModal({
       }
 
       const data = await response.json();
-      setUsers(data.users || []);
-      setFilteredUsers(data.users || []);
+      // Filter out users with empty userNames
+      const validUsers = (data.users || []).filter((user: User) => user.userName && user.userName.trim() !== '');
+      setUsers(validUsers);
+      setFilteredUsers(validUsers);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load users');
     } finally {
