@@ -28,11 +28,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Filter for transactions containing "SUBS" (case-insensitive) in Description
+    // Filter out header rows (where Date is "Date") and empty rows
     // Expected CSV columns: Date, Type (ignored), Description, Amount, Balance (ignored)
     const filteredData = csvData.filter((row: any) => {
-      const description = row.Description || '';
-      return description.toLowerCase().includes('subs');
+      const date = row.Date || '';
+      // Skip header row and empty rows
+      if (!date || date === 'Date') return false;
+      return true;
     });
 
     if (filteredData.length === 0) {
@@ -40,7 +42,7 @@ export async function POST(request: NextRequest) {
         success: true,
         paymentIds: [],
         count: 0,
-        message: 'No SUBS transactions found to import',
+        message: 'No transactions found to import',
       });
     }
 
@@ -79,7 +81,7 @@ export async function POST(request: NextRequest) {
       success: true,
       paymentIds,
       count: paymentIds.length,
-      message: `Imported ${paymentIds.length} SUBS transactions as TRF`,
+      message: `Imported ${paymentIds.length} transactions as TRF`,
     });
   } catch (error) {
     console.error('Error importing CSV:', error);

@@ -198,31 +198,12 @@ export default function TeamSelectionPage() {
   /**
    * Handle Get Stats button click
    * Fetches latest stats from Players sheet for all players
-   * Updates name down, picked, percent played, and last 8 games
+   * Updates name down, picked, percent played, driver/bar, and last 6 games
    */
   async function handleGetStats() {
-    // Check if game data is loaded
     if (!gameData) return;
 
-    // Show confirmation dialog
-    setConfirmDialog({
-      isOpen: true,
-      title: 'Update Stats',
-      message: 'Update all player stats from the Players sheet?',
-      onConfirm: () => {
-        closeConfirmDialog();
-        performGetStats();
-      },
-    });
-  }
-
-  /**
-   * Perform the actual get stats operation
-   */
-  async function performGetStats() {
-    if (!gameData) return;
-
-    // Show getting stats indicator
+    // Show loading indicator
     setGettingStats(true);
 
     try {
@@ -235,23 +216,17 @@ export default function TeamSelectionPage() {
 
       const data = await response.json();
 
-      // Check if update was successful
       if (response.ok) {
-        // Show success message with count
-        alert(`Stats updated for ${data.players_updated} players`);
-
         // Refresh game data to show updated stats
         await fetchGameData();
       } else {
-        // Show error message
+        // Only show alert on error
         alert(data.error || 'Failed to update stats');
       }
     } catch (error) {
-      // Network or other error
       console.error('Error updating stats:', error);
       alert('Failed to update stats');
     } finally {
-      // Hide getting stats indicator
       setGettingStats(false);
     }
   }
@@ -510,8 +485,14 @@ export default function TeamSelectionPage() {
           <button
             onClick={handleGetStats}
             disabled={gettingStats}
-            className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
           >
+            {gettingStats && (
+              <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+            )}
             {gettingStats ? 'Updating Stats...' : 'Get Stats'}
           </button>
 
@@ -611,7 +592,7 @@ export default function TeamSelectionPage() {
                       className="cursor-help"
                       title={player.last8Games && player.last8Games.length > 0 ? player.last8Games.join('\n') : 'No recent games'}
                     >
-                      {player.name}
+                      {player.fullName}
                     </span>
                   </td>
 

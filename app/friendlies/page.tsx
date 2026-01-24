@@ -12,6 +12,8 @@ import { Navbar } from '@/components/Navbar';
 import Link from 'next/link';
 import { getButtonClasses } from '@/config/theme-helpers';
 import { canEnterGame, type GameGender } from '@/lib/member-type-utils';
+import { calculateCapacity, formatCapacity, getCapacityBadgeColor } from '@/lib/game-management/capacity';
+import { EnteredPlayersModal } from '@/components/game-management/EnteredPlayersModal';
 
 // ============================================================================
 // Type Definitions
@@ -62,6 +64,10 @@ export default function FriendliesPage() {
 
   // State: User's member type for filtering eligible games
   const [memberType, setMemberType] = useState<string>('');
+
+  // State: Modal for viewing and managing entered players
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedGameForModal, setSelectedGameForModal] = useState<GameWithUserStatus | null>(null);
 
   // ============================================================================
   // Effects
@@ -276,6 +282,52 @@ export default function FriendliesPage() {
         // 'all' filter - show everything (don't filter by eligibility here)
         return true;
     }
+  }).sort((a, b) => {
+    // Sort by date (ascending) - earliest dates first
+    const parseDate = (dateStr: string) => {
+      if (!dateStr) return new Date(0);
+
+      // Try format: "Day, DD Month" (e.g., "Sun, 26 April")
+      const dayMonthMatch = dateStr.match(/(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),?\s+(\d{1,2})\s+(\w+)/i);
+      if (dayMonthMatch) {
+        const day = parseInt(dayMonthMatch[1], 10);
+        const monthName = dayMonthMatch[2];
+        const monthNames = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+        const monthIndex = monthNames.findIndex(m => m.startsWith(monthName.toLowerCase()));
+
+        if (monthIndex === -1) return new Date(0);
+
+        // Determine year based on current month
+        const now = new Date();
+        const currentMonth = now.getMonth();
+        let year = now.getFullYear();
+
+        // If the month has passed, assume next year
+        if (monthIndex < currentMonth - 1) {
+          year++;
+        }
+
+        return new Date(year, monthIndex, day);
+      }
+
+      // Try format: "DD/MM/YYYY" or "DD/MM/YY"
+      const parts = dateStr.split('/');
+      if (parts.length === 3) {
+        const day = parseInt(parts[0], 10);
+        const month = parseInt(parts[1], 10);
+        const year = parseInt(parts[2], 10);
+        if (isNaN(day) || isNaN(month) || isNaN(year)) return new Date(0);
+        return new Date(year, month - 1, day);
+      }
+
+      return new Date(0);
+    };
+
+    const dateA = parseDate(a.date);
+    const dateB = parseDate(b.date);
+
+    // Ascending order: earlier dates first
+    return dateA.getTime() - dateB.getTime();
   });
 
   /**
@@ -398,9 +450,9 @@ export default function FriendliesPage() {
         ) : (
           // Game cards grid - show all filtered games
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {filteredGames.map(game => (
+            {filteredGames.map((game, index) => (
               <div
-                key={game.tabName}
+                key={game.tabName && game.tabName.trim() ? game.tabName : `${game.date}-${game.clubName}-${game.time}-${index}`}
                 className={`bg-white rounded-lg shadow border ${
                   game.userEntered ? 'border-blue-200' : 'border-gray-200'
                 } p-4`}
@@ -408,8 +460,16 @@ export default function FriendliesPage() {
                 {/* Game card header - club name, date, and status badge */}
                 <div className="flex justify-between items-start mb-3">
                   <div>
-                    {/* Opponent club name */}
-                    <h3 className="font-bold text-lg">{game.clubName}</h3>
+                    {/* Opponent club name - links to club details */}
+                    <h3 className="font-bold text-lg">
+                      <Link
+                        href={`/clubs/${encodeURIComponent(game.clubName)}?from=friendlies`}
+                        className="text-blue-600 hover:text-blue-800 hover:underline"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {game.clubName}
+                      </Link>
+                    </h3>
 
                     {/* Game date and time formatted for display */}
                     <p className="text-sm text-gray-600">
@@ -444,11 +504,37 @@ export default function FriendliesPage() {
                     <span className="font-medium">Type:</span> {game.ladiesMen}
                   </p>
 
-                  {/* For open games, show number of players entered */}
-                  {game.status === 'O' && (
-                    <p className="text-green-600">
+                  {/* For open games, show capacity information */}
+                  {game.status === 'O' && game.maxPlayers != null && game.maxPlayers > 0 && (() => {
+                    const capacity = calculateCapacity(game);
+                    const badgeColor = getCapacityBadgeColor(capacity);
+                    return (
+                      <p>
+                        <span className="font-medium">Capacity:</span>{' '}
+                        <button
+                          onClick={() => {
+                            setSelectedGameForModal(game);
+                            setIsModalOpen(true);
+                          }}
+                          className={`inline-block px-2 py-0.5 text-xs font-semibold text-white rounded ${badgeColor} hover:opacity-80 cursor-pointer`}
+                        >
+                          {formatCapacity(capacity)}
+                        </button>
+                      </p>
+                    );
+                  })()}
+
+                  {/* For open games without capacity limit, show simple player count */}
+                  {game.status === 'O' && (!game.maxPlayers || game.maxPlayers === 0) && (
+                    <button
+                      onClick={() => {
+                        setSelectedGameForModal(game);
+                        setIsModalOpen(true);
+                      }}
+                      className="text-green-600 hover:text-green-700 hover:underline cursor-pointer"
+                    >
                       <span className="font-medium">{game.entered}</span> players entered
-                    </p>
+                    </button>
                   )}
 
                   {/* For played games, show final score */}
@@ -460,34 +546,41 @@ export default function FriendliesPage() {
                 </div>
 
                 {/* For open games, show checkbox to enter/withdraw (only if eligible) */}
-                {game.status === 'O' && memberType && canEnterGame(memberType, game.ladiesMen as GameGender) && (
-                  <label className="flex items-center space-x-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={selectedGames.has(game.tabName)}
-                      onChange={e => {
-                        // Create new Set to trigger state update
-                        const newSelected = new Set(selectedGames);
+                {game.status === 'O' && memberType && canEnterGame(memberType, game.ladiesMen as GameGender) && (() => {
+                  // Check if game is full and user hasn't already entered
+                  const capacity = calculateCapacity(game);
+                  const isFull = capacity.isFull && !game.userEntered;
 
-                        // Add or remove game from selected set
-                        if (e.target.checked) {
-                          newSelected.add(game.tabName);
-                        } else {
-                          newSelected.delete(game.tabName);
-                        }
+                  return (
+                    <label className={`flex items-center space-x-2 ${isFull ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
+                      <input
+                        type="checkbox"
+                        checked={selectedGames.has(game.tabName)}
+                        disabled={isFull}
+                        onChange={e => {
+                          // Create new Set to trigger state update
+                          const newSelected = new Set(selectedGames);
 
-                        // Update selected games state
-                        setSelectedGames(newSelected);
-                      }}
-                      className="w-4 h-4 text-blue-500 rounded focus:ring-blue-500"
-                    />
+                          // Add or remove game from selected set
+                          if (e.target.checked) {
+                            newSelected.add(game.tabName);
+                          } else {
+                            newSelected.delete(game.tabName);
+                          }
 
-                    {/* Label shows current entry status */}
-                    <span className="text-sm font-medium text-blue-500">
-                      {game.userEntered ? 'Entered' : 'Enter this game'}
-                    </span>
-                  </label>
-                )}
+                          // Update selected games state
+                          setSelectedGames(newSelected);
+                        }}
+                        className="w-4 h-4 text-blue-500 rounded focus:ring-blue-500 disabled:cursor-not-allowed"
+                      />
+
+                      {/* Label shows current entry status or full message */}
+                      <span className={`text-sm font-medium ${isFull ? 'text-gray-400' : 'text-blue-500'}`}>
+                        {isFull ? 'Game is full' : (game.userEntered ? 'Entered' : 'Enter this game')}
+                      </span>
+                    </label>
+                  );
+                })()}
 
                 {/* For Selected or Played games, show View Details button */}
                 {['S', 'P'].includes(game.status) && game.userEntered && (
@@ -550,6 +643,27 @@ export default function FriendliesPage() {
             </div>
           );
         })()}
+
+        {/* Modal for viewing and managing entered players */}
+        {selectedGameForModal && (
+          <EnteredPlayersModal
+            isOpen={isModalOpen}
+            onClose={() => {
+              setIsModalOpen(false);
+              setSelectedGameForModal(null);
+            }}
+            gameId={selectedGameForModal.tabName}
+            gameType="friendlies"
+            gameName={`${selectedGameForModal.clubName} - ${selectedGameForModal.date}`}
+            ladiesMen={selectedGameForModal.ladiesMen}
+            currentUserRole={session?.user?.role}
+            maxPlayers={selectedGameForModal.maxPlayers}
+            onPlayersChanged={() => {
+              // Refresh games list when players are added/removed
+              fetchGames();
+            }}
+          />
+        )}
       </div>
     </div>
   );

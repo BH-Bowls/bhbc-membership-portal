@@ -64,19 +64,38 @@ function extractSignificantWords(text: string): string[] {
  * Used for fuzzy matching of complex payment references
  */
 function hasCommonWords(searchTerm: string, targetField: string): boolean {
+  return countMatchingWords(searchTerm, targetField) > 0;
+}
+
+/**
+ * Count how many significant words match between two strings
+ * Used for scoring matches - more matching words = better match
+ *
+ * Example: "Gary Player SUBS PLAYER" vs "Gary Player" = 2 matches (gary, player)
+ * Example: "Gary Player SUBS PLAYER" vs "Gary Foley" = 1 match (gary)
+ */
+function countMatchingWords(searchTerm: string, targetField: string): number {
   const searchWords = extractSignificantWords(searchTerm);
   const targetWords = extractSignificantWords(targetField);
 
-  // Check if any search word matches any target word
+  let matchCount = 0;
+  const matchedTargetWords = new Set<string>();
+
+  // Count unique matching words
   for (const searchWord of searchWords) {
     for (const targetWord of targetWords) {
+      // Skip if we already counted this target word
+      if (matchedTargetWords.has(targetWord)) continue;
+
       if (searchWord === targetWord || searchWord.includes(targetWord) || targetWord.includes(searchWord)) {
-        return true;
+        matchCount++;
+        matchedTargetWords.add(targetWord);
+        break; // Move to next search word
       }
     }
   }
 
-  return false;
+  return matchCount;
 }
 
 /**
@@ -84,20 +103,21 @@ function hasCommonWords(searchTerm: string, targetField: string): boolean {
  * Searches member names (fullKnownAs, lastName, userName, buddyUserName)
  * Only returns renewals with outstanding balances (unpaid or partially paid)
  *
- * Uses word-based matching to handle complex references like:
+ * Uses word-based matching with scoring to handle complex references like:
  * - "Dasey LJ & C DASEY" → matches "Dasey"
  * - "DOREEN MARSH SUBS" → matches "Marsh" or "Doreen Marsh"
+ * - "Gary Player SUBS" → matches "Gary Player" (2 words) over "Gary Foley" (1 word)
  *
  * @param searchTerm The name or username to search for (case-insensitive)
  * @param renewals Array of all renewal records
- * @returns Array of renewals matching the search term with outstanding > 0
+ * @returns Array of best-matching renewals with outstanding > 0
  */
 export function findMatchingRenewals(
   searchTerm: string,
   renewals: RenewalForBanking[]
 ): RenewalForBanking[] {
-  // Build array of matching renewals
-  const matches: RenewalForBanking[] = [];
+  // Build array of scored matches
+  const scoredMatches: { renewal: RenewalForBanking; score: number }[] = [];
 
   // Loop through all renewals
   for (const renewal of renewals) {
@@ -106,32 +126,35 @@ export function findMatchingRenewals(
       continue;
     }
 
-    // Check if search term matches any name field
-    // Search fields: full name, last name, username
-    let isMatch = false;
+    // Calculate match score - max of all fields
+    let score = 0;
 
     // Check full name (e.g., "Celia Dasey")
-    if (renewal.fullName && hasCommonWords(searchTerm, renewal.fullName)) {
-      isMatch = true;
+    if (renewal.fullName) {
+      score = Math.max(score, countMatchingWords(searchTerm, renewal.fullName));
     }
 
     // Check last name
-    if (!isMatch && renewal.lastName && hasCommonWords(searchTerm, renewal.lastName)) {
-      isMatch = true;
+    if (renewal.lastName) {
+      score = Math.max(score, countMatchingWords(searchTerm, renewal.lastName));
     }
 
     // Check username (e.g., "john_smith")
-    if (!isMatch && renewal.userName && hasCommonWords(searchTerm, renewal.userName)) {
-      isMatch = true;
+    if (renewal.userName) {
+      score = Math.max(score, countMatchingWords(searchTerm, renewal.userName));
     }
 
-    // Add to matches if any field matched
-    if (isMatch) {
-      matches.push(renewal);
+    // Add to matches if any field matched (score > 0)
+    if (score > 0) {
+      scoredMatches.push({ renewal, score });
     }
   }
 
-  return matches;
+  // Keep only the best-scoring matches
+  const maxScore = Math.max(0, ...scoredMatches.map(m => m.score));
+  return scoredMatches
+    .filter(m => m.score === maxScore)
+    .map(m => m.renewal);
 }
 
 /**
@@ -372,33 +395,43 @@ export function runGlobalAutoMatch(
     const unmatchedRenewals = getUnmatchedRenewals();
     const usernameIndex = createUsernameIndex(unmatchedRenewals);
 
-    // Find matching renewals using word-based matching
+    // Find matching renewals using word-based matching with scoring
     // This handles complex references like "Dasey LJ & C DASEY", "GardnerSUBS", etc.
-    const matches: RenewalWithState[] = [];
+    // Score each match by number of matching words to handle cases like:
+    // "Gary Player SUBS" should match "Gary Player" (2 words) over "Gary Foley" (1 word)
+    const scoredMatches: { renewal: RenewalWithState; score: number }[] = [];
+
     for (const renewal of unmatchedRenewals) {
-      // Check if search term matches any field for this renewal
-      let isMatch = false;
+      // Calculate match score - max of all fields
+      let score = 0;
 
       // Check full name
-      if (renewal.fullName && hasCommonWords(searchTerm, renewal.fullName)) {
-        isMatch = true;
+      if (renewal.fullName) {
+        score = Math.max(score, countMatchingWords(searchTerm, renewal.fullName));
       }
 
       // Check last name
-      if (!isMatch && renewal.lastName && hasCommonWords(searchTerm, renewal.lastName)) {
-        isMatch = true;
+      if (renewal.lastName) {
+        score = Math.max(score, countMatchingWords(searchTerm, renewal.lastName));
       }
 
       // Check username
-      if (!isMatch && renewal.userName && hasCommonWords(searchTerm, renewal.userName)) {
-        isMatch = true;
+      if (renewal.userName) {
+        score = Math.max(score, countMatchingWords(searchTerm, renewal.userName));
       }
 
-      // Add to matches if any field matched
-      if (isMatch) {
-        matches.push(renewal);
+      // Add to matches if any field matched (score > 0)
+      if (score > 0) {
+        scoredMatches.push({ renewal, score });
       }
     }
+
+    // Keep only the best-scoring matches
+    // This prevents "Gary Foley" (1 match) from being included when "Gary Player" (2 matches) exists
+    const maxScore = Math.max(0, ...scoredMatches.map(m => m.score));
+    const matches = scoredMatches
+      .filter(m => m.score === maxScore)
+      .map(m => m.renewal);
 
     // Also include buddies of matched renewals (for family/couple payments)
     // Include ALL buddies of matched renewals, regardless of whether buddy's name matches search term

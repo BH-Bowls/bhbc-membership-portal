@@ -46,3 +46,75 @@ textarea:disabled,
 select:disabled {
   color: #6B7280; /* gray-500 */
 }
+
+/* Print styles */
+@media print {
+  /* Hide navbar */
+  nav {
+    display: none !important;
+  }
+
+  /* Remove backgrounds and shadows for better printing */
+  body {
+    background: white !important;
+  }
+
+  .bg-gray-50 {
+    background: white !important;
+  }
+
+  .shadow,
+  .shadow-sm {
+    box-shadow: none !important;
+  }
+
+  /* Ensure table borders are visible */
+  table {
+    border-collapse: collapse !important;
+  }
+
+  th, td {
+    border: 1px solid #e5e7eb !important;
+    padding: 8px !important;
+  }
+
+  thead {
+    background-color: #f9fafb !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Preserve highlight colors for user assignments */
+  .bg-yellow-50,
+  .bg-yellow-100 {
+    background-color: #fef9c3 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Page settings */
+  @page {
+    margin: 1cm;
+    size: landscape;
+  }
+
+  /* Prevent page breaks in table rows */
+  tr {
+    page-break-inside: avoid;
+  }
+
+  /* Compact spacing for print */
+  .container {
+    max-width: 100% !important;
+    padding: 0 !important;
+  }
+
+  h1 {
+    font-size: 20px !important;
+    margin-bottom: 8px !important;
+  }
+
+  p {
+    font-size: 12px !important;
+  }
+}

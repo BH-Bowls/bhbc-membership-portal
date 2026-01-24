@@ -36,7 +36,7 @@ export type GameStatus = '' | 'O' | 'X' | 'S' | 'P' | 'C' | 'A';
  *   'TW' = Reserve Team + Withdrawn
  *   'AW' = Abandoned + Withdrawn (rare)
  */
-export type PlayerEntryStatus = 'E' | 'P' | 'R' | 'T' | 'A' | 'EW' | 'PW' | 'RW' | 'TW' | 'AW' | 'C';
+export type PlayerEntryStatus = 'E' | 'M' | 'P' | 'R' | 'T' | 'A' | 'EW' | 'MW' | 'PW' | 'RW' | 'TW' | 'AW' | 'C';
 
 /**
  * Selection status codes - stored in game sheet 'Selected' column
@@ -97,6 +97,7 @@ export interface Game {
   tabName: string;              // Unique tab identifier (e.g., "West Hoathly 25-Sep")
   status: GameStatus;           // Current game status ('', O, X, S, P, C, or A)
   include?: string;             // Optional include flag for filtering
+  maxPlayers: number;           // Maximum number of players allowed (capacity limit)
   entered: number;              // Count of players who entered
   selected: number;             // Count of players picked to play
   reserves: number;             // Count of reserve players
@@ -136,7 +137,8 @@ export interface PlayerEntry {
  */
 export interface GameSheetPlayer {
   rowNumber: number;            // Row number in game sheet (for updates)
-  name: string;                 // Player's username or full name
+  name: string;                 // Player's userName (for referential integrity)
+  fullName: string;             // Player's full name (for UI display)
   nameDown: number;             // How many games player has entered
   picked: number;               // How many times player was selected to play
   percentPlayed: number;        // Percentage of games player actually played
@@ -196,6 +198,25 @@ export interface TeaRota {
   shortLead: string;  // Short game tea lead person
   shortSecond: string;// Short game tea second person
   shortThird: string; // Short game tea third person
+}
+
+/**
+ * TeaRotaEntry - Entry for tea rota list page
+ * Contains game info and tea duty assignments for home games
+ * Used for viewing, editing, and swapping tea duties
+ */
+export interface TeaRotaEntry {
+  rowNumber: number;      // Row number in Games sheet (for updates)
+  tabName: string;        // Unique game identifier
+  date: string;           // Game date in YYYY-MM-DD format
+  displayDate: string;    // Formatted display date (e.g., "Sat 25 Apr")
+  time: string;           // Game time (e.g., "14:00")
+  clubName: string;       // Opponent club name
+  format: string;         // Game format (e.g., "Rinks", "Triples")
+  ladiesMen: string;      // "Ladies", "Men", or "Mixed"
+  teaLead: string;        // Tea Lead username
+  teaFirst: string;       // Tea First username
+  teaSecond: string;      // Tea Second username
 }
 
 /**
@@ -383,7 +404,8 @@ export interface WithdrawRequest {
  * Each action has specific validation and may trigger sheet operations
  */
 export interface ChangeStatusRequest {
-  tab_name: string;    // Game tabName to update
+  tab_name: string;    // Game tabName to update (may be empty for unopened games)
+  row_number?: number; // Row number in Games sheet (used to identify unopened games)
   action: 'open' | 'close' | 'publish' | 'played' | 'cancel' | 'abandon'; // Status transition action
   bhbc_score?: number;      // Burgess Hill score (required for 'played' and 'abandon')
   opponent_score?: number;  // Opponent score (required for 'played' and 'abandon')
