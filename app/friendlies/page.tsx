@@ -460,8 +460,16 @@ export default function FriendliesPage() {
                 {/* Game card header - club name, date, and status badge */}
                 <div className="flex justify-between items-start mb-3">
                   <div>
-                    {/* Opponent club name */}
-                    <h3 className="font-bold text-lg">{game.clubName}</h3>
+                    {/* Opponent club name - links to club details */}
+                    <h3 className="font-bold text-lg">
+                      <Link
+                        href={`/clubs/${encodeURIComponent(game.clubName)}?from=friendlies`}
+                        className="text-blue-600 hover:text-blue-800 hover:underline"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {game.clubName}
+                      </Link>
+                    </h3>
 
                     {/* Game date and time formatted for display */}
                     <p className="text-sm text-gray-600">

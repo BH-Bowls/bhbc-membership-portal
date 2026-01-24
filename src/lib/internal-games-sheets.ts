@@ -407,6 +407,131 @@ export async function updatePlayerEntry(
   });
 }
 
+/**
+ * Batch update multiple player entries for a single internal game
+ * Updates all players in a single Google Sheets API call
+ * @param gameId The game's tab name (column header to update)
+ * @param entries Array of {userName, status} to update
+ * @returns Array of results indicating success/failure for each player
+ */
+export async function batchUpdatePlayerEntries(
+  gameId: string,
+  entries: { userName: string; status: string }[]
+): Promise<{ userName: string; success: boolean; error?: string }[]> {
+  if (entries.length === 0) return [];
+
+  const spreadsheetId = getSpreadsheetId(InternalGamesConfig);
+  const sheets = getGoogleSheetsClient();
+  const membersSheetName = InternalGamesConfig.membersSheetName;
+
+  // Fetch header row to find game column
+  const headersResponse = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${membersSheetName}!1:1`,
+  });
+
+  const headers = headersResponse.data.values?.[0] || [];
+  const gameColumnIndex = headers.findIndex(h => h === gameId);
+
+  if (gameColumnIndex === -1) {
+    throw new Error(`Game column not found: ${gameId}`);
+  }
+
+  // Build column map from headers
+  const colMap: { [key: string]: number } = {};
+  headers.forEach((header: string, index: number) => {
+    const normalized = header.toLowerCase().replace(/\s+/g, '_');
+    colMap[normalized] = index;
+  });
+
+  // Find user column
+  const userNameColIndex = colMap['user_name'] ?? colMap['full_name'] ?? colMap['name'] ?? 0;
+  const userNameColLetter = getColumnLetter(userNameColIndex);
+
+  // Fetch entire identifier column
+  const membersResponse = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${membersSheetName}!${userNameColLetter}:${userNameColLetter}`,
+  });
+
+  const members = membersResponse.data.values || [];
+  const gameColumnLetter = getColumnLetter(gameColumnIndex);
+
+  // Process results and build batch updates
+  const results: { userName: string; success: boolean; error?: string }[] = [];
+  const batchData: { range: string; values: string[][] }[] = [];
+  const newUsersToAdd: { userName: string; status: string }[] = [];
+
+  for (const entry of entries) {
+    try {
+      // Find user's row
+      let userRowIndex = members.findIndex((row, index) => index > 0 && row[0] === entry.userName);
+
+      if (userRowIndex === -1) {
+        // User doesn't exist - track them for adding later
+        newUsersToAdd.push(entry);
+      } else {
+        // User exists - add to batch
+        const rowNumber = userRowIndex + 1;
+        batchData.push({
+          range: `${membersSheetName}!${gameColumnLetter}${rowNumber}`,
+          values: [[entry.status]],
+        });
+        results.push({ userName: entry.userName, success: true });
+      }
+    } catch (err) {
+      results.push({
+        userName: entry.userName,
+        success: false,
+        error: err instanceof Error ? err.message : 'Unknown error',
+      });
+    }
+  }
+
+  // Add new users first
+  for (const newUser of newUsersToAdd) {
+    try {
+      const nextRowNumber = members.length + 1;
+      // Add user identifier
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${membersSheetName}!${userNameColLetter}${nextRowNumber}`,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [[newUser.userName]] },
+      });
+
+      // Add their status to batch
+      batchData.push({
+        range: `${membersSheetName}!${gameColumnLetter}${nextRowNumber}`,
+        values: [[newUser.status]],
+      });
+      results.push({ userName: newUser.userName, success: true });
+
+      // Update local members array for next iteration
+      members.push([newUser.userName]);
+    } catch (err) {
+      results.push({
+        userName: newUser.userName,
+        success: false,
+        error: err instanceof Error ? err.message : 'Failed to add user',
+      });
+    }
+  }
+
+  // Execute batch update for all status updates
+  if (batchData.length > 0) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        valueInputOption: 'USER_ENTERED',
+        data: batchData,
+      },
+    });
+  }
+
+  return results;
+}
+
 // ============================================================================
 // GAME STATUS MANAGEMENT
 // ============================================================================
@@ -561,6 +686,62 @@ export async function updateGameCounts(
       spreadsheetId,
       requestBody: {
         data: updates,
+        valueInputOption: 'USER_ENTERED',
+      },
+    });
+  }
+}
+
+/**
+ * Batch update game counts for multiple games in a single API call
+ * More efficient than calling updateGameCounts multiple times
+ * @param updates Array of game count updates with rowNumber pre-calculated
+ */
+export async function batchUpdateGameCounts(
+  updates: {
+    rowNumber: number;
+    counts: {
+      entered?: number;
+      selected?: number;
+      reserves?: number;
+    };
+  }[]
+): Promise<void> {
+  if (updates.length === 0) return;
+
+  const spreadsheetId = getSpreadsheetId(InternalGamesConfig);
+  const colMap = await getColumnMap(spreadsheetId, InternalGamesConfig.gamesSheetName);
+  const sheets = getGoogleSheetsClient();
+
+  // Build array of cell updates for all games
+  const batchData: { range: string; values: number[][] }[] = [];
+
+  for (const update of updates) {
+    if (update.counts.entered !== undefined && colMap['entered'] !== undefined) {
+      batchData.push({
+        range: `${InternalGamesConfig.gamesSheetName}!${getColumnLetter(colMap['entered'])}${update.rowNumber}`,
+        values: [[update.counts.entered]],
+      });
+    }
+    if (update.counts.selected !== undefined && colMap['selected'] !== undefined) {
+      batchData.push({
+        range: `${InternalGamesConfig.gamesSheetName}!${getColumnLetter(colMap['selected'])}${update.rowNumber}`,
+        values: [[update.counts.selected]],
+      });
+    }
+    if (update.counts.reserves !== undefined && colMap['reserves'] !== undefined) {
+      batchData.push({
+        range: `${InternalGamesConfig.gamesSheetName}!${getColumnLetter(colMap['reserves'])}${update.rowNumber}`,
+        values: [[update.counts.reserves]],
+      });
+    }
+  }
+
+  if (batchData.length > 0) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        data: batchData,
         valueInputOption: 'USER_ENTERED',
       },
     });

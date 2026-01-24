@@ -10,6 +10,7 @@ import {
   PlayerStats,
   DriverBarInfo,
   TeaRota,
+  TeaRotaEntry,
   ClubDetails,
   ClubContact,
   GameStatus,
@@ -629,6 +630,62 @@ export async function updateGameCounts(
   }
 }
 
+/**
+ * Batch update game counts for multiple games in a single API call
+ * More efficient than calling updateGameCounts multiple times
+ * @param updates Array of game count updates with rowNumber pre-calculated
+ */
+export async function batchUpdateGameCounts(
+  updates: {
+    rowNumber: number;
+    counts: {
+      entered?: number;
+      selected?: number;
+      reserves?: number;
+    };
+  }[]
+): Promise<void> {
+  if (updates.length === 0) return;
+
+  const spreadsheetId = getFriendliesSpreadsheetId();
+  const colMap = await getColumnMap(spreadsheetId, 'Games');
+  const sheets = getSheetsClient();
+
+  // Build array of cell updates for all games
+  const batchData: { range: string; values: number[][] }[] = [];
+
+  for (const update of updates) {
+    if (update.counts.entered !== undefined) {
+      batchData.push({
+        range: `Games!${getColumnLetter(colMap['entered'])}${update.rowNumber}`,
+        values: [[update.counts.entered]],
+      });
+    }
+    if (update.counts.selected !== undefined) {
+      batchData.push({
+        range: `Games!${getColumnLetter(colMap['selected'])}${update.rowNumber}`,
+        values: [[update.counts.selected]],
+      });
+    }
+    if (update.counts.reserves !== undefined) {
+      batchData.push({
+        range: `Games!${getColumnLetter(colMap['reserves'])}${update.rowNumber}`,
+        values: [[update.counts.reserves]],
+      });
+    }
+  }
+
+  if (batchData.length > 0) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        data: batchData,
+        valueInputOption: 'USER_ENTERED',
+      },
+    });
+  }
+}
+
 // ============================================================================
 // PLAYERS SHEET OPERATIONS
 // ============================================================================
@@ -1070,6 +1127,135 @@ export async function updatePlayerEntry(
       values: [[status]],  // Single cell value (e.g., "E", "P", "PW", or "")
     },
   });
+}
+
+/**
+ * Batch update multiple player entries for a single game
+ * Updates all players in a single Google Sheets API call
+ * @param tabName The game's tab name (column header to update)
+ * @param entries Array of {userName, status} to update
+ * @returns Array of results indicating success/failure for each player
+ */
+export async function batchUpdatePlayerEntries(
+  tabName: string,
+  entries: { userName: string; status: PlayerEntryStatus | '' }[]
+): Promise<{ userName: string; success: boolean; error?: string }[]> {
+  if (entries.length === 0) return [];
+
+  const spreadsheetId = getFriendliesSpreadsheetId();
+  const colMap = await getColumnMap(spreadsheetId, 'Players');
+  const sheets = getSheetsClient();
+
+  // Fetch header row to find game column
+  const headersResponse = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: 'Players!1:1',
+  });
+
+  const headers = headersResponse.data.values?.[0] || [];
+  const gameColumnIndex = headers.findIndex(h => h === tabName);
+
+  if (gameColumnIndex === -1) {
+    throw new Error(`Game column not found: ${tabName}`);
+  }
+
+  // Determine which column contains player identifiers
+  const userNameColIndex = colMap['user_name'] ?? colMap['full_name'] ?? colMap['name'] ?? 0;
+  const userNameColLetter = getColumnLetter(userNameColIndex);
+
+  // Fetch entire identifier column to find all users' rows
+  const playersResponse = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `Players!${userNameColLetter}:${userNameColLetter}`,
+  });
+
+  const players = playersResponse.data.values || [];
+  const gameColumnLetter = getColumnLetter(gameColumnIndex);
+
+  // Build lookup values for all users
+  const lookupPromises = entries.map(async entry => {
+    const lookupValue = await getPlayerLookupValue(entry.userName, spreadsheetId, colMap);
+    return { ...entry, lookupValue };
+  });
+  const entriesWithLookup = await Promise.all(lookupPromises);
+
+  // Process results and build batch updates
+  const results: { userName: string; success: boolean; error?: string }[] = [];
+  const batchData: { range: string; values: string[][] }[] = [];
+  const newUsersToAdd: { lookupValue: string; userName: string; status: string }[] = [];
+
+  for (const entry of entriesWithLookup) {
+    try {
+      // Find user's row
+      let userRowIndex = players.findIndex((row, index) => index > 0 && row[0] === entry.lookupValue);
+
+      if (userRowIndex === -1) {
+        // User doesn't exist - track them for adding later
+        newUsersToAdd.push({
+          lookupValue: entry.lookupValue,
+          userName: entry.userName,
+          status: entry.status,
+        });
+      } else {
+        // User exists - add to batch
+        const rowNumber = userRowIndex + 1;
+        batchData.push({
+          range: `Players!${gameColumnLetter}${rowNumber}`,
+          values: [[entry.status]],
+        });
+        results.push({ userName: entry.userName, success: true });
+      }
+    } catch (err) {
+      results.push({
+        userName: entry.userName,
+        success: false,
+        error: err instanceof Error ? err.message : 'Unknown error',
+      });
+    }
+  }
+
+  // Add new users first (need to add them one by one to get row numbers)
+  for (const newUser of newUsersToAdd) {
+    try {
+      const nextRowNumber = players.length + 1;
+      // Add user identifier
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `Players!${userNameColLetter}${nextRowNumber}`,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [[newUser.lookupValue]] },
+      });
+
+      // Add their status to batch
+      batchData.push({
+        range: `Players!${gameColumnLetter}${nextRowNumber}`,
+        values: [[newUser.status]],
+      });
+      results.push({ userName: newUser.userName, success: true });
+
+      // Update local players array for next iteration
+      players.push([newUser.lookupValue]);
+    } catch (err) {
+      results.push({
+        userName: newUser.userName,
+        success: false,
+        error: err instanceof Error ? err.message : 'Failed to add user',
+      });
+    }
+  }
+
+  // Execute batch update for all status updates
+  if (batchData.length > 0) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        valueInputOption: 'USER_ENTERED',
+        data: batchData,
+      },
+    });
+  }
+
+  return results;
 }
 
 /**
@@ -2743,4 +2929,463 @@ export async function getClubContacts(clubName: string): Promise<ClubContact[]> 
 
   // Return sorted contacts array
   return clubContacts;
+}
+
+// ============================================================================
+// TEA ROTA OPERATIONS
+// ============================================================================
+
+/**
+ * Get all home games with tea rota assignments
+ * Returns games sorted by date (upcoming first)
+ * Used for the tea rota list page
+ */
+export async function getTeaRotaList(): Promise<TeaRotaEntry[]> {
+  // Get Friendlies spreadsheet ID from environment
+  const spreadsheetId = getFriendliesSpreadsheetId();
+
+  // Get column mappings for Games sheet (cached)
+  const colMap = await getColumnMap(spreadsheetId, 'Games');
+
+  // Initialize Google Sheets API client
+  const sheets = getSheetsClient();
+
+  // Fetch all data rows from Games sheet (skip header row 1)
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: 'Games!A2:ZZ',
+  });
+
+  // Extract rows from response (empty array if no data)
+  const rows = response.data.values || [];
+
+  // Helper function to get a string value from a row by field name
+  const get = (row: any[], field: string): string | null => {
+    const index = colMap[field];
+    return index !== undefined ? (row[index] || null) : null;
+  };
+
+  // Day names for display date formatting
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  // Build array of tea rota entries for home games only
+  const teaRotaEntries: TeaRotaEntry[] = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const rowNumber = i + 2; // Row 1 is header, data starts at row 2
+
+    // Get home/away status - only include home games
+    const homeAway = get(row, 'home_away') || 'H';
+    if (homeAway !== 'H') continue;
+
+    // Get game status - skip cancelled games
+    const status = get(row, 'status') || '';
+    if (status === 'C') continue;
+
+    // Extract game data
+    const date = get(row, 'date') || '';
+    const time = get(row, 'time') || '';
+    const clubName = get(row, 'club_name') || '';
+    const format = get(row, 'format') || '';
+    const ladiesMen = get(row, 'ladies_men') || '';
+    const tabName = get(row, 'tab_name') || '';
+
+    // Extract tea assignments
+    const teaLead = get(row, 'tea_lead') || '';
+    const teaFirst = get(row, 'tea_first') || '';
+    const teaSecond = get(row, 'tea_second') || '';
+
+    // Format display date (e.g., "Sat 25 Apr")
+    let displayDate = date;
+    if (date) {
+      const dateObj = new Date(date);
+      if (!isNaN(dateObj.getTime())) {
+        const dayName = dayNames[dateObj.getDay()];
+        const day = dateObj.getDate();
+        const month = monthNames[dateObj.getMonth()];
+        displayDate = `${dayName} ${day} ${month}`;
+      }
+    }
+
+    teaRotaEntries.push({
+      rowNumber,
+      tabName,
+      date,
+      displayDate,
+      time,
+      clubName,
+      format,
+      ladiesMen,
+      teaLead,
+      teaFirst,
+      teaSecond,
+    });
+  }
+
+  // Sort by date (chronological order - past games first, then future)
+  teaRotaEntries.sort((a, b) => {
+    const dateA = new Date(a.date);
+    const dateB = new Date(b.date);
+    return dateA.getTime() - dateB.getTime();
+  });
+
+  return teaRotaEntries;
+}
+
+/**
+ * Update tea rota assignments for a game
+ * Used by committee members to edit tea assignments
+ * @param rowNumber Row number in Games sheet
+ * @param teaLead Username for tea lead
+ * @param teaFirst Username for tea first
+ * @param teaSecond Username for tea second
+ */
+export async function updateTeaRotaAssignment(
+  rowNumber: number,
+  teaLead: string,
+  teaFirst: string,
+  teaSecond: string
+): Promise<void> {
+  // Get Friendlies spreadsheet ID from environment
+  const spreadsheetId = getFriendliesSpreadsheetId();
+
+  // Get column mappings for Games sheet (cached)
+  const colMap = await getColumnMap(spreadsheetId, 'Games');
+
+  // Get column indices for tea fields
+  const teaLeadCol = colMap['tea_lead'];
+  const teaFirstCol = colMap['tea_first'];
+  const teaSecondCol = colMap['tea_second'];
+
+  if (teaLeadCol === undefined || teaFirstCol === undefined || teaSecondCol === undefined) {
+    throw new Error('Tea columns not found in Games sheet. Expected: Tea Lead, Tea First, Tea Second');
+  }
+
+  // Initialize Google Sheets API client
+  const sheets = getSheetsClient();
+
+  // Build update data for each column
+  const updates = [
+    {
+      range: `Games!${getColumnLetter(teaLeadCol)}${rowNumber}`,
+      values: [[teaLead]],
+    },
+    {
+      range: `Games!${getColumnLetter(teaFirstCol)}${rowNumber}`,
+      values: [[teaFirst]],
+    },
+    {
+      range: `Games!${getColumnLetter(teaSecondCol)}${rowNumber}`,
+      values: [[teaSecond]],
+    },
+  ];
+
+  // Update all tea columns in a batch
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      valueInputOption: 'RAW',
+      data: updates,
+    },
+  });
+}
+
+/**
+ * Batch update tea rota assignments for multiple rows
+ * Updates all modified rows in a single Google Sheets API call
+ * @param updates Array of updates containing rowNumber and tea assignments
+ */
+export async function batchUpdateTeaRotaAssignments(
+  updates: {
+    rowNumber: number;
+    teaLead: string;
+    teaFirst: string;
+    teaSecond: string;
+  }[]
+): Promise<void> {
+  if (updates.length === 0) return;
+
+  // Get Friendlies spreadsheet ID from environment
+  const spreadsheetId = getFriendliesSpreadsheetId();
+
+  // Get column mappings for Games sheet (cached)
+  const colMap = await getColumnMap(spreadsheetId, 'Games');
+
+  // Get column indices for tea fields
+  const teaLeadCol = colMap['tea_lead'];
+  const teaFirstCol = colMap['tea_first'];
+  const teaSecondCol = colMap['tea_second'];
+
+  if (teaLeadCol === undefined || teaFirstCol === undefined || teaSecondCol === undefined) {
+    throw new Error('Tea columns not found in Games sheet. Expected: Tea Lead, Tea First, Tea Second');
+  }
+
+  // Initialize Google Sheets API client
+  const sheets = getSheetsClient();
+
+  // Build update data for all rows
+  const batchData: { range: string; values: string[][] }[] = [];
+
+  for (const update of updates) {
+    batchData.push(
+      {
+        range: `Games!${getColumnLetter(teaLeadCol)}${update.rowNumber}`,
+        values: [[update.teaLead]],
+      },
+      {
+        range: `Games!${getColumnLetter(teaFirstCol)}${update.rowNumber}`,
+        values: [[update.teaFirst]],
+      },
+      {
+        range: `Games!${getColumnLetter(teaSecondCol)}${update.rowNumber}`,
+        values: [[update.teaSecond]],
+      }
+    );
+  }
+
+  // Update all tea columns for all rows in a single batch
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      valueInputOption: 'RAW',
+      data: batchData,
+    },
+  });
+}
+
+/**
+ * Swap tea assignment between two members across any games
+ * If target is specified, swaps with that specific assignment
+ * Otherwise searches ALL games to find where the new user is assigned
+ * @param rowNumber Row number in Games sheet for the game where oldUser is assigned
+ * @param position Which position oldUser is in: 'teaLead', 'teaFirst', or 'teaSecond'
+ * @param oldUsername Current username in that position (the user initiating the swap)
+ * @param newUsername Username to swap with
+ * @param targetRowNumber Optional: specific row number for newUser's assignment
+ * @param targetPosition Optional: specific position for newUser's assignment
+ * @returns The updated tea rota entry for the original row
+ */
+export async function swapTeaAssignment(
+  rowNumber: number,
+  position: 'teaLead' | 'teaFirst' | 'teaSecond',
+  oldUsername: string,
+  newUsername: string,
+  targetRowNumber?: number,
+  targetPosition?: 'teaLead' | 'teaFirst' | 'teaSecond'
+): Promise<TeaRotaEntry> {
+  // Get Friendlies spreadsheet ID from environment
+  const spreadsheetId = getFriendliesSpreadsheetId();
+
+  // Get column mappings for Games sheet (cached)
+  const colMap = await getColumnMap(spreadsheetId, 'Games');
+
+  // Get column indices for all tea fields
+  const teaLeadCol = colMap['tea_lead'];
+  const teaFirstCol = colMap['tea_first'];
+  const teaSecondCol = colMap['tea_second'];
+  const homeAwayCol = colMap['home_away'];
+
+  if (teaLeadCol === undefined || teaFirstCol === undefined || teaSecondCol === undefined) {
+    throw new Error('Tea columns not found in Games sheet');
+  }
+
+  const positionToCol: { [key: string]: number } = {
+    teaLead: teaLeadCol,
+    teaFirst: teaFirstCol,
+    teaSecond: teaSecondCol,
+  };
+
+  const colToPosition: { [key: number]: 'teaLead' | 'teaFirst' | 'teaSecond' } = {
+    [teaLeadCol]: 'teaLead',
+    [teaFirstCol]: 'teaFirst',
+    [teaSecondCol]: 'teaSecond',
+  };
+
+  // Initialize Google Sheets API client
+  const sheets = getSheetsClient();
+
+  // Fetch ALL rows to find where newUsername is assigned
+  const allRowsResponse = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: 'Games!A2:ZZ',
+  });
+
+  const allRows = allRowsResponse.data.values || [];
+
+  // Verify oldUsername is in the specified position at the specified row
+  const oldUserRowIndex = rowNumber - 2; // Convert sheet row to array index (row 2 = index 0)
+  if (oldUserRowIndex < 0 || oldUserRowIndex >= allRows.length) {
+    throw new Error('Invalid row number');
+  }
+
+  const oldUserRow = allRows[oldUserRowIndex];
+  const oldUserCurrentValue = oldUserRow[positionToCol[position]] || '';
+  if (oldUserCurrentValue !== oldUsername) {
+    throw new Error(`Cannot swap: you are not assigned to ${position}`);
+  }
+
+  // Determine the target assignment (where newUser is assigned)
+  let newUserRowNumber: number | null = null;
+  let newUserPosition: 'teaLead' | 'teaFirst' | 'teaSecond' | null = null;
+
+  // If target is explicitly specified, use it
+  if (targetRowNumber && targetPosition) {
+    newUserRowNumber = targetRowNumber;
+    newUserPosition = targetPosition;
+  } else {
+    // Otherwise, search for newUsername in any tea position across ALL home games
+    for (let i = 0; i < allRows.length; i++) {
+      const row = allRows[i];
+      const sheetRowNumber = i + 2; // Convert array index to sheet row number
+
+      // Only check home games
+      const homeAway = homeAwayCol !== undefined ? row[homeAwayCol] : 'H';
+      if (homeAway !== 'H') continue;
+
+      // Check each tea position
+      if (row[teaLeadCol] === newUsername) {
+        newUserRowNumber = sheetRowNumber;
+        newUserPosition = 'teaLead';
+        break;
+      }
+      if (row[teaFirstCol] === newUsername) {
+        newUserRowNumber = sheetRowNumber;
+        newUserPosition = 'teaFirst';
+        break;
+      }
+      if (row[teaSecondCol] === newUsername) {
+        newUserRowNumber = sheetRowNumber;
+        newUserPosition = 'teaSecond';
+        break;
+      }
+    }
+  }
+
+  // Build the updates for the swap
+  const updates: { range: string; values: string[][] }[] = [];
+
+  // Put newUsername in oldUsername's position (at oldUsername's row)
+  updates.push({
+    range: `Games!${getColumnLetter(positionToCol[position])}${rowNumber}`,
+    values: [[newUsername]],
+  });
+
+  // If newUsername was assigned somewhere, put oldUsername there (completing the swap)
+  if (newUserRowNumber !== null && newUserPosition !== null) {
+    updates.push({
+      range: `Games!${getColumnLetter(positionToCol[newUserPosition])}${newUserRowNumber}`,
+      values: [[oldUsername]],
+    });
+  }
+
+  // Apply all updates in a batch
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      valueInputOption: 'RAW',
+      data: updates,
+    },
+  });
+
+  // Fetch the updated row to return the full entry
+  const updatedRowResponse = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `Games!A${rowNumber}:ZZ${rowNumber}`,
+  });
+
+  const updatedRow = updatedRowResponse.data.values?.[0] || [];
+
+  // Helper function to get a string value from the row
+  const get = (field: string): string | null => {
+    const index = colMap[field];
+    return index !== undefined ? (updatedRow[index] || null) : null;
+  };
+
+  // Format display date
+  const date = get('date') || '';
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  let displayDate = date;
+  if (date) {
+    const dateObj = new Date(date);
+    if (!isNaN(dateObj.getTime())) {
+      displayDate = `${dayNames[dateObj.getDay()]} ${dateObj.getDate()} ${monthNames[dateObj.getMonth()]}`;
+    }
+  }
+
+  return {
+    rowNumber,
+    tabName: get('tab_name') || '',
+    date,
+    displayDate,
+    time: get('time') || '',
+    clubName: get('club_name') || '',
+    format: get('format') || '',
+    ladiesMen: get('ladies_men') || '',
+    teaLead: get('tea_lead') || '',
+    teaFirst: get('tea_first') || '',
+    teaSecond: get('tea_second') || '',
+  };
+}
+
+/**
+ * Get a single tea rota entry by row number
+ * Used to fetch details for swap confirmation
+ */
+export async function getTeaRotaEntry(rowNumber: number): Promise<TeaRotaEntry | null> {
+  // Get Friendlies spreadsheet ID from environment
+  const spreadsheetId = getFriendliesSpreadsheetId();
+
+  // Get column mappings for Games sheet (cached)
+  const colMap = await getColumnMap(spreadsheetId, 'Games');
+
+  // Initialize Google Sheets API client
+  const sheets = getSheetsClient();
+
+  // Fetch the specific row
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `Games!A${rowNumber}:ZZ${rowNumber}`,
+  });
+
+  const row = response.data.values?.[0];
+  if (!row) return null;
+
+  // Helper function to get a string value from the row
+  const get = (field: string): string | null => {
+    const index = colMap[field];
+    return index !== undefined ? (row[index] || null) : null;
+  };
+
+  // Only return if this is a home game
+  const homeAway = get('home_away') || 'H';
+  if (homeAway !== 'H') return null;
+
+  // Format display date
+  const date = get('date') || '';
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  let displayDate = date;
+  if (date) {
+    const dateObj = new Date(date);
+    if (!isNaN(dateObj.getTime())) {
+      displayDate = `${dayNames[dateObj.getDay()]} ${dateObj.getDate()} ${monthNames[dateObj.getMonth()]}`;
+    }
+  }
+
+  return {
+    rowNumber,
+    tabName: get('tab_name') || '',
+    date,
+    displayDate,
+    time: get('time') || '',
+    clubName: get('club_name') || '',
+    format: get('format') || '',
+    ladiesMen: get('ladies_men') || '',
+    teaLead: get('tea_lead') || '',
+    teaFirst: get('tea_first') || '',
+    teaSecond: get('tea_second') || '',
+  };
 }

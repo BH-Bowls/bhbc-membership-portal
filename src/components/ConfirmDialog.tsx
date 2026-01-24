@@ -12,8 +12,10 @@ interface ConfirmDialogProps {
   confirmLabel?: string;
   cancelLabel?: string;
   confirmVariant?: 'primary' | 'danger';
+  confirmDisabled?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  children?: React.ReactNode;
 }
 
 export function ConfirmDialog({
@@ -23,8 +25,10 @@ export function ConfirmDialog({
   confirmLabel = 'Continue',
   cancelLabel = 'Cancel',
   confirmVariant = 'primary',
+  confirmDisabled = false,
   onConfirm,
   onCancel,
+  children,
 }: ConfirmDialogProps) {
   // Handle ESC key to cancel
   useEffect(() => {
@@ -103,6 +107,9 @@ export function ConfirmDialog({
             {message}
           </p>
 
+          {/* Custom content */}
+          {children}
+
           {/* Buttons */}
           <div className="flex gap-3 justify-end">
             <button
@@ -115,8 +122,9 @@ export function ConfirmDialog({
             <button
               type="button"
               onClick={onConfirm}
-              className={confirmButtonClasses}
-              autoFocus
+              className={confirmDisabled ? 'inline-flex justify-center px-4 py-2 text-sm font-medium text-white bg-gray-400 border border-transparent rounded-md cursor-not-allowed' : confirmButtonClasses}
+              disabled={confirmDisabled}
+              autoFocus={!confirmDisabled}
             >
               {confirmLabel}
             </button>

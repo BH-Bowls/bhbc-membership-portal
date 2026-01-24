@@ -201,6 +201,25 @@ export interface TeaRota {
 }
 
 /**
+ * TeaRotaEntry - Entry for tea rota list page
+ * Contains game info and tea duty assignments for home games
+ * Used for viewing, editing, and swapping tea duties
+ */
+export interface TeaRotaEntry {
+  rowNumber: number;      // Row number in Games sheet (for updates)
+  tabName: string;        // Unique game identifier
+  date: string;           // Game date in YYYY-MM-DD format
+  displayDate: string;    // Formatted display date (e.g., "Sat 25 Apr")
+  time: string;           // Game time (e.g., "14:00")
+  clubName: string;       // Opponent club name
+  format: string;         // Game format (e.g., "Rinks", "Triples")
+  ladiesMen: string;      // "Ladies", "Men", or "Mixed"
+  teaLead: string;        // Tea Lead username
+  teaFirst: string;       // Tea First username
+  teaSecond: string;      // Tea Second username
+}
+
+/**
  * ClubDetails - Comprehensive details about an opponent club
  * Read from Match Day Contacts spreadsheet
  * Used for away games to show venue information, directions, and costs

@@ -208,6 +208,19 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
         </svg>
       ),
     },
+    {
+      name: 'Lookups',
+      icon: (
+        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+        </svg>
+      ),
+      subItems: [
+        { name: 'Members', href: '/members' },
+        { name: 'Clubs', href: '/clubs' },
+        { name: 'Tea Rota', href: '/tea-rota' },
+      ],
+    },
 //    {
 //      name: 'Social Events',
 //      href: '/social-events',

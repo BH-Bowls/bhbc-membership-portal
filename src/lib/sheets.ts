@@ -87,6 +87,7 @@ export interface User {
   barDuty: string | null;
   barAdditionalInfo: string | null;
   otherSkills: string | null;
+  gmc: string | null; // "GMC" or blank - General Management Committee member
   profileUpdatedDate: string | null;
 
   // Renewal Email Fields
@@ -559,6 +560,7 @@ function parseUserRow(row: any[], rowNumber: number, colMap: { [key: string]: nu
     barDuty: get('bar_duty'),
     barAdditionalInfo: get('bar_additional_info'),
     otherSkills: get('other_skills'),
+    gmc: get('gmc'),
     profileUpdatedDate: get('profile_updated_date'),
 
     // Renewal Email Fields

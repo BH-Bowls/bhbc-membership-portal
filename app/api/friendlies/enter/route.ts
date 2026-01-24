@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, updatePlayerEntry } from '@/lib/friendlies-sheets';
+import { getGames, updatePlayerEntry, batchUpdateGameCounts } from '@/lib/friendlies-sheets';
 import { EnterGamesRequest, EnterGamesResponse } from '@/lib/types/friendlies';
 import { canEnterGame } from '@/lib/game-management/capacity';
 
@@ -101,8 +101,6 @@ export async function POST(request: NextRequest) {
     const successfulEntries = results.filter(r => r.entered);
 
     if (successfulEntries.length > 0) {
-      // Dynamically import functions to avoid circular dependencies
-      const { updateGameCounts } = await import('@/lib/friendlies-sheets');
       const { getGoogleSheetsClient } = await import('@/lib/sheets');
 
       // Get Sheets client and spreadsheet ID
@@ -119,30 +117,19 @@ export async function POST(request: NextRequest) {
       const rows = playersResponse.data.values || [];
       const headers = rows[0] || [];
 
-      // Update count for each successfully entered game
+      // Collect all count updates for batch operation
+      const countUpdates: { rowNumber: number; counts: { entered: number } }[] = [];
+
       for (const result of successfulEntries) {
         // Find the game object for this entry
-        let game = null;
-        for (const g of allGames) {
-          if (g.tabName === result.game_id) {
-            game = g;
-            break;
-          }
-        }
+        const game = allGames.find(g => g.tabName === result.game_id);
 
         if (game) {
           // Find which column in Players sheet corresponds to this game
-          let gameColIndex = -1;
-          for (let i = 0; i < headers.length; i++) {
-            if (headers[i] === game.tabName) {
-              gameColIndex = i;
-              break;
-            }
-          }
+          const gameColIndex = headers.findIndex((h: string) => h === game.tabName);
 
           if (gameColIndex !== -1) {
             // Count how many players have entered this game
-            // (Count non-empty cells in this game's column, excluding header)
             let enteredCount = 0;
             for (let i = 1; i < rows.length; i++) {
               if (rows[i][gameColIndex]) {
@@ -150,10 +137,18 @@ export async function POST(request: NextRequest) {
               }
             }
 
-            // Update the entered count in Games sheet
-            await updateGameCounts(result.game_id, { entered: enteredCount });
+            // Add to batch updates
+            countUpdates.push({
+              rowNumber: game.rowNumber,
+              counts: { entered: enteredCount },
+            });
           }
         }
+      }
+
+      // Batch update all counts in a single API call
+      if (countUpdates.length > 0) {
+        await batchUpdateGameCounts(countUpdates);
       }
     }
 

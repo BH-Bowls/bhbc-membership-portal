@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getInternalGames, updatePlayerEntry, updateGameCounts } from '@/lib/internal-games-sheets';
+import { getInternalGames, updatePlayerEntry, batchUpdateGameCounts } from '@/lib/internal-games-sheets';
 import { InternalGamesConfig, getSpreadsheetId } from '@/lib/game-management/config';
 import { getGoogleSheetsClient } from '@/lib/sheets';
 import { canEnterGame } from '@/lib/game-management/capacity';
@@ -119,19 +119,15 @@ export async function POST(request: NextRequest) {
       const rows = playersResponse.data.values || [];
       const headers = rows[0] || [];
 
-      // Update count for each successfully entered game
+      // Collect all count updates for batch operation
+      const countUpdates: { rowNumber: number; counts: { entered: number } }[] = [];
+
       for (const result of successfulEntries) {
         const game = allGames.find(g => g.tabName === result.game_id);
 
-        if (game) {
+        if (game && game._rowNumber) {
           // Find game column index
-          let gameColIndex = -1;
-          for (let i = 0; i < headers.length; i++) {
-            if (headers[i] === game.tabName) {
-              gameColIndex = i;
-              break;
-            }
-          }
+          const gameColIndex = headers.findIndex((h: string) => h === game.tabName);
 
           if (gameColIndex !== -1) {
             // Count players who have entered this game
@@ -142,10 +138,18 @@ export async function POST(request: NextRequest) {
               }
             }
 
-            // Update the entered count in Games sheet
-            await updateGameCounts(result.game_id, { entered: enteredCount });
+            // Add to batch updates
+            countUpdates.push({
+              rowNumber: game._rowNumber,
+              counts: { entered: enteredCount },
+            });
           }
         }
+      }
+
+      // Batch update all counts in a single API call
+      if (countUpdates.length > 0) {
+        await batchUpdateGameCounts(countUpdates);
       }
     }
 

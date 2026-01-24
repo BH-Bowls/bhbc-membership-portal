@@ -6,7 +6,7 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import {
   getInternalGames,
-  updatePlayerEntry,
+  batchUpdatePlayerEntries,
   getEnteredPlayers,
   getInternalGameMembers,
   updateGameCounts,
@@ -92,10 +92,9 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Add all players with 'M' status
-    for (const userName of playerUserNames) {
-      await updatePlayerEntry(userName, game.tabName, 'M');
-    }
+    // Add all players with 'M' status in a single batch
+    const entries = playerUserNames.map(userName => ({ userName, status: 'M' }));
+    await batchUpdatePlayerEntries(game.tabName, entries);
 
     // Update the entered count in Games sheet
     try {

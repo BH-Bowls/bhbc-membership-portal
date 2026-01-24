@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, updatePlayerEntry, getEnteredPlayers, updateGameCounts } from '@/lib/friendlies-sheets';
+import { getGames, batchUpdatePlayerEntries, getEnteredPlayers, updateGameCounts } from '@/lib/friendlies-sheets';
 import { canEnterGame } from '@/lib/game-management/capacity';
 
 // POST handler - Adds players with M (manually added) status
@@ -58,20 +58,14 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Add each player with M (manually added) status
-    const results = [];
-    for (const userName of playerUserNames) {
-      try {
-        await updatePlayerEntry(userName, game.tabName, 'M');
-        results.push({ userName, added: true });
-      } catch (updateError: any) {
-        results.push({
-          userName,
-          added: false,
-          error: updateError.message || 'Update failed'
-        });
-      }
-    }
+    // Add all players with M (manually added) status in a single batch
+    const entries = playerUserNames.map(userName => ({ userName, status: 'M' as const }));
+    const batchResults = await batchUpdatePlayerEntries(game.tabName, entries);
+    const results = batchResults.map(r => ({
+      userName: r.userName,
+      added: r.success,
+      error: r.error,
+    }));
 
     // Check if any failed
     const failed = results.filter(r => !r.added);

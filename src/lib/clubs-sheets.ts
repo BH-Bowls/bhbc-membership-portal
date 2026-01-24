@@ -1,0 +1,768 @@
+// src/lib/clubs-sheets.ts
+// Google Sheets operations for Clubs feature - handles all data access and manipulation
+// for clubs and their contacts from the Match Day Contacts spreadsheet
+
+import { google } from 'googleapis';
+import {
+  Club,
+  ClubContact,
+  ClubWithContacts,
+  CreateClubRequest,
+  UpdateClubRequest,
+  CreateContactRequest,
+  UpdateContactRequest,
+} from './types/clubs';
+
+// ============================================================================
+// ENVIRONMENT VARIABLE GETTERS
+// ============================================================================
+
+/**
+ * Get the Match Day Contacts spreadsheet ID from environment variables
+ * This spreadsheet contains club details and contacts
+ * @returns Spreadsheet ID string
+ */
+function getMatchDayContactsSpreadsheetId(): string {
+  const id = process.env.MATCH_DAY_CONTACTS_SPREADSHEET_ID;
+  if (!id) {
+    throw new Error('MATCH_DAY_CONTACTS_SPREADSHEET_ID environment variable is not set');
+  }
+  return id;
+}
+
+/**
+ * Get the Google service account email from environment variables
+ * @returns Service account email
+ */
+function getServiceAccountEmail(): string {
+  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  if (!email) {
+    throw new Error('GOOGLE_SERVICE_ACCOUNT_EMAIL environment variable is not set');
+  }
+  return email;
+}
+
+/**
+ * Get the Google service account private key from environment variables
+ * @returns Private key string with actual newline characters
+ */
+function getPrivateKey(): string {
+  const key = process.env.GOOGLE_PRIVATE_KEY;
+  if (!key) {
+    throw new Error('GOOGLE_PRIVATE_KEY environment variable is not set');
+  }
+  return key.replace(/\\n/g, '\n');
+}
+
+// ============================================================================
+// GOOGLE SHEETS CLIENT
+// ============================================================================
+
+/**
+ * Create and return an authenticated Google Sheets API client
+ * @returns Google Sheets API v4 client
+ */
+function getSheetsClient() {
+  const auth = new google.auth.GoogleAuth({
+    credentials: {
+      client_email: getServiceAccountEmail(),
+      private_key: getPrivateKey(),
+    },
+    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+  });
+  return google.sheets({ version: 'v4', auth });
+}
+
+// ============================================================================
+// UTILITY FUNCTIONS
+// ============================================================================
+
+/**
+ * Convert a zero-based column index to a spreadsheet column letter
+ * @param index Zero-based column index
+ * @returns Column letter (e.g., "A", "B", "AA")
+ */
+function getColumnLetter(index: number): string {
+  let letter = '';
+  while (index >= 0) {
+    letter = String.fromCharCode((index % 26) + 65) + letter;
+    index = Math.floor(index / 26) - 1;
+  }
+  return letter;
+}
+
+// ============================================================================
+// COLUMN MAPPING
+// ============================================================================
+
+interface ColumnMapCache {
+  [spreadsheetId: string]: {
+    [sheetName: string]: { [key: string]: number };
+  };
+}
+
+let columnMapCache: ColumnMapCache = {};
+
+/**
+ * Get column mapping from header row
+ * Maps column names to their index positions (0-based)
+ */
+async function getColumnMap(
+  spreadsheetId: string,
+  sheetName: string
+): Promise<{ [key: string]: number }> {
+  // Check cache first
+  if (columnMapCache[spreadsheetId]?.[sheetName]) {
+    return columnMapCache[spreadsheetId][sheetName];
+  }
+
+  const sheets = getSheetsClient();
+
+  // Fetch header row
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${sheetName}!1:1`,
+  });
+
+  const headers = response.data.values?.[0] || [];
+  const map: { [key: string]: number } = {};
+
+  // Build mapping from normalized column names to indices
+  headers.forEach((header: string, index: number) => {
+    const normalized = String(header).toLowerCase().trim().replace(/\s+/g, '_');
+    map[normalized] = index;
+  });
+
+  // Cache the mapping
+  if (!columnMapCache[spreadsheetId]) {
+    columnMapCache[spreadsheetId] = {};
+  }
+  columnMapCache[spreadsheetId][sheetName] = map;
+
+  return map;
+}
+
+/**
+ * Clear column map cache
+ */
+export function clearColumnMapCache() {
+  columnMapCache = {};
+}
+
+// ============================================================================
+// CLUBS OPERATIONS
+// ============================================================================
+
+/**
+ * Get all clubs from the Clubs sheet
+ * @returns Array of all clubs
+ */
+export async function getClubs(): Promise<Club[]> {
+  const spreadsheetId = getMatchDayContactsSpreadsheetId();
+  const colMap = await getColumnMap(spreadsheetId, 'clubs');
+  const sheets = getSheetsClient();
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: 'clubs!A:ZZ',
+  });
+
+  const rows = response.data.values || [];
+  if (rows.length <= 1) return []; // No data rows (only header)
+
+  const get = (row: any[], field: string): string => {
+    const index = colMap[field];
+    return index !== undefined ? (row[index] || '') : '';
+  };
+
+  const getNumber = (row: any[], field: string): number | null => {
+    const value = get(row, field);
+    if (!value) return null;
+    const num = parseFloat(value);
+    return isNaN(num) ? null : num;
+  };
+
+  const clubs: Club[] = [];
+
+  // Skip header row (index 0), process data rows
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    const clubName = get(row, 'club_name');
+
+    // Skip empty rows
+    if (!clubName) continue;
+
+    clubs.push({
+      clubName,
+      clubNumber: get(row, 'club_number'),
+      clubMobile: get(row, 'club_mobile'),
+      clubEmailAddress: get(row, 'club_email_address') || get(row, 'club_email'),
+      clubEmailNote: get(row, 'club_email_note'),
+      generalInformation: get(row, 'general_information') || get(row, 'general_info'),
+      drivingBand: get(row, 'driving_band'),
+      address1: get(row, 'address_1'),
+      address2: get(row, 'address_2'),
+      address3: get(row, 'address_3'),
+      address4: get(row, 'address_4'),
+      postCode: get(row, 'post_code'),
+      website: get(row, 'website'),
+      latitude: getNumber(row, 'latitude'),
+      longitude: getNumber(row, 'longitude'),
+      lastUpdated: get(row, 'last_updated'),
+      _rowNumber: i + 1, // Sheet rows are 1-indexed
+    });
+  }
+
+  // Sort clubs alphabetically by name
+  clubs.sort((a, b) => a.clubName.localeCompare(b.clubName));
+
+  return clubs;
+}
+
+/**
+ * Get a single club by name
+ * @param clubName Club name to search for
+ * @returns Club object or null if not found
+ */
+export async function getClubByName(clubName: string): Promise<Club | null> {
+  const clubs = await getClubs();
+  return clubs.find(c => c.clubName.toLowerCase() === clubName.toLowerCase()) || null;
+}
+
+/**
+ * Get all contacts for a specific club
+ * @param clubName Club name to get contacts for
+ * @returns Array of contacts for the club
+ */
+export async function getContactsForClub(clubName: string): Promise<ClubContact[]> {
+  const spreadsheetId = getMatchDayContactsSpreadsheetId();
+  const colMap = await getColumnMap(spreadsheetId, 'Contacts');
+  const sheets = getSheetsClient();
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: 'Contacts!A:ZZ',
+  });
+
+  const rows = response.data.values || [];
+  if (rows.length <= 1) return [];
+
+  const get = (row: any[], field: string): string => {
+    const index = colMap[field];
+    return index !== undefined ? (row[index] || '') : '';
+  };
+
+  const contacts: ClubContact[] = [];
+
+  // Skip header row (index 0), process data rows
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    const rowClubName = get(row, 'club_name');
+
+    // Skip contacts that don't belong to the requested club
+    if (rowClubName.toLowerCase() !== clubName.toLowerCase()) {
+      continue;
+    }
+
+    contacts.push({
+      clubName: rowClubName,
+      role: get(row, 'role'),
+      firstName: get(row, 'first_name'),
+      lastName: get(row, 'last_name'),
+      name: get(row, 'name'),
+      phoneNumber: get(row, 'phone_number'),
+      mobileNumber: get(row, 'mobile_number'),
+      notes: get(row, 'notes'),
+      email: get(row, 'email'),
+      _rowNumber: i + 1, // Sheet rows are 1-indexed
+    });
+  }
+
+  // Sort contacts by role priority
+  const roleOrder: { [key: string]: number } = {
+    'Captain': 1,
+    'Secretary': 2,
+  };
+
+  contacts.sort((a, b) => {
+    const aOrder = roleOrder[a.role] ?? 99;
+    const bOrder = roleOrder[b.role] ?? 99;
+    return aOrder - bOrder;
+  });
+
+  return contacts;
+}
+
+/**
+ * Get a club with all its contacts
+ * @param clubName Club name to get
+ * @returns Club with contacts or null if not found
+ */
+export async function getClubWithContacts(clubName: string): Promise<ClubWithContacts | null> {
+  const club = await getClubByName(clubName);
+  if (!club) return null;
+
+  const contacts = await getContactsForClub(clubName);
+  return { club, contacts };
+}
+
+/**
+ * Create a new club
+ * @param clubData Club data to create
+ * @returns Created club object
+ */
+export async function createClub(clubData: CreateClubRequest): Promise<Club> {
+  const spreadsheetId = getMatchDayContactsSpreadsheetId();
+  const colMap = await getColumnMap(spreadsheetId, 'clubs');
+  const sheets = getSheetsClient();
+
+  // Check if club already exists
+  const existing = await getClubByName(clubData.clubName);
+  if (existing) {
+    throw new Error(`Club "${clubData.clubName}" already exists`);
+  }
+
+  // Build row data based on column mapping
+  const headerResponse = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: 'clubs!1:1',
+  });
+  const headers = headerResponse.data.values?.[0] || [];
+  const rowData: string[] = new Array(headers.length).fill('');
+
+  // Map club data to row
+  const setValue = (field: string, value: string | number | null | undefined) => {
+    const index = colMap[field];
+    if (index !== undefined && value !== undefined && value !== null) {
+      rowData[index] = String(value);
+    }
+  };
+
+  setValue('club_name', clubData.clubName);
+  setValue('club_number', clubData.clubNumber);
+  setValue('club_mobile', clubData.clubMobile);
+  setValue('club_email_address', clubData.clubEmailAddress);
+  setValue('club_email', clubData.clubEmailAddress); // Also set alternate column name
+  setValue('club_email_note', clubData.clubEmailNote);
+  setValue('general_information', clubData.generalInformation);
+  setValue('general_info', clubData.generalInformation); // Also set alternate column name
+  setValue('driving_band', clubData.drivingBand);
+  setValue('address_1', clubData.address1);
+  setValue('address_2', clubData.address2);
+  setValue('address_3', clubData.address3);
+  setValue('address_4', clubData.address4);
+  setValue('post_code', clubData.postCode);
+  setValue('website', clubData.website);
+  setValue('latitude', clubData.latitude);
+  setValue('longitude', clubData.longitude);
+  setValue('last_updated', new Date().toISOString().split('T')[0]);
+
+  // Append new row
+  await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: 'clubs!A:ZZ',
+    valueInputOption: 'USER_ENTERED',
+    requestBody: {
+      values: [rowData],
+    },
+  });
+
+  // Clear cache and return the created club
+  clearColumnMapCache();
+  const createdClub = await getClubByName(clubData.clubName);
+  if (!createdClub) {
+    throw new Error('Failed to create club');
+  }
+  return createdClub;
+}
+
+/**
+ * Update an existing club
+ * @param clubName Club name to update
+ * @param updates Fields to update
+ * @returns Updated club object
+ */
+export async function updateClub(clubName: string, updates: UpdateClubRequest): Promise<Club> {
+  const club = await getClubByName(clubName);
+  if (!club) {
+    throw new Error(`Club "${clubName}" not found`);
+  }
+
+  const spreadsheetId = getMatchDayContactsSpreadsheetId();
+  const colMap = await getColumnMap(spreadsheetId, 'clubs');
+  const sheets = getSheetsClient();
+
+  // Build update data
+  const updateData: { range: string; values: any[][] }[] = [];
+
+  const addUpdate = (field: string, value: string | number | null | undefined) => {
+    const index = colMap[field];
+    if (index !== undefined && value !== undefined) {
+      const colLetter = getColumnLetter(index);
+      updateData.push({
+        range: `clubs!${colLetter}${club._rowNumber}`,
+        values: [[value === null ? '' : value]],
+      });
+    }
+  };
+
+  // Add updates for each provided field
+  if (updates.clubNumber !== undefined) addUpdate('club_number', updates.clubNumber);
+  if (updates.clubMobile !== undefined) addUpdate('club_mobile', updates.clubMobile);
+  if (updates.clubEmailAddress !== undefined) {
+    addUpdate('club_email_address', updates.clubEmailAddress);
+    addUpdate('club_email', updates.clubEmailAddress);
+  }
+  if (updates.clubEmailNote !== undefined) addUpdate('club_email_note', updates.clubEmailNote);
+  if (updates.generalInformation !== undefined) {
+    addUpdate('general_information', updates.generalInformation);
+    addUpdate('general_info', updates.generalInformation);
+  }
+  if (updates.drivingBand !== undefined) addUpdate('driving_band', updates.drivingBand);
+  if (updates.address1 !== undefined) addUpdate('address_1', updates.address1);
+  if (updates.address2 !== undefined) addUpdate('address_2', updates.address2);
+  if (updates.address3 !== undefined) addUpdate('address_3', updates.address3);
+  if (updates.address4 !== undefined) addUpdate('address_4', updates.address4);
+  if (updates.postCode !== undefined) addUpdate('post_code', updates.postCode);
+  if (updates.website !== undefined) addUpdate('website', updates.website);
+  if (updates.latitude !== undefined) addUpdate('latitude', updates.latitude);
+  if (updates.longitude !== undefined) addUpdate('longitude', updates.longitude);
+
+  // Always update last_updated
+  addUpdate('last_updated', new Date().toISOString().split('T')[0]);
+
+  if (updateData.length > 0) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        data: updateData,
+        valueInputOption: 'USER_ENTERED',
+      },
+    });
+  }
+
+  // Clear cache and return updated club
+  clearColumnMapCache();
+  const updatedClub = await getClubByName(clubName);
+  if (!updatedClub) {
+    throw new Error('Failed to retrieve updated club');
+  }
+  return updatedClub;
+}
+
+/**
+ * Delete a club and all its contacts
+ * @param clubName Club name to delete
+ */
+export async function deleteClub(clubName: string): Promise<void> {
+  const club = await getClubByName(clubName);
+  if (!club) {
+    throw new Error(`Club "${clubName}" not found`);
+  }
+
+  const spreadsheetId = getMatchDayContactsSpreadsheetId();
+  const sheets = getSheetsClient();
+
+  // First, delete all contacts for this club
+  const contacts = await getContactsForClub(clubName);
+
+  // Delete contacts in reverse order to maintain row numbers
+  const sortedContacts = [...contacts].sort((a, b) => b._rowNumber - a._rowNumber);
+  for (const contact of sortedContacts) {
+    await deleteContactByRowNumber(contact._rowNumber);
+  }
+
+  // Get the sheet ID for the clubs sheet
+  const spreadsheet = await sheets.spreadsheets.get({
+    spreadsheetId,
+  });
+
+  const clubsSheet = spreadsheet.data.sheets?.find(s =>
+    s.properties?.title?.toLowerCase() === 'clubs'
+  );
+
+  if (!clubsSheet?.properties?.sheetId) {
+    throw new Error('Clubs sheet not found');
+  }
+
+  // Delete the club row
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [
+        {
+          deleteDimension: {
+            range: {
+              sheetId: clubsSheet.properties.sheetId,
+              dimension: 'ROWS',
+              startIndex: club._rowNumber - 1, // 0-indexed
+              endIndex: club._rowNumber,
+            },
+          },
+        },
+      ],
+    },
+  });
+
+  // Clear cache
+  clearColumnMapCache();
+}
+
+// ============================================================================
+// CONTACTS OPERATIONS
+// ============================================================================
+
+/**
+ * Add a contact to a club
+ * @param contactData Contact data to create
+ * @returns Created contact object
+ */
+export async function addContact(contactData: CreateContactRequest): Promise<ClubContact> {
+  // Verify club exists
+  const club = await getClubByName(contactData.clubName);
+  if (!club) {
+    throw new Error(`Club "${contactData.clubName}" not found`);
+  }
+
+  const spreadsheetId = getMatchDayContactsSpreadsheetId();
+  const colMap = await getColumnMap(spreadsheetId, 'Contacts');
+  const sheets = getSheetsClient();
+
+  // Get header row to build new row
+  const headerResponse = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: 'Contacts!1:1',
+  });
+  const headers = headerResponse.data.values?.[0] || [];
+  const rowData: string[] = new Array(headers.length).fill('');
+
+  // Map contact data to row
+  const setValue = (field: string, value: string | undefined) => {
+    const index = colMap[field];
+    if (index !== undefined && value !== undefined) {
+      rowData[index] = value;
+    }
+  };
+
+  setValue('club_name', contactData.clubName);
+  setValue('role', contactData.role);
+  setValue('first_name', contactData.firstName);
+  setValue('last_name', contactData.lastName);
+  // Build full name from first and last name
+  const fullName = [contactData.firstName, contactData.lastName].filter(Boolean).join(' ');
+  setValue('name', fullName);
+  setValue('phone_number', contactData.phoneNumber);
+  setValue('mobile_number', contactData.mobileNumber);
+  setValue('notes', contactData.notes);
+  setValue('email', contactData.email);
+
+  // Append new row
+  const appendResponse = await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: 'Contacts!A:ZZ',
+    valueInputOption: 'USER_ENTERED',
+    requestBody: {
+      values: [rowData],
+    },
+  });
+
+  // Get the row number of the appended row
+  const updatedRange = appendResponse.data.updates?.updatedRange;
+  let rowNumber = 0;
+  if (updatedRange) {
+    const match = updatedRange.match(/!A(\d+):/);
+    if (match) {
+      rowNumber = parseInt(match[1], 10);
+    }
+  }
+
+  // Clear cache
+  clearColumnMapCache();
+
+  return {
+    clubName: contactData.clubName,
+    role: contactData.role || '',
+    firstName: contactData.firstName || '',
+    lastName: contactData.lastName || '',
+    name: fullName,
+    phoneNumber: contactData.phoneNumber || '',
+    mobileNumber: contactData.mobileNumber || '',
+    notes: contactData.notes || '',
+    email: contactData.email || '',
+    _rowNumber: rowNumber,
+  };
+}
+
+/**
+ * Update a contact by row number
+ * @param rowNumber Row number in Contacts sheet
+ * @param updates Fields to update
+ * @returns Updated contact
+ */
+export async function updateContact(rowNumber: number, updates: UpdateContactRequest): Promise<ClubContact> {
+  const spreadsheetId = getMatchDayContactsSpreadsheetId();
+  const colMap = await getColumnMap(spreadsheetId, 'Contacts');
+  const sheets = getSheetsClient();
+
+  // Get current contact data
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `Contacts!A${rowNumber}:ZZ${rowNumber}`,
+  });
+
+  const row = response.data.values?.[0];
+  if (!row) {
+    throw new Error(`Contact at row ${rowNumber} not found`);
+  }
+
+  const get = (field: string): string => {
+    const index = colMap[field];
+    return index !== undefined ? (row[index] || '') : '';
+  };
+
+  // Build update data
+  const updateData: { range: string; values: any[][] }[] = [];
+
+  const addUpdate = (field: string, value: string | undefined) => {
+    const index = colMap[field];
+    if (index !== undefined && value !== undefined) {
+      const colLetter = getColumnLetter(index);
+      updateData.push({
+        range: `Contacts!${colLetter}${rowNumber}`,
+        values: [[value]],
+      });
+    }
+  };
+
+  // Add updates for each provided field
+  if (updates.role !== undefined) addUpdate('role', updates.role);
+  if (updates.firstName !== undefined) addUpdate('first_name', updates.firstName);
+  if (updates.lastName !== undefined) addUpdate('last_name', updates.lastName);
+  if (updates.phoneNumber !== undefined) addUpdate('phone_number', updates.phoneNumber);
+  if (updates.mobileNumber !== undefined) addUpdate('mobile_number', updates.mobileNumber);
+  if (updates.notes !== undefined) addUpdate('notes', updates.notes);
+  if (updates.email !== undefined) addUpdate('email', updates.email);
+
+  // Update name field if first or last name changed
+  if (updates.firstName !== undefined || updates.lastName !== undefined) {
+    const firstName = updates.firstName ?? get('first_name');
+    const lastName = updates.lastName ?? get('last_name');
+    const fullName = [firstName, lastName].filter(Boolean).join(' ');
+    addUpdate('name', fullName);
+  }
+
+  if (updateData.length > 0) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        data: updateData,
+        valueInputOption: 'USER_ENTERED',
+      },
+    });
+  }
+
+  // Clear cache and return updated contact
+  clearColumnMapCache();
+
+  // Re-fetch the row to get current data
+  const updatedResponse = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `Contacts!A${rowNumber}:ZZ${rowNumber}`,
+  });
+
+  const updatedRow = updatedResponse.data.values?.[0];
+  if (!updatedRow) {
+    throw new Error('Failed to retrieve updated contact');
+  }
+
+  const getUpdated = (field: string): string => {
+    const index = colMap[field];
+    return index !== undefined ? (updatedRow[index] || '') : '';
+  };
+
+  return {
+    clubName: getUpdated('club_name'),
+    role: getUpdated('role'),
+    firstName: getUpdated('first_name'),
+    lastName: getUpdated('last_name'),
+    name: getUpdated('name'),
+    phoneNumber: getUpdated('phone_number'),
+    mobileNumber: getUpdated('mobile_number'),
+    notes: getUpdated('notes'),
+    email: getUpdated('email'),
+    _rowNumber: rowNumber,
+  };
+}
+
+/**
+ * Delete a contact by row number (internal helper)
+ * @param rowNumber Row number to delete
+ */
+async function deleteContactByRowNumber(rowNumber: number): Promise<void> {
+  const spreadsheetId = getMatchDayContactsSpreadsheetId();
+  const sheets = getSheetsClient();
+
+  // Get the sheet ID for the Contacts sheet
+  const spreadsheet = await sheets.spreadsheets.get({
+    spreadsheetId,
+  });
+
+  const contactsSheet = spreadsheet.data.sheets?.find(s =>
+    s.properties?.title === 'Contacts'
+  );
+
+  if (!contactsSheet?.properties?.sheetId) {
+    throw new Error('Contacts sheet not found');
+  }
+
+  // Delete the row
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [
+        {
+          deleteDimension: {
+            range: {
+              sheetId: contactsSheet.properties.sheetId,
+              dimension: 'ROWS',
+              startIndex: rowNumber - 1, // 0-indexed
+              endIndex: rowNumber,
+            },
+          },
+        },
+      ],
+    },
+  });
+
+  // Clear cache
+  clearColumnMapCache();
+}
+
+/**
+ * Delete a contact by row number
+ * @param clubName Club name (for validation)
+ * @param rowNumber Row number in Contacts sheet
+ */
+export async function deleteContact(clubName: string, rowNumber: number): Promise<void> {
+  const spreadsheetId = getMatchDayContactsSpreadsheetId();
+  const colMap = await getColumnMap(spreadsheetId, 'Contacts');
+  const sheets = getSheetsClient();
+
+  // Get current contact data to verify it belongs to the specified club
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `Contacts!A${rowNumber}:ZZ${rowNumber}`,
+  });
+
+  const row = response.data.values?.[0];
+  if (!row) {
+    throw new Error(`Contact at row ${rowNumber} not found`);
+  }
+
+  const contactClubName = colMap['club_name'] !== undefined ? row[colMap['club_name']] : '';
+  if (contactClubName.toLowerCase() !== clubName.toLowerCase()) {
+    throw new Error(`Contact at row ${rowNumber} does not belong to club "${clubName}"`);
+  }
+
+  await deleteContactByRowNumber(rowNumber);
+}
