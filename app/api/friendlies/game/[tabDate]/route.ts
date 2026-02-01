@@ -113,6 +113,7 @@ export async function GET(
         team: teamNum,
         players: teamPlayers.map(p => ({
           name: p.fullName,  // Use fullName for display
+          userName: p.name,  // Include userName for current user highlighting
           position: p.position,
           status: p.status,
           isCaptain: p.captain === 'Y',
@@ -152,6 +153,7 @@ export async function GET(
         team: teamNum,
         players: teamPlayers.map(p => ({
           name: p.fullName,  // Use fullName for display
+          userName: p.name,  // Include userName for current user highlighting
           position: p.position,
           status: p.status,
         })),
@@ -206,10 +208,12 @@ export async function GET(
         userTeam: userTeam,
         userPosition: userPosition,
         userConfirmed: userConfirmed,
+        userName: userName,  // Current user's userName for highlighting
       },
       teams,
       reserves: reserves.map(r => ({
         name: r.fullName,  // Use fullName for display
+        userName: r.name,  // Include userName for current user highlighting
         team: r.team,
         position: r.position,
         status: r.status,

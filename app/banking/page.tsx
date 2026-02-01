@@ -34,6 +34,7 @@ export default function BankingPage() {
   // Dialogs
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
   const [showManualMatchDialog, setShowManualMatchDialog] = useState(false);
+  const [showImportFormatDialog, setShowImportFormatDialog] = useState(false);
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [editingPayment, setEditingPayment] = useState<PaymentWithState | null>(null);
   const [editingRenewal, setEditingRenewal] = useState<RenewalWithState | null>(null);
@@ -330,6 +331,7 @@ export default function BankingPage() {
     editingRenewal.matched_donations = donationsNum;
     editingRenewal.matched_difference = differenceNum;
     editingRenewal.matched_payment_ids = [...selectedPaymentIds]; // Store which payments were used
+    editingRenewal.matched_notes = manualNotes; // Store notes on this specific renewal
     // Update outstanding: total_fee_due - banking + donations + difference
     editingRenewal.outstanding = editingRenewal.totalPayment - calculatedBanking + donationsNum + differenceNum;
     editingRenewal.isMatched = true;
@@ -346,6 +348,7 @@ export default function BankingPage() {
         r.matched_donations = 0;
         r.matched_difference = 0;
         r.matched_payment_ids = [...selectedPaymentIds]; // Store which payments were used
+        r.matched_notes = ''; // Other renewals in this match have no notes
         // Update outstanding: total_fee_due - banking + donations + difference
         r.outstanding = r.totalPayment - banking + 0 + 0;
         r.isMatched = true;
@@ -368,6 +371,9 @@ export default function BankingPage() {
     setPayments([...payments]);
   };
 
+  // Valid payment types
+  const validTypes = ['TRF', 'CDM', 'CHQ', 'CSH'];
+
   // Handle CSV file selection
   const handleCSVChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -376,20 +382,23 @@ export default function BankingPage() {
     setCsvFile(file);
 
     // Parse CSV
-    // Expected format: Date, Type (ignored), Description, Amount, Balance (ignored)
+    // Expected format: Date, Type, Description, Amount, Balance (ignored)
     const reader = new FileReader();
     reader.onload = (event) => {
       const text = event.target?.result as string;
       const lines = text.split('\n');
-      const headers = lines[0].split(',');
 
       const data = lines
         .slice(1)
         .filter(line => line.trim())
         .map(line => {
           const values = line.split(',');
+          const rawType = values[1]?.trim().toUpperCase() || 'TRF';
+          // Validate type - default to TRF if invalid
+          const type = validTypes.includes(rawType) ? rawType : 'TRF';
           return {
             Date: values[0]?.trim(),
+            Type: type,
             Description: values[2]?.trim(), // Use Description (column 3) as reference
             Amount: values[3]?.trim(),
           };
@@ -466,6 +475,41 @@ export default function BankingPage() {
         const existingIds = r.payment_ids || '';
         const updatedPaymentIds = existingIds ? `${existingIds}, ${newPaymentIds}` : newPaymentIds;
 
+        // Calculate amounts by payment type for this renewal
+        // Find the matched payments for this renewal and sum by type
+        const typeAmounts: Record<string, number> = {
+          TRF: 0,
+          CDM: 0,
+          CHQ: 0,
+          CSH: 0,
+        };
+
+        // Get all payments matched to this renewal
+        const renewalPayments = matchedPayments.filter(p =>
+          r.matched_payment_ids.includes(p.payment_id)
+        );
+
+        // If this renewal has specific matched payments, calculate proportional amounts
+        if (renewalPayments.length > 0) {
+          // Calculate total from matched payments
+          const totalPaymentAmount = renewalPayments.reduce((sum, p) => sum + p.amount, 0);
+
+          // If renewal matched_banking equals total payment amount, use actual payment amounts
+          // Otherwise, proportionally distribute the matched_banking across payment types
+          if (Math.abs(r.matched_banking - totalPaymentAmount) < 0.01) {
+            // Exact match - use actual payment amounts per type
+            for (const p of renewalPayments) {
+              typeAmounts[p.type] += p.amount;
+            }
+          } else {
+            // Partial match - proportionally distribute matched_banking across types
+            const ratio = r.matched_banking / totalPaymentAmount;
+            for (const p of renewalPayments) {
+              typeAmounts[p.type] += p.amount * ratio;
+            }
+          }
+        }
+
         return {
           userName: r.userName,
           totalPayment: r.totalPayment,
@@ -477,9 +521,14 @@ export default function BankingPage() {
           matched_donations: r.matched_donations,
           matched_difference: r.matched_difference,
           payment_ids: updatedPaymentIds,
-          payment_notes: manualNotes || '',
-          paymentType: matchedPayments[0]?.type || 'TRF',
-          paymentTypeAmount: r.banking, // Current banking amount
+          payment_notes: r.matched_notes || '',
+          // Send all type amounts instead of single type
+          typeAmounts: {
+            bank_transfer: r.bank_transfer + typeAmounts.TRF,
+            card_machine: r.card_machine + typeAmounts.CDM,
+            cheque: r.cheque + typeAmounts.CHQ,
+            cash: r.cash + typeAmounts.CSH,
+          },
         };
       });
 
@@ -544,6 +593,13 @@ export default function BankingPage() {
 
           <div className="flex space-x-3">
             <button
+              onClick={() => router.push('/banking/report')}
+              className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 flex items-center"
+            >
+              Report
+            </button>
+
+            <button
               onClick={() => router.push('/banking/add-payments')}
               className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 flex items-center"
             >
@@ -551,17 +607,20 @@ export default function BankingPage() {
               Add Payments
             </button>
 
-            <label className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 cursor-pointer flex items-center">
-              <span className="mr-2">📥</span>
+            <button
+              onClick={() => setShowImportFormatDialog(true)}
+              className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 flex items-center"
+            >
+              <span className="mr-2">+</span>
               Import CSV
-              <input
-                ref={csvInputRef}
-                type="file"
-                accept=".csv"
-                className="hidden"
-                onChange={handleCSVChange}
-              />
-            </label>
+            </button>
+            <input
+              ref={csvInputRef}
+              type="file"
+              accept=".csv"
+              className="hidden"
+              onChange={handleCSVChange}
+            />
           </div>
         </div>
 
@@ -946,8 +1005,88 @@ export default function BankingPage() {
           );
         })()}
 
+        {/* CSV Import Format Dialog */}
+        {showImportFormatDialog && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 w-[480px]">
+              <h3 className="text-lg font-semibold mb-4">Import CSV Format</h3>
+
+              <div className="mb-4 space-y-3">
+                <p className="text-sm text-gray-600">
+                  The CSV file should have 4 columns: Date, Type, Description, Amount
+                </p>
+
+                <div className="bg-gray-50 rounded-lg p-3 font-mono text-xs">
+                  <div className="grid grid-cols-[90px_40px_1fr_60px] gap-2 font-semibold text-gray-700 border-b pb-2 mb-2">
+                    <div>Date</div>
+                    <div>Type</div>
+                    <div>Description</div>
+                    <div className="text-right">Amount</div>
+                  </div>
+                  <div className="space-y-1 text-gray-600">
+                    <div className="grid grid-cols-[90px_40px_1fr_60px] gap-2">
+                      <div>15/01/2025</div>
+                      <div>TRF</div>
+                      <div>A & B SMITH SUBS</div>
+                      <div className="text-right">248.00</div>
+                    </div>
+                    <div className="grid grid-cols-[90px_40px_1fr_60px] gap-2">
+                      <div>18/01/2025</div>
+                      <div>CDM</div>
+                      <div>JONES SUBS</div>
+                      <div className="text-right">116.00</div>
+                    </div>
+                    <div className="grid grid-cols-[90px_40px_1fr_60px] gap-2">
+                      <div>22/01/2025</div>
+                      <div>CHQ</div>
+                      <div>John Doe Subs</div>
+                      <div className="text-right">110.00</div>
+                    </div>
+                    <div className="grid grid-cols-[90px_40px_1fr_60px] gap-2">
+                      <div>25/01/2025</div>
+                      <div>CSH</div>
+                      <div>J.R Hartley</div>
+                      <div className="text-right">31.00</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="text-xs text-gray-500">
+                  <span className="font-medium">Types:</span> TRF (Bank Transfer), CDM (Card Machine), CHQ (Cheque), CSH (Cash)
+                </div>
+              </div>
+
+              <div className="flex justify-end space-x-3">
+                <button
+                  onClick={() => setShowImportFormatDialog(false)}
+                  className="px-4 py-2 border rounded hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    setShowImportFormatDialog(false);
+                    csvInputRef.current?.click();
+                  }}
+                  className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+                >
+                  Select File
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* CSV Import Dialog */}
-        {showImportDialog && (
+        {showImportDialog && (() => {
+          // Count transactions by type
+          const typeCounts: Record<string, number> = {};
+          csvData.forEach((row: any) => {
+            const type = row.Type || 'TRF';
+            typeCounts[type] = (typeCounts[type] || 0) + 1;
+          });
+
+          return (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white rounded-lg p-6 w-96">
               <h3 className="text-lg font-semibold mb-4">Import Payments</h3>
@@ -956,9 +1095,13 @@ export default function BankingPage() {
                 <p className="text-sm font-medium text-gray-900">
                   Found: {csvData.length} transactions
                 </p>
-                <p className="text-xs text-gray-500 mt-1">
-                  All transactions will be imported as TRF (Bank Transfer)
-                </p>
+                <div className="mt-2 space-y-1">
+                  {Object.entries(typeCounts).map(([type, count]) => (
+                    <p key={type} className="text-xs text-gray-500">
+                      {type}: {count} transaction{count !== 1 ? 's' : ''}
+                    </p>
+                  ))}
+                </div>
               </div>
 
               {isImporting && (
@@ -1003,7 +1146,8 @@ export default function BankingPage() {
               </div>
             </div>
           </div>
-        )}
+          );
+        })()}
       </main>
 
       {/* Confirmation Dialog */}

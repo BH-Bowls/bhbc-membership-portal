@@ -9,7 +9,6 @@ import {
   GameSheetPlayer,
   PlayerStats,
   DriverBarInfo,
-  TeaRota,
   TeaRotaEntry,
   ClubDetails,
   ClubContact,
@@ -27,7 +26,7 @@ import {
  * Throws an error if the environment variable is not configured
  * @returns Spreadsheet ID string (e.g., "1a2b3c4d5e6f...")
  */
-function getFriendliesSpreadsheetId(): string {
+export function getFriendliesSpreadsheetId(): string {
   // Read the spreadsheet ID from environment variables
   const id = process.env.FRIENDLIES_SPREADSHEET_ID;
 
@@ -46,7 +45,7 @@ function getFriendliesSpreadsheetId(): string {
  * Throws an error if the environment variable is not configured
  * @returns Spreadsheet ID string (e.g., "1a2b3c4d5e6f...")
  */
-function getMembersSpreadsheetId(): string {
+export function getMembersSpreadsheetId(): string {
   // Read the spreadsheet ID from environment variables
   const id = process.env.MEMBERS_SPREADSHEET_ID;
 
@@ -185,7 +184,7 @@ let columnMapCache: ColumnMapCache = {};
  * Example: { "full_name": 2, "user_name": 0, "email": 3 }
  * Caches result to avoid repeated API calls for the same sheet
  */
-async function getColumnMap(
+export async function getColumnMap(
   spreadsheetId: string,
   sheetName: string
 ): Promise<{ [key: string]: number }> {
@@ -206,10 +205,10 @@ async function getColumnMap(
   const sheets = getSheetsClient();
 
   // Fetch the first row (header row) from the sheet
-  // Range format: "SheetName!1:1" means row 1 only
+  // Range format: "'SheetName'!1:1" means row 1 only (quotes needed for names with spaces)
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${sheetName}!1:1`,
+    range: `'${sheetName}'!1:1`,
   });
 
   // Extract header row from API response
@@ -267,6 +266,16 @@ export function clearColumnMapCache() {
   // Reset the cache to an empty object
   // Next call to getColumnMap will fetch fresh headers from Google Sheets
   columnMapCache = {};
+}
+
+/**
+ * Clear column map cache for a specific sheet
+ * Used when column mapping appears stale or invalid
+ */
+export function clearColumnMapCacheForSheet(spreadsheetId: string, sheetName: string) {
+  if (columnMapCache[spreadsheetId] && columnMapCache[spreadsheetId][sheetName]) {
+    delete columnMapCache[spreadsheetId][sheetName];
+  }
 }
 
 // ============================================================================
@@ -628,6 +637,125 @@ export async function updateGameCounts(
       },
     });
   }
+}
+
+/**
+ * Add players directly to a game sheet tab with their stats
+ * Optimized version that fetches all data once and does a single batch write
+ * Used by add-players API to add players in one operation
+ * @param tabName The game sheet tab name
+ * @param playerUserNames Array of userNames to add
+ * @returns Number of players added
+ */
+export async function addPlayersToGameSheetDirect(
+  tabName: string,
+  playerUserNames: string[]
+): Promise<number> {
+  if (playerUserNames.length === 0) return 0;
+
+  const spreadsheetId = getFriendliesSpreadsheetId();
+  const sheets = getSheetsClient();
+
+  // Fetch all needed data in parallel for efficiency
+  const [gameSheetColMap, playersColMap, membersColMap] = await Promise.all([
+    getColumnMap(spreadsheetId, tabName),
+    getColumnMap(spreadsheetId, 'Players'),
+    getColumnMap(getMembersSpreadsheetId(), 'Members'),
+  ]);
+
+  // Fetch game sheet, Players sheet, and Members sheet in parallel
+  const [gameSheetResponse, playersResponse, membersResponse] = await Promise.all([
+    sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${tabName}'!A:ZZ`,
+    }),
+    sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: 'Players!A:ZZ',
+    }),
+    sheets.spreadsheets.values.get({
+      spreadsheetId: getMembersSpreadsheetId(),
+      range: 'Members!A:ZZ',
+    }),
+  ]);
+
+  const gameSheetRows = gameSheetResponse.data.values || [];
+  const playersRows = playersResponse.data.values || [];
+  const playersHeaders = playersRows[0] || [];
+  const membersRows = membersResponse.data.values || [];
+
+  // Build set of existing players in game sheet (lowercase for comparison)
+  const existingPlayers = new Set<string>();
+  const nameColIndex = gameSheetColMap['name'] ?? gameSheetColMap['user_name'] ?? 0;
+  for (let i = 1; i < gameSheetRows.length; i++) {
+    const name = gameSheetRows[i][nameColIndex];
+    if (name) existingPlayers.add(name.toString().toLowerCase());
+  }
+
+  // Filter to only new players
+  const newPlayers = playerUserNames.filter(
+    userName => !existingPlayers.has(userName.toLowerCase())
+  );
+
+  if (newPlayers.length === 0) return 0;
+
+  // Get column indices for game sheet
+  const nameDownColIndex = gameSheetColMap['name_down'];
+  const pickedColIndex = gameSheetColMap['picked'];
+  const percentPlayedColIndex = gameSheetColMap['percent_played'];
+  const driverBarColIndex = gameSheetColMap['driver_bar'];
+
+  // Calculate starting row for new players
+  let nextRow = gameSheetRows.length + 1;
+  if (nextRow < 2) nextRow = 2; // Minimum row 2 (after header)
+
+  // Build batch updates
+  const batchData: { range: string; values: (string | number)[][] }[] = [];
+
+  for (const userName of newPlayers) {
+    try {
+      // Get stats from cached data
+      const stats = getPlayerStatsFromCache(userName, playersRows, playersColMap, playersHeaders, tabName);
+      const driverBar = getDriverBarInfoFromCache(userName, membersRows, membersColMap);
+
+      // Add player name
+      batchData.push({
+        range: `'${tabName}'!${getColumnLetter(nameColIndex)}${nextRow}`,
+        values: [[userName]],
+      });
+
+      // Add stats in one range if columns are contiguous
+      // Write percentPlayed as decimal (0-1) for percentage-formatted cells
+      // Normalize: if value > 1, it's already a percentage (64 -> 0.64)
+      const percentPlayedDecimal = stats.percentPlayed > 1
+        ? stats.percentPlayed / 100
+        : stats.percentPlayed;
+      if (nameDownColIndex !== undefined && driverBarColIndex !== undefined) {
+        batchData.push({
+          range: `'${tabName}'!${getColumnLetter(nameDownColIndex)}${nextRow}:${getColumnLetter(driverBarColIndex)}${nextRow}`,
+          values: [[stats.nameDown, stats.picked, percentPlayedDecimal, driverBar.code]],
+        });
+      }
+
+      nextRow++;
+    } catch (error) {
+      console.error(`[addPlayersToGameSheetDirect] Error adding ${userName}:`, error);
+      // Continue with other players
+    }
+  }
+
+  // Execute batch update
+  if (batchData.length > 0) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        valueInputOption: 'USER_ENTERED',
+        data: batchData,
+      },
+    });
+  }
+
+  return newPlayers.length;
 }
 
 /**
@@ -1146,65 +1274,98 @@ export async function batchUpdatePlayerEntries(
   const colMap = await getColumnMap(spreadsheetId, 'Players');
   const sheets = getSheetsClient();
 
-  // Fetch header row to find game column
-  const headersResponse = await sheets.spreadsheets.values.get({
+  // Fetch entire Players sheet in one call (more efficient than multiple calls)
+  const playersResponse = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: 'Players!1:1',
+    range: 'Players!A:ZZ',
   });
 
-  const headers = headersResponse.data.values?.[0] || [];
-  const gameColumnIndex = headers.findIndex(h => h === tabName);
+  const playersRows = playersResponse.data.values || [];
+  const headers = playersRows[0] || [];
 
+  // Find game column
+  const gameColumnIndex = headers.findIndex((h: string) => h === tabName);
   if (gameColumnIndex === -1) {
     throw new Error(`Game column not found: ${tabName}`);
   }
 
   // Determine which column contains player identifiers
   const userNameColIndex = colMap['user_name'] ?? colMap['full_name'] ?? colMap['name'] ?? 0;
+  const usesUserName = colMap['user_name'] !== undefined;
+
+  // If Players sheet uses full_name, fetch Members sheet ONCE for all lookups
+  let membersLookup: Map<string, string> | null = null;
+  if (!usesUserName) {
+    const membersSpreadsheetId = getMembersSpreadsheetId();
+    const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
+    const membersResponse = await sheets.spreadsheets.values.get({
+      spreadsheetId: membersSpreadsheetId,
+      range: 'Members!A:ZZ',
+    });
+    const membersRows = membersResponse.data.values || [];
+    const memberUserNameCol = membersColMap['user_name'] ?? 0;
+    const memberFullNameCol = membersColMap['full_name'] ?? membersColMap['name'] ?? 1;
+
+    membersLookup = new Map();
+    for (let i = 1; i < membersRows.length; i++) {
+      const row = membersRows[i];
+      const userName = row[memberUserNameCol];
+      const fullName = row[memberFullNameCol];
+      if (userName && fullName) {
+        membersLookup.set(userName.toLowerCase(), fullName);
+      }
+    }
+  }
+
+  // Helper to get lookup value (userName or fullName)
+  const getLookupValue = (userName: string): string => {
+    if (usesUserName) return userName;
+    return membersLookup?.get(userName.toLowerCase()) || userName;
+  };
+
+  // Build a map of existing players (lowercase lookup value -> row index)
+  const existingPlayersMap = new Map<string, number>();
+  for (let i = 1; i < playersRows.length; i++) {
+    const lookupValue = playersRows[i][userNameColIndex];
+    if (lookupValue) {
+      existingPlayersMap.set(lookupValue.toString().toLowerCase(), i + 1); // 1-based row
+    }
+  }
+
+  const gameColumnLetter = getColumnLetter(gameColumnIndex);
   const userNameColLetter = getColumnLetter(userNameColIndex);
 
-  // Fetch entire identifier column to find all users' rows
-  const playersResponse = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `Players!${userNameColLetter}:${userNameColLetter}`,
-  });
-
-  const players = playersResponse.data.values || [];
-  const gameColumnLetter = getColumnLetter(gameColumnIndex);
-
-  // Build lookup values for all users
-  const lookupPromises = entries.map(async entry => {
-    const lookupValue = await getPlayerLookupValue(entry.userName, spreadsheetId, colMap);
-    return { ...entry, lookupValue };
-  });
-  const entriesWithLookup = await Promise.all(lookupPromises);
-
-  // Process results and build batch updates
+  // Process all entries and build batch updates
   const results: { userName: string; success: boolean; error?: string }[] = [];
-  const batchData: { range: string; values: string[][] }[] = [];
-  const newUsersToAdd: { lookupValue: string; userName: string; status: string }[] = [];
+  const batchData: { range: string; values: (string | number)[][] }[] = [];
+  let nextNewRow = playersRows.length + 1;
 
-  for (const entry of entriesWithLookup) {
+  for (const entry of entries) {
     try {
-      // Find user's row
-      let userRowIndex = players.findIndex((row, index) => index > 0 && row[0] === entry.lookupValue);
+      const lookupValue = getLookupValue(entry.userName);
+      const existingRow = existingPlayersMap.get(lookupValue.toLowerCase());
 
-      if (userRowIndex === -1) {
-        // User doesn't exist - track them for adding later
-        newUsersToAdd.push({
-          lookupValue: entry.lookupValue,
-          userName: entry.userName,
-          status: entry.status,
-        });
-      } else {
-        // User exists - add to batch
-        const rowNumber = userRowIndex + 1;
+      if (existingRow) {
+        // User exists - add status update to batch
         batchData.push({
-          range: `Players!${gameColumnLetter}${rowNumber}`,
+          range: `Players!${gameColumnLetter}${existingRow}`,
           values: [[entry.status]],
         });
-        results.push({ userName: entry.userName, success: true });
+      } else {
+        // New user - add both name and status to batch
+        batchData.push({
+          range: `Players!${userNameColLetter}${nextNewRow}`,
+          values: [[lookupValue]],
+        });
+        batchData.push({
+          range: `Players!${gameColumnLetter}${nextNewRow}`,
+          values: [[entry.status]],
+        });
+        // Track for next iteration
+        existingPlayersMap.set(lookupValue.toLowerCase(), nextNewRow);
+        nextNewRow++;
       }
+      results.push({ userName: entry.userName, success: true });
     } catch (err) {
       results.push({
         userName: entry.userName,
@@ -1214,37 +1375,7 @@ export async function batchUpdatePlayerEntries(
     }
   }
 
-  // Add new users first (need to add them one by one to get row numbers)
-  for (const newUser of newUsersToAdd) {
-    try {
-      const nextRowNumber = players.length + 1;
-      // Add user identifier
-      await sheets.spreadsheets.values.update({
-        spreadsheetId,
-        range: `Players!${userNameColLetter}${nextRowNumber}`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[newUser.lookupValue]] },
-      });
-
-      // Add their status to batch
-      batchData.push({
-        range: `Players!${gameColumnLetter}${nextRowNumber}`,
-        values: [[newUser.status]],
-      });
-      results.push({ userName: newUser.userName, success: true });
-
-      // Update local players array for next iteration
-      players.push([newUser.lookupValue]);
-    } catch (err) {
-      results.push({
-        userName: newUser.userName,
-        success: false,
-        error: err instanceof Error ? err.message : 'Failed to add user',
-      });
-    }
-  }
-
-  // Execute batch update for all status updates
+  // Execute single batch update for all changes
   if (batchData.length > 0) {
     await sheets.spreadsheets.values.batchUpdate({
       spreadsheetId,
@@ -1478,11 +1609,27 @@ export async function getPlayerStats(userName: string): Promise<PlayerStats> {
     return val ? parseFloat(val) : 0;
   };
 
+  // Helper function to get percent_played normalized to decimal (0-1 range)
+  // Handles multiple formats: "64%", "64", "0.64", or 1 (for 100%)
+  const getPercentPlayed = (): number => {
+    const val = get('percent_played');
+    if (!val) return 0;
+
+    // Remove % sign if present and parse as float
+    const numStr = String(val).replace('%', '').trim();
+    const num = parseFloat(numStr);
+
+    if (isNaN(num)) return 0;
+
+    // Normalize to decimal: values > 1 are percentages (64 -> 0.64), values <= 1 are already decimal
+    return num > 1 ? num / 100 : num;
+  };
+
   // Extract stats from the fixed stat columns
   const stats: PlayerStats = {
     nameDown: getInt('name_down'),          // How many times player has put their name down
     picked: getInt('picked'),               // How many times player has been picked to play
-    percentPlayed: getFloat('percent_played'), // Percentage of games played vs name down
+    percentPlayed: getPercentPlayed(),      // Percentage of games played vs name down (normalized to 0-1)
     withdrawn: getInt('withdrawn'),         // Number of withdrawals
     cancelled: getInt('cancelled'),         // Number of cancelled games
     last6Games: [],                         // Will be populated below
@@ -1772,21 +1919,108 @@ export async function createGameSheet(tabName: string): Promise<{ enteredCount: 
     }
   }
 
-  // Add entered players to the game sheet (if any entered)
+  // Add entered players to the game sheet with their stats (if any entered)
   if (enteredPlayers.length > 0) {
-    // Sort players alphabetically for easier captain selection
-    // Convert to array of single-element arrays (format required by Sheets API)
-    const playerValues = enteredPlayers.sort().map(name => [name]);
+    // Get column map for the newly created game sheet
+    const gameSheetColMap = await getColumnMap(getFriendliesSpreadsheetId(), tabName);
 
-    // Write player names to column A starting at row 2 (row 1 is header)
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: getFriendliesSpreadsheetId(),
-      range: `'${tabName}'!A2:A${1 + playerValues.length}`,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: {
-        values: playerValues,
-      },
+    // Get column indices for the game sheet
+    const nameColIndex = gameSheetColMap['name'] ?? gameSheetColMap['user_name'] ?? 0;
+    const nameDownColIndex = gameSheetColMap['name_down'];
+    const pickedColIndex = gameSheetColMap['picked'];
+    const percentPlayedColIndex = gameSheetColMap['percent_played'];
+    const driverBarColIndex = gameSheetColMap['driver_bar'];
+
+    // Fetch Members sheet for driver/bar lookups
+    const membersSpreadsheetId = getMembersSpreadsheetId();
+    const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
+    const membersResponse = await sheets.spreadsheets.values.get({
+      spreadsheetId: membersSpreadsheetId,
+      range: 'Members!A:ZZ',
     });
+    const membersRows = membersResponse.data.values || [];
+
+    // Sort players alphabetically for easier captain selection
+    const sortedPlayers = enteredPlayers.sort();
+
+    // Build batch updates for each player with their stats
+    const batchUpdates: { range: string; values: (string | number)[][] }[] = [];
+    let currentRow = 2; // Start at row 2 (row 1 is header)
+
+    for (const userName of sortedPlayers) {
+      try {
+        // Get player stats from Players sheet
+        const stats = getPlayerStatsFromCache(userName, rows, playersColMap, headers, tabName);
+        const driverBar = getDriverBarInfoFromCache(userName, membersRows, membersColMap);
+
+        // Add player name
+        const nameCol = getColumnLetter(nameColIndex);
+        batchUpdates.push({
+          range: `'${tabName}'!${nameCol}${currentRow}`,
+          values: [[userName]],
+        });
+
+        // Add stats if columns exist
+        if (nameDownColIndex !== undefined) {
+          const col = getColumnLetter(nameDownColIndex);
+          batchUpdates.push({
+            range: `'${tabName}'!${col}${currentRow}`,
+            values: [[stats.nameDown]],
+          });
+        }
+
+        if (pickedColIndex !== undefined) {
+          const col = getColumnLetter(pickedColIndex);
+          batchUpdates.push({
+            range: `'${tabName}'!${col}${currentRow}`,
+            values: [[stats.picked]],
+          });
+        }
+
+        if (percentPlayedColIndex !== undefined) {
+          const col = getColumnLetter(percentPlayedColIndex);
+          // Write percentPlayed as decimal (0-1) for percentage-formatted cells
+          // Normalize: if value > 1, it's already a percentage (64 -> 0.64)
+          const percentPlayedDecimal = stats.percentPlayed > 1
+            ? stats.percentPlayed / 100
+            : stats.percentPlayed;
+          batchUpdates.push({
+            range: `'${tabName}'!${col}${currentRow}`,
+            values: [[percentPlayedDecimal]],
+          });
+        }
+
+        if (driverBarColIndex !== undefined) {
+          const col = getColumnLetter(driverBarColIndex);
+          batchUpdates.push({
+            range: `'${tabName}'!${col}${currentRow}`,
+            values: [[driverBar.code]],
+          });
+        }
+
+        currentRow++;
+      } catch (statsError) {
+        console.error(`[createGameSheet] Error getting stats for ${userName}:`, statsError);
+        // Still add the player name even if stats fail
+        const nameCol = getColumnLetter(nameColIndex);
+        batchUpdates.push({
+          range: `'${tabName}'!${nameCol}${currentRow}`,
+          values: [[userName]],
+        });
+        currentRow++;
+      }
+    }
+
+    // Execute batch update to add all players with stats
+    if (batchUpdates.length > 0) {
+      await sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId: getFriendliesSpreadsheetId(),
+        requestBody: {
+          valueInputOption: 'USER_ENTERED',
+          data: batchUpdates,
+        },
+      });
+    }
   }
 
   // Update the entered count in Games sheet to reflect how many players entered
@@ -2073,16 +2307,18 @@ export async function updateGameSheet(
  * Also adds cell notes with last 6 games history to help captains make selection decisions
  * Uses batch update for efficiency when updating multiple cells
  * Called by captains before making team selections to see current player stats
+ * Also adds any players from the Players sheet who have entered but aren't in the game sheet yet
  * @param tabName The game's tab name (sheet to update)
- * @returns Number of stat cells updated
+ * @returns Number of players in the game sheet after update
  */
 export async function updateGameSheetStats(tabName: string): Promise<number> {
   const spreadsheetId = getFriendliesSpreadsheetId();
-  const colMap = await getColumnMap(spreadsheetId, tabName);
+  let colMap = await getColumnMap(spreadsheetId, tabName);
   const sheets = getSheetsClient();
 
-  // Get all players from game sheet
-  const players = await getGameSheet(tabName);
+  // Get all players currently in game sheet
+  let players = await getGameSheet(tabName);
+  const existingPlayerNames = new Set(players.map(p => p.name.toLowerCase()));
 
   // Read Players sheet once for all lookups
   const playersColMap = await getColumnMap(spreadsheetId, 'Players');
@@ -2093,7 +2329,35 @@ export async function updateGameSheetStats(tabName: string): Promise<number> {
   const playersRows = playersResponse.data.values || [];
   const playersHeaders = playersRows[0] || [];
 
-  // Read Members sheet once for driver/bar lookups
+  // Find game column in Players sheet to check who has entered
+  const gameColumnIndex = playersHeaders.findIndex((h: string) => h === tabName);
+  const userNameColIndex = playersColMap['user_name'] ?? 0;
+
+  // Find players who have entered but aren't in the game sheet yet
+  // Only add players with 'M' (manually added) status - these are newly added players
+  // Don't add E (self-entered) as they should have been added when game was closed
+  // Don't add D, P, R, T as they've already been processed
+  const playersToAdd: string[] = [];
+  if (gameColumnIndex !== -1) {
+    for (let i = 1; i < playersRows.length; i++) {
+      const row = playersRows[i];
+      const status = (row[gameColumnIndex] || '').toString().toUpperCase();
+      const userName = row[userNameColIndex];
+
+      // Only add players with 'M' status who aren't already in game sheet
+      // 'M' means manually added by captain and not yet in game sheet
+      if (userName && status === 'M') {
+        if (!existingPlayerNames.has(userName.toLowerCase())) {
+          playersToAdd.push(userName);
+        }
+      }
+    }
+  }
+
+  // Track newly added player names (lowercase) to only update stats for these players
+  const newlyAddedPlayers = new Set(playersToAdd.map(name => name.toLowerCase()));
+
+  // Fetch Members sheet ONCE for all driver/bar lookups (used by both add and update sections)
   const membersSpreadsheetId = getMembersSpreadsheetId();
   const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
   const membersResponse = await sheets.spreadsheets.values.get({
@@ -2102,11 +2366,81 @@ export async function updateGameSheetStats(tabName: string): Promise<number> {
   });
   const membersRows = membersResponse.data.values || [];
 
+  // Add missing players to the game sheet
+  if (playersToAdd.length > 0) {
+    // Get column letters for adding players (name column may be 'user_name' or 'name')
+    const nameColIndex = colMap['user_name'] ?? colMap['name'];
+    const nameDownColIndex = colMap['name_down'];
+    const driverBarColIndex = colMap['driver_bar'];
+
+    if (nameColIndex !== undefined && nameDownColIndex !== undefined && driverBarColIndex !== undefined) {
+      const nameCol = getColumnLetter(nameColIndex);
+      const nameDownCol = getColumnLetter(nameDownColIndex);
+      const driverBarCol = getColumnLetter(driverBarColIndex);
+
+      // Calculate next available row
+      let nextRow = players.length > 0
+        ? players[players.length - 1].rowNumber + 1
+        : 2;
+
+      const addUpdates: { range: string; values: (string | number)[][] }[] = [];
+
+      for (const userName of playersToAdd) {
+        // Get stats from cached Players sheet data
+        const stats = getPlayerStatsFromCache(userName, playersRows, playersColMap, playersHeaders, tabName);
+        // Get driver/bar info from cached Members data
+        const driverBar = getDriverBarInfoFromCache(userName, membersRows, membersColMap);
+
+        // Add player name
+        addUpdates.push({
+          range: `'${tabName}'!${nameCol}${nextRow}`,
+          values: [[userName]],
+        });
+
+        // Add stats (name_down through driver_bar)
+        // Write percentPlayed as decimal (0-1) for percentage-formatted cells
+        // Normalize: if value > 1, it's already a percentage (64 -> 0.64)
+        const percentPlayedDecimal = stats.percentPlayed > 1
+          ? stats.percentPlayed / 100
+          : stats.percentPlayed;
+        addUpdates.push({
+          range: `'${tabName}'!${nameDownCol}${nextRow}:${driverBarCol}${nextRow}`,
+          values: [[stats.nameDown, stats.picked, percentPlayedDecimal, driverBar.code]],
+        });
+
+        nextRow++;
+      }
+
+      // Execute batch update to add new players
+      if (addUpdates.length > 0) {
+        await sheets.spreadsheets.values.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            valueInputOption: 'USER_ENTERED',
+            data: addUpdates,
+          },
+        });
+      }
+
+      // Refresh players list and column map after adding
+      players = await getGameSheet(tabName);
+      clearColumnMapCacheForSheet(spreadsheetId, tabName);
+      colMap = await getColumnMap(spreadsheetId, tabName);
+    }
+  }
+
   const updates: any[] = [];
   const noteUpdates: any[] = [];
 
   for (let i = 0; i < players.length; i++) {
     const player = players[i];
+
+    // Only update stats for newly added players (just added by this function)
+    // Stats are populated once when players are first added - either via createGameSheet
+    // (when game is closed) or via this function (when Add Players is used)
+    if (!newlyAddedPlayers.has(player.name.toLowerCase())) {
+      continue;
+    }
 
     try {
       // Get stats for this player from cached Players sheet
@@ -2151,9 +2485,14 @@ export async function updateGameSheetStats(tabName: string): Promise<number> {
 
       if (percentPlayedIdx !== undefined) {
         const percentPlayedCol = getColumnLetter(percentPlayedIdx);
+        // Write percentPlayed as decimal (0-1) for percentage-formatted cells
+        // Normalize: if value > 1, it's already a percentage (64 -> 0.64)
+        const percentPlayedDecimal = stats.percentPlayed > 1
+          ? stats.percentPlayed / 100
+          : stats.percentPlayed;
         updates.push({
           range: `'${tabName}'!${percentPlayedCol}${player.rowNumber}`,
-          values: [[stats.percentPlayed]],
+          values: [[percentPlayedDecimal]],
         });
       }
 
@@ -2233,7 +2572,7 @@ export async function updateGameSheetStats(tabName: string): Promise<number> {
     });
   }
 
-  return players.length;
+  return newlyAddedPlayers.size;
 }
 
 // Helper function to get player stats from cached Players sheet data
@@ -2313,20 +2652,21 @@ function getPlayerStatsFromCache(
   // Extract cancelled stat (how many games were cancelled)
   const cancelled = getInt('cancelled');
 
-  // Parse percent_played - handle multiple formats: "64%", "64", or "0.64"
-  let percentPlayedVal = get('percent_played');
+  // Parse percent_played - handle multiple formats: "64%", "64", "0.64", or numeric 1/0.64
+  const percentPlayedVal = get('percent_played');
   let percentPlayed = 0;
 
   // Process the value if it exists
-  if (percentPlayedVal) {
-    // Remove % sign if present and parse as float
-    const numStr = percentPlayedVal.replace('%', '').trim();
-    const num = parseFloat(numStr);
+  if (percentPlayedVal !== null && percentPlayedVal !== undefined && percentPlayedVal !== '') {
+    // Convert to string first to handle both string and number values from Google Sheets
+    const valStr = String(percentPlayedVal).replace('%', '').trim();
+    const num = parseFloat(valStr);
 
     // Check if valid number
     if (!isNaN(num)) {
-      // If value is like "64", convert to decimal (0.64)
-      // If already decimal like "0.64", keep as is
+      // Normalize to decimal (0-1 range):
+      // - Values > 1 are percentages (64 -> 0.64, 100 -> 1.0)
+      // - Values <= 1 are already decimal (0.64 stays 0.64, 1 stays 1.0)
       percentPlayed = num > 1 ? num / 100 : num;
     }
   }
@@ -2334,6 +2674,14 @@ function getPlayerStatsFromCache(
   // Collect last 6 games player participated in
   // Iterate backward through game columns (right to left = newest to oldest)
   const last6Games: string[] = [];
+
+  // Valid status codes for last 6 games display
+  // E=Entered, M=Manually added, D=Down (entered but not selected), P=Picked, R=Reserve, T=Reserve Team
+  // A=Available, C=Cancelled, with W suffix for withdrawn versions
+  const validStatuses = [
+    'E', 'M', 'D', 'P', 'R', 'T', 'A', 'C',
+    'EW', 'MW', 'DW', 'PW', 'RW', 'TW', 'AW'
+  ];
 
   // Loop from rightmost column backwards, stop when we have 6 games
   for (let i = headers.length - 1; i >= 0 && last6Games.length < 6; i--) {
@@ -2348,11 +2696,11 @@ function getPlayerStatsFromCache(
     // Get this player's entry status for this game
     const cellValue = userRow[i];
 
-    // Only include games where player has a valid status
-    // E=Entered, P=Picked, R=Reserve, T=Reserve Team, Y=Played, etc.
-    if (cellValue && ['E', 'P', 'R', 'T', 'Y', 'PW', 'RW', 'TW', 'EW'].includes(cellValue)) {
+    // Only include games where player has a valid status (case-insensitive check)
+    const normalizedValue = cellValue ? String(cellValue).toUpperCase() : '';
+    if (normalizedValue && validStatuses.includes(normalizedValue)) {
       // Add to history in format: "West Hoathly 25-Sep    E"
-      last6Games.push(`${header}    ${cellValue}`);
+      last6Games.push(`${header}    ${normalizedValue}`);
     }
   }
 
@@ -2448,8 +2796,8 @@ export async function addPlayerToGameSheet(
     ? currentPlayers[currentPlayers.length - 1].rowNumber + 1
     : 2;
 
-  // Write player's name to the game sheet
-  const nameCol = getColumnLetter(colMap['name']);
+  // Write player's name to the game sheet (column may be 'user_name' or 'name')
+  const nameCol = getColumnLetter(colMap['user_name'] ?? colMap['name']);
   await sheets.spreadsheets.values.update({
     spreadsheetId,
     range: `'${tabName}'!${nameCol}${nextRow}`,  // e.g., "'West Hoathly 25-Sep'!A5"
@@ -2468,6 +2816,11 @@ export async function addPlayerToGameSheet(
   // Calculate column range for stats (name_down through driver_bar)
   const nameDownCol = getColumnLetter(colMap['name_down']);
   const driverBarCol = getColumnLetter(colMap['driver_bar']);
+  // Write percentPlayed as decimal (0-1) for percentage-formatted cells
+  // Normalize: if value > 1, it's already a percentage (64 -> 0.64)
+  const percentPlayedDecimal = stats.percentPlayed > 1
+    ? stats.percentPlayed / 100
+    : stats.percentPlayed;
 
   // Write all stats in a single row update
   await sheets.spreadsheets.values.update({
@@ -2478,7 +2831,7 @@ export async function addPlayerToGameSheet(
       values: [[
         stats.nameDown,         // How many games player has entered
         stats.picked,           // How many times selected to play
-        stats.percentPlayed,    // Percentage of games played
+        percentPlayedDecimal,   // Percentage as decimal (0.64 for 64%) for percentage-formatted cells
         driverBar.code,         // D=Driver, B=Bar, DB=Both, ''=Neither
       ]],
     },
@@ -2486,6 +2839,127 @@ export async function addPlayerToGameSheet(
 
   // Mark player as 'E' (Entered) in Players sheet for this game
   await updatePlayerEntry(userName, tabName, 'E');
+}
+
+/**
+ * Batch add multiple players to a game sheet
+ * Adds players to both the individual game sheet (tab) and the Players sheet column
+ * More efficient than calling addPlayerToGameSheet multiple times
+ * @param tabName The game's tab name
+ * @param userNames Array of usernames to add
+ * @returns Array of results indicating success/failure for each player
+ */
+export async function batchAddPlayersToGameSheet(
+  tabName: string,
+  userNames: string[]
+): Promise<{ userName: string; success: boolean; error?: string }[]> {
+  if (userNames.length === 0) return [];
+
+  const spreadsheetId = getFriendliesSpreadsheetId();
+  let colMap = await getColumnMap(spreadsheetId, tabName);
+  const sheets = getSheetsClient();
+
+  // Validate required columns exist (name column may be 'user_name' or 'name')
+  const hasNameCol = colMap['user_name'] !== undefined || colMap['name'] !== undefined;
+  const requiredCols = ['name_down', 'driver_bar'];
+  const missingCols = requiredCols.filter(col => colMap[col] === undefined);
+  if (!hasNameCol) {
+    missingCols.unshift('user_name/name');
+  }
+
+  // If columns are missing, clear cache and retry once (cache might be stale)
+  if (missingCols.length > 0) {
+    clearColumnMapCacheForSheet(spreadsheetId, tabName);
+    colMap = await getColumnMap(spreadsheetId, tabName);
+
+    // Check again after refresh
+    const stillMissing = requiredCols.filter(col => colMap[col] === undefined);
+    if (stillMissing.length > 0) {
+      throw new Error(`Required columns not found in sheet '${tabName}': ${stillMissing.join(', ')}. Available: ${Object.keys(colMap).join(', ')}`);
+    }
+  }
+
+  // Get current players to find next available row
+  const currentPlayers = await getGameSheet(tabName);
+  let nextRow = currentPlayers.length > 0
+    ? currentPlayers[currentPlayers.length - 1].rowNumber + 1
+    : 2;
+
+  // Get column letters for updates (name column may be 'user_name' or 'name')
+  const nameCol = getColumnLetter(colMap['user_name'] ?? colMap['name']);
+  const nameDownCol = getColumnLetter(colMap['name_down']);
+  const driverBarCol = getColumnLetter(colMap['driver_bar']);
+
+  const results: { userName: string; success: boolean; error?: string }[] = [];
+  const gameSheetUpdates: { range: string; values: (string | number)[][] }[] = [];
+  const playersToAddToPlayersSheet: string[] = [];
+
+  // Process each player
+  for (const userName of userNames) {
+    try {
+      // Check if player already exists in game sheet
+      const isDuplicate = currentPlayers.some(
+        player => player.name === userName || player.name.toLowerCase() === userName.toLowerCase()
+      );
+
+      if (isDuplicate) {
+        results.push({ userName, success: false, error: 'Already in game' });
+        continue;
+      }
+
+      // Get player stats and driver/bar info
+      const stats = await getPlayerStats(userName);
+      const driverBar = await getDriverBarInfo(userName);
+      // Write percentPlayed as decimal (0-1) for percentage-formatted cells
+      // Normalize: if value > 1, it's already a percentage (64 -> 0.64)
+      const percentPlayedDecimal = stats.percentPlayed > 1
+        ? stats.percentPlayed / 100
+        : stats.percentPlayed;
+
+      // Add to game sheet batch updates
+      gameSheetUpdates.push(
+        {
+          range: `'${tabName}'!${nameCol}${nextRow}`,
+          values: [[userName]],
+        },
+        {
+          range: `'${tabName}'!${nameDownCol}${nextRow}:${driverBarCol}${nextRow}`,
+          values: [[stats.nameDown, stats.picked, percentPlayedDecimal, driverBar.code]],
+        }
+      );
+
+      // Track for Players sheet update
+      playersToAddToPlayersSheet.push(userName);
+      results.push({ userName, success: true });
+      nextRow++;
+    } catch (err) {
+      results.push({
+        userName,
+        success: false,
+        error: err instanceof Error ? err.message : 'Failed to add player',
+      });
+    }
+  }
+
+  // Execute batch update for game sheet
+  if (gameSheetUpdates.length > 0) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        valueInputOption: 'USER_ENTERED',
+        data: gameSheetUpdates,
+      },
+    });
+  }
+
+  // Update Players sheet for all successfully added players
+  if (playersToAddToPlayersSheet.length > 0) {
+    await batchUpdatePlayerEntries(tabName,
+      playersToAddToPlayersSheet.map(userName => ({ userName, status: 'E' as const }))
+    );
+  }
+
+  return results;
 }
 
 // ============================================================================
@@ -2613,117 +3087,6 @@ export async function getDriverBarInfo(userName: string): Promise<DriverBarInfo>
 
   // Return driver/bar information object
   return { driver, bar, code };
-}
-
-/**
- * Get tea rota information for a specific game
- * The Tea Rota sheet contains tea duties assigned to members for each game
- * Matches games by date, time, and club name (date matching is flexible to handle different formats)
- * Returns tea duty assignments (lead, second, third) for full games and short games
- */
-export async function getTeaRota(
-  date: string,       // Game date in YYYY-MM-DD format (e.g., "2025-04-27")
-  time: string,       // Game time (e.g., "14:00")
-  clubName: string    // Opponent club name
-): Promise<TeaRota | null> {
-  // Get Members spreadsheet ID (Tea Rota sheet is in Members spreadsheet)
-  const spreadsheetId = getMembersSpreadsheetId();
-
-  // Get column mappings for Tea Rota sheet (cached)
-  const colMap = await getColumnMap(spreadsheetId, 'Tea Rota');
-
-  // Initialize Google Sheets API client
-  const sheets = getSheetsClient();
-
-  // Fetch all data from Tea Rota sheet
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: 'Tea Rota!A:ZZ',
-  });
-
-  // Extract rows from response
-  const rows = response.data.values || [];
-
-  // Return null if no data in Tea Rota sheet
-  if (rows.length === 0) return null;
-
-  // Helper function to get a string value from a row by field name
-  const get = (row: any[], field: string): string | null => {
-    const index = colMap[field];
-    return index !== undefined ? (row[index] || null) : null;
-  };
-
-  // Parse the input date to extract day and month numbers
-  // Input format: "YYYY-MM-DD" (e.g., "2025-04-27")
-  const dateParts = date.split('-');
-  const month = dateParts[1] ? parseInt(dateParts[1]) : 0;  // Month number (1-12)
-  const day = dateParts[2] ? parseInt(dateParts[2]) : 0;    // Day number (1-31)
-
-  // Month names array for converting month number to text
-  // Index 0 = January, Index 11 = December
-  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
-                     'July', 'August', 'September', 'October', 'November', 'December'];
-
-  // Get the full month name (e.g., "April" for month 4)
-  const monthName = monthNames[month - 1];
-
-  // Search for matching tea rota entry by date, time, and club name
-  let matchingRow = null;
-
-  // Loop through all data rows (skip header at index 0)
-  for (let i = 1; i < rows.length; i++) {
-    const row = rows[i];
-
-    // Extract date, time, and club from this row
-    const rowDate = get(row, 'date');
-    const rowTime = get(row, 'time');
-    const rowClub = get(row, 'club_name');
-
-    // Check if date matches using flexible date format matching
-    // Tea Rota sheet may use different date formats: "27 April" or "27 Apr"
-    // We match against both full month name and abbreviated month name
-    let dateMatch = false;
-    if (rowDate && monthName) {
-      // Check for full month format: "27 April"
-      const fullMonthMatch = rowDate.includes(`${day} ${monthName}`);
-
-      // Check for abbreviated month format: "27 Apr" (first 3 letters)
-      const shortMonthMatch = rowDate.includes(`${day} ${monthName.substring(0, 3)}`);
-
-      // Date matches if either format is found in the row's date field
-      dateMatch = fullMonthMatch || shortMonthMatch;
-    }
-
-    // Check if time matches exactly
-    const timeMatch = rowTime === time;
-
-    // Check if club name matches exactly
-    const clubMatch = rowClub === clubName;
-
-    // If all three criteria match (date, time, and club), we found the tea rota entry
-    if (dateMatch && timeMatch && clubMatch) {
-      matchingRow = row;
-      break;
-    }
-  }
-
-  // Return null if no matching tea rota entry found
-  if (!matchingRow) return null;
-
-  // Extract tea duty assignments from matching row and return TeaRota object
-  return {
-    date: get(matchingRow, 'date') || '',                 // Display date (formatted)
-    time: get(matchingRow, 'time') || '',                 // Game time
-    clubName: get(matchingRow, 'club_name') || '',        // Opponent club
-    ladiesMen: get(matchingRow, 'ladies_men') || '',      // Ladies/Men designation
-    format: get(matchingRow, 'format') || '',             // Game format (Triples, Rinks, etc.)
-    lead: get(matchingRow, 'lead') || '',                 // Lead tea duty (full game)
-    second: get(matchingRow, 'second') || '',             // Second tea duty (full game)
-    third: get(matchingRow, 'third') || '',               // Third tea duty (full game)
-    shortLead: get(matchingRow, 'short_lead') || '',      // Lead tea duty (short game)
-    shortSecond: get(matchingRow, 'short_second') || '',  // Second tea duty (short game)
-    shortThird: get(matchingRow, 'short_third') || '',    // Third tea duty (short game)
-  };
 }
 
 // ============================================================================

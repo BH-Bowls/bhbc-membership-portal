@@ -174,6 +174,10 @@ export default function MatchCardPage() {
       {/* Print-specific styles - hide navbar and buttons, enable page breaks */}
       <style jsx global>{`
         @media print {
+          @page {
+            size: auto;
+            margin: 10mm;
+          }
           body {
             print-color-adjust: exact;
             -webkit-print-color-adjust: exact;
@@ -196,8 +200,13 @@ export default function MatchCardPage() {
         {/* Header with back link and print button - hidden when printing */}
         <div className="no-print bg-white border-b border-gray-200 p-4">
           <div className="container mx-auto max-w-4xl flex justify-between items-center">
-            {/* Link back to game details page */}
-            <Link href={`/friendlies/game/${tabDate}`} className="text-blue-600 hover:text-blue-800">
+            {/* Link back to appropriate page based on user role */}
+            <Link
+              href={session?.user?.role === 'Captain' || session?.user?.role === 'Admin'
+                ? `/friendlies/manage/game/${tabDate}`
+                : `/friendlies/game/${tabDate}`}
+              className="text-blue-600 hover:text-blue-800"
+            >
               ← Back to Game
             </Link>
 

@@ -10,6 +10,8 @@ interface SearchableSelectProps {
   placeholder?: string;
   className?: string;
   disabled?: boolean;
+  autoFocus?: boolean;
+  keepFocusOnSelect?: boolean;
 }
 
 export function SearchableSelect({
@@ -19,12 +21,21 @@ export function SearchableSelect({
   placeholder = 'Type to search...',
   className = '',
   disabled = false,
+  autoFocus = false,
+  keepFocusOnSelect = false,
 }: SearchableSelectProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-focus on mount if requested
+  useEffect(() => {
+    if (autoFocus && inputRef.current && !disabled) {
+      inputRef.current.focus();
+    }
+  }, [autoFocus, disabled]);
 
   // Filter options based on search term
   // Google Sheets-style matching: check if any word in the label starts with the search term
@@ -72,8 +83,14 @@ export function SearchableSelect({
     if (disabled) return;
     onChange(option.value);
     setSearchTerm('');
-    setIsOpen(false);
-    inputRef.current?.blur();
+    setIsOpen(false); // Always close dropdown after selection
+    if (keepFocusOnSelect) {
+      // Keep focus on input for quick additional selections
+      // User can start typing again to reopen dropdown
+      inputRef.current?.focus();
+    } else {
+      inputRef.current?.blur();
+    }
   }
 
   // Handle keyboard navigation
@@ -125,7 +142,7 @@ export function SearchableSelect({
         onChange={handleInputChange}
         onFocus={() => {
           if (!disabled) {
-            setIsOpen(true);
+            // Don't open dropdown on focus - only open when user starts typing
             setSearchTerm('');
           }
         }}

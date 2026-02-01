@@ -23,7 +23,8 @@ export async function POST(request: NextRequest) {
 
     // Parse request body
     const body: WithdrawRequest = await request.json();
-    const { tab_name } = body;
+    // Decode tab_name in case it's URL-encoded
+    const tab_name = decodeURIComponent(body.tab_name);
 
     // Get current user's username
     const userName = session.user.userName;

@@ -1,10 +1,11 @@
 // app/api/friendlies/add-players/route.ts
 // API endpoint for players to manually add other players to a game
+// Optimized to add players to both Players sheet AND game sheet in one call
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, batchUpdatePlayerEntries, getEnteredPlayers, updateGameCounts } from '@/lib/friendlies-sheets';
+import { getGames, batchUpdatePlayerEntries, addPlayersToGameSheetDirect, updateGameCounts } from '@/lib/friendlies-sheets';
 import { canEnterGame } from '@/lib/game-management/capacity';
 
 // POST handler - Adds players with M (manually added) status
@@ -37,13 +38,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
 
-    // Only allow adding to open games
-    if (game.status !== 'O') {
-      return NextResponse.json({ error: 'Game is not open for entry' }, { status: 400 });
-    }
-
     // Check capacity limits (captains/admins bypass capacity)
     const isCaptainOrAdmin = session.user.role && ['Captain', 'Admin'].includes(session.user.role);
+
+    // Only allow adding to open games, or Selecting/Selected games for captains/admins
+    if (game.status !== 'O') {
+      if (!isCaptainOrAdmin || !['X', 'S'].includes(game.status)) {
+        return NextResponse.json({ error: 'Game is not open for entry' }, { status: 400 });
+      }
+    }
 
     if (!isCaptainOrAdmin && game.maxPlayers && game.maxPlayers > 0) {
       const capacityCheck = canEnterGame(game, false);
@@ -58,7 +61,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Add all players with M (manually added) status in a single batch
+    // Add all players with M (manually added) status to Players sheet
     const entries = playerUserNames.map(userName => ({ userName, status: 'M' as const }));
     const batchResults = await batchUpdatePlayerEntries(game.tabName, entries);
     const results = batchResults.map(r => ({
@@ -78,16 +81,29 @@ export async function POST(request: NextRequest) {
       }, { status: 500 });
     }
 
-    // Update the entered count in Games sheet
-    try {
-      const enteredPlayers = await getEnteredPlayers(game.tabName);
-      await updateGameCounts(game.tabName, { entered: enteredPlayers.length });
-    } catch (countError) {
-      console.error('[Friendlies API] Error updating entered count:', countError);
-      // Don't fail the request, players were added successfully
+    // For games in Selecting/Selected status, also add players to game sheet directly
+    // This eliminates the need for a separate get-stats call
+    if (['X', 'S'].includes(game.status)) {
+      try {
+        const successfulPlayers = results.filter(r => r.added).map(r => r.userName);
+        await addPlayersToGameSheetDirect(game.tabName, successfulPlayers);
+      } catch (gameSheetError) {
+        console.error('[Friendlies API] Error adding to game sheet:', gameSheetError);
+        // Don't fail - players were added to Players sheet
+      }
     }
 
-    return NextResponse.json({ success: true, results });
+    // Update the entered count (just increment by successful additions)
+    const addedCount = results.filter(r => r.added).length;
+    if (addedCount > 0) {
+      try {
+        await updateGameCounts(game.tabName, { entered: game.entered + addedCount });
+      } catch (countError) {
+        console.error('[Friendlies API] Error updating entered count:', countError);
+      }
+    }
+
+    return NextResponse.json({ success: true, results, addedToGameSheet: ['X', 'S'].includes(game.status) });
   } catch (error) {
     console.error('[Friendlies API] Error adding players:', error);
     return NextResponse.json(

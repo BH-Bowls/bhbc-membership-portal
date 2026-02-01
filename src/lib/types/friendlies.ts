@@ -23,7 +23,9 @@ export type GameStatus = '' | 'O' | 'X' | 'S' | 'P' | 'C' | 'A';
  * Player entry status codes - stored in Players sheet columns
  * Tracks player's participation status for each game
  * Base codes:
- *   'E' = Entered - Player entered but not yet selected
+ *   'E' = Entered - Player entered the game (self-entered)
+ *   'M' = Manually added - Player added by captain
+ *   'D' = Down - Player confirmed for game (stats updated, not selected to play)
  *   'P' = Picked - Player selected to play in regular team
  *   'R' = Reserve - Player selected as reserve
  *   'T' = Reserve Team - Player in reserve team
@@ -31,12 +33,13 @@ export type GameStatus = '' | 'O' | 'X' | 'S' | 'P' | 'C' | 'A';
  *   'C' = Cancelled - Game was cancelled
  * Withdrawal suffix 'W':
  *   'EW' = Entered + Withdrawn
+ *   'DW' = Down + Withdrawn
  *   'PW' = Picked + Withdrawn
  *   'RW' = Reserve + Withdrawn
  *   'TW' = Reserve Team + Withdrawn
  *   'AW' = Abandoned + Withdrawn (rare)
  */
-export type PlayerEntryStatus = 'E' | 'M' | 'P' | 'R' | 'T' | 'A' | 'EW' | 'MW' | 'PW' | 'RW' | 'TW' | 'AW' | 'C';
+export type PlayerEntryStatus = 'E' | 'M' | 'D' | 'P' | 'R' | 'T' | 'A' | 'EW' | 'MW' | 'DW' | 'PW' | 'RW' | 'TW' | 'AW' | 'C';
 
 /**
  * Selection status codes - stored in game sheet 'Selected' column
@@ -178,26 +181,6 @@ export interface DriverBarInfo {
   driver: boolean;  // True if player can drive to away matches
   bar: boolean;     // True if player does bar duty at home matches
   code: string;     // Display code: 'D', 'B', 'DB', or ''
-}
-
-/**
- * TeaRota - Tea duty assignment for a specific game
- * Read from Tea Rota sheet
- * Assigns members to prepare tea before/during the match
- * Full game tea duties (lead, second, third) and short game duties
- */
-export interface TeaRota {
-  date: string;       // Game date for matching
-  time: string;       // Game time for matching
-  clubName: string;   // Opponent club name for matching
-  ladiesMen: string;  // "Ladies", "Men", or "Mixed"
-  format: string;     // Game format (e.g., "Rinks", "Triples")
-  lead: string;       // Full game tea lead person
-  second: string;     // Full game tea second person
-  third: string;      // Full game tea third person
-  shortLead: string;  // Short game tea lead person
-  shortSecond: string;// Short game tea second person
-  shortThird: string; // Short game tea third person
 }
 
 /**

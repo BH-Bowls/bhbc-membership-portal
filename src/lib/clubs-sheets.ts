@@ -708,11 +708,12 @@ async function deleteContactByRowNumber(rowNumber: number): Promise<void> {
   });
 
   const contactsSheet = spreadsheet.data.sheets?.find(s =>
-    s.properties?.title === 'Contacts'
+    s.properties?.title?.trim().toLowerCase() === 'contacts'
   );
 
-  if (!contactsSheet?.properties?.sheetId) {
-    throw new Error('Contacts sheet not found');
+  const sheetId = contactsSheet?.properties?.sheetId;
+  if (sheetId === undefined) {
+    throw new Error(`Contacts sheet not found. Available sheets: ${spreadsheet.data.sheets?.map(s => `"${s.properties?.title}" (id: ${s.properties?.sheetId})`).join(', ')}`);
   }
 
   // Delete the row
@@ -723,7 +724,7 @@ async function deleteContactByRowNumber(rowNumber: number): Promise<void> {
         {
           deleteDimension: {
             range: {
-              sheetId: contactsSheet.properties.sheetId,
+              sheetId: sheetId,
               dimension: 'ROWS',
               startIndex: rowNumber - 1, // 0-indexed
               endIndex: rowNumber,

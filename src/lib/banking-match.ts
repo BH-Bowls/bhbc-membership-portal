@@ -185,6 +185,7 @@ export interface RenewalWithState extends RenewalForBanking {
   matched_donations: number;
   matched_difference: number;
   matched_payment_ids: string[]; // Track which specific payment IDs were used for this renewal
+  matched_notes: string; // Payment notes specific to this renewal's match
 }
 
 export interface PaymentWithState extends Payment {
@@ -210,6 +211,7 @@ export function initializeRenewalState(renewal: RenewalForBanking): RenewalWithS
     matched_donations: 0,
     matched_difference: 0,
     matched_payment_ids: [],
+    matched_notes: '',
   };
 }
 
@@ -295,6 +297,7 @@ export function autoMatchIfEqual(
     renewal.matched_donations = renewal.selected_donations;
     renewal.matched_difference = renewal.selected_difference;
     renewal.matched_payment_ids = [...selectedPaymentIds]; // Store which payments were used
+    renewal.matched_notes = ''; // Auto-matched renewals have no notes
     renewal.selected_banking = 0;
     renewal.selected_donations = 0;
     renewal.selected_difference = 0;

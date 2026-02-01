@@ -5,9 +5,12 @@ import { authOptions } from '@/lib/auth';
 import {
   getGames,
   getGameSheet,
-  getTeaRota,
+  getTeaRotaList,
   getClubDetails,
   getClubContacts,
+  getMembersSpreadsheetId,
+  getColumnMap,
+  getSheetsClient,
 } from '@/lib/friendlies-sheets';
 import { MatchCardData, Team, ReservePlayer } from '@/lib/types/friendlies';
 
@@ -50,16 +53,25 @@ export async function GET(
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
 
-    // Verify game status is S or P (Selected or Played)
-    if (!['S', 'P'].includes(game.status)) {
+    // Verify game status is X, S, or P (Selecting, Selected, or Played)
+    if (!['X', 'S', 'P'].includes(game.status)) {
       return NextResponse.json(
-        { error: 'Match card only available for Selected or Played games' },
+        { error: 'Match card only available for Selecting, Selected, or Played games' },
         { status: 400 }
       );
     }
 
+    console.log('[match-card] Game found:', { tabName: game.tabName, status: game.status, homeAway: game.homeAway });
+
     // Get all players from game sheet
-    const allPlayers = await getGameSheet(game.tabName);
+    let allPlayers;
+    try {
+      allPlayers = await getGameSheet(game.tabName);
+      console.log('[match-card] Got players from game sheet:', allPlayers.length);
+    } catch (err) {
+      console.error('[match-card] Error getting game sheet:', err);
+      throw err;
+    }
 
     // Filter selected players
     const selectedPlayers = allPlayers.filter(p =>
@@ -190,22 +202,76 @@ export async function GET(
       captain: captainName,
     };
 
-    // Add tea rota for HOME games
+    // Add tea rota for HOME games (read from Games sheet columns)
     if (game.homeAway === 'H') {
-      const teaRota = await getTeaRota(game.date, game.time, game.clubName);
-      if (teaRota) {
-        matchCardData.teaRota = {
-          lead: teaRota.lead,
-          second: teaRota.second,
-          third: teaRota.third,
-        };
+      try {
+        console.log('[match-card] Fetching tea rota for HOME game:', { tabName: game.tabName });
+        const teaRotaList = await getTeaRotaList();
+        const teaRotaEntry = teaRotaList.find(t => t.tabName === game.tabName);
+        if (teaRotaEntry && (teaRotaEntry.teaLead || teaRotaEntry.teaFirst || teaRotaEntry.teaSecond)) {
+          // Build full name lookup from Members sheet
+          const membersSpreadsheetId = getMembersSpreadsheetId();
+          const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
+          const sheets = getSheetsClient();
+          const membersResponse = await sheets.spreadsheets.values.get({
+            spreadsheetId: membersSpreadsheetId,
+            range: 'Members!A:ZZ',
+          });
+          const membersRows = membersResponse.data.values || [];
+
+          // Build userName -> fullName lookup
+          const fullNameLookup: Record<string, string> = {};
+          const memberUserNameCol = membersColMap['user_name'];
+          const memberFullNameCol = membersColMap['full_name'] ?? membersColMap['full_known_as'] ?? membersColMap['name'];
+          if (memberUserNameCol !== undefined && memberFullNameCol !== undefined) {
+            for (let j = 1; j < membersRows.length; j++) {
+              const memberRow = membersRows[j];
+              const memberUserName = memberRow[memberUserNameCol];
+              const memberFullName = memberRow[memberFullNameCol];
+              if (memberUserName) {
+                fullNameLookup[memberUserName.toLowerCase()] = memberFullName || memberUserName;
+              }
+            }
+          }
+
+          // Helper to get full name from username
+          const getFullName = (userName: string): string => {
+            if (!userName) return '';
+            return fullNameLookup[userName.toLowerCase()] || userName;
+          };
+
+          matchCardData.teaRota = {
+            lead: getFullName(teaRotaEntry.teaLead),
+            second: getFullName(teaRotaEntry.teaFirst),
+            third: getFullName(teaRotaEntry.teaSecond),
+          };
+        }
+        console.log('[match-card] Tea rota result:', teaRotaEntry ? 'found' : 'not found');
+      } catch (err) {
+        // Tea rota is optional - log warning but continue without it
+        console.warn('[match-card] Could not fetch tea rota:', err instanceof Error ? err.message : err);
       }
     }
 
-    // Add club details and contacts for AWAY games
+    // Add club details and contacts for AWAY games (optional - don't fail if not available)
     if (game.homeAway === 'A') {
-      const clubDetails = await getClubDetails(game.clubName);
-      const clubContacts = await getClubContacts(game.clubName);
+      console.log('[match-card] Fetching club details for AWAY game:', { clubName: game.clubName });
+      let clubDetails;
+      let clubContacts;
+      try {
+        clubDetails = await getClubDetails(game.clubName);
+        console.log('[match-card] Club details result:', clubDetails ? 'found' : 'not found');
+      } catch (err) {
+        // Club details are optional - log warning but continue without them
+        console.warn('[match-card] Could not fetch club details:', err instanceof Error ? err.message : err);
+      }
+      try {
+        clubContacts = await getClubContacts(game.clubName);
+        console.log('[match-card] Club contacts result:', clubContacts?.length || 0);
+      } catch (err) {
+        // Club contacts are optional - log warning but continue without them
+        console.warn('[match-card] Could not fetch club contacts:', err instanceof Error ? err.message : err);
+      }
 
       if (clubDetails) {
         // Build address string
@@ -252,6 +318,7 @@ export async function GET(
 
     return NextResponse.json(matchCardData);
   } catch (error) {
+    console.error('[match-card] Error generating match card:', error);
     return NextResponse.json(
       { error: 'Failed to generate match card' },
       { status: 500 }

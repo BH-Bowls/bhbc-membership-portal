@@ -60,6 +60,27 @@ export default function ManageGamesPage() {
     onConfirm: () => {},
   });
 
+  // State: Game outcome dialog for Played/Cancelled/Abandoned
+  const [outcomeDialog, setOutcomeDialog] = useState<{
+    isOpen: boolean;
+    tabName: string;
+    gameStatus: string;  // Current game status to determine available options
+    status: 'P' | 'C' | 'A' | '';  // Played, Cancelled, Abandoned
+    bhbcScore: string;
+    opponentScore: string;
+    reason: string;
+    who: 'Burgess Hill' | 'Opponent' | '';
+  }>({
+    isOpen: false,
+    tabName: '',
+    gameStatus: '',
+    status: '',
+    bhbcScore: '',
+    opponentScore: '',
+    reason: '',
+    who: '',
+  });
+
   // ============================================================================
   // Effects
   // ============================================================================
@@ -223,44 +244,74 @@ export default function ManageGamesPage() {
   }
 
   /**
-   * Handle Mark Played button click
-   * Changes status from 'S' (Selected) to 'P' (Played)
-   * Prompts for scores and records game as completed
+   * Handle game outcome button click (Mark Played, Cancel, Abandon)
+   * Opens the outcome dialog for entering game result details
    */
-  function handleMarkPlayed(tabName: string) {
-    // Prompt for BHBC score
-    const bhbcScore = prompt('Enter BHBC score:');
+  function handleGameOutcome(tabName: string, gameStatus: string) {
+    // For non-selected games, auto-select Cancel since it's the only option
+    const autoStatus = gameStatus !== 'S' ? 'C' : '';
 
-    // Prompt for opponent score
-    const opponentScore = prompt('Enter opponent score:');
-
-    // Check if user cancelled either prompt
-    if (bhbcScore === null || opponentScore === null) return;
-
-    // Call API to mark game as played with scores
-    changeStatus(tabName, 'played', {
-      bhbc_score: parseInt(bhbcScore),
-      opponent_score: parseInt(opponentScore),
+    setOutcomeDialog({
+      isOpen: true,
+      tabName,
+      gameStatus,
+      status: autoStatus as 'P' | 'C' | 'A' | '',
+      bhbcScore: '',
+      opponentScore: '',
+      reason: '',
+      who: '',
     });
   }
 
   /**
-   * Handle Cancel Game button click
-   * Changes status to 'C' (Cancelled)
-   * Prompts for cancellation reason and who cancelled
+   * Submit game outcome from the dialog
    */
-  function handleCancelGame(tabName: string) {
-    // Prompt for cancellation reason
-    const reason = prompt('Enter cancellation reason:');
+  function submitOutcome() {
+    const { tabName, status, bhbcScore, opponentScore, reason, who } = outcomeDialog;
 
-    // Prompt for who cancelled (Us/Them)
-    const who = prompt('Who cancelled? (Us/Them):');
+    // Close dialog
+    setOutcomeDialog({ ...outcomeDialog, isOpen: false });
 
-    // Check if user cancelled either prompt or didn't enter values
-    if (!reason || !who) return;
+    if (status === 'P') {
+      // Mark as Played - just need scores
+      changeStatus(tabName, 'played', {
+        bhbc_score: parseInt(bhbcScore),
+        opponent_score: parseInt(opponentScore),
+      });
+    } else if (status === 'C') {
+      // Mark as Cancelled - need reason and who
+      changeStatus(tabName, 'cancel', { reason, who });
+    } else if (status === 'A') {
+      // Mark as Abandoned - need scores, reason, and who
+      changeStatus(tabName, 'abandon', {
+        bhbc_score: parseInt(bhbcScore),
+        opponent_score: parseInt(opponentScore),
+        reason,
+        who,
+      });
+    }
+  }
 
-    // Call API to cancel game with reason
-    changeStatus(tabName, 'cancel', { reason, who });
+  /**
+   * Check if outcome dialog can be submitted
+   */
+  function canSubmitOutcome(): boolean {
+    const { status, bhbcScore, opponentScore, reason, who } = outcomeDialog;
+
+    if (!status) return false;
+
+    if (status === 'P') {
+      // Played: need both scores
+      return bhbcScore !== '' && opponentScore !== '';
+    } else if (status === 'C') {
+      // Cancelled: need reason and who
+      return reason !== '' && who !== '';
+    } else if (status === 'A') {
+      // Abandoned: need scores, reason, and who
+      return bhbcScore !== '' && opponentScore !== '' && reason !== '' && who !== '';
+    }
+
+    return false;
   }
 
   // ============================================================================
@@ -538,7 +589,7 @@ export default function ManageGamesPage() {
                         </>
                       )}
 
-                      {/* Selected games - show Edit link and Mark Played button */}
+                      {/* Selected games - show Edit link and Record Result button */}
                       {game.status === 'S' && (
                         <>
                           <Link
@@ -548,19 +599,19 @@ export default function ManageGamesPage() {
                             Edit
                           </Link>
                           <button
-                            onClick={() => handleMarkPlayed(game.tabName)}
+                            onClick={() => handleGameOutcome(game.tabName, game.status)}
                             disabled={actionLoading === game.tabName}
                             className="text-purple-600 hover:text-purple-800 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            Mark Played
+                            Record Result
                           </button>
                         </>
                       )}
 
-                      {/* Cancel button - show for all active games (not Cancelled, Played, or Abandoned) */}
-                      {!['C', 'P', 'A'].includes(game.status) && (
+                      {/* Cancel button - show for non-selected active games (Open, Closing) */}
+                      {['', 'O', 'X'].includes(game.status) && (
                         <button
-                          onClick={() => handleCancelGame(game.tabName)}
+                          onClick={() => handleGameOutcome(game.tabName, game.status)}
                           disabled={actionLoading === game.tabName}
                           className="text-red-600 hover:text-red-800 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                         >
@@ -584,6 +635,155 @@ export default function ManageGamesPage() {
         onConfirm={confirmDialog.onConfirm}
         onCancel={closeConfirmDialog}
       />
+
+      {/* Game Outcome Dialog for Played/Cancelled/Abandoned */}
+      {outcomeDialog.isOpen && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-black bg-opacity-50 z-40"
+            onClick={() => setOutcomeDialog({ ...outcomeDialog, isOpen: false })}
+          />
+
+          {/* Dialog */}
+          <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+              <h2 className="text-xl font-bold mb-4">
+                {outcomeDialog.gameStatus === 'S' ? 'Record Game Outcome' : 'Cancel Game'}
+              </h2>
+
+              <div className="space-y-4">
+                {/* Status Selection - only show for Selected games (has multiple options) */}
+                {outcomeDialog.gameStatus === 'S' && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      What happened?
+                    </label>
+                    <div className="flex gap-3">
+                      {/* Played */}
+                      <button
+                        type="button"
+                        onClick={() => setOutcomeDialog({ ...outcomeDialog, status: 'P' })}
+                        className={`flex-1 px-4 py-3 rounded-lg font-medium shadow-sm transition-all ${
+                          outcomeDialog.status === 'P'
+                            ? 'bg-green-600 text-white ring-2 ring-green-600 ring-offset-2'
+                            : 'bg-white text-gray-700 border-2 border-gray-200 hover:border-green-400 hover:bg-green-50'
+                        }`}
+                      >
+                        Played
+                      </button>
+                      {/* Cancelled */}
+                      <button
+                        type="button"
+                        onClick={() => setOutcomeDialog({ ...outcomeDialog, status: 'C' })}
+                        className={`flex-1 px-4 py-3 rounded-lg font-medium shadow-sm transition-all ${
+                          outcomeDialog.status === 'C'
+                            ? 'bg-red-600 text-white ring-2 ring-red-600 ring-offset-2'
+                            : 'bg-white text-gray-700 border-2 border-gray-200 hover:border-red-400 hover:bg-red-50'
+                        }`}
+                      >
+                        Cancelled
+                      </button>
+                      {/* Abandoned */}
+                      <button
+                        type="button"
+                        onClick={() => setOutcomeDialog({ ...outcomeDialog, status: 'A' })}
+                        className={`flex-1 px-4 py-3 rounded-lg font-medium shadow-sm transition-all ${
+                          outcomeDialog.status === 'A'
+                            ? 'bg-orange-600 text-white ring-2 ring-orange-600 ring-offset-2'
+                            : 'bg-white text-gray-700 border-2 border-gray-200 hover:border-orange-400 hover:bg-orange-50'
+                        }`}
+                      >
+                        Abandoned
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Scores - show for Played or Abandoned */}
+                {(outcomeDialog.status === 'P' || outcomeDialog.status === 'A') && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Burgess Hill Score
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={outcomeDialog.bhbcScore}
+                        onChange={(e) => setOutcomeDialog({ ...outcomeDialog, bhbcScore: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Opponent Score
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={outcomeDialog.opponentScore}
+                        onChange={(e) => setOutcomeDialog({ ...outcomeDialog, opponentScore: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  </>
+                )}
+
+                {/* Reason and Who - show for Cancelled or Abandoned */}
+                {(outcomeDialog.status === 'C' || outcomeDialog.status === 'A') && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Reason
+                      </label>
+                      <input
+                        type="text"
+                        value={outcomeDialog.reason}
+                        onChange={(e) => setOutcomeDialog({ ...outcomeDialog, reason: e.target.value })}
+                        placeholder="e.g., Weather, Insufficient players"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Who {outcomeDialog.status === 'C' ? 'Cancelled' : 'Abandoned'}?
+                      </label>
+                      <select
+                        value={outcomeDialog.who}
+                        onChange={(e) => setOutcomeDialog({ ...outcomeDialog, who: e.target.value as 'Burgess Hill' | 'Opponent' | '' })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="">Select...</option>
+                        <option value="Burgess Hill">Burgess Hill</option>
+                        <option value="Opponent">Opponent</option>
+                      </select>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-3 mt-6">
+                <button
+                  onClick={() => setOutcomeDialog({ ...outcomeDialog, isOpen: false })}
+                  className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={submitOutcome}
+                  disabled={!canSubmitOutcome()}
+                  className="px-4 py-2 text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

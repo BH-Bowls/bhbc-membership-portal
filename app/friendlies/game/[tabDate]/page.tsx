@@ -34,6 +34,7 @@ interface GameDetails {
     userTeam: number | null;      // Team number user is in (1, 2, etc.)
     userPosition: string | null;  // Position user is playing (S, 1, 2, 3)
     userConfirmed: boolean;       // Whether user has confirmed participation
+    userName: string;             // Current user's userName for highlighting
   };
 
   // Main teams (playing teams)
@@ -41,6 +42,7 @@ interface GameDetails {
     team: number;                 // Team number (1, 2, etc.)
     players: Array<{
       name: string;               // Player full name
+      userName: string;           // Player userName for highlighting
       position: string;           // Position (S, 1, 2, 3)
       status: string;             // Player status code
       isCaptain: boolean;         // Whether this player is captain of day
@@ -50,6 +52,7 @@ interface GameDetails {
   // Reserve players (backup for main teams)
   reserves: Array<{
     name: string;                 // Player full name
+    userName: string;             // Player userName for highlighting
     team: number | null;          // Team number if assigned
     position: string;             // Position if assigned
     status: string;               // Player status code
@@ -60,6 +63,7 @@ interface GameDetails {
     team: number;                 // Reserve team number
     players: Array<{
       name: string;               // Player full name
+      userName: string;           // Player userName for highlighting
       position: string;           // Position (S, 1, 2, 3)
       status: string;             // Player status code
     }>;
@@ -117,6 +121,12 @@ export default function GameDetailsPage() {
     message: '',
     onConfirm: () => {},
   });
+
+  // State: Flash message for success/error feedback
+  const [flashMessage, setFlashMessage] = useState<{
+    type: 'success' | 'error';
+    text: string;
+  } | null>(null);
 
   // ============================================================================
   // Effects
@@ -210,6 +220,7 @@ export default function GameDetailsPage() {
   async function performConfirm() {
     // Show action loading indicator
     setActionLoading(true);
+    setFlashMessage(null);
 
     try {
       // Call API to confirm participation
@@ -227,18 +238,18 @@ export default function GameDetailsPage() {
       // Check if confirmation was successful
       if (response.ok) {
         // Show success message
-        alert('Participation confirmed!');
+        setFlashMessage({ type: 'success', text: 'Participation confirmed!' });
 
         // Refresh game details to show updated status
         await fetchGameDetails();
       } else {
         // Show error message
-        alert(data.error || 'Failed to confirm participation');
+        setFlashMessage({ type: 'error', text: data.error || 'Failed to confirm participation' });
       }
     } catch (error) {
       // Network or other error
       console.error('Error confirming:', error);
-      alert('Failed to confirm participation');
+      setFlashMessage({ type: 'error', text: 'Failed to confirm participation' });
     } finally {
       // Hide action loading indicator
       setActionLoading(false);
@@ -269,6 +280,7 @@ export default function GameDetailsPage() {
   async function performWithdraw() {
     // Show action loading indicator
     setActionLoading(true);
+    setFlashMessage(null);
 
     try {
       // Call API to withdraw from game
@@ -284,19 +296,19 @@ export default function GameDetailsPage() {
 
       // Check if withdrawal was successful
       if (response.ok) {
-        // Show success message
-        alert('You have withdrawn from this game. Captains have been notified.');
+        // Show success message briefly before redirecting
+        setFlashMessage({ type: 'success', text: 'You have withdrawn from this game. Captains have been notified.' });
 
-        // Redirect back to friendlies list
-        router.push('/friendlies');
+        // Redirect back to friendlies list after a short delay
+        setTimeout(() => router.push('/friendlies'), 1500);
       } else {
         // Show error message
-        alert(data.error || 'Failed to withdraw');
+        setFlashMessage({ type: 'error', text: data.error || 'Failed to withdraw' });
       }
     } catch (error) {
       // Network or other error
       console.error('Error withdrawing:', error);
-      alert('Failed to withdraw');
+      setFlashMessage({ type: 'error', text: 'Failed to withdraw' });
     } finally {
       // Hide action loading indicator
       setActionLoading(false);
@@ -397,6 +409,23 @@ export default function GameDetailsPage() {
       <Navbar userName={session?.user.name ?? undefined} userRole={session?.user.role ?? undefined} />
 
       <div className="container mx-auto px-4 py-8 max-w-6xl">
+        {/* Flash message for success/error feedback */}
+        {flashMessage && (
+          <div className={`mb-4 p-4 rounded-lg flex items-center justify-between ${
+            flashMessage.type === 'success'
+              ? 'bg-green-50 border border-green-200 text-green-800'
+              : 'bg-red-50 border border-red-200 text-red-800'
+          }`}>
+            <span>{flashMessage.text}</span>
+            <button
+              onClick={() => setFlashMessage(null)}
+              className="text-gray-500 hover:text-gray-700"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {/* Header with back button and game info */}
         <div className="mb-6">
           {/* Back to Games link */}
@@ -498,16 +527,26 @@ export default function GameDetailsPage() {
 
                 {/* List of players in this team */}
                 <div className="space-y-2">
-                  {team.players.map((player, idx) => (
+                  {team.players.map((player, idx) => {
+                    const isCurrentUser = player.userName === game.userName;
+                    return (
                     <div
                       key={idx}
                       className={`flex justify-between items-center p-2 rounded ${
+                        isCurrentUser ? 'bg-blue-100 ring-2 ring-blue-400' :
                         player.isCaptain ? 'bg-purple-100' : 'bg-gray-50'
                       }`}
                     >
                       <div>
                         {/* Player name */}
                         <span className="font-medium">{player.name}</span>
+
+                        {/* You badge if this is the current user */}
+                        {isCurrentUser && (
+                          <span className="ml-2 text-xs bg-blue-600 text-white px-2 py-1 rounded">
+                            You
+                          </span>
+                        )}
 
                         {/* Captain badge if this player is captain of day */}
                         {player.isCaptain && (
@@ -520,7 +559,7 @@ export default function GameDetailsPage() {
                       {/* Player position (Skip, Lead, Second, Third) */}
                       <span className="text-gray-600">{getPositionLabel(player.position)}</span>
                     </div>
-                  ))}
+                  );})}
                 </div>
               </div>
             ))}
@@ -534,17 +573,28 @@ export default function GameDetailsPage() {
 
             {/* List of reserve players */}
             <div className="space-y-2">
-              {reserves.map((reserve, idx) => (
-                <div key={idx} className="flex justify-between items-center p-2 bg-yellow-50 rounded">
+              {reserves.map((reserve, idx) => {
+                const isCurrentUser = reserve.userName === game.userName;
+                return (
+                <div key={idx} className={`flex justify-between items-center p-2 rounded ${
+                  isCurrentUser ? 'bg-blue-100 ring-2 ring-blue-400' : 'bg-yellow-50'
+                }`}>
                   {/* Reserve player name */}
-                  <span className="font-medium">{reserve.name}</span>
+                  <span className="font-medium">
+                    {reserve.name}
+                    {isCurrentUser && (
+                      <span className="ml-2 text-xs bg-blue-600 text-white px-2 py-1 rounded">
+                        You
+                      </span>
+                    )}
+                  </span>
 
                   {/* Reserve position if assigned */}
                   {reserve.position && (
                     <span className="text-gray-600">{getPositionLabel(reserve.position)}</span>
                   )}
                 </div>
-              ))}
+              );})}
             </div>
           </div>
         )}
@@ -563,15 +613,26 @@ export default function GameDetailsPage() {
 
                   {/* List of players in this reserve team */}
                   <div className="space-y-2">
-                    {team.players.map((player, idx) => (
-                      <div key={idx} className="flex justify-between items-center p-2 bg-white rounded">
+                    {team.players.map((player, idx) => {
+                      const isCurrentUser = player.userName === game.userName;
+                      return (
+                      <div key={idx} className={`flex justify-between items-center p-2 rounded ${
+                        isCurrentUser ? 'bg-blue-100 ring-2 ring-blue-400' : 'bg-white'
+                      }`}>
                         {/* Player name */}
-                        <span className="font-medium">{player.name}</span>
+                        <span className="font-medium">
+                          {player.name}
+                          {isCurrentUser && (
+                            <span className="ml-2 text-xs bg-blue-600 text-white px-2 py-1 rounded">
+                              You
+                            </span>
+                          )}
+                        </span>
 
                         {/* Player position */}
                         <span className="text-gray-600">{getPositionLabel(player.position)}</span>
                       </div>
-                    ))}
+                    );})}
                   </div>
                 </div>
               ))}

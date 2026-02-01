@@ -52,6 +52,27 @@ export async function GET(
     // Get all players from game sheet
     const players = await getGameSheet(game.tabName);
 
+    // Sort players: Selected status (Y, R, T, then blank), then Team number, then Position
+    const selectedOrder: Record<string, number> = { 'Y': 1, 'R': 2, 'T': 3, '': 4 };
+    const positionOrder: Record<string, number> = { 'S': 1, '1': 2, '2': 3, '3': 4, '': 5 };
+
+    players.sort((a, b) => {
+      // First sort by selected status
+      const selA = selectedOrder[a.selected] ?? 4;
+      const selB = selectedOrder[b.selected] ?? 4;
+      if (selA !== selB) return selA - selB;
+
+      // Then by team number (nulls last)
+      const teamA = a.team ?? 999;
+      const teamB = b.team ?? 999;
+      if (teamA !== teamB) return teamA - teamB;
+
+      // Then by position
+      const posA = positionOrder[a.position] ?? 5;
+      const posB = positionOrder[b.position] ?? 5;
+      return posA - posB;
+    });
+
     return NextResponse.json({
       game: {
         tabDate: game.tabDate,

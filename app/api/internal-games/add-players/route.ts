@@ -10,6 +10,7 @@ import {
   getEnteredPlayers,
   getInternalGameMembers,
   updateGameCounts,
+  addPlayerToInternalGame,
 } from '@/lib/internal-games-sheets';
 
 // POST handler - Manually add players to an internal game
@@ -40,16 +41,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
 
-    // Check if game is open for entries
-    if (game.status !== 'O') {
-      return NextResponse.json(
-        { error: 'Can only add players to open games' },
-        { status: 400 }
-      );
-    }
-
     // Check capacity restrictions (regular players only)
     const isUnrestricted = ['Captain', 'Admin'].includes(session.user.role);
+
+    // Check if game is open for entries (Captains/Admins can add to Selecting/Selected games)
+    if (game.status !== 'O') {
+      if (!isUnrestricted || !['X', 'S'].includes(game.status)) {
+        return NextResponse.json(
+          { error: 'Can only add players to open games' },
+          { status: 400 }
+        );
+      }
+    }
 
     if (!isUnrestricted) {
       const maxPlayers = game.maxPlayers || 0;
@@ -92,9 +95,19 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Add all players with 'M' status in a single batch
+    // Add all players with 'M' status in a single batch (updates Players sheet)
     const entries = playerUserNames.map(userName => ({ userName, status: 'M' }));
     await batchUpdatePlayerEntries(game.tabName, entries);
+
+    // Also add each player to the individual game sheet tab
+    for (const userName of playerUserNames) {
+      try {
+        await addPlayerToInternalGame(game.tabName, userName);
+      } catch (addError) {
+        console.error(`[Internal Games API] Error adding ${userName} to game sheet:`, addError);
+        // Continue with other players even if one fails
+      }
+    }
 
     // Update the entered count in Games sheet
     try {

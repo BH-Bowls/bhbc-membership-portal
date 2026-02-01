@@ -691,8 +691,12 @@ export async function updateRenewalPayment(
     banking: number;
     donations: number;
     difference: number;
-    paymentTypeColumn: string;
-    paymentTypeAmount: number;
+    typeAmounts: {
+      bank_transfer: number;
+      card_machine: number;
+      cheque: number;
+      cash: number;
+    };
     payment_ids: string;
     payment_notes?: string;
     date_received: string;
@@ -738,7 +742,11 @@ export async function updateRenewalPayment(
     addUpdate('banking', updates.banking);
     addUpdate('donations', updates.donations);
     addUpdate('difference', updates.difference);
-    addUpdate(updates.paymentTypeColumn, updates.paymentTypeAmount);
+    // Update all payment type columns
+    addUpdate('bank_transfer', updates.typeAmounts.bank_transfer);
+    addUpdate('card_machine', updates.typeAmounts.card_machine);
+    addUpdate('cheque', updates.typeAmounts.cheque);
+    addUpdate('cash', updates.typeAmounts.cash);
     addUpdate('payment_ids', updates.payment_ids);
     if (updates.payment_notes) {
       addUpdate('payment_notes', updates.payment_notes);

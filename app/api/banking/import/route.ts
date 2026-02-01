@@ -28,8 +28,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Valid payment types
+    const validTypes = ['TRF', 'CDM', 'CHQ', 'CSH'];
+
     // Filter out header rows (where Date is "Date") and empty rows
-    // Expected CSV columns: Date, Type (ignored), Description, Amount, Balance (ignored)
+    // Expected CSV columns: Date, Type, Description, Amount, Balance (ignored)
     const filteredData = csvData.filter((row: any) => {
       const date = row.Date || '';
       // Skip header row and empty rows
@@ -61,10 +64,14 @@ export async function POST(request: NextRequest) {
       const paymentNumber = startingNumber + i;
       const payment_id = `${prefix}${String(paymentNumber).padStart(3, '0')}`;
 
+      // Use type from CSV, validate it, default to TRF if invalid
+      const rawType = (row.Type || 'TRF').toUpperCase();
+      const type = validTypes.includes(rawType) ? rawType : 'TRF';
+
       paymentsToAdd.push({
         payment_id,
         date: row.Date,
-        type: 'TRF' as const, // All SUBS payments are bank transfers
+        type: type as 'TRF' | 'CDM' | 'CHQ' | 'CSH',
         reference: row.Description || '',
         amount: parseFloat(row.Amount) || 0,
         status: 'Unmatched' as const,
@@ -81,7 +88,7 @@ export async function POST(request: NextRequest) {
       success: true,
       paymentIds,
       count: paymentIds.length,
-      message: `Imported ${paymentIds.length} transactions as TRF`,
+      message: `Imported ${paymentIds.length} transactions`,
     });
   } catch (error) {
     console.error('Error importing CSV:', error);

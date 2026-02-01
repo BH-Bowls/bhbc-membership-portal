@@ -23,6 +23,10 @@ interface EnteredPlayersModalProps {
   currentUserRole?: string; // For capacity restrictions
   maxPlayers?: number; // For capacity checking
   onPlayersChanged: () => void; // Callback to refresh parent data
+  // Optional props for "add-only" mode (used by manage game pages)
+  addOnlyMode?: boolean; // If true, starts in add mode without showing entered players list
+  existingPlayerNames?: string[]; // Players already in game (for filtering in add-only mode)
+  onAddPlayers?: (playerUserNames: string[]) => Promise<{ success: boolean; message?: string; error?: string }>; // Custom add handler
 }
 
 export function EnteredPlayersModal({
@@ -35,11 +39,14 @@ export function EnteredPlayersModal({
   currentUserRole,
   maxPlayers,
   onPlayersChanged,
+  addOnlyMode = false,
+  existingPlayerNames = [],
+  onAddPlayers,
 }: EnteredPlayersModalProps) {
   const [enteredPlayers, setEnteredPlayers] = useState<EnteredPlayer[]>([]);
   const [availablePlayers, setAvailablePlayers] = useState<{ userName: string; fullName: string; memberType?: string }[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showAddDialog, setShowAddDialog] = useState(false);
+  const [loading, setLoading] = useState(!addOnlyMode); // Don't show loading in add-only mode
+  const [showAddDialog, setShowAddDialog] = useState(addOnlyMode); // Start in add mode if addOnlyMode
   const [selectedPlayers, setSelectedPlayers] = useState<string[]>([]);
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
@@ -50,13 +57,20 @@ export function EnteredPlayersModal({
 
   useEffect(() => {
     if (isOpen) {
-      fetchEnteredPlayers();
-      // Only fetch available players for Captain/Admin (they're the only ones who can add)
-      if (isCaptainOrAdmin) {
+      // In add-only mode, just fetch available players
+      if (addOnlyMode) {
+        setShowAddDialog(true);
+        setLoading(false);
         fetchAvailablePlayers();
+      } else {
+        fetchEnteredPlayers();
+        // Only fetch available players for Captain/Admin (they're the only ones who can add)
+        if (isCaptainOrAdmin) {
+          fetchAvailablePlayers();
+        }
       }
     }
-  }, [isOpen, gameId, isCaptainOrAdmin]);
+  }, [isOpen, gameId, isCaptainOrAdmin, addOnlyMode]);
 
   async function fetchEnteredPlayers() {
     try {
@@ -91,11 +105,17 @@ export function EnteredPlayersModal({
   // Filter available players based on eligibility and not already entered
   const getEligiblePlayers = () => {
     const enteredUserNames = new Set(enteredPlayers.map(p => p.userName));
+    // In add-only mode, also filter out players already in the game (passed via prop)
+    const existingNames = new Set(existingPlayerNames.map(n => n.toLowerCase()));
 
     return availablePlayers
       .filter(player => {
-        // Already entered
+        // Already entered (from fetched entered players)
         if (enteredUserNames.has(player.userName)) return false;
+
+        // Already in game (from existingPlayerNames prop, used in add-only mode)
+        if (existingNames.has(player.userName.toLowerCase())) return false;
+        if (existingNames.has(player.fullName.toLowerCase())) return false;
 
         // Check gender eligibility (Friendlies/Internal Games only)
         // Member types: PL=Playing Lady, SL=Social Lady, PM=Playing Man, SM=Social Man
@@ -141,25 +161,39 @@ export function EnteredPlayersModal({
     setError('');
 
     try {
-      const response = await fetch(`/api/${gameType}/add-players`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          gameId,
-          playerUserNames: selectedPlayers,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        // Refresh the entered players list
-        await fetchEnteredPlayers();
-        setShowAddDialog(false);
-        setSelectedPlayers([]);
-        onPlayersChanged(); // Notify parent to refresh
+      // Use custom handler if provided (for add-only mode)
+      if (onAddPlayers) {
+        const result = await onAddPlayers(selectedPlayers);
+        if (result.success) {
+          setShowAddDialog(false);
+          setSelectedPlayers([]);
+          onPlayersChanged();
+          onClose(); // Close modal in add-only mode after success
+        } else {
+          setError(result.error || 'Failed to add players');
+        }
       } else {
-        setError(data.error || 'Failed to add players');
+        // Default behavior: call the standard API endpoint
+        const response = await fetch(`/api/${gameType}/add-players`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            gameId,
+            playerUserNames: selectedPlayers,
+          }),
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+          // Refresh the entered players list
+          await fetchEnteredPlayers();
+          setShowAddDialog(false);
+          setSelectedPlayers([]);
+          onPlayersChanged(); // Notify parent to refresh
+        } else {
+          setError(data.error || 'Failed to add players');
+        }
       }
     } catch (err) {
       setError('Failed to add players');
@@ -221,11 +255,11 @@ export function EnteredPlayersModal({
           {/* Header */}
           <div className="px-6 py-4 border-b border-gray-200">
             <h2 className="text-xl font-semibold text-gray-900">
-              Players Entered
+              {showAddDialog ? 'Add Players' : 'Players Entered'}
             </h2>
             <p className="text-sm text-gray-600 mt-1">
               {gameName}
-              {maxPlayers != null && maxPlayers > 0 && (
+              {!addOnlyMode && maxPlayers != null && maxPlayers > 0 && (
                 <span className="ml-2">
                   ({enteredPlayers.length}/{maxPlayers})
                 </span>
@@ -238,9 +272,15 @@ export function EnteredPlayersModal({
             <div className="px-6 py-3 border-b border-gray-200 flex justify-between">
               <button
                 onClick={showAddDialog ? () => {
-                  setShowAddDialog(false);
-                  setSelectedPlayers([]);
-                  setError('');
+                  // In add-only mode, Cancel closes the modal entirely
+                  // In normal mode, Cancel goes back to the players list
+                  if (addOnlyMode) {
+                    handleClose();
+                  } else {
+                    setShowAddDialog(false);
+                    setSelectedPlayers([]);
+                    setError('');
+                  }
                 } : handleClose}
                 disabled={adding}
                 className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 transition-colors disabled:opacity-50"
@@ -307,6 +347,8 @@ export function EnteredPlayersModal({
                   placeholder="Type to search players..."
                   disabled={adding}
                   className="w-full"
+                  autoFocus={true}
+                  keepFocusOnSelect={true}
                 />
 
                 {/* Selected players list */}
@@ -341,7 +383,7 @@ export function EnteredPlayersModal({
                     className="flex items-center justify-between p-3 bg-gray-50 rounded hover:bg-gray-100 transition-colors"
                   >
                     <span className="text-gray-900">{player.fullName}</span>
-                    {player.status === 'M' && (
+                    {(player.status === 'M' || player.status === 'E') && (
                       <button
                         onClick={() => handleRemovePlayer(player.userName)}
                         disabled={removing === player.userName}

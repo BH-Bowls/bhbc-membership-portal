@@ -7,7 +7,6 @@ import { authOptions } from '@/lib/auth';
 import {
   updatePaymentInSheet,
   updateRenewalPayment,
-  getPaymentTypeColumn,
 } from '@/lib/banking-sheets';
 
 interface MatchedRenewal {
@@ -22,8 +21,13 @@ interface MatchedRenewal {
   matched_difference: number;
   payment_ids: string;
   payment_notes?: string;
-  paymentType: string; // TRF, CDM, etc.
-  paymentTypeAmount: number; // Current banking amount
+  // All type amounts (already includes existing + new matched amounts)
+  typeAmounts: {
+    bank_transfer: number;
+    card_machine: number;
+    cheque: number;
+    cash: number;
+  };
 }
 
 interface MatchedPayment {
@@ -85,8 +89,6 @@ export async function POST(request: NextRequest) {
 
     // Update Renewals sheet
     for (const renewal of matchedRenewals as MatchedRenewal[]) {
-      const paymentTypeColumn = getPaymentTypeColumn(renewal.paymentType);
-
       // Calculate new cumulative values by adding matched amounts to existing amounts
       const newBanking = renewal.banking + renewal.matched_banking;
       const newDonations = renewal.donations + renewal.matched_donations;
@@ -110,16 +112,19 @@ export async function POST(request: NextRequest) {
       const validatedOutstanding = Math.max(0, newOutstanding);
 
       try {
+        // Format date as dd/mm/yyyy for Google Sheets
+        const now = new Date();
+        const dateReceived = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`;
+
         await updateRenewalPayment(renewal.userName, {
           outstanding: validatedOutstanding,
           banking: newBanking,
           donations: newDonations,
           difference: newDifference,
-          paymentTypeColumn,
-          paymentTypeAmount: renewal.paymentTypeAmount + renewal.matched_banking,
+          typeAmounts: renewal.typeAmounts,
           payment_ids: renewal.payment_ids,
           payment_notes: renewal.payment_notes,
-          date_received: new Date().toISOString(),
+          date_received: dateReceived,
         });
         updatedRenewals.push(renewal.userName);
       } catch (error) {
