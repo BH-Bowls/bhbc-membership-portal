@@ -778,3 +778,111 @@ export async function sendRenewalConfirmation(
     };
   }
 }
+
+/**
+ * Send membership cancellation confirmation email
+ * Called when a member indicates they will NOT be renewing
+ */
+export async function sendCancellationConfirmation(
+  userName: string,
+  managerUserName?: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    // Get user profile for email address and name
+    const user = await getUserByUsername(userName);
+    if (!user) {
+      return { success: false, error: 'User not found' };
+    }
+
+    // Check if SMTP is configured
+    if (!isEmailConfigured()) {
+      return { success: false, error: 'SMTP not configured' };
+    }
+
+    // Determine recipient email - prioritize user's email, then manager, then buddy
+    let recipientEmail = user.emailAddress;
+    let memberName = user.fullKnownAs || user.firstName;
+
+    // If user has no email, send to the person managing this renewal (if different from user)
+    if (!recipientEmail && managerUserName && managerUserName !== userName) {
+      const manager = await getUserByUsername(managerUserName);
+      if (manager?.emailAddress) {
+        recipientEmail = manager.emailAddress;
+        memberName = `${memberName} (sent to manager: ${manager.fullKnownAs || manager.firstName})`;
+      }
+    }
+
+    // If still no email and user has a designated buddy, try sending to buddy
+    if (!recipientEmail && user.buddyUserName) {
+      const buddy = await getUserByUsername(user.buddyUserName);
+      if (buddy?.emailAddress) {
+        recipientEmail = buddy.emailAddress;
+        memberName = `${memberName} (sent to buddy: ${buddy.fullKnownAs || buddy.firstName})`;
+      }
+    }
+
+    // If still no email address, return error
+    if (!recipientEmail) {
+      return { success: false, error: 'No email address found for user, manager, or buddy' };
+    }
+
+    // Send email using template
+    const result = await sendTemplateEmail(
+      recipientEmail,
+      'BHBC Membership - Sorry to See You Go',
+      'renewal-cancellation',
+      {
+        memberName,
+      }
+    );
+
+    if (!result.success) {
+      // Log to MemberEmails sheet
+      await logMemberEmail({
+        userName,
+        emailAddress: user.emailAddress,
+        templateName: 'Renewal Cancellation',
+        subject: 'BHBC Membership - Sorry to See You Go',
+        success: false,
+        errorMessage: result.error,
+        sentBy: managerUserName || userName,
+        attachments: [],
+      });
+
+      return result;
+    }
+
+    // Log to MemberEmails sheet
+    await logMemberEmail({
+      userName,
+      emailAddress: user.emailAddress,
+      templateName: 'Renewal Cancellation',
+      subject: 'BHBC Membership - Sorry to See You Go',
+      success: true,
+      sentBy: managerUserName || userName,
+      attachments: [],
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error(`[sendCancellationConfirmation] Failed to send cancellation email for ${userName}:`, error);
+    const errorMsg = error instanceof Error ? error.message : 'Failed to send cancellation email';
+
+    // Log to MemberEmails sheet
+    await logMemberEmail({
+      userName,
+      emailAddress: null,
+      templateName: 'Renewal Cancellation',
+      subject: 'BHBC Membership - Sorry to See You Go',
+      success: false,
+      errorMessage: errorMsg,
+      sentBy: managerUserName || userName,
+      attachments: [],
+    });
+
+    return {
+      success: false,
+      error: errorMsg,
+    };
+  }
+}

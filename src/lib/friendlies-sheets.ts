@@ -15,6 +15,7 @@ import {
   GameStatus,
   PlayerEntryStatus,
 } from './types/friendlies';
+import { parseNormalizedDate, normalizeToUKDate } from './date-utils';
 
 // ============================================================================
 // ENVIRONMENT VARIABLE GETTERS
@@ -331,13 +332,16 @@ export async function getGames(statusFilter?: GameStatus): Promise<Game[]> {
     const rowNumber = i + 2;
 
     // Extract basic game information
-    const date = get(row, 'date') || '';
+    // Normalize date to DD/MM/YYYY format immediately when reading from sheet
+    const date = normalizeToUKDate(get(row, 'date') || '');
     const tabDate = get(row, 'tab_date') || '';
     const time = get(row, 'time') || '';
     const clubName = get(row, 'club_name') || '';
 
     // Extract home/away status (default to Home if not specified)
-    const homeAway = (get(row, 'home_away') || 'H') as 'H' | 'A';
+    // Try multiple possible column names: "Home/Away" -> "home_away", "H/A" -> "h_a"
+    const homeAwayValue = get(row, 'home_away') || get(row, 'h_a') || 'H';
+    const homeAway = (homeAwayValue.trim().toUpperCase() === 'A' ? 'A' : 'H') as 'H' | 'A';
 
     // Extract game format and type details
     const format = get(row, 'format') || '';           // e.g., "Triples", "Rinks"
@@ -3330,7 +3334,7 @@ export async function getTeaRotaList(): Promise<TeaRotaEntry[]> {
 
   // Day names for display date formatting
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const monthNamesShort = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
   // Build array of tea rota entries for home games only
   const teaRotaEntries: TeaRotaEntry[] = [];
@@ -3347,8 +3351,8 @@ export async function getTeaRotaList(): Promise<TeaRotaEntry[]> {
     const status = get(row, 'status') || '';
     if (status === 'C') continue;
 
-    // Extract game data
-    const date = get(row, 'date') || '';
+    // Extract game data - normalize date to DD/MM/YYYY immediately
+    const date = normalizeToUKDate(get(row, 'date') || '');
     const time = get(row, 'time') || '';
     const clubName = get(row, 'club_name') || '';
     const format = get(row, 'format') || '';
@@ -3360,14 +3364,14 @@ export async function getTeaRotaList(): Promise<TeaRotaEntry[]> {
     const teaFirst = get(row, 'tea_first') || '';
     const teaSecond = get(row, 'tea_second') || '';
 
-    // Format display date (e.g., "Sat 25 Apr")
+    // Format display date (e.g., "Sat 25 Apr") - date is now normalized to DD/MM/YYYY
     let displayDate = date;
     if (date) {
-      const dateObj = new Date(date);
+      const dateObj = parseNormalizedDate(date);
       if (!isNaN(dateObj.getTime())) {
         const dayName = dayNames[dateObj.getDay()];
         const day = dateObj.getDate();
-        const month = monthNames[dateObj.getMonth()];
+        const month = monthNamesShort[dateObj.getMonth()];
         displayDate = `${dayName} ${day} ${month}`;
       }
     }
@@ -3389,8 +3393,8 @@ export async function getTeaRotaList(): Promise<TeaRotaEntry[]> {
 
   // Sort by date (chronological order - past games first, then future)
   teaRotaEntries.sort((a, b) => {
-    const dateA = new Date(a.date);
-    const dateB = new Date(b.date);
+    const dateA = parseNormalizedDate(a.date);
+    const dateB = parseNormalizedDate(b.date);
     return dateA.getTime() - dateB.getTime();
   });
 
@@ -3666,15 +3670,15 @@ export async function swapTeaAssignment(
     return index !== undefined ? (updatedRow[index] || null) : null;
   };
 
-  // Format display date
-  const date = get('date') || '';
+  // Normalize date to DD/MM/YYYY and format display date
+  const date = normalizeToUKDate(get('date') || '');
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const monthNamesShort = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   let displayDate = date;
   if (date) {
-    const dateObj = new Date(date);
+    const dateObj = parseNormalizedDate(date);
     if (!isNaN(dateObj.getTime())) {
-      displayDate = `${dayNames[dateObj.getDay()]} ${dateObj.getDate()} ${monthNames[dateObj.getMonth()]}`;
+      displayDate = `${dayNames[dateObj.getDay()]} ${dateObj.getDate()} ${monthNamesShort[dateObj.getMonth()]}`;
     }
   }
 
@@ -3726,15 +3730,15 @@ export async function getTeaRotaEntry(rowNumber: number): Promise<TeaRotaEntry |
   const homeAway = get('home_away') || 'H';
   if (homeAway !== 'H') return null;
 
-  // Format display date
-  const date = get('date') || '';
+  // Normalize date to DD/MM/YYYY and format display date
+  const date = normalizeToUKDate(get('date') || '');
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const monthNamesShort = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   let displayDate = date;
   if (date) {
-    const dateObj = new Date(date);
+    const dateObj = parseNormalizedDate(date);
     if (!isNaN(dateObj.getTime())) {
-      displayDate = `${dayNames[dateObj.getDay()]} ${dateObj.getDate()} ${monthNames[dateObj.getMonth()]}`;
+      displayDate = `${dayNames[dateObj.getDay()]} ${dateObj.getDate()} ${monthNamesShort[dateObj.getMonth()]}`;
     }
   }
 

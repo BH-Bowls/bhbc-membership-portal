@@ -11,6 +11,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import Link from 'next/link';
+import { parseUKDate } from '@/lib/date-utils';
 
 // ============================================================================
 // Type Definitions
@@ -426,6 +427,18 @@ export default function GameDetailsPage() {
           </div>
         )}
 
+        {/* Cancelled/Abandoned game notice */}
+        {game.status === 'C' && (
+          <div className="mb-4 p-4 rounded-lg bg-red-50 border border-red-200 text-red-800">
+            <span className="font-semibold">This game has been cancelled.</span>
+          </div>
+        )}
+        {game.status === 'A' && (
+          <div className="mb-4 p-4 rounded-lg bg-orange-50 border border-orange-200 text-orange-800">
+            <span className="font-semibold">This game has been abandoned.</span>
+          </div>
+        )}
+
         {/* Header with back button and game info */}
         <div className="mb-6">
           {/* Back to Games link */}
@@ -438,7 +451,7 @@ export default function GameDetailsPage() {
 
           {/* Game date and time */}
           <div className="text-gray-600 mt-2">
-            {new Date(game.date).toLocaleDateString('en-GB', {
+            {parseUKDate(game.date).toLocaleDateString('en-GB', {
               weekday: 'long',
               day: 'numeric',
               month: 'long',

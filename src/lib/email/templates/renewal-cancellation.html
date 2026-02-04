@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Membership Cancellation Confirmation</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f4f4;">
+  <table role="presentation" style="width: 100%; border-collapse: collapse;">
+    <tr>
+      <td align="center" style="padding: 40px 0;">
+        <table role="presentation" style="width: 600px; border-collapse: collapse; background-color: #ffffff; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+
+          <!-- Header -->
+          <tr>
+            <td style="background-color: {{HEADER_COLOR}}; padding: 40px 30px; text-align: center;">
+              <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: bold;">
+                {{BRAND_NAME}}
+              </h1>
+              <p style="margin: 10px 0 0 0; color: #E0E7FF; font-size: 16px;">
+                Membership Update
+              </p>
+            </td>
+          </tr>
+
+          <!-- Content -->
+          <tr>
+            <td style="padding: 40px 30px;">
+              <p style="margin: 0 0 20px 0; font-size: 16px; color: #1F2937;">
+                Dear {{memberName}},
+              </p>
+
+              <p style="margin: 0 0 20px 0; font-size: 16px; color: #1F2937;">
+                We're sorry to hear that you won't be renewing your membership for the <strong>2026 season</strong>.
+              </p>
+
+              <p style="margin: 0 0 20px 0; font-size: 16px; color: #1F2937;">
+                We have received your notification and your membership will not be renewed. We wanted to take this opportunity to thank you for being part of our club.
+              </p>
+
+              <div style="background-color: #FEF3C7; border-left: 4px solid #F59E0B; padding: 16px; border-radius: 4px; margin: 0 0 20px 0;">
+                <p style="margin: 0; font-size: 15px; color: #78350F; line-height: 1.5;">
+                  <strong>Changed your mind?</strong><br>
+                  If you've had a change of heart and would like to renew after all, simply log back into the Members Portal and update your renewal status. We'd love to have you back!
+                </p>
+              </div>
+
+              <p style="margin: 0 0 20px 0; font-size: 16px; color: #1F2937;">
+                Even if you're not renewing as a member, you're always welcome to visit the club as a guest. We hope to see you on the green again in the future.
+              </p>
+
+              <p style="margin: 0 0 20px 0; font-size: 16px; color: #1F2937;">
+                If there's anything we could have done differently, or if you have any feedback, we'd love to hear from you.
+              </p>
+
+              <p style="margin: 30px 0 0 0; font-size: 16px; color: #1F2937;">
+                With best wishes,<br>
+                <strong>{{BRAND_NAME}}</strong>
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background-color: #F9FAFB; padding: 20px 30px; text-align: center; border-top: 1px solid #E5E7EB;">
+              <p style="margin: 0; font-size: 14px; color: #6B7280;">
+                This is an automated email from the {{BRAND_NAME}} Members Portal.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

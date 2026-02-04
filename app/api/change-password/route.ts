@@ -81,8 +81,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate new password strength
-    if (newPassword.length < 8) {
+    // Validate new password strength (skip for admin managing another user)
+    if (!isAdminManaging && newPassword.length < 8) {
       return NextResponse.json(
         { error: 'New password must be at least 8 characters' },
         { status: 400 }

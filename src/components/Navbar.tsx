@@ -83,9 +83,10 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
   const isAdmin = userRole === 'Admin' || userRole === 'superadmin';
   const isTreasurer = userRole === 'T' || userRole === 'Treasurer';
   const isCaptain = userRole === 'Captain';
+  const isKiosk = userRole === 'Kiosk';
   const canAccessBanking = isAdmin || isTreasurer;
   const canAccessCaptainTools = isAdmin || isCaptain;
-  const isCommittee = userRole && userRole !== 'Member' && userRole !== '';
+  const isCommittee = userRole && userRole !== 'Member' && userRole !== '' && !isKiosk;
 
   // Build admin menu items based on role
   const getAdminMenuItems = (): SubMenuItem[] => {
@@ -118,10 +119,10 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
 
   const adminMenuItems = getAdminMenuItems();
 
-  // Check if regular users have buddies to manage
+  // Check if regular users have buddies to manage (not for kiosk)
   useEffect(() => {
-    // Only check for non-admin users
-    if (!isAdmin && userName) {
+    // Only check for non-admin, non-kiosk users
+    if (!isAdmin && !isKiosk && userName) {
       fetch('/api/admin/impersonate/users')
         .then(res => res.json())
         .then(data => {
@@ -133,15 +134,52 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
           setHasBuddies(false);
         });
     }
-  }, [isAdmin, userName]);
+  }, [isAdmin, isKiosk, userName]);
 
   // Show impersonation/switch user only to:
   // - Admins (can switch to anyone)
   // - Regular users who have buddies (people who set them as buddy)
-  const canShowImpersonation = isAdmin || hasBuddies;
+  // - Never for kiosk users
+  const canShowImpersonation = !isKiosk && (isAdmin || hasBuddies);
+
+  // Kiosk navigation items - simplified for clubhouse tablet
+  const kioskNavigationItems: NavItem[] = [
+    {
+      name: 'Friendlies',
+      href: '/friendlies',
+      icon: (
+        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+        </svg>
+      ),
+    },
+    {
+      name: 'Internal Games',
+      href: '/internal-games',
+      icon: (
+        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      ),
+    },
+    {
+      name: 'Lookups',
+      icon: (
+        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+        </svg>
+      ),
+      subItems: [
+        { name: 'Members', href: '/members' },
+        { name: 'Clubs', href: '/clubs' },
+        { name: 'Tea Rota', href: '/tea-rota' },
+        { name: 'Cleaning Rota', href: '/cleaning-rota' },
+      ],
+    },
+  ];
 
   // Navigation items - easy to add more here
-  const navigationItems: NavItem[] = [
+  const regularNavigationItems: NavItem[] = [
     {
       name: 'Home',
       href: '/',
@@ -233,6 +271,9 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
       ),
     },
   ];
+
+  // Use kiosk or regular navigation based on role
+  const navigationItems = isKiosk ? kioskNavigationItems : regularNavigationItems;
 
   const isActive = (href: string) => {
     if (href === '/') {
@@ -570,72 +611,92 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
               {profileMenuOpen && (
                 <div className="absolute right-0 mt-2 w-56 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-50">
                   <div className="py-1">
-                    {/* User name header */}
-                    {userName && (
-                      <div className="px-4 py-2 text-sm font-medium text-gray-900 border-b border-gray-200">
-                        {userName}
-                        {isImpersonating && (
-                          <div className="text-xs text-orange-600 font-normal mt-1">
-                            Switched User
+                    {/* Kiosk mode header - but show full menu if impersonating */}
+                    {isKiosk && !isImpersonating ? (
+                      <>
+                        <div className="px-4 py-2 text-sm font-medium text-blue-700 border-b border-gray-200 bg-blue-50">
+                          Kiosk Mode
+                        </div>
+                        <button
+                          onClick={handleLogout}
+                          className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                        >
+                          Logout
+                        </button>
+                        <div className="px-4 py-2 border-t border-gray-200">
+                          <VersionDisplay showBuildDate={true} />
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        {/* User name header */}
+                        {userName && (
+                          <div className="px-4 py-2 text-sm font-medium text-gray-900 border-b border-gray-200">
+                            {userName}
+                            {isImpersonating && (
+                              <div className="text-xs text-orange-600 font-normal mt-1">
+                                Switched User
+                              </div>
+                            )}
                           </div>
                         )}
-                      </div>
-                    )}
 
-                    {/* Show original admin when impersonating */}
-                    {isImpersonating && originalAdmin && (
-                      <div className="px-4 py-2 text-xs text-gray-500 border-b border-gray-200">
-                        Logged in as: {originalAdmin.name}
-                      </div>
-                    )}
+                        {/* Show original admin when impersonating */}
+                        {isImpersonating && originalAdmin && (
+                          <div className="px-4 py-2 text-xs text-gray-500 border-b border-gray-200">
+                            Logged in as: {originalAdmin.name}
+                          </div>
+                        )}
 
-                    {/* Impersonation controls */}
-                    {(canShowImpersonation || isImpersonating) && (
-                      <>
-                        {isImpersonating ? (
+                        {/* Impersonation controls */}
+                        {(canShowImpersonation || isImpersonating) && (
+                          <>
+                            {isImpersonating ? (
+                              <button
+                                onClick={handleExitSwitch}
+                                className="block w-full text-left px-4 py-2 text-sm text-orange-700 hover:bg-orange-50 border-b border-gray-200"
+                              >
+                                Exit Switch
+                              </button>
+                            ) : (
+                              <button
+                                onClick={handleSwitchUser}
+                                className="block w-full text-left px-4 py-2 text-sm text-blue-500 hover:bg-blue-50 border-b border-gray-200"
+                              >
+                                Switch User
+                              </button>
+                            )}
+                          </>
+                        )}
+
+                        {/* Change Password - available for own account and when managing buddies */}
+                        <Link
+                          href="/change-password"
+                          onClick={(e) => {
+                            handleNavigation(e, '/change-password');
+                            setProfileMenuOpen(false);
+                          }}
+                          className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                        >
+                          Change Password
+                        </Link>
+
+                        {/* Hide logout when impersonating */}
+                        {!isImpersonating && (
                           <button
-                            onClick={handleExitSwitch}
-                            className="block w-full text-left px-4 py-2 text-sm text-orange-700 hover:bg-orange-50 border-b border-gray-200"
+                            onClick={handleLogout}
+                            className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
                           >
-                            Exit Switch
-                          </button>
-                        ) : (
-                          <button
-                            onClick={handleSwitchUser}
-                            className="block w-full text-left px-4 py-2 text-sm text-blue-500 hover:bg-blue-50 border-b border-gray-200"
-                          >
-                            Switch User
+                            Logout
                           </button>
                         )}
+
+                        {/* Version info */}
+                        <div className="px-4 py-2 border-t border-gray-200">
+                          <VersionDisplay showBuildDate={true} />
+                        </div>
                       </>
                     )}
-
-                    {/* Change Password - available for own account and when managing buddies */}
-                    <Link
-                      href="/change-password"
-                      onClick={(e) => {
-                        handleNavigation(e, '/change-password');
-                        setProfileMenuOpen(false);
-                      }}
-                      className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                    >
-                      Change Password
-                    </Link>
-
-                    {/* Hide logout when impersonating */}
-                    {!isImpersonating && (
-                      <button
-                        onClick={handleLogout}
-                        className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                      >
-                        Logout
-                      </button>
-                    )}
-
-                    {/* Version info */}
-                    <div className="px-4 py-2 border-t border-gray-200">
-                      <VersionDisplay showBuildDate={true} />
-                    </div>
                   </div>
                 </div>
               )}
@@ -778,81 +839,106 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
               ))}
             </div>
             <div className="pt-4 pb-3 border-t border-gray-200">
-              {userName && (
-                <div className="px-4 mb-3">
-                  <div className={`text-sm font-medium ${isImpersonating ? 'text-orange-600' : 'text-gray-900'}`}>
-                    {userName}
-                    {isImpersonating && (
-                      <span className="ml-2 text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">
-                        Switched User
-                      </span>
-                    )}
+              {isKiosk && !isImpersonating ? (
+                /* Kiosk mode mobile menu - but show full menu if impersonating */
+                <>
+                  <div className="px-4 mb-3">
+                    <div className="text-sm font-medium text-blue-700 bg-blue-50 px-3 py-2 rounded-md">
+                      Kiosk Mode
+                    </div>
                   </div>
-                  {isImpersonating && originalAdmin && (
-                    <div className="text-xs text-gray-500 mt-1">
-                      Logged in as: {originalAdmin.name}
+                  <div className="px-2 space-y-1">
+                    <button
+                      onClick={handleLogout}
+                      className="block w-full text-left px-3 py-2 text-base font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-md"
+                    >
+                      Logout
+                    </button>
+                  </div>
+                  <div className="px-4 py-3 mt-4 border-t border-gray-200 text-center">
+                    <VersionDisplay showBuildDate={true} />
+                  </div>
+                </>
+              ) : (
+                /* Regular user mobile menu */
+                <>
+                  {userName && (
+                    <div className="px-4 mb-3">
+                      <div className={`text-sm font-medium ${isImpersonating ? 'text-orange-600' : 'text-gray-900'}`}>
+                        {userName}
+                        {isImpersonating && (
+                          <span className="ml-2 text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">
+                            Switched User
+                          </span>
+                        )}
+                      </div>
+                      {isImpersonating && originalAdmin && (
+                        <div className="text-xs text-gray-500 mt-1">
+                          Logged in as: {originalAdmin.name}
+                        </div>
+                      )}
+                      {userRole && !isImpersonating && (
+                        <div className="text-xs text-gray-500">Role: {userRole}</div>
+                      )}
                     </div>
                   )}
-                  {userRole && !isImpersonating && (
-                    <div className="text-xs text-gray-500">Role: {userRole}</div>
-                  )}
-                </div>
-              )}
-              <div className="px-2 space-y-1">
-                {/* Impersonation controls */}
-                {(canShowImpersonation || isImpersonating) && (
-                  <>
-                    {isImpersonating ? (
+                  <div className="px-2 space-y-1">
+                    {/* Impersonation controls */}
+                    {(canShowImpersonation || isImpersonating) && (
+                      <>
+                        {isImpersonating ? (
+                          <button
+                            onClick={() => {
+                              handleExitSwitch();
+                              setMobileMenuOpen(false);
+                            }}
+                            className="block w-full text-left px-3 py-2 text-base font-medium text-orange-700 bg-orange-50 hover:bg-orange-100 rounded-md"
+                          >
+                            Exit Switch
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              handleSwitchUser();
+                              setMobileMenuOpen(false);
+                            }}
+                            className="block w-full text-left px-3 py-2 text-base font-medium text-blue-600 hover:bg-blue-50 rounded-md"
+                          >
+                            Switch User
+                          </button>
+                        )}
+                      </>
+                    )}
+
+                    {/* Change Password - available for own account and when managing buddies */}
+                    <Link
+                      href="/change-password"
+                      onClick={(e) => {
+                        handleNavigation(e, '/change-password');
+                        setMobileMenuOpen(false);
+                      }}
+                      className="block px-3 py-2 text-base font-medium text-gray-700 hover:bg-gray-100 rounded-md"
+                    >
+                      Change Password
+                    </Link>
+
+                    {/* Hide logout when impersonating */}
+                    {!isImpersonating && (
                       <button
-                        onClick={() => {
-                          handleExitSwitch();
-                          setMobileMenuOpen(false);
-                        }}
-                        className="block w-full text-left px-3 py-2 text-base font-medium text-orange-700 bg-orange-50 hover:bg-orange-100 rounded-md"
+                        onClick={handleLogout}
+                        className="block w-full text-left px-3 py-2 text-base font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-md"
                       >
-                        Exit Switch
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => {
-                          handleSwitchUser();
-                          setMobileMenuOpen(false);
-                        }}
-                        className="block w-full text-left px-3 py-2 text-base font-medium text-blue-600 hover:bg-blue-50 rounded-md"
-                      >
-                        Switch User
+                        Logout
                       </button>
                     )}
-                  </>
-                )}
+                  </div>
 
-                {/* Change Password - available for own account and when managing buddies */}
-                <Link
-                  href="/change-password"
-                  onClick={(e) => {
-                    handleNavigation(e, '/change-password');
-                    setMobileMenuOpen(false);
-                  }}
-                  className="block px-3 py-2 text-base font-medium text-gray-700 hover:bg-gray-100 rounded-md"
-                >
-                  Change Password
-                </Link>
-
-                {/* Hide logout when impersonating */}
-                {!isImpersonating && (
-                  <button
-                    onClick={handleLogout}
-                    className="block w-full text-left px-3 py-2 text-base font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-md"
-                  >
-                    Logout
-                  </button>
-                )}
-              </div>
-
-              {/* Version info */}
-              <div className="px-4 py-3 mt-4 border-t border-gray-200 text-center">
-                <VersionDisplay showBuildDate={true} />
-              </div>
+                  {/* Version info */}
+                  <div className="px-4 py-3 mt-4 border-t border-gray-200 text-center">
+                    <VersionDisplay showBuildDate={true} />
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </>

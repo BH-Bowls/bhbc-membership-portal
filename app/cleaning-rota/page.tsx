@@ -76,7 +76,8 @@ export default function CleaningRotaPage() {
 
   // Check if user can edit (committee = non-Member)
   const userRole = session?.user?.role || 'Member';
-  const canEdit = userRole !== 'Member' && userRole !== '';
+  const canEdit = userRole !== 'Member' && userRole !== '' && userRole !== 'Kiosk';
+  const isKiosk = userRole === 'Kiosk';
 
   // Fetch members for searchable select
   const fetchMembers = useCallback(async () => {
@@ -532,7 +533,7 @@ export default function CleaningRotaPage() {
                           ) : (
                             <div className="flex items-center gap-1 whitespace-nowrap">
                               <span>{getMemberDisplayName(entry[position]) || '-'}</span>
-                              {isCurrentUserAssigned(entry, position) && !isEditing && (
+                              {isCurrentUserAssigned(entry, position) && !isEditing && !isKiosk && (
                                 <button
                                   onClick={() => openSwapModal(entry, position)}
                                   className="ml-2 text-blue-600 hover:text-blue-800 text-xs underline print:hidden"
@@ -582,7 +583,7 @@ export default function CleaningRotaPage() {
                         ) : (
                           <div className="flex items-center gap-2">
                             <span className="text-gray-900 font-medium">{getMemberDisplayName(entry[position]) || '-'}</span>
-                            {isCurrentUserAssigned(entry, position) && (
+                            {isCurrentUserAssigned(entry, position) && !isKiosk && (
                               <button
                                 onClick={() => openSwapModal(entry, position)}
                                 className="text-blue-600 hover:text-blue-800 text-xs underline"

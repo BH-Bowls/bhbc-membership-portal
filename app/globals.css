@@ -1,5 +1,19 @@
 @import "tailwindcss";
 
+/*
+ * TEXT COLOR ACCESSIBILITY GUIDELINES
+ * ====================================
+ * For good contrast across all devices (especially mobile like Google Pixel):
+ *
+ * Primary text: text-gray-900 (strongly recommended for main content)
+ * Secondary text: text-gray-700 (use this instead of text-gray-500/600)
+ * Placeholder text: text-gray-400 (only for placeholders)
+ * Disabled text: text-gray-500 (only for disabled states)
+ *
+ * AVOID: text-gray-400, text-gray-500, text-gray-600 for regular content
+ * These are too light on some mobile devices and fail accessibility contrast checks.
+ */
+
 :root {
   --background: #ffffff;
   --foreground: #171717;

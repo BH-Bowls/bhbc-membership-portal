@@ -14,6 +14,7 @@ import { getButtonClasses } from '@/config/theme-helpers';
 import { canEnterGame, type GameGender } from '@/lib/member-type-utils';
 import { calculateCapacity, formatCapacity, getCapacityBadgeColor } from '@/lib/game-management/capacity';
 import { EnteredPlayersModal } from '@/components/game-management/EnteredPlayersModal';
+import { parseUKDate } from '@/lib/date-utils';
 
 // ============================================================================
 // Type Definitions
@@ -283,48 +284,9 @@ export default function FriendliesPage() {
         return true;
     }
   }).sort((a, b) => {
-    // Sort by date (ascending) - earliest dates first
-    const parseDate = (dateStr: string) => {
-      if (!dateStr) return new Date(0);
-
-      // Try format: "Day, DD Month" (e.g., "Sun, 26 April")
-      const dayMonthMatch = dateStr.match(/(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),?\s+(\d{1,2})\s+(\w+)/i);
-      if (dayMonthMatch) {
-        const day = parseInt(dayMonthMatch[1], 10);
-        const monthName = dayMonthMatch[2];
-        const monthNames = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
-        const monthIndex = monthNames.findIndex(m => m.startsWith(monthName.toLowerCase()));
-
-        if (monthIndex === -1) return new Date(0);
-
-        // Determine year based on current month
-        const now = new Date();
-        const currentMonth = now.getMonth();
-        let year = now.getFullYear();
-
-        // If the month has passed, assume next year
-        if (monthIndex < currentMonth - 1) {
-          year++;
-        }
-
-        return new Date(year, monthIndex, day);
-      }
-
-      // Try format: "DD/MM/YYYY" or "DD/MM/YY"
-      const parts = dateStr.split('/');
-      if (parts.length === 3) {
-        const day = parseInt(parts[0], 10);
-        const month = parseInt(parts[1], 10);
-        const year = parseInt(parts[2], 10);
-        if (isNaN(day) || isNaN(month) || isNaN(year)) return new Date(0);
-        return new Date(year, month - 1, day);
-      }
-
-      return new Date(0);
-    };
-
-    const dateA = parseDate(a.date);
-    const dateB = parseDate(b.date);
+    // Sort by date (ascending) - earliest dates first using parseUKDate
+    const dateA = parseUKDate(a.date);
+    const dateB = parseUKDate(b.date);
 
     // Ascending order: earlier dates first
     return dateA.getTime() - dateB.getTime();
@@ -371,7 +333,7 @@ export default function FriendliesPage() {
       <div className="container mx-auto px-4 py-8 max-w-6xl">
         {/* Page header with title and optional Manage button for Captains/Admins */}
         <div className="flex justify-between items-center mb-6">
-          <h1 className="text-3xl font-bold">Friendly Matches</h1>
+          <h1 className="text-3xl font-bold text-gray-900">Friendly Matches</h1>
 
           {/* Show Manage Games button only for Captains and Admins */}
           {session?.user.role && ['Captain', 'Admin'].includes(session.user.role) && (
@@ -472,8 +434,8 @@ export default function FriendliesPage() {
                     </h3>
 
                     {/* Game date and time formatted for display */}
-                    <p className="text-sm text-gray-600">
-                      {new Date(game.date).toLocaleDateString('en-GB', {
+                    <p className="text-sm text-gray-700">
+                      {parseUKDate(game.date).toLocaleDateString('en-GB', {
                         weekday: 'short',
                         day: 'numeric',
                         month: 'short',
@@ -488,7 +450,7 @@ export default function FriendliesPage() {
                 </div>
 
                 {/* Game details - venue, format, type, player count, score */}
-                <div className="space-y-1 text-sm mb-4">
+                <div className="space-y-1 text-sm text-gray-900 mb-4">
                   {/* Home or Away venue */}
                   <p>
                     <span className="font-medium">Venue:</span> {game.homeAway === 'H' ? 'Home' : 'Away'}
@@ -504,43 +466,43 @@ export default function FriendliesPage() {
                     <span className="font-medium">Type:</span> {game.ladiesMen}
                   </p>
 
-                  {/* For open games, show capacity information */}
-                  {game.status === 'O' && game.maxPlayers != null && game.maxPlayers > 0 && (() => {
+                  {/* For open games, show player count and capacity with View/Add button */}
+                  {game.status === 'O' && (() => {
+                    const hasCapacity = game.maxPlayers != null && game.maxPlayers > 0;
                     const capacity = calculateCapacity(game);
-                    const badgeColor = getCapacityBadgeColor(capacity);
+                    const badgeColor = hasCapacity ? getCapacityBadgeColor(capacity) : 'bg-green-500';
+
                     return (
-                      <p>
-                        <span className="font-medium">Capacity:</span>{' '}
+                      <div className="mt-2 pt-2 border-t border-gray-100">
+                        <p className="font-medium text-gray-900">
+                          {game.entered} Player{game.entered !== 1 ? 's' : ''} Entered
+                        </p>
+                        {hasCapacity && (
+                          <p className="text-gray-700">
+                            Capacity: {game.maxPlayers}
+                          </p>
+                        )}
                         <button
                           onClick={() => {
                             setSelectedGameForModal(game);
                             setIsModalOpen(true);
                           }}
-                          className={`inline-block px-2 py-0.5 text-xs font-semibold text-white rounded ${badgeColor} hover:opacity-80 cursor-pointer`}
+                          className={`mt-2 inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-white rounded ${badgeColor} hover:opacity-90 transition-opacity`}
                         >
-                          {formatCapacity(capacity)}
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                          </svg>
+                          View / Add
                         </button>
-                      </p>
+                      </div>
                     );
                   })()}
-
-                  {/* For open games without capacity limit, show simple player count */}
-                  {game.status === 'O' && (!game.maxPlayers || game.maxPlayers === 0) && (
-                    <button
-                      onClick={() => {
-                        setSelectedGameForModal(game);
-                        setIsModalOpen(true);
-                      }}
-                      className="text-green-600 hover:text-green-700 hover:underline cursor-pointer"
-                    >
-                      <span className="font-medium">{game.entered}</span> players entered
-                    </button>
-                  )}
 
                   {/* For played games, show final score */}
                   {game.status === 'P' && game.bhbcScore !== undefined && game.opponentScore !== undefined && (
                     <p className="text-lg font-bold">
-                      Score: <span className="text-blue-500">{game.bhbcScore}</span> - <span className="text-gray-600">{game.opponentScore}</span>
+                      Score: <span className="text-blue-600">{game.bhbcScore}</span> - <span className="text-gray-700">{game.opponentScore}</span>
                     </p>
                   )}
                 </div>
@@ -582,8 +544,8 @@ export default function FriendliesPage() {
                   );
                 })()}
 
-                {/* For Selected or Played games, show View Details button */}
-                {['S', 'P'].includes(game.status) && game.userEntered && (
+                {/* For Selected, Played, Cancelled, or Abandoned games, show View Details button */}
+                {['S', 'P', 'C', 'A'].includes(game.status) && game.userEntered && (
                   <Link
                     href={`/friendlies/game/${game.tabName}`}
                     className={`block w-full text-center ${getButtonClasses('primary', 'md')}`}

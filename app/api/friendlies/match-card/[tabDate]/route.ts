@@ -53,10 +53,10 @@ export async function GET(
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
 
-    // Verify game status is X, S, or P (Selecting, Selected, or Played)
-    if (!['X', 'S', 'P'].includes(game.status)) {
+    // Verify game status allows match card (X, S, P, C, A)
+    if (!['X', 'S', 'P', 'C', 'A'].includes(game.status)) {
       return NextResponse.json(
-        { error: 'Match card only available for Selecting, Selected, or Played games' },
+        { error: 'Match card only available for Selecting, Selected, Played, Cancelled, or Abandoned games' },
         { status: 400 }
       );
     }

@@ -117,6 +117,6 @@ export default withAuth(
  */
 export const config = {
   matcher: [
-    '/((?!api/auth|login|forgot-password|reset-password|_next/static|_next/image|favicon.ico).*)',
+    '/((?!api/auth|login|forgot-password|reset-password|kiosk|apply|_next/static|_next/image|favicon.ico).*)',
   ],
 };

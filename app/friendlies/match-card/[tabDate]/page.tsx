@@ -11,6 +11,7 @@ import { useParams } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
 import Link from 'next/link';
 import { MatchCardData } from '@/lib/types/friendlies';
+import { parseUKDate } from '@/lib/date-utils';
 
 // ============================================================================
 // Main Component
@@ -238,7 +239,7 @@ export default function MatchCardPage() {
               <div className="mt-3 text-lg">
                 {/* Full date with day name */}
                 <p>
-                  {new Date(game.date).toLocaleDateString('en-GB', {
+                  {parseUKDate(game.date).toLocaleDateString('en-GB', {
                     weekday: 'long',
                     day: 'numeric',
                     month: 'long',

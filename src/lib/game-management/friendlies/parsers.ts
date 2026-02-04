@@ -4,6 +4,7 @@
 
 import type { FriendlyGame, FriendlyPlayer } from '../types';
 import type { GameStatus, SelectionStatus, Position, ConfirmationStatus, HomeAway } from '../types';
+import { normalizeToUKDate } from '../../date-utils';
 
 /**
  * Format date from DD/MM/YYYY to DD MMM YY
@@ -54,8 +55,8 @@ export function parseFriendlyGameRow(
     return isNaN(parsed) ? 0 : parsed;
   };
 
-  // Get date and calculate tabDate
-  const date = get('date');
+  // Get date, normalize to DD/MM/YYYY, and calculate tabDate
+  const date = normalizeToUKDate(get('date'));
   const tabDate = formatTabDate(date);
 
   // Get tab name from sheet (populated by system when game opens/closes)

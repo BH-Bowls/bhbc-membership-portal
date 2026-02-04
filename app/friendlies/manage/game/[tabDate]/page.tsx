@@ -13,6 +13,7 @@ import { EnteredPlayersModal } from '@/components/game-management/EnteredPlayers
 import Link from 'next/link';
 import { GameSheetPlayer } from '@/lib/types/friendlies';
 import { saveDraft, restoreDraft, clearDraft } from '@/lib/form-draft-utils';
+import { parseUKDate } from '@/lib/date-utils';
 
 // ============================================================================
 // Type Definitions
@@ -490,7 +491,7 @@ export default function TeamSelectionPage() {
           <h1 className="text-3xl font-bold">{game.clubName} - Team Selection</h1>
 
           <div className="text-gray-600 mt-2">
-            {new Date(game.date).toLocaleDateString('en-GB', {
+            {parseUKDate(game.date).toLocaleDateString('en-GB', {
               weekday: 'long',
               day: 'numeric',
               month: 'long',

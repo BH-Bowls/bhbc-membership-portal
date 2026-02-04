@@ -32,9 +32,14 @@ export default function ClubDetailPage({ params }: PageProps) {
 
   const [club, setClub] = useState<Club | null>(null);
   const [contacts, setContacts] = useState<ClubContact[]>([]);
-  const [canEdit, setCanEdit] = useState(false);
+  const [canEditFromApi, setCanEditFromApi] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Kiosk users cannot edit, even if API says they can
+  const userRole = session?.user?.role || 'Member';
+  const isKiosk = userRole === 'Kiosk';
+  const canEdit = canEditFromApi && !isKiosk;
 
   // Edit states
   const [isEditingClub, setIsEditingClub] = useState(false);
@@ -107,7 +112,7 @@ export default function ClubDetailPage({ params }: PageProps) {
       const data = await response.json();
       setClub(data.club);
       setContacts(data.contacts || []);
-      setCanEdit(data.canEdit || false);
+      setCanEditFromApi(data.canEdit || false);
     } catch (err) {
       console.error('Failed to fetch club:', err);
       setError('Failed to load club');

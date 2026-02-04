@@ -125,8 +125,15 @@ export const authOptions: NextAuthOptions = {
         token.impersonationSessionId = undefined;
       }
 
-      // Handle session updates triggered by impersonation API endpoints
+      // Handle session updates triggered by API endpoints
       if (trigger === 'update' && session) {
+        // Refresh user data from database (for role changes, etc.)
+        if (session.action === 'REFRESH_USER_DATA' && session.userData) {
+          token.role = session.userData.role;
+          token.name = session.userData.name;
+          token.email = session.userData.email;
+        }
+
         // Start impersonation
         if (session.action === 'START_IMPERSONATION') {
           // Store original admin info before switching

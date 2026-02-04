@@ -251,6 +251,172 @@ Friendlies Management System
 }
 
 /**
+ * Send game published notification email to all entered players
+ * Sends a single email with all recipients in BCC
+ * Includes a link to view the game details and selection status
+ * @param game The game object containing match details
+ * @param players Array of entered players with their email addresses
+ * @param appUrl The base URL of the application for building links
+ * @returns Object with success status, count of emails sent, and any players without emails
+ */
+export async function sendGamePublishedEmail(
+  game: Game,
+  players: Array<{ fullName: string; email: string | null }>,
+  appUrl: string
+): Promise<{ success: boolean; emailsSent: number; playersWithoutEmail: string[]; error?: string }> {
+  try {
+    // Filter players who have email addresses
+    const playersWithEmail = players.filter(p => p.email && p.email.trim() !== '');
+    const playersWithoutEmail = players.filter(p => !p.email || p.email.trim() === '').map(p => p.fullName);
+
+    if (playersWithEmail.length === 0) {
+      console.warn('No players with email addresses for game published notification');
+      return { success: true, emailsSent: 0, playersWithoutEmail };
+    }
+
+    // Build the game URL
+    const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}`;
+
+    // Build email subject
+    const subject = `Team Selection Published - ${game.clubName} ${game.date}`;
+
+    // Build plain text version
+    const text = `
+Team Selection Published
+
+The team has been selected for the ${game.clubName} game.
+
+Date: ${game.date}
+Time: ${game.time}
+Venue: ${game.homeAway === 'H' ? 'Home' : 'Away'}
+
+View your selection and game details online:
+${gameUrl}
+
+---
+Burgess Hill Bowls Club
+Friendlies Management System
+    `.trim();
+
+    // Build HTML version
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      line-height: 1.6;
+      color: #333;
+    }
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .header {
+      background-color: #0066cc;
+      color: white;
+      padding: 20px;
+      text-align: center;
+      border-radius: 5px 5px 0 0;
+    }
+    .content {
+      background-color: #f9f9f9;
+      padding: 20px;
+      border: 1px solid #ddd;
+    }
+    .details {
+      background-color: white;
+      padding: 15px;
+      margin: 15px 0;
+      border-left: 4px solid #0066cc;
+    }
+    .button {
+      display: inline-block;
+      background-color: #0066cc;
+      color: white;
+      padding: 12px 24px;
+      text-decoration: none;
+      border-radius: 5px;
+      margin-top: 15px;
+    }
+    .footer {
+      text-align: center;
+      padding: 15px;
+      color: #666;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h2>Team Selection Published</h2>
+    </div>
+
+    <div class="content">
+      <p>The team has been selected for the <strong>${game.clubName}</strong> game.</p>
+
+      <div class="details">
+        <p><strong>Date:</strong> ${game.date}</p>
+        <p><strong>Time:</strong> ${game.time}</p>
+        <p><strong>Venue:</strong> ${game.homeAway === 'H' ? 'Home' : 'Away'}</p>
+      </div>
+
+      <p>Click the button below to view your selection and the full game details.</p>
+
+      <a href="${gameUrl}" class="button">View Game Details</a>
+    </div>
+
+    <div class="footer">
+      <p>Burgess Hill Bowls Club - Friendlies Management System</p>
+    </div>
+  </div>
+</body>
+</html>
+    `.trim();
+
+    // Get email transporter
+    const { getEmailTransporter, isEmailConfigured } = await import('./mailer');
+
+    if (!isEmailConfigured()) {
+      console.error('SMTP not configured for game published notification');
+      return { success: false, emailsSent: 0, playersWithoutEmail, error: 'Email service not configured' };
+    }
+
+    const transporter = getEmailTransporter();
+
+    // Build BCC list from all player emails
+    const bccList = playersWithEmail.map(p => p.email).join(', ');
+
+    // Send single email with all recipients in BCC
+    // Send TO the club email (or SMTP user) so we have a valid recipient
+    const mailOptions = {
+      from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
+      to: process.env.SMTP_USER, // Send to ourselves
+      bcc: bccList,
+      subject,
+      text,
+      html,
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    console.log(`✓ Game published notification sent to ${playersWithEmail.length} player(s) for ${game.tabName}`);
+    return { success: true, emailsSent: playersWithEmail.length, playersWithoutEmail };
+  } catch (error) {
+    console.error('Error sending game published email:', error);
+    return {
+      success: false,
+      emailsSent: 0,
+      playersWithoutEmail: [],
+      error: error instanceof Error ? error.message : 'Failed to send email'
+    };
+  }
+}
+
+/**
  * Send game status change notification (future enhancement placeholder)
  * Currently just logs the status change - not yet implemented
  * Future use: notify all entered players when game status changes

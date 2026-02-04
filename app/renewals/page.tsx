@@ -581,16 +581,32 @@ export default function RenewalsPage() {
 
             {/* Membership Renewal Section */}
             <div className="mb-8">
-              <div className="flex items-center">
-                <input
-                  type="checkbox"
-                  checked={currentRenewal?.renewingMembership || false}
-                  onChange={(e) => handleChange('renewingMembership', e.target.checked)}
-                  disabled={isFormDisabled}
-                  className="h-5 w-5 text-blue-500 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
-                />
-                <label className="ml-3 text-lg font-medium text-gray-900">
-                  I will be renewing my membership for the 2026 season
+              <div className="flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-8">
+                <label className="flex items-center cursor-pointer">
+                  <input
+                    type="radio"
+                    name="membershipStatus"
+                    checked={currentRenewal?.renewingMembership === true}
+                    onChange={() => handleChange('renewingMembership', true)}
+                    disabled={isFormDisabled}
+                    className="h-5 w-5 text-blue-500 focus:ring-blue-500 border-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                  <span className="ml-3 text-lg font-medium text-gray-900">
+                    I will be renewing my membership
+                  </span>
+                </label>
+                <label className="flex items-center cursor-pointer">
+                  <input
+                    type="radio"
+                    name="membershipStatus"
+                    checked={currentRenewal?.renewingMembership === false}
+                    onChange={() => handleChange('renewingMembership', false)}
+                    disabled={isFormDisabled}
+                    className="h-5 w-5 text-red-500 focus:ring-red-500 border-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                  <span className="ml-3 text-lg font-medium text-gray-900">
+                    I will be cancelling my membership
+                  </span>
                 </label>
               </div>
 

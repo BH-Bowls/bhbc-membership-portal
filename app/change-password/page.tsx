@@ -48,8 +48,8 @@ export default function ChangePasswordPage() {
       return;
     }
 
-    // Validate password length
-    if (newPassword.length < 8) {
+    // Validate password length (skip for admin managing another user)
+    if (!isAdminManaging && newPassword.length < 8) {
       setError('New password must be at least 8 characters');
       return;
     }
@@ -214,7 +214,7 @@ export default function ChangePasswordPage() {
                       onChange={(e) => setNewPassword(e.target.value)}
                       className="block w-full px-3 py-2 pr-10 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                       required
-                      minLength={8}
+                      minLength={isAdminManaging ? 1 : 8}
                       disabled={isSubmitting || success}
                     />
                     <button
@@ -235,7 +235,9 @@ export default function ChangePasswordPage() {
                       )}
                     </button>
                   </div>
-                  <p className="mt-1 text-xs text-gray-500">Must be at least 8 characters</p>
+                  {!isAdminManaging && (
+                    <p className="mt-1 text-xs text-gray-500">Must be at least 8 characters</p>
+                  )}
                 </div>
 
                 {/* Confirm New Password */}
@@ -251,7 +253,7 @@ export default function ChangePasswordPage() {
                       onChange={(e) => setConfirmPassword(e.target.value)}
                       className="block w-full px-3 py-2 pr-10 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                       required
-                      minLength={8}
+                      minLength={isAdminManaging ? 1 : 8}
                       disabled={isSubmitting || success}
                     />
                     <button
@@ -311,15 +313,15 @@ export default function ChangePasswordPage() {
             </div>
 
             {/* Help Text */}
-            <div className="mt-4 text-sm text-gray-600">
-              <p>Password requirements:</p>
-              <ul className="list-disc list-inside mt-2 space-y-1">
-                <li>At least 8 characters long</li>
-                {!isAdminManaging && (
+            {!isAdminManaging && (
+              <div className="mt-4 text-sm text-gray-600">
+                <p>Password requirements:</p>
+                <ul className="list-disc list-inside mt-2 space-y-1">
+                  <li>At least 8 characters long</li>
                   <li>Must be different from your current password</li>
-                )}
-              </ul>
-            </div>
+                </ul>
+              </div>
+            )}
           </div>
         </div>
       </main>

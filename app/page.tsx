@@ -3,9 +3,13 @@
 import { useSession } from 'next-auth/react';
 import { Navbar } from '@/components/Navbar';
 import { getBadgeClasses } from '@/config/theme-helpers';
+import { useSessionRefresh } from '@/hooks/useSessionRefresh';
 
 export default function HomePage() {
   const { data: session, status } = useSession();
+
+  // Refresh session data from database (picks up role changes, etc.)
+  useSessionRefresh();
 
   if (status === 'loading') {
     return (

@@ -10,6 +10,7 @@ import { Navbar } from '@/components/Navbar';
 import { EnteredPlayersModal } from '@/components/game-management/EnteredPlayersModal';
 import Link from 'next/link';
 import { saveDraft, restoreDraft, clearDraft } from '@/lib/form-draft-utils';
+import { parseUKDate } from '@/lib/date-utils';
 
 interface Player {
   rowNumber: number;
@@ -303,7 +304,7 @@ export default function InternalGameSelectionPage() {
             </Link>
             <h1 className="text-3xl font-bold">{game.gameName}</h1>
             <p className="text-gray-600">
-              {new Date(game.date).toLocaleDateString('en-GB', {
+              {parseUKDate(game.date).toLocaleDateString('en-GB', {
                 weekday: 'long',
                 day: 'numeric',
                 month: 'long',

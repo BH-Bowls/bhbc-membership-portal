@@ -10,6 +10,7 @@ import { Navbar } from '@/components/Navbar';
 import { SearchableSelect } from '@/components/SearchableSelect';
 import { getMemberTypeDisplay, getMemberTypeOptions } from '@/lib/member-type-utils';
 import { saveDraft, restoreDraft, clearDraft } from '@/lib/form-draft-utils';
+import { useSessionRefresh } from '@/hooks/useSessionRefresh';
 
 interface ProfileData {
   title: string;
@@ -47,6 +48,9 @@ interface ProfileData {
 export default function ProfilePage() {
   const { data: session, status } = useSession();
   const router = useRouter();
+
+  // Refresh session data from database (picks up role changes, etc.)
+  useSessionRefresh();
 
   // Check if admin is managing another user
   const isAdminManaging = session?.user?.isImpersonating &&

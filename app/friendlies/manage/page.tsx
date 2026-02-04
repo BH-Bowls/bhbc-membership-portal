@@ -81,6 +81,25 @@ export default function ManageGamesPage() {
     who: '',
   });
 
+  // State: Publish dialog for publishing team selection
+  const [publishDialog, setPublishDialog] = useState<{
+    isOpen: boolean;
+    tabName: string;
+    sendEmail: boolean;
+    submitting: boolean;
+    result: {
+      emailsSent?: number;
+      playersWithoutEmail?: string[];
+      emailError?: string;
+    } | null;
+  }>({
+    isOpen: false,
+    tabName: '',
+    sendEmail: false, // Default to not sending email
+    submitting: false,
+    result: null,
+  });
+
   // ============================================================================
   // Effects
   // ============================================================================
@@ -227,20 +246,80 @@ export default function ManageGamesPage() {
 
   /**
    * Handle Publish Selection button click
-   * Changes status from 'X' (Selecting) to 'S' (Selected)
-   * Publishes team selection to all players
+   * Opens the publish dialog with email option
    */
   function handlePublishSelection(tabName: string) {
-    // Show confirmation dialog
-    setConfirmDialog({
+    setPublishDialog({
       isOpen: true,
-      title: 'Publish Selection',
-      message: 'Publish team selection to players?',
-      onConfirm: () => {
-        closeConfirmDialog();
-        changeStatus(tabName, 'publish');
-      },
+      tabName,
+      sendEmail: false, // Default to not sending email
+      submitting: false,
+      result: null,
     });
+  }
+
+  /**
+   * Submit the publish action from the publish dialog
+   */
+  async function submitPublish() {
+    const { tabName, sendEmail } = publishDialog;
+
+    // Show submitting state
+    setPublishDialog(prev => ({ ...prev, submitting: true }));
+
+    try {
+      const response = await fetch('/api/friendlies/manage/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tab_name: tabName,
+          action: 'publish',
+          send_email: sendEmail,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        // If email was sent, show the result
+        if (sendEmail && (data.emails_sent > 0 || data.players_without_email?.length > 0 || data.email_error)) {
+          setPublishDialog(prev => ({
+            ...prev,
+            submitting: false,
+            result: {
+              emailsSent: data.emails_sent,
+              playersWithoutEmail: data.players_without_email,
+              emailError: data.email_error,
+            },
+          }));
+        } else {
+          // No email or no result to show - close dialog and refresh
+          setPublishDialog(prev => ({ ...prev, isOpen: false }));
+          await fetchGames();
+        }
+      } else {
+        alert(data.error || 'Failed to publish selection');
+        setPublishDialog(prev => ({ ...prev, submitting: false }));
+      }
+    } catch (error) {
+      console.error('Error publishing selection:', error);
+      alert('Failed to publish selection');
+      setPublishDialog(prev => ({ ...prev, submitting: false }));
+    }
+  }
+
+  /**
+   * Close the publish dialog and refresh games
+   */
+  function closePublishDialog() {
+    setPublishDialog({
+      isOpen: false,
+      tabName: '',
+      sendEmail: false,
+      submitting: false,
+      result: null,
+    });
+    fetchGames();
   }
 
   /**
@@ -519,20 +598,20 @@ export default function ManageGamesPage() {
                     className={actionLoading === game.tabName ? 'opacity-50' : ''}
                   >
                     {/* Date and time column */}
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       <div>{parseDDMMYYYY(game.date)?.toLocaleDateString('en-GB') || game.date}</div>
-                      <div className="text-gray-500">{game.time}</div>
+                      <div className="text-gray-700">{game.time}</div>
                     </td>
 
                     {/* Club name column */}
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                       {game.clubName}
                     </td>
 
                     {/* Game details column (venue and format) */}
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       <div>{game.homeAway === 'H' ? 'Home' : 'Away'}</div>
-                      <div className="text-gray-500">{game.format}</div>
+                      <div className="text-gray-700">{game.format}</div>
                     </td>
 
                     {/* Status badge column */}
@@ -541,9 +620,9 @@ export default function ManageGamesPage() {
                     </td>
 
                     {/* Player counts column */}
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       <div>Entered: {game.entered}</div>
-                      <div className="text-gray-500">Selected: {game.selected}</div>
+                      <div className="text-gray-700">Selected: {game.selected}</div>
                     </td>
 
                     {/* Actions column - buttons vary based on game status */}
@@ -780,6 +859,117 @@ export default function ManageGamesPage() {
                   Save
                 </button>
               </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Publish Selection Dialog */}
+      {publishDialog.isOpen && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-black bg-opacity-50 z-40"
+            onClick={() => !publishDialog.submitting && !publishDialog.result && closePublishDialog()}
+          />
+
+          {/* Dialog */}
+          <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+              {publishDialog.result ? (
+                // Show email result
+                <>
+                  <h2 className="text-xl font-bold mb-4 text-gray-900">Selection Published</h2>
+
+                  <div className="space-y-3">
+                    {publishDialog.result.emailsSent !== undefined && publishDialog.result.emailsSent > 0 && (
+                      <div className="flex items-center gap-2 text-green-700 bg-green-50 p-3 rounded">
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        <span>Email sent to {publishDialog.result.emailsSent} player{publishDialog.result.emailsSent !== 1 ? 's' : ''}</span>
+                      </div>
+                    )}
+
+                    {publishDialog.result.playersWithoutEmail && publishDialog.result.playersWithoutEmail.length > 0 && (
+                      <div className="bg-yellow-50 p-3 rounded">
+                        <p className="text-yellow-800 font-medium mb-1">
+                          {publishDialog.result.playersWithoutEmail.length} player{publishDialog.result.playersWithoutEmail.length !== 1 ? 's' : ''} without email:
+                        </p>
+                        <ul className="text-yellow-700 text-sm list-disc list-inside">
+                          {publishDialog.result.playersWithoutEmail.map((name, i) => (
+                            <li key={i}>{name}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {publishDialog.result.emailError && (
+                      <div className="bg-red-50 p-3 rounded text-red-700">
+                        <p className="font-medium">Email error:</p>
+                        <p className="text-sm">{publishDialog.result.emailError}</p>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex justify-end mt-6">
+                    <button
+                      onClick={closePublishDialog}
+                      className="px-4 py-2 text-white bg-blue-600 rounded hover:bg-blue-700"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </>
+              ) : (
+                // Show publish form
+                <>
+                  <h2 className="text-xl font-bold mb-4 text-gray-900">Publish Selection</h2>
+
+                  <p className="text-gray-700 mb-4">
+                    Publish the team selection for this game? Players will be able to see their selection status.
+                  </p>
+
+                  <label className="flex items-center gap-3 p-3 bg-gray-50 rounded cursor-pointer hover:bg-gray-100">
+                    <input
+                      type="checkbox"
+                      checked={publishDialog.sendEmail}
+                      onChange={(e) => setPublishDialog(prev => ({ ...prev, sendEmail: e.target.checked }))}
+                      disabled={publishDialog.submitting}
+                      className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"
+                    />
+                    <div>
+                      <span className="font-medium text-gray-900">Email entered players</span>
+                      <p className="text-sm text-gray-600">
+                        Send notification to all players who entered this game
+                      </p>
+                    </div>
+                  </label>
+
+                  <div className="flex justify-end gap-3 mt-6">
+                    <button
+                      onClick={closePublishDialog}
+                      disabled={publishDialog.submitting}
+                      className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={submitPublish}
+                      disabled={publishDialog.submitting}
+                      className="px-4 py-2 text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
+                    >
+                      {publishDialog.submitting && (
+                        <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                      )}
+                      {publishDialog.submitting ? 'Publishing...' : 'Publish'}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </>

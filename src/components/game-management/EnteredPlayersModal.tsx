@@ -64,13 +64,11 @@ export function EnteredPlayersModal({
         fetchAvailablePlayers();
       } else {
         fetchEnteredPlayers();
-        // Only fetch available players for Captain/Admin (they're the only ones who can add)
-        if (isCaptainOrAdmin) {
-          fetchAvailablePlayers();
-        }
+        // Fetch available players for all members (everyone can add players now)
+        fetchAvailablePlayers();
       }
     }
-  }, [isOpen, gameId, isCaptainOrAdmin, addOnlyMode]);
+  }, [isOpen, gameId, addOnlyMode]);
 
   async function fetchEnteredPlayers() {
     try {
@@ -301,7 +299,7 @@ export function EnteredPlayersModal({
                   )}
                   Add {selectedPlayers.length} Player{selectedPlayers.length === 1 ? '' : 's'}
                 </button>
-              ) : isCaptainOrAdmin ? (
+              ) : (
                 <button
                   onClick={() => setShowAddDialog(true)}
                   className="px-4 py-2 text-white bg-green-600 rounded hover:bg-green-700 transition-colors flex items-center gap-2"
@@ -311,7 +309,7 @@ export function EnteredPlayersModal({
                   </svg>
                   Add Players
                 </button>
-              ) : null}
+              )}
             </div>
           )}
 

@@ -12,7 +12,10 @@ import {
   updateGameStatus,
   createGameColumn,
   createGameSheet,
+  getGameSheet,
 } from '@/lib/friendlies-sheets';
+import { sendGamePublishedEmail } from '@/lib/email/friendlies';
+import { getAllUsers } from '@/lib/sheets';
 import { ChangeStatusRequest, ChangeStatusResponse, GameStatus } from '@/lib/types/friendlies';
 
 // POST handler - Changes game status with validation and sheet creation
@@ -33,7 +36,7 @@ export async function POST(request: NextRequest) {
 
     // Parse request body
     const body: ChangeStatusRequest = await request.json();
-    const { tab_name, row_number, action, bhbc_score, opponent_score, reason, who } = body;
+    const { tab_name, row_number, action, bhbc_score, opponent_score, reason, who, send_email } = body;
 
     // Fetch all games from Games sheet
     const games = await getGames();
@@ -126,6 +129,7 @@ export async function POST(request: NextRequest) {
     // Track new status and whether game sheet was created
     let newStatus: GameStatus = currentStatus;
     let gameSheetCreated = false;
+    let emailResult: { emailsSent?: number; playersWithoutEmail?: string[]; emailError?: string } = {};
 
     // Handle different status transition actions with validation and sheet operations
     switch (action) {
@@ -180,6 +184,44 @@ export async function POST(request: NextRequest) {
 
         // Set new status to Selected (team has been picked and published)
         newStatus = 'S';
+
+        // If email notification requested, send emails to all entered players
+        if (send_email) {
+          try {
+            // Get all players from the game sheet (all entered players)
+            const gamePlayers = await getGameSheet(effectiveTabName);
+
+            // Get all users to find email addresses
+            const allUsers = await getAllUsers();
+            const userEmailMap = new Map<string, string>();
+            for (const user of allUsers) {
+              if (user.userName && user.emailAddress) {
+                userEmailMap.set(user.userName.toLowerCase(), user.emailAddress);
+              }
+            }
+
+            // Build player list with email addresses
+            const playersWithEmails = gamePlayers.map(player => ({
+              fullName: player.fullName || player.name,
+              email: userEmailMap.get(player.name.toLowerCase()) || null,
+            }));
+
+            // Get app URL from environment or request
+            const appUrl = process.env.NEXTAUTH_URL || 'https://members.burgesshillbowlsclub.com';
+
+            // Send the email
+            const result = await sendGamePublishedEmail(game, playersWithEmails, appUrl);
+
+            emailResult = {
+              emailsSent: result.emailsSent,
+              playersWithoutEmail: result.playersWithoutEmail,
+              emailError: result.error,
+            };
+          } catch (emailError) {
+            console.error('Error sending publish notification emails:', emailError);
+            emailResult.emailError = emailError instanceof Error ? emailError.message : 'Failed to send emails';
+          }
+        }
         break;
 
       // PLAYED: Transition from 'S' (Selected) to 'P' (Played/Completed)
@@ -259,11 +301,26 @@ export async function POST(request: NextRequest) {
     });
 
     // Build success response with new status and whether game sheet was created
-    const response: ChangeStatusResponse = {
+    const response: ChangeStatusResponse & {
+      emails_sent?: number;
+      players_without_email?: string[];
+      email_error?: string;
+    } = {
       success: true,
       new_status: newStatus,            // The new status code (O, X, S, P, C, or A)
       game_sheet_created: gameSheetCreated, // True if game sheet was created (close action)
     };
+
+    // Add email results if applicable
+    if (emailResult.emailsSent !== undefined) {
+      response.emails_sent = emailResult.emailsSent;
+    }
+    if (emailResult.playersWithoutEmail && emailResult.playersWithoutEmail.length > 0) {
+      response.players_without_email = emailResult.playersWithoutEmail;
+    }
+    if (emailResult.emailError) {
+      response.email_error = emailResult.emailError;
+    }
 
     // Return success response to client
     return NextResponse.json(response);

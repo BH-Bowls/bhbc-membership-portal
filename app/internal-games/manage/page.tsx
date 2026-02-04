@@ -10,6 +10,7 @@ import { Navbar } from '@/components/Navbar';
 import Link from 'next/link';
 import { getButtonClasses } from '@/config/theme-helpers';
 import type { InternalGame } from '@/lib/game-management/types';
+import { parseUKDate } from '@/lib/date-utils';
 
 interface ConfirmDialogState {
   isOpen: boolean;
@@ -211,22 +212,22 @@ export default function ManageInternalGamesPage() {
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider">
                     Game
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider">
                     Date / Time
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider">
                     Format
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider">
                     Players
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider">
                     Status
                   </th>
-                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-900 uppercase tracking-wider">
                     Actions
                   </th>
                 </tr>
@@ -237,20 +238,20 @@ export default function ManageInternalGamesPage() {
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-gray-900">{game.gameName}</div>
                       {game.location && (
-                        <div className="text-sm text-gray-500">{game.location}</div>
+                        <div className="text-sm text-gray-700">{game.location}</div>
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-900">
-                        {new Date(game.date).toLocaleDateString('en-GB')}
+                        {parseUKDate(game.date).toLocaleDateString('en-GB')}
                       </div>
-                      <div className="text-sm text-gray-500">{game.time}</div>
+                      <div className="text-sm text-gray-700">{game.time}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-900">{game.format}</div>
-                      <div className="text-sm text-gray-500">{game.ladiesMen}</div>
+                      <div className="text-sm text-gray-700">{game.ladiesMen}</div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {game.entered} entered / {game.selected} selected
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">

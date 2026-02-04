@@ -394,6 +394,7 @@ export interface ChangeStatusRequest {
   opponent_score?: number;  // Opponent score (required for 'played' and 'abandon')
   reason?: string;          // Reason for cancellation/abandonment (required for 'cancel' and 'abandon')
   who?: string;             // Who initiated cancellation (required for 'cancel')
+  send_email?: boolean;     // Whether to send email notification to players (for 'publish' action)
 }
 
 /**

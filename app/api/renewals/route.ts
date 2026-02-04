@@ -11,6 +11,7 @@ import {
   updateRenewal,
   calculateFees,
   sendRenewalConfirmation,
+  sendCancellationConfirmation,
   type Renewal,
   type FeeBreakdown,
 } from '@/lib/renewals-sheets';
@@ -345,15 +346,15 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    // Send confirmation email if renewing
-    // Pass both target user and the person submitting (manager)
-    if (data.renewingMembership) {
-      // Get the actual manager's userName
-      // If impersonating, use originalAdmin.userName, otherwise use current user
-      const managerUserName = session.user.isImpersonating
-        ? session.user.originalAdmin?.userName
-        : session.user.userName;
+    // Get the actual manager's userName for email sending
+    // If impersonating, use originalAdmin.userName, otherwise use current user
+    const managerUserName = session.user.isImpersonating
+      ? session.user.originalAdmin?.userName
+      : session.user.userName;
 
+    // Send confirmation email based on renewal status
+    if (data.renewingMembership) {
+      // Send renewal confirmation email
       const emailResult = await sendRenewalConfirmation(
         targetUserName,
         updatedRenewal,
@@ -379,15 +380,41 @@ export async function PUT(request: NextRequest) {
 
       // Track that email was sent successfully
       emailSent = true;
+    } else {
+      // Send cancellation confirmation email
+      const emailResult = await sendCancellationConfirmation(
+        targetUserName,
+        managerUserName
+      );
+
+      if (!emailResult.success) {
+        console.error('Failed to send cancellation email:', emailResult.error);
+        // Don't fail the request if email fails, just log it
+        emailSent = false;
+        return NextResponse.json({
+          success: true,
+          partialSuccess: true,
+          renewal: updatedRenewal,
+          fees,
+          profileUpdated: true,
+          renewalUpdated: true,
+          emailSent: false,
+          warning: 'Cancellation saved but confirmation email could not be sent',
+        });
+      }
+
+      // Track that email was sent successfully
+      emailSent = true;
     }
 
     return NextResponse.json({
       success: true,
       renewal: updatedRenewal,
       fees,
+      emailSent: true,
       message: data.renewingMembership
         ? 'Renewal submitted successfully. Confirmation email sent.'
-        : 'Renewal updated successfully',
+        : 'Cancellation confirmed. Confirmation email sent.',
     });
   } catch (error) {
     console.error('Error updating renewal:', error);

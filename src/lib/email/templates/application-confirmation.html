@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Membership Application Received</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: Arial, Helvetica, sans-serif; font-size: 16px; line-height: 1.5; color: #333333; background-color: #f5f5f5;">
+  <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f5f5f5;">
+    <tr>
+      <td style="padding: 20px 0;">
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="600" style="margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+          <!-- Header -->
+          <tr>
+            <td style="background-color: {{HEADER_COLOR}}; padding: 30px 40px; text-align: center;">
+              <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: bold;">{{BRAND_NAME}}</h1>
+            </td>
+          </tr>
+
+          <!-- Content -->
+          <tr>
+            <td style="padding: 40px;">
+              <h2 style="margin: 0 0 20px 0; color: #333333; font-size: 20px;">Thank You for Your Application</h2>
+
+              <p style="margin: 0 0 20px 0;">Dear {{firstName}},</p>
+
+              <p style="margin: 0 0 20px 0;">Thank you for applying for membership at Burgess Hill Bowls Club. We have received your application and will be in touch shortly.</p>
+
+              <p style="margin: 0 0 10px 0;">Please find attached our membership information document for your reference.</p>
+
+              <!-- Application Details -->
+              <div style="background-color: #f8f9fa; border-radius: 8px; padding: 20px; margin: 20px 0;">
+                <h3 style="margin: 0 0 15px 0; color: {{HEADER_COLOR}}; font-size: 16px; border-bottom: 2px solid {{HEADER_COLOR}}; padding-bottom: 10px;">Your Application Details</h3>
+
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="font-size: 14px;">
+                  <tr>
+                    <td style="padding: 5px 0; color: #666666; width: 40%;">Name:</td>
+                    <td style="padding: 5px 0; font-weight: bold;">{{firstName}} {{lastName}}{{#if knownAs}} ({{knownAs}}){{/if}}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 5px 0; color: #666666;">Gender:</td>
+                    <td style="padding: 5px 0;">{{gender}}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 5px 0; color: #666666;">Email:</td>
+                    <td style="padding: 5px 0;">{{email}}</td>
+                  </tr>
+                  {{#if landline}}
+                  <tr>
+                    <td style="padding: 5px 0; color: #666666;">Landline:</td>
+                    <td style="padding: 5px 0;">{{landline}}</td>
+                  </tr>
+                  {{/if}}
+                  <tr>
+                    <td style="padding: 5px 0; color: #666666;">Mobile:</td>
+                    <td style="padding: 5px 0;">{{mobile}}</td>
+                  </tr>
+                  {{#if address1}}
+                  <tr>
+                    <td style="padding: 5px 0; color: #666666; vertical-align: top;">Address:</td>
+                    <td style="padding: 5px 0;">
+                      {{address1}}{{#if address2}}<br>{{address2}}{{/if}}{{#if address3}}<br>{{address3}}{{/if}}{{#if postCode}}<br>{{postCode}}{{/if}}
+                    </td>
+                  </tr>
+                  {{/if}}
+                  <tr>
+                    <td style="padding: 5px 0; color: #666666;">Age Group:</td>
+                    <td style="padding: 5px 0;">{{ageDemographic}}</td>
+                  </tr>
+                  {{#if showDob}}
+                  <tr>
+                    <td style="padding: 5px 0; color: #666666;">Date of Birth:</td>
+                    <td style="padding: 5px 0;">{{dob}}</td>
+                  </tr>
+                  {{/if}}
+                  {{#if showFtEducation}}
+                  <tr>
+                    <td style="padding: 5px 0; color: #666666;">Full Time Education:</td>
+                    <td style="padding: 5px 0;">{{ftEducation}}</td>
+                  </tr>
+                  {{/if}}
+                  <tr>
+                    <td style="padding: 5px 0; color: #666666;">Membership Type:</td>
+                    <td style="padding: 5px 0; font-weight: bold;">{{memberType}}</td>
+                  </tr>
+                  {{#if previousExperience}}
+                  <tr>
+                    <td style="padding: 5px 0; color: #666666; vertical-align: top;">Previous Experience:</td>
+                    <td style="padding: 5px 0;">{{previousExperience}}</td>
+                  </tr>
+                  {{/if}}
+                  {{#if disabilities}}
+                  <tr>
+                    <td style="padding: 5px 0; color: #666666; vertical-align: top;">Disabilities/Accessibility:</td>
+                    <td style="padding: 5px 0;">{{disabilities}}</td>
+                  </tr>
+                  {{/if}}
+                  {{#if proposerName}}
+                  <tr>
+                    <td style="padding: 5px 0; color: #666666;">Proposer:</td>
+                    <td style="padding: 5px 0;">{{proposerName}}</td>
+                  </tr>
+                  {{/if}}
+                  {{#if seconderName}}
+                  <tr>
+                    <td style="padding: 5px 0; color: #666666;">Seconder:</td>
+                    <td style="padding: 5px 0;">{{seconderName}}</td>
+                  </tr>
+                  {{/if}}
+                  {{#if comments}}
+                  <tr>
+                    <td style="padding: 5px 0; color: #666666; vertical-align: top;">Comments:</td>
+                    <td style="padding: 5px 0;">{{comments}}</td>
+                  </tr>
+                  {{/if}}
+                </table>
+              </div>
+
+              <p style="margin: 20px 0 0 0;">If you have any questions in the meantime, please don't hesitate to contact us.</p>
+
+              <p style="margin: 20px 0 0 0;">We look forward to welcoming you to the club!</p>
+
+              <p style="margin: 20px 0 0 0;">
+                Kind regards,<br>
+                <strong>Burgess Hill Bowls Club</strong>
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background-color: #f8f9fa; padding: 20px 40px; text-align: center; border-top: 1px solid #e9ecef;">
+              <p style="margin: 0; font-size: 12px; color: #6c757d;">
+                Burgess Hill Bowls Club<br>
+                Westhill Drive, Burgess Hill, West Sussex, RH15 9PP
+              </p>
+              <p style="margin: 10px 0 0 0; font-size: 12px; color: #6c757d;">
+                <a href="https://www.burgesshillbowlsclub.com/" style="color: {{LINK_COLOR}}; text-decoration: none;">www.burgesshillbowlsclub.com</a>
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

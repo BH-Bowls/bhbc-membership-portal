@@ -165,7 +165,7 @@ export function SearchableSelect({
                 className={`px-3 py-2 cursor-pointer text-sm ${
                   index === highlightedIndex
                     ? 'bg-blue-100 text-blue-900'
-                    : 'hover:bg-gray-100'
+                    : 'text-gray-900 hover:bg-gray-100'
                 }`}
               >
                 {option.label}
