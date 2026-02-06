@@ -17,10 +17,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Only Captains and Admins can access member list
-    if (!['Captain', 'Admin'].includes(session.user.role)) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
+    // All authenticated users can access member list (for adding players to games)
 
     // Fetch all members
     const allMembers = await getInternalGameMembers();

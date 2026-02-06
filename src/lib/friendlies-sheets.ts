@@ -3344,8 +3344,9 @@ export async function getTeaRotaList(): Promise<TeaRotaEntry[]> {
     const rowNumber = i + 2; // Row 1 is header, data starts at row 2
 
     // Get home/away status - only include home games
-    const homeAway = get(row, 'home_away') || 'H';
-    if (homeAway !== 'H') continue;
+    // Try multiple possible column names: "Home/Away" -> "home_away", "H/A" -> "h_a"
+    const homeAwayValue = get(row, 'home_away') || get(row, 'h_a') || 'H';
+    if (homeAwayValue.trim().toUpperCase() !== 'H') continue;
 
     // Get game status - skip cancelled games
     const status = get(row, 'status') || '';
@@ -3552,7 +3553,7 @@ export async function swapTeaAssignment(
   const teaLeadCol = colMap['tea_lead'];
   const teaFirstCol = colMap['tea_first'];
   const teaSecondCol = colMap['tea_second'];
-  const homeAwayCol = colMap['home_away'];
+  const homeAwayCol = colMap['home_away'] ?? colMap['h_a'];
 
   if (teaLeadCol === undefined || teaFirstCol === undefined || teaSecondCol === undefined) {
     throw new Error('Tea columns not found in Games sheet');
@@ -3727,8 +3728,9 @@ export async function getTeaRotaEntry(rowNumber: number): Promise<TeaRotaEntry |
   };
 
   // Only return if this is a home game
-  const homeAway = get('home_away') || 'H';
-  if (homeAway !== 'H') return null;
+  // Try multiple possible column names: "Home/Away" -> "home_away", "H/A" -> "h_a"
+  const homeAway = get('home_away') || get('h_a') || 'H';
+  if (homeAway.trim().toUpperCase() !== 'H') return null;
 
   // Normalize date to DD/MM/YYYY and format display date
   const date = normalizeToUKDate(get('date') || '');
