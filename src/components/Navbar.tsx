@@ -258,8 +258,8 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
       subItems: [
         { name: 'Members', href: '/members' },
         { name: 'Clubs', href: '/clubs' },
-        { name: 'Tea Rota', href: '/tea-rota' },
-        { name: 'Cleaning Rota', href: '/cleaning-rota' },
+//        { name: 'Tea Rota', href: '/tea-rota' },
+//        { name: 'Cleaning Rota', href: '/cleaning-rota' },
         { name: 'Sweeping Rota', href: '/sweeping-rota' },
       ],
     },
