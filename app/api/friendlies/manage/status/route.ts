@@ -1,6 +1,7 @@
 // app/api/friendlies/manage/status/route.ts
 // API endpoint for captains to change game status through the full lifecycle
-// Status flow: blank → O (Open) → X (Selecting) → S (Selected) → P (Played)
+// Status flow: blank → O (Open) → [L (Allocating) →] X (Selecting) → S (Selected) → P (Played)
+// Paired games use L status for allocation before game sheets are created
 // Alternative endings: C (Cancelled) or A (Abandoned)
 // Each transition creates necessary Google Sheets structures and enforces business rules
 
@@ -152,12 +153,28 @@ export async function POST(request: NextRequest) {
         await createGameColumn(effectiveTabName);
         break;
 
-      // CLOSE: Transition from 'O' (Open) to 'X' (Selecting/Closed for entries)
-      case 'close':
-        // Validate that game is currently Open
+      // ALLOCATE: Transition from 'O' (Open) to 'L' (Allocating) — paired games only
+      // Entries are closed but no game sheets are created yet.
+      // Captain will allocate players between paired games, then close to create sheets.
+      case 'allocate':
         if (currentStatus !== 'O') {
           return NextResponse.json(
-            { error: 'Can only close games with Open status' },
+            { error: 'Can only allocate games with Open status' },
+            { status: 400 }
+          );
+        }
+
+        // Set new status to Allocating (entries closed, no game sheet yet)
+        newStatus = 'L';
+        break;
+
+      // CLOSE: Transition from 'O' (Open) to 'X' (Selecting/Closed for entries)
+      // Also handles 'L' → 'X' for paired games after allocation
+      case 'close':
+        // Validate that game is currently Open or Allocating
+        if (currentStatus !== 'O' && currentStatus !== 'L') {
+          return NextResponse.json(
+            { error: 'Can only close games with Open or Allocating status' },
             { status: 400 }
           );
         }

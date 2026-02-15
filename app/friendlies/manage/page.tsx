@@ -13,6 +13,7 @@ import { Navbar } from '@/components/Navbar';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Game, GameStatus } from '@/lib/types/friendlies';
 import { getButtonClasses } from '@/config/theme-helpers';
+import { groupPairedGames, isPairedGame, type GameOrPair } from '@/lib/friendlies-utils';
 
 // ============================================================================
 // Main Component
@@ -227,6 +228,27 @@ export default function ManageGamesPage() {
   }
 
   /**
+   * Handle Open for paired games - opens both games together
+   */
+  function handleOpenPairedGames(gameA: Game, gameB: Game) {
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Open Paired Games',
+      message: `Open both ${gameA.clubName} and ${gameB.clubName} games for player entry?`,
+      onConfirm: async () => {
+        closeConfirmDialog();
+        setActionLoading(`paired-${gameA.rowNumber}-${gameB.rowNumber}`);
+        try {
+          await changeStatus(gameA.tabName, 'open', undefined, gameA.rowNumber);
+          await changeStatus(gameB.tabName, 'open', undefined, gameB.rowNumber);
+        } finally {
+          setActionLoading(null);
+        }
+      },
+    });
+  }
+
+  /**
    * Handle Close Game button click
    * Changes status from 'O' (Open) to 'X' (Selecting)
    * Closes entries and creates game sheet for team selection
@@ -240,6 +262,56 @@ export default function ManageGamesPage() {
       onConfirm: () => {
         closeConfirmDialog();
         changeStatus(tabName, 'close', undefined, rowNumber);
+      },
+    });
+  }
+
+  /**
+   * Handle Close for paired games - transitions O → L (Allocating) and redirects to allocation
+   * Game sheets are NOT created yet — allocation happens first, then sheets are created with only allocated players
+   */
+  function handleClosePairedGames(gameA: Game, gameB: Game) {
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Close & Allocate',
+      message: `Close entries for ${gameA.clubName} and ${gameB.clubName} and allocate players between games?`,
+      onConfirm: async () => {
+        closeConfirmDialog();
+        const pairKey = `paired-${gameA.rowNumber}-${gameB.rowNumber}`;
+        setActionLoading(pairKey);
+        try {
+          // Set game A to Allocating (O → L)
+          const resA = await fetch('/api/friendlies/manage/status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tab_name: gameA.tabName, row_number: gameA.rowNumber, action: 'allocate' }),
+          });
+          if (!resA.ok) {
+            const data = await resA.json();
+            alert(data.error || 'Failed to close first game');
+            return;
+          }
+
+          // Set game B to Allocating (O → L)
+          const resB = await fetch('/api/friendlies/manage/status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tab_name: gameB.tabName, row_number: gameB.rowNumber, action: 'allocate' }),
+          });
+          if (!resB.ok) {
+            const data = await resB.json();
+            alert(data.error || 'Failed to close second game');
+            return;
+          }
+
+          // Redirect to allocation page using the shared date
+          router.push(`/friendlies/manage/allocate/${encodeURIComponent(gameA.date)}`);
+        } catch (error) {
+          console.error('Error closing paired games:', error);
+          alert('Failed to close paired games');
+        } finally {
+          setActionLoading(null);
+        }
       },
     });
   }
@@ -495,6 +567,7 @@ export default function ManageGamesPage() {
     const badges: { [key in GameStatus]: { label: string; color: string } } = {
       '': { label: 'Upcoming', color: 'bg-gray-500' },      // Blank = Not opened yet
       'O': { label: 'Open', color: 'bg-green-500' },        // Open for entries
+      'L': { label: 'Allocating', color: 'bg-amber-500' },  // Paired games: allocating players
       'X': { label: 'Selecting', color: 'bg-yellow-500' },  // Captain selecting team
       'S': { label: 'Selected', color: 'bg-blue-500' },     // Team selected
       'P': { label: 'Played', color: 'bg-purple-500' },     // Game completed
@@ -539,7 +612,7 @@ export default function ManageGamesPage() {
         {/* Filter tabs - allow captain to filter by game status */}
         <div className="flex gap-2 mb-6 border-b border-gray-200 overflow-x-auto">
           {/* Loop through all possible status values */}
-          {(['all', '', 'O', 'X', 'S', 'P', 'C', 'A'] as const).map(status => (
+          {(['all', '', 'O', 'L', 'X', 'S', 'P', 'C', 'A'] as const).map(status => (
             <button
               key={status}
               onClick={() => setFilter(status)}
@@ -550,7 +623,7 @@ export default function ManageGamesPage() {
               }`}
             >
               {/* Display friendly label for each status */}
-              {status === 'all' ? 'All' : status === '' ? 'Upcoming' : status}
+              {status === 'all' ? 'All' : status === '' ? 'Upcoming' : status === 'L' ? 'Allocating' : status}
             </button>
           ))}
         </div>
@@ -590,116 +663,198 @@ export default function ManageGamesPage() {
                 </tr>
               </thead>
 
-              {/* Table body - list of games */}
+              {/* Table body - list of games (with paired game grouping) */}
               <tbody className="bg-white divide-y divide-gray-200">
-                {filteredGames.map((game, index) => (
-                  <tr
-                    key={game.tabName && game.tabName.trim() ? game.tabName : `${game.date}-${game.clubName}-${game.time}-${index}`}
-                    className={actionLoading === game.tabName ? 'opacity-50' : ''}
-                  >
-                    {/* Date and time column */}
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      <div>{parseDDMMYYYY(game.date)?.toLocaleDateString('en-GB') || game.date}</div>
-                      <div className="text-gray-700">{game.time}</div>
-                    </td>
+                {groupPairedGames(filteredGames).map((item, index) => {
+                  // Paired game row — combined view for Upcoming/Open status
+                  if (isPairedGame(item)) {
+                    const [gameA, gameB] = item;
+                    const pairKey = `paired-${gameA.rowNumber}-${gameB.rowNumber}`;
+                    const combinedEntered = Math.max(gameA.entered, gameB.entered);
+                    const isPairLoading = actionLoading === pairKey;
 
-                    {/* Club name column */}
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      {game.clubName}
-                    </td>
+                    return (
+                      <tr
+                        key={pairKey}
+                        className={`bg-purple-50 ${isPairLoading ? 'opacity-50' : ''}`}
+                      >
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          <div>{parseDDMMYYYY(gameA.date)?.toLocaleDateString('en-GB') || gameA.date}</div>
+                          <div className="text-gray-700">{gameA.time}</div>
+                        </td>
+                        <td className="px-6 py-4 text-sm font-medium text-gray-900">
+                          <div>{gameA.clubName}{gameA.clubName !== gameB.clubName ? ` + ${gameB.clubName}` : ''}</div>
+                          <span className="inline-block mt-1 px-2 py-0.5 text-xs font-medium text-purple-700 bg-purple-100 rounded">
+                            {gameA.ladiesMen} + {gameB.ladiesMen}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          <div>
+                            {gameA.homeAway === gameB.homeAway
+                              ? (gameA.homeAway === 'H' ? 'Home' : 'Away')
+                              : `${gameA.homeAway === 'H' ? 'H' : 'A'} / ${gameB.homeAway === 'H' ? 'H' : 'A'}`
+                            }
+                          </div>
+                          <div className="text-gray-700">{gameA.format} / {gameB.format}</div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          {getStatusBadge(gameA.status)}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          <div>Entered: {combinedEntered}</div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm space-x-2">
+                          {gameA.status === '' && (
+                            <button
+                              onClick={() => handleOpenPairedGames(gameA, gameB)}
+                              disabled={isPairLoading}
+                              className="text-green-600 hover:text-green-800 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              Open Both
+                            </button>
+                          )}
+                          {gameA.status === 'O' && (
+                            <button
+                              onClick={() => handleClosePairedGames(gameA, gameB)}
+                              disabled={isPairLoading}
+                              className="text-yellow-600 hover:text-yellow-800 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              Close & Allocate
+                            </button>
+                          )}
+                          {gameA.status === 'L' && (
+                            <Link
+                              href={`/friendlies/manage/allocate/${encodeURIComponent(gameA.date)}`}
+                              className="text-amber-600 hover:text-amber-800 font-medium"
+                            >
+                              Allocate Players
+                            </Link>
+                          )}
+                          {['', 'O', 'L'].includes(gameA.status) && (
+                            <button
+                              onClick={() => handleGameOutcome(gameA.tabName, gameA.status)}
+                              disabled={isPairLoading}
+                              className="text-red-600 hover:text-red-800 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              Cancel
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  }
 
-                    {/* Game details column (venue and format) */}
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      <div>{game.homeAway === 'H' ? 'Home' : 'Away'}</div>
-                      <div className="text-gray-700">{game.format}</div>
-                    </td>
+                  // Standard single game row (unchanged)
+                  const game = item as Game;
+                  return (
+                    <tr
+                      key={game.tabName && game.tabName.trim() ? game.tabName : `${game.date}-${game.clubName}-${game.time}-${index}`}
+                      className={actionLoading === game.tabName ? 'opacity-50' : ''}
+                    >
+                      {/* Date and time column */}
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        <div>{parseDDMMYYYY(game.date)?.toLocaleDateString('en-GB') || game.date}</div>
+                        <div className="text-gray-700">{game.time}</div>
+                      </td>
 
-                    {/* Status badge column */}
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {getStatusBadge(game.status)}
-                    </td>
+                      {/* Club name column */}
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                        {game.clubName}
+                      </td>
 
-                    {/* Player counts column */}
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      <div>Entered: {game.entered}</div>
-                      <div className="text-gray-700">Selected: {game.selected}</div>
-                    </td>
+                      {/* Game details column (venue and format) */}
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        <div>{game.homeAway === 'H' ? 'Home' : 'Away'}</div>
+                        <div className="text-gray-700">{game.format}</div>
+                      </td>
 
-                    {/* Actions column - buttons vary based on game status */}
-                    <td className="px-6 py-4 whitespace-nowrap text-sm space-x-2">
-                      {/* Upcoming games (blank status) - show Open button */}
-                      {game.status === '' && (
-                        <button
-                          onClick={() => handleOpenGame(game.tabName, game.rowNumber)}
-                          disabled={actionLoading === game.tabName || actionLoading === `row-${game.rowNumber}`}
-                          className="text-green-600 hover:text-green-800 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          Open
-                        </button>
-                      )}
+                      {/* Status badge column */}
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {getStatusBadge(game.status)}
+                      </td>
 
-                      {/* Open games - show Close button */}
-                      {game.status === 'O' && (
-                        <button
-                          onClick={() => handleCloseGame(game.tabName, game.rowNumber)}
-                          disabled={actionLoading === game.tabName || actionLoading === `row-${game.rowNumber}`}
-                          className="text-yellow-600 hover:text-yellow-800 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          Close
-                        </button>
-                      )}
+                      {/* Player counts column */}
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        <div>Entered: {game.entered}</div>
+                        <div className="text-gray-700">Selected: {game.selected}</div>
+                      </td>
 
-                      {/* Selecting games - show Select Team link and Publish button */}
-                      {game.status === 'X' && (
-                        <>
-                          <Link
-                            href={`/friendlies/manage/game/${encodeURIComponent(game.tabName)}`}
-                            className="text-blue-600 hover:text-blue-800 font-medium"
-                          >
-                            Select Team
-                          </Link>
+                      {/* Actions column - buttons vary based on game status */}
+                      <td className="px-6 py-4 whitespace-nowrap text-sm space-x-2">
+                        {/* Upcoming games (blank status) - show Open button */}
+                        {game.status === '' && (
                           <button
-                            onClick={() => handlePublishSelection(game.tabName)}
-                            disabled={actionLoading === game.tabName}
-                            className="text-blue-600 hover:text-blue-800 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                            onClick={() => handleOpenGame(game.tabName, game.rowNumber)}
+                            disabled={actionLoading === game.tabName || actionLoading === `row-${game.rowNumber}`}
+                            className="text-green-600 hover:text-green-800 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            Publish
+                            Open
                           </button>
-                        </>
-                      )}
+                        )}
 
-                      {/* Selected games - show Edit link and Record Result button */}
-                      {game.status === 'S' && (
-                        <>
-                          <Link
-                            href={`/friendlies/manage/game/${encodeURIComponent(game.tabName)}`}
-                            className="text-blue-600 hover:text-blue-800 font-medium"
+                        {/* Open games - show Close button */}
+                        {game.status === 'O' && (
+                          <button
+                            onClick={() => handleCloseGame(game.tabName, game.rowNumber)}
+                            disabled={actionLoading === game.tabName || actionLoading === `row-${game.rowNumber}`}
+                            className="text-yellow-600 hover:text-yellow-800 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            Edit
-                          </Link>
+                            Close
+                          </button>
+                        )}
+
+                        {/* Selecting games - show Select Team link and Publish button */}
+                        {game.status === 'X' && (
+                          <>
+                            <Link
+                              href={`/friendlies/manage/game/${encodeURIComponent(game.tabName)}`}
+                              className="text-blue-600 hover:text-blue-800 font-medium"
+                            >
+                              Select Team
+                            </Link>
+                            <button
+                              onClick={() => handlePublishSelection(game.tabName)}
+                              disabled={actionLoading === game.tabName}
+                              className="text-blue-600 hover:text-blue-800 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              Publish
+                            </button>
+                          </>
+                        )}
+
+                        {/* Selected games - show Edit link and Record Result button */}
+                        {game.status === 'S' && (
+                          <>
+                            <Link
+                              href={`/friendlies/manage/game/${encodeURIComponent(game.tabName)}`}
+                              className="text-blue-600 hover:text-blue-800 font-medium"
+                            >
+                              Edit
+                            </Link>
+                            <button
+                              onClick={() => handleGameOutcome(game.tabName, game.status)}
+                              disabled={actionLoading === game.tabName}
+                              className="text-purple-600 hover:text-purple-800 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              Record Result
+                            </button>
+                          </>
+                        )}
+
+                        {/* Cancel button - show for non-selected active games (Open, Closing) */}
+                        {['', 'O', 'X'].includes(game.status) && (
                           <button
                             onClick={() => handleGameOutcome(game.tabName, game.status)}
                             disabled={actionLoading === game.tabName}
-                            className="text-purple-600 hover:text-purple-800 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="text-red-600 hover:text-red-800 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            Record Result
+                            Cancel
                           </button>
-                        </>
-                      )}
-
-                      {/* Cancel button - show for non-selected active games (Open, Closing) */}
-                      {['', 'O', 'X'].includes(game.status) && (
-                        <button
-                          onClick={() => handleGameOutcome(game.tabName, game.status)}
-                          disabled={actionLoading === game.tabName}
-                          className="text-red-600 hover:text-red-800 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          Cancel
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

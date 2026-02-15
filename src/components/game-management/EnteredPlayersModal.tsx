@@ -17,6 +17,7 @@ interface EnteredPlayersModalProps {
   isOpen: boolean;
   onClose: () => void;
   gameId: string; // tabName for the game
+  pairedGameIds?: string[]; // Additional tabNames for paired games (add players to all)
   gameType: 'friendlies' | 'internal-games' | 'social-events';
   gameName: string; // Display name (club name, game name, or event name)
   ladiesMen?: string; // For gender validation (Friendlies/Internal Games only)
@@ -33,6 +34,7 @@ export function EnteredPlayersModal({
   isOpen,
   onClose,
   gameId,
+  pairedGameIds,
   gameType,
   gameName,
   ladiesMen,
@@ -184,6 +186,24 @@ export function EnteredPlayersModal({
         const data = await response.json();
 
         if (data.success) {
+          // For paired games, also add to the partner game(s)
+          if (pairedGameIds && pairedGameIds.length > 0) {
+            for (const pairedId of pairedGameIds) {
+              try {
+                await fetch(`/api/${gameType}/add-players`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    gameId: pairedId,
+                    playerUserNames: selectedPlayers,
+                  }),
+                });
+              } catch (pairedErr) {
+                console.error(`Failed to add players to paired game ${pairedId}:`, pairedErr);
+              }
+            }
+          }
+
           // Refresh the entered players list
           await fetchEnteredPlayers();
           setShowAddDialog(false);
@@ -217,6 +237,24 @@ export function EnteredPlayersModal({
       const data = await response.json();
 
       if (data.success) {
+        // For paired games, also remove from the partner game(s)
+        if (pairedGameIds && pairedGameIds.length > 0) {
+          for (const pairedId of pairedGameIds) {
+            try {
+              await fetch(`/api/${gameType}/remove-player`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  gameId: pairedId,
+                  playerUserName: userName,
+                }),
+              });
+            } catch (pairedErr) {
+              console.error(`Failed to remove player from paired game ${pairedId}:`, pairedErr);
+            }
+          }
+        }
+
         // Refresh the entered players list
         await fetchEnteredPlayers();
         onPlayersChanged(); // Notify parent to refresh
@@ -283,7 +321,7 @@ export function EnteredPlayersModal({
                 disabled={adding}
                 className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 transition-colors disabled:opacity-50"
               >
-                Cancel
+                Close
               </button>
               {showAddDialog ? (
                 <button

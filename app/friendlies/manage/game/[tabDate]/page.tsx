@@ -4,7 +4,7 @@
 
 'use client';
 
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useSession } from 'next-auth/react';
 import { useParams, useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
@@ -339,6 +339,7 @@ export default function TeamSelectionPage() {
         driving: p.driving,
         car_number: p.carNumber,
         captain: p.captain,
+        status: p.status,
       }));
 
       const response = await fetch('/api/friendlies/manage/update-selection', {
@@ -374,7 +375,7 @@ export default function TeamSelectionPage() {
           body: JSON.stringify({ tab_name: gameData.game.tabName }),
         });
 
-        const refreshResponse = await fetch(`/api/friendlies/manage/game?tab_name=${encodeURIComponent(gameData.game.tabName)}`);
+        const refreshResponse = await fetch(`/api/friendlies/manage/game/${encodeURIComponent(gameData.game.tabName)}`);
         if (refreshResponse.ok) {
           const refreshData = await refreshResponse.json();
           if (refreshData.players) {
@@ -431,6 +432,83 @@ export default function TeamSelectionPage() {
   }
 
   // ============================================================================
+  // Preview Data (derived from players state, updates on every change)
+  // ============================================================================
+
+  const previewData = useMemo(() => {
+    const positionOrder: Record<string, number> = { '1': 0, '2': 1, '3': 2, 'S': 3 };
+
+    // Teams: selected === 'Y' with team assigned
+    const teamPlayers = players.filter(p => p.selected === 'Y' && p.team !== null);
+    const teamMap = new Map<number, GameSheetPlayer[]>();
+    teamPlayers.forEach(p => {
+      const t = p.team!;
+      if (!teamMap.has(t)) teamMap.set(t, []);
+      teamMap.get(t)!.push(p);
+    });
+    const teams = Array.from(teamMap.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([teamNum, tPlayers]) => ({
+        team: teamNum,
+        players: [...tPlayers].sort((a, b) => (positionOrder[a.position] ?? 99) - (positionOrder[b.position] ?? 99)),
+      }));
+
+    // Reserves: selected === 'R'
+    const reserves = players.filter(p => p.selected === 'R');
+
+    // Reserve teams: selected === 'T' with team assigned
+    const rtPlayers = players.filter(p => p.selected === 'T' && p.team !== null);
+    const rtMap = new Map<number, GameSheetPlayer[]>();
+    rtPlayers.forEach(p => {
+      const t = p.team!;
+      if (!rtMap.has(t)) rtMap.set(t, []);
+      rtMap.get(t)!.push(p);
+    });
+    const reserveTeams = Array.from(rtMap.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([teamNum, tPlayers]) => ({
+        team: teamNum,
+        players: [...tPlayers].sort((a, b) => (positionOrder[a.position] ?? 99) - (positionOrder[b.position] ?? 99)),
+      }));
+
+    // Car shares: from all selected players (Y, R, T)
+    const carMap = new Map<string, { driver: string; passengers: string[] }>();
+    const ownTransport: string[] = [];
+    const allSelected = players.filter(p => p.selected === 'Y' || p.selected === 'R' || p.selected === 'T');
+    allSelected.forEach(p => {
+      if (p.carNumber && p.carNumber.toUpperCase() === 'O') {
+        // 'O' means own transport
+        ownTransport.push(p.fullName);
+      } else if (p.driving === 'Y' && p.carNumber) {
+        if (!carMap.has(p.carNumber)) {
+          carMap.set(p.carNumber, { driver: p.fullName, passengers: [] });
+        } else {
+          carMap.get(p.carNumber)!.driver = p.fullName;
+        }
+      } else if (p.carNumber) {
+        if (!carMap.has(p.carNumber)) {
+          carMap.set(p.carNumber, { driver: '', passengers: [p.fullName] });
+        } else {
+          carMap.get(p.carNumber)!.passengers.push(p.fullName);
+        }
+      } else if (p.driving === 'Y') {
+        ownTransport.push(p.fullName);
+      }
+    });
+    const carGroups: { carNumber: string; driver: string; passengers: string[] }[] = [];
+    carMap.forEach((value, carNumber) => {
+      if (value.driver && value.passengers.length === 0) {
+        ownTransport.push(value.driver);
+      } else {
+        carGroups.push({ carNumber, driver: value.driver, passengers: value.passengers });
+      }
+    });
+    carGroups.sort((a, b) => a.carNumber.localeCompare(b.carNumber));
+
+    return { teams, reserves, reserveTeams, carGroups, ownTransport };
+  }, [players]);
+
+  // ============================================================================
   // Loading State
   // ============================================================================
 
@@ -438,7 +516,7 @@ export default function TeamSelectionPage() {
     return (
       <div className="min-h-screen bg-gray-50">
         <Navbar userName={session?.user.name ?? undefined} userRole={session?.user.role ?? undefined} />
-        <div className="container mx-auto px-4 py-8 max-w-7xl">
+        <div className="px-4 py-8">
           <div className="text-center py-12">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
             <p className="mt-2 text-gray-600">Loading game...</p>
@@ -481,7 +559,11 @@ export default function TeamSelectionPage() {
         actionButtons={navbarActionButtons}
       />
 
-      <div className="container mx-auto px-4 py-8 max-w-7xl">
+      <div className="px-4 py-8">
+        {/* Two-column layout: left = all content, right = live preview (when editing) */}
+        <div className={isEditing ? 'flex gap-6' : ''}>
+          <div className={isEditing ? 'flex-1 min-w-0' : ''}>
+
         {/* Header with back link and game details */}
         <div className="mb-6">
           <Link href="/friendlies/manage" className="text-blue-600 hover:text-blue-800 mb-2 inline-block">
@@ -552,153 +634,271 @@ export default function TeamSelectionPage() {
           >
             Print Match Card
           </Link>
+
+          {/* Print Picker Sheet link - always visible */}
+          <Link
+            href={`/friendlies/manage/picker/${tabDate}`}
+            className="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 transition-colors"
+          >
+            Print Picker Sheet
+          </Link>
         </div>
 
-        {/* Selection table - main UI for selecting players and assigning teams */}
-        <div className="bg-white rounded-lg shadow overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Stats</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">D/B</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Selected</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Team</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Position</th>
+            {/* Selection table - main UI for selecting players and assigning teams */}
+            <div className="bg-white rounded-lg shadow overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
+                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">Stats</th>
+                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">D/B</th>
+                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">Sel</th>
+                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">Tm</th>
+                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">Pos</th>
 
-                {isAway && (
-                  <>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Driving</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Car #</th>
-                  </>
-                )}
+                    {isAway && (
+                      <>
+                        <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">Drv</th>
+                        <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">Car</th>
+                      </>
+                    )}
 
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Captain</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-              </tr>
-            </thead>
+                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">Cpt</th>
+                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                  </tr>
+                </thead>
 
-            <tbody className="bg-white divide-y divide-gray-200">
-              {players.map(player => (
-                <tr
-                  key={player.rowNumber}
-                  className={player.status === 'W' ? 'bg-red-50' : ''}
-                >
-                  <td className="px-4 py-3 text-sm font-medium">
-                    <span
-                      className="cursor-help"
-                      title={player.last8Games && player.last8Games.length > 0 ? player.last8Games.join('\n') : 'No recent games'}
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {players.map(player => (
+                    <tr
+                      key={player.rowNumber}
+                      className={player.status === 'W' ? 'bg-red-50' : ''}
                     >
-                      {player.fullName}
-                    </span>
-                  </td>
+                      <td className="px-2 py-2 text-sm font-medium">
+                        <span
+                          className="cursor-help"
+                          title={player.last8Games && player.last8Games.length > 0 ? player.last8Games.join('\n') : 'No recent games'}
+                        >
+                          {player.fullName}
+                        </span>
+                      </td>
 
-                  <td className="px-4 py-3 text-sm text-gray-600">
-                    <div className="text-xs">
-                      {player.nameDown}/{player.picked} ({player.percentPlayed}%)
-                    </div>
-                  </td>
+                      <td className="px-2 py-2 text-sm text-gray-600">
+                        <div className="text-xs">
+                          {player.nameDown}/{player.picked} ({player.percentPlayed}%)
+                        </div>
+                      </td>
 
-                  <td className="px-4 py-3 text-sm">
-                    <span className="text-xs bg-gray-100 px-2 py-1 rounded">{player.driverBar}</span>
-                  </td>
+                      <td className="px-2 py-2 text-sm">
+                        <span className="text-xs bg-gray-100 px-2 py-1 rounded">{player.driverBar}</span>
+                      </td>
 
-                  <td className="px-4 py-3">
-                    <select
-                      value={player.selected}
-                      onChange={e => updatePlayer(player.rowNumber, 'selected', e.target.value)}
-                      disabled={!isEditing}
-                      className={`text-sm border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 ${!isEditing ? 'bg-gray-100 cursor-not-allowed' : ''}`}
-                    >
-                      <option value="">-</option>
-                      <option value="Y">Y (Playing)</option>
-                      <option value="R">R (Reserve)</option>
-                      <option value="T">T (Reserve Team)</option>
-                    </select>
-                  </td>
+                      <td className="px-2 py-2">
+                        <select
+                          value={player.selected}
+                          onChange={e => updatePlayer(player.rowNumber, 'selected', e.target.value)}
+                          disabled={!isEditing}
+                          className={`text-sm border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 ${!isEditing ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+                        >
+                          <option value="Y">Y</option>
+                          <option value="R">R</option>
+                          <option value="T">T</option>
+                        </select>
+                      </td>
 
-                  <td className="px-4 py-3">
-                    <input
-                      type="number"
-                      value={player.team || ''}
-                      onChange={e => updatePlayer(player.rowNumber, 'team', e.target.value ? parseInt(e.target.value) : null)}
-                      min="1"
-                      disabled={!isEditing}
-                      className={`w-16 text-sm border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 ${!isEditing ? 'bg-gray-100 cursor-not-allowed' : ''}`}
-                    />
-                  </td>
-
-                  <td className="px-4 py-3">
-                    <select
-                      value={player.position}
-                      onChange={e => updatePlayer(player.rowNumber, 'position', e.target.value)}
-                      disabled={!isEditing}
-                      className={`text-sm border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 ${!isEditing ? 'bg-gray-100 cursor-not-allowed' : ''}`}
-                    >
-                      <option value="">-</option>
-                      <option value="S">Skip</option>
-                      <option value="1">Lead</option>
-                      <option value="2">Second</option>
-                      <option value="3">Third</option>
-                    </select>
-                  </td>
-
-                  {isAway && (
-                    <>
-                      <td className="px-4 py-3">
+                      <td className="px-2 py-2">
                         <input
-                          type="checkbox"
-                          checked={player.driving === 'Y'}
-                          onChange={e => updatePlayer(player.rowNumber, 'driving', e.target.checked ? 'Y' : '')}
+                          type="text"
+                          inputMode="numeric"
+                          value={player.team || ''}
+                          onChange={e => {
+                            const v = e.target.value.replace(/\D/g, '');
+                            updatePlayer(player.rowNumber, 'team', v ? parseInt(v) : null);
+                          }}
+                          disabled={!isEditing}
+                          className={`w-10 text-sm text-center border border-gray-300 rounded px-1 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 ${!isEditing ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+                        />
+                      </td>
+
+                      <td className="px-2 py-2">
+                        <select
+                          value={player.position}
+                          onChange={e => updatePlayer(player.rowNumber, 'position', e.target.value)}
+                          disabled={!isEditing}
+                          className={`text-sm border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 ${!isEditing ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+                        >
+                          <option value="">-</option>
+                          <option value="S">S</option>
+                          <option value="1">1</option>
+                          <option value="2">2</option>
+                          <option value="3">3</option>
+                        </select>
+                      </td>
+
+                      {isAway && (
+                        <>
+                          <td className="px-2 py-2">
+                            <input
+                              type="checkbox"
+                              checked={player.driving === 'Y'}
+                              onChange={e => updatePlayer(player.rowNumber, 'driving', e.target.checked ? 'Y' : '')}
+                              disabled={!isEditing}
+                              className={`w-4 h-4 ${!isEditing ? 'cursor-not-allowed' : ''}`}
+                            />
+                          </td>
+                          <td className="px-2 py-2">
+                            <input
+                              type="text"
+                              value={player.carNumber || ''}
+                              onChange={e => updatePlayer(player.rowNumber, 'carNumber', e.target.value)}
+                              disabled={!isEditing}
+                              className={`w-10 text-sm text-center border border-gray-300 rounded px-1 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 ${!isEditing ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+                            />
+                          </td>
+                        </>
+                      )}
+
+                      <td className="px-2 py-2">
+                        <input
+                          type="radio"
+                          name="captain"
+                          checked={player.captain === 'Y'}
+                          onChange={() => updatePlayer(player.rowNumber, 'captain', 'Y')}
                           disabled={!isEditing}
                           className={`w-4 h-4 ${!isEditing ? 'cursor-not-allowed' : ''}`}
                         />
                       </td>
-                      <td className="px-4 py-3">
-                        <input
-                          type="text"
-                          value={player.carNumber || ''}
-                          onChange={e => updatePlayer(player.rowNumber, 'carNumber', e.target.value)}
-                          disabled={!isEditing}
-                          className={`w-12 text-sm border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 ${!isEditing ? 'bg-gray-100 cursor-not-allowed' : ''}`}
-                        />
+
+                      <td className="px-2 py-2 text-sm">
+                        {isEditing ? (
+                          <select
+                            value={player.status}
+                            onChange={e => updatePlayer(player.rowNumber, 'status', e.target.value)}
+                            className="text-sm border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          >
+                            <option value="">-</option>
+                            <option value="Y">Confirmed</option>
+                            <option value="W">Withdrawn</option>
+                          </select>
+                        ) : (
+                          <>
+                            {player.status === 'Y' && <span className="text-green-600">Confirmed</span>}
+                            {player.status === 'W' && <span className="text-red-600">Withdrawn</span>}
+                          </>
+                        )}
                       </td>
-                    </>
-                  )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
 
-                  <td className="px-4 py-3">
-                    <input
-                      type="radio"
-                      name="captain"
-                      checked={player.captain === 'Y'}
-                      onChange={() => updatePlayer(player.rowNumber, 'captain', 'Y')}
-                      disabled={!isEditing}
-                      className={`w-4 h-4 ${!isEditing ? 'cursor-not-allowed' : ''}`}
-                    />
-                  </td>
+            {/* Instructions panel */}
+            <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <h4 className="font-semibold mb-2">Instructions:</h4>
+              <ul className="text-sm space-y-1 list-disc list-inside">
+                <li>Player stats are populated when the game is closed and when new players are added</li>
+                <li>Click <strong>Edit Selection</strong> to start editing</li>
+                <li>Select players as Y (Playing), R (Reserve), or T (Reserve Team)</li>
+                <li>Assign team numbers and positions for selected players</li>
+                <li>Select ONE captain of the day (radio button)</li>
+                <li>For away games, mark drivers and assign car numbers</li>
+                <li>Click <strong>Save</strong> to save selections (also updates Players sheet), or <strong>Cancel</strong> to discard changes</li>
+              </ul>
+            </div>
+          </div>
 
-                  <td className="px-4 py-3 text-sm">
-                    {player.status === 'Y' && <span className="text-green-600">Confirmed</span>}
-                    {player.status === 'W' && <span className="text-red-600">Withdrawn</span>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+          {/* Right side: live preview panel (only visible when editing, hidden on small screens) */}
+          {isEditing && (
+            <div className="w-64 shrink-0 hidden lg:block">
+              <div className="sticky top-2 max-h-[calc(100vh-1rem)] overflow-y-auto space-y-3 pr-1">
+                <h3 className="font-bold text-sm text-gray-700 uppercase tracking-wide">Live Preview</h3>
 
-        {/* Instructions panel */}
-        <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <h4 className="font-semibold mb-2">Instructions:</h4>
-          <ul className="text-sm space-y-1 list-disc list-inside">
-            <li>Player stats are populated when the game is closed and when new players are added</li>
-            <li>Click <strong>Edit Selection</strong> to start editing</li>
-            <li>Select players as Y (Playing), R (Reserve), or T (Reserve Team)</li>
-            <li>Assign team numbers and positions for selected players</li>
-            <li>Select ONE captain of the day (radio button)</li>
-            <li>For away games, mark drivers and assign car numbers</li>
-            <li>Click <strong>Save</strong> to save selections (also updates Players sheet), or <strong>Cancel</strong> to discard changes</li>
-          </ul>
+                {/* Teams */}
+                {previewData.teams.length > 0 ? (
+                  previewData.teams.map(team => (
+                    <div key={team.team} className="border border-gray-300 rounded bg-white">
+                      <div className="bg-gray-100 px-3 py-1 border-b border-gray-300">
+                        <span className="text-sm font-semibold">Team {team.team}</span>
+                      </div>
+                      <div className="px-3 py-1">
+                        {team.players.map(p => (
+                          <div key={p.rowNumber} className="flex text-sm py-0.5">
+                            <span className="text-gray-500 w-6">{p.position || '-'}</span>
+                            <span className="flex-1 ml-2">
+                              {p.fullName}
+                              {p.captain === 'Y' && <span className="text-purple-600 ml-1">&#9733;</span>}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-sm text-gray-400 italic">No teams assigned yet</p>
+                )}
+
+                {/* Reserves */}
+                {previewData.reserves.length > 0 && (
+                  <div className="border border-gray-300 rounded bg-white">
+                    <div className="bg-yellow-50 px-3 py-1 border-b border-gray-300">
+                      <span className="text-sm font-semibold">Reserves</span>
+                    </div>
+                    <div className="px-3 py-1">
+                      {previewData.reserves.map(p => (
+                        <div key={p.rowNumber} className="text-sm py-0.5">{p.fullName}</div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Car Shares (away games only) */}
+                {isAway && (previewData.carGroups.length > 0 || previewData.ownTransport.length > 0) && (
+                  <div className="border border-gray-300 rounded bg-white">
+                    <div className="bg-blue-50 px-3 py-1 border-b border-gray-300">
+                      <span className="text-sm font-semibold">Car Shares</span>
+                    </div>
+                    <div className="px-3 py-1 text-sm space-y-1">
+                      {previewData.carGroups.map((group, idx) => (
+                        <div key={idx} className="py-0.5">
+                          <div className="font-medium text-gray-600">Car {group.carNumber}</div>
+                          <div>
+                            {group.driver && <span>{group.driver} (Driver)</span>}
+                            {group.passengers.map((p, pidx) => (
+                              <span key={pidx}>{(group.driver || pidx > 0) ? ', ' : ''}{p}</span>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                      {previewData.ownTransport.length > 0 && (
+                        <div className="py-0.5 border-t border-gray-200 mt-1 pt-1">
+                          <div className="font-medium text-gray-600">Own Transport</div>
+                          <div>{previewData.ownTransport.join(', ')}</div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Reserve Teams */}
+                {previewData.reserveTeams.map(team => (
+                  <div key={team.team} className="border border-gray-300 rounded bg-white">
+                    <div className="bg-orange-50 px-3 py-1 border-b border-gray-300">
+                      <span className="text-sm font-semibold">Reserve Team {team.team}</span>
+                    </div>
+                    <div className="px-3 py-1">
+                      {team.players.map(p => (
+                        <div key={p.rowNumber} className="flex text-sm py-0.5">
+                          <span className="text-gray-500 w-6">{p.position || '-'}</span>
+                          <span className="flex-1 ml-2">{p.fullName}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

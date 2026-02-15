@@ -15,6 +15,7 @@ import { canEnterGame, type GameGender } from '@/lib/member-type-utils';
 import { calculateCapacity, formatCapacity, getCapacityBadgeColor } from '@/lib/game-management/capacity';
 import { EnteredPlayersModal } from '@/components/game-management/EnteredPlayersModal';
 import { parseUKDate } from '@/lib/date-utils';
+import { groupPairedGames, isPairedGame, type GameOrPair } from '@/lib/friendlies-utils';
 
 // ============================================================================
 // Type Definitions
@@ -69,6 +70,8 @@ export default function FriendliesPage() {
   // State: Modal for viewing and managing entered players
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedGameForModal, setSelectedGameForModal] = useState<GameWithUserStatus | null>(null);
+  const [pairedGameIdsForModal, setPairedGameIdsForModal] = useState<string[]>([]);
+  const [modalGameName, setModalGameName] = useState('');
 
   // ============================================================================
   // Effects
@@ -303,6 +306,7 @@ export default function FriendliesPage() {
     const badges: { [key: string]: { label: string; color: string } } = {
       '': { label: 'Upcoming', color: 'bg-gray-500' },      // Blank = Not opened yet
       'O': { label: 'Open', color: 'bg-green-500' },        // Open for entries
+      'L': { label: 'Allocating', color: 'bg-amber-500' },  // Paired games: entries closed, allocating players
       'X': { label: 'Selecting', color: 'bg-yellow-500' },  // Captain selecting team
       'S': { label: 'Selected', color: 'bg-blue-500' },     // Team selected/published
       'P': { label: 'Played', color: 'bg-purple-500' },     // Game completed
@@ -410,151 +414,303 @@ export default function FriendliesPage() {
             <p className="text-gray-600">No games found for this filter.</p>
           </div>
         ) : (
-          // Game cards grid - show all filtered games
+          // Game cards grid - group paired games then render
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {filteredGames.map((game, index) => (
-              <div
-                key={game.tabName && game.tabName.trim() ? game.tabName : `${game.date}-${game.clubName}-${game.time}-${index}`}
-                className={`bg-white rounded-lg shadow border ${
-                  game.userEntered ? 'border-blue-200' : 'border-gray-200'
-                } p-4`}
-              >
-                {/* Game card header - club name, date, and status badge */}
-                <div className="flex justify-between items-start mb-3">
-                  <div>
-                    {/* Opponent club name - links to club details */}
-                    <h3 className="font-bold text-lg">
-                      <Link
-                        href={`/clubs/${encodeURIComponent(game.clubName)}?from=friendlies`}
-                        className="text-blue-600 hover:text-blue-800 hover:underline"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {game.clubName}
-                      </Link>
-                    </h3>
+            {groupPairedGames(filteredGames as GameWithUserStatus[]).map((item, index) => {
+              // Paired game card — combined view for two games on the same date
+              if (isPairedGame(item)) {
+                const [gameA, gameB] = item as [GameWithUserStatus, GameWithUserStatus];
+                const bothTabNames = [gameA.tabName, gameB.tabName];
+                const userEnteredBoth = gameA.userEntered && gameB.userEntered;
+                const userEnteredEither = gameA.userEntered || gameB.userEntered;
+                const combinedEntered = Math.max(gameA.entered, gameB.entered);
 
-                    {/* Game date and time formatted for display */}
-                    <p className="text-sm text-gray-700">
-                      {parseUKDate(game.date).toLocaleDateString('en-GB', {
-                        weekday: 'short',
-                        day: 'numeric',
-                        month: 'short',
-                      })}
-                      {' at '}
-                      {game.time}
-                    </p>
+                return (
+                  <div
+                    key={`paired-${gameA.tabName}-${gameB.tabName}`}
+                    className={`bg-white rounded-lg shadow border ${
+                      userEnteredEither ? 'border-blue-200' : 'border-gray-200'
+                    } p-4`}
+                  >
+                    {/* Paired badge */}
+                    <div className="flex justify-between items-start mb-3">
+                      <div>
+                        <h3 className="font-bold text-lg">
+                          <Link
+                            href={`/clubs/${encodeURIComponent(gameA.clubName)}?from=friendlies`}
+                            className="text-blue-600 hover:text-blue-800 hover:underline"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {gameA.clubName}
+                          </Link>
+                          {gameA.clubName !== gameB.clubName && (
+                            <>
+                              {' + '}
+                              <Link
+                                href={`/clubs/${encodeURIComponent(gameB.clubName)}?from=friendlies`}
+                                className="text-blue-600 hover:text-blue-800 hover:underline"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {gameB.clubName}
+                              </Link>
+                            </>
+                          )}
+                        </h3>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {gameA.ladiesMen} + {gameB.ladiesMen}
+                        </p>
+                        <p className="text-sm text-gray-700">
+                          {parseUKDate(gameA.date).toLocaleDateString('en-GB', {
+                            weekday: 'short',
+                            day: 'numeric',
+                            month: 'short',
+                          })}
+                          {' at '}
+                          {gameA.time}
+                        </p>
+                      </div>
+                      <div className="flex flex-col items-end gap-1">
+                        {getStatusBadge(gameA.status)}
+                        <span className="inline-block px-2 py-0.5 text-xs font-medium text-purple-700 bg-purple-100 rounded">
+                          Paired
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1 text-sm text-gray-900 mb-4">
+                      <p>
+                        <span className="font-medium">Venue:</span>{' '}
+                        {gameA.homeAway === gameB.homeAway
+                          ? (gameA.homeAway === 'H' ? 'Home' : 'Away')
+                          : `${gameA.clubName}: ${gameA.homeAway === 'H' ? 'Home' : 'Away'} / ${gameB.clubName}: ${gameB.homeAway === 'H' ? 'Home' : 'Away'}`
+                        }
+                      </p>
+                      <p>
+                        <span className="font-medium">Format:</span> {gameA.format} ({gameA.ladiesMen}) / {gameB.format} ({gameB.ladiesMen})
+                      </p>
+
+                      {/* For open paired games, show combined player count */}
+                      {gameA.status === 'O' && (
+                        <div className="mt-2 pt-2 border-t border-gray-100">
+                          <p className="font-medium text-gray-900">
+                            {combinedEntered} Player{combinedEntered !== 1 ? 's' : ''} Entered
+                          </p>
+                          <button
+                            onClick={() => {
+                              setSelectedGameForModal(gameA);
+                              setPairedGameIdsForModal([gameB.tabName]);
+                              setModalGameName(
+                                gameA.clubName !== gameB.clubName
+                                  ? `${gameA.clubName} + ${gameB.clubName} - ${gameA.date}`
+                                  : `${gameA.clubName} - ${gameA.date}`
+                              );
+                              setIsModalOpen(true);
+                            }}
+                            className="mt-2 inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-white rounded bg-green-500 hover:opacity-90 transition-opacity"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                            </svg>
+                            View / Add
+                          </button>
+                        </div>
+                      )}
+
+                      {/* For allocating paired games, show closed message */}
+                      {gameA.status === 'L' && (
+                        <div className="mt-2 pt-2 border-t border-gray-100">
+                          <p className="font-medium text-gray-900">
+                            {combinedEntered} Player{combinedEntered !== 1 ? 's' : ''} Entered
+                          </p>
+                          <p className="text-sm text-amber-700 mt-1">
+                            Entries closed — players being allocated between games
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Single checkbox enters BOTH games */}
+                    {gameA.status === 'O' && memberType && (
+                      canEnterGame(memberType, gameA.ladiesMen as GameGender) ||
+                      canEnterGame(memberType, gameB.ladiesMen as GameGender)
+                    ) && (() => {
+                      return (
+                        <label className="flex items-center space-x-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={selectedGames.has(gameA.tabName) && selectedGames.has(gameB.tabName)}
+                            onChange={e => {
+                              const newSelected = new Set(selectedGames);
+                              if (e.target.checked) {
+                                newSelected.add(gameA.tabName);
+                                newSelected.add(gameB.tabName);
+                              } else {
+                                newSelected.delete(gameA.tabName);
+                                newSelected.delete(gameB.tabName);
+                              }
+                              setSelectedGames(newSelected);
+                            }}
+                            className="w-4 h-4 text-blue-500 rounded focus:ring-blue-500"
+                          />
+                          <span className="text-sm font-medium text-blue-500">
+                            {userEnteredBoth ? 'Entered' : 'Enter both games'}
+                          </span>
+                        </label>
+                      );
+                    })()}
+                  </div>
+                );
+              }
+
+              // Standard single game card (unchanged)
+              const game = item as GameWithUserStatus;
+              return (
+                <div
+                  key={game.tabName && game.tabName.trim() ? game.tabName : `${game.date}-${game.clubName}-${game.time}-${index}`}
+                  className={`bg-white rounded-lg shadow border ${
+                    game.userEntered ? 'border-blue-200' : 'border-gray-200'
+                  } p-4`}
+                >
+                  {/* Game card header - club name, date, and status badge */}
+                  <div className="flex justify-between items-start mb-3">
+                    <div>
+                      {/* Opponent club name - links to club details */}
+                      <h3 className="font-bold text-lg">
+                        <Link
+                          href={`/clubs/${encodeURIComponent(game.clubName)}?from=friendlies`}
+                          className="text-blue-600 hover:text-blue-800 hover:underline"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {game.clubName}
+                        </Link>
+                      </h3>
+
+                      {/* Game date and time formatted for display */}
+                      <p className="text-sm text-gray-700">
+                        {parseUKDate(game.date).toLocaleDateString('en-GB', {
+                          weekday: 'short',
+                          day: 'numeric',
+                          month: 'short',
+                        })}
+                        {' at '}
+                        {game.time}
+                      </p>
+                    </div>
+
+                    {/* Status badge (Open, Selecting, Selected, etc.) */}
+                    {getStatusBadge(game.status)}
                   </div>
 
-                  {/* Status badge (Open, Selecting, Selected, etc.) */}
-                  {getStatusBadge(game.status)}
-                </div>
+                  {/* Game details - venue, format, type, player count, score */}
+                  <div className="space-y-1 text-sm text-gray-900 mb-4">
+                    {/* Home or Away venue */}
+                    <p>
+                      <span className="font-medium">Venue:</span> {game.homeAway === 'H' ? 'Home' : 'Away'}
+                    </p>
 
-                {/* Game details - venue, format, type, player count, score */}
-                <div className="space-y-1 text-sm text-gray-900 mb-4">
-                  {/* Home or Away venue */}
-                  <p>
-                    <span className="font-medium">Venue:</span> {game.homeAway === 'H' ? 'Home' : 'Away'}
-                  </p>
+                    {/* Game format (e.g., "Triples", "Pairs") */}
+                    <p>
+                      <span className="font-medium">Format:</span> {game.format}
+                    </p>
 
-                  {/* Game format (e.g., "Triples", "Pairs") */}
-                  <p>
-                    <span className="font-medium">Format:</span> {game.format}
-                  </p>
+                    {/* Ladies/Men/Mixed */}
+                    <p>
+                      <span className="font-medium">Type:</span> {game.ladiesMen}
+                    </p>
 
-                  {/* Ladies/Men/Mixed */}
-                  <p>
-                    <span className="font-medium">Type:</span> {game.ladiesMen}
-                  </p>
+                    {/* For open games, show player count and capacity with View/Add button */}
+                    {game.status === 'O' && (() => {
+                      const hasCapacity = game.maxPlayers != null && game.maxPlayers > 0;
+                      const capacity = calculateCapacity(game);
+                      const badgeColor = hasCapacity ? getCapacityBadgeColor(capacity) : 'bg-green-500';
 
-                  {/* For open games, show player count and capacity with View/Add button */}
-                  {game.status === 'O' && (() => {
-                    const hasCapacity = game.maxPlayers != null && game.maxPlayers > 0;
+                      return (
+                        <div className="mt-2 pt-2 border-t border-gray-100">
+                          <p className="font-medium text-gray-900">
+                            {game.entered} Player{game.entered !== 1 ? 's' : ''} Entered
+                          </p>
+                          {hasCapacity && (
+                            <p className="text-gray-700">
+                              Capacity: {game.maxPlayers}
+                            </p>
+                          )}
+                          <button
+                            onClick={() => {
+                              setSelectedGameForModal(game);
+                              setPairedGameIdsForModal([]);
+                              setModalGameName(`${game.clubName} - ${game.date}`);
+                              setIsModalOpen(true);
+                            }}
+                            className={`mt-2 inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-white rounded ${badgeColor} hover:opacity-90 transition-opacity`}
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                            </svg>
+                            View / Add
+                          </button>
+                        </div>
+                      );
+                    })()}
+
+                    {/* For played/abandoned games, show final score */}
+                    {(game.status === 'P' || game.status === 'A') && game.bhbcScore !== undefined && game.opponentScore !== undefined && (
+                      <p className="text-lg font-bold">
+                        BH: <span className="text-blue-600">{game.bhbcScore}</span> - {game.clubName}: <span className="text-gray-700">{game.opponentScore}</span>
+                      </p>
+                    )}
+                  </div>
+
+                  {/* For open games, show checkbox to enter/withdraw (only if eligible) */}
+                  {game.status === 'O' && memberType && canEnterGame(memberType, game.ladiesMen as GameGender) && (() => {
+                    // Check if game is full and user hasn't already entered
                     const capacity = calculateCapacity(game);
-                    const badgeColor = hasCapacity ? getCapacityBadgeColor(capacity) : 'bg-green-500';
+                    const isFull = capacity.isFull && !game.userEntered;
 
                     return (
-                      <div className="mt-2 pt-2 border-t border-gray-100">
-                        <p className="font-medium text-gray-900">
-                          {game.entered} Player{game.entered !== 1 ? 's' : ''} Entered
-                        </p>
-                        {hasCapacity && (
-                          <p className="text-gray-700">
-                            Capacity: {game.maxPlayers}
-                          </p>
-                        )}
-                        <button
-                          onClick={() => {
-                            setSelectedGameForModal(game);
-                            setIsModalOpen(true);
+                      <label className={`flex items-center space-x-2 ${isFull ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
+                        <input
+                          type="checkbox"
+                          checked={selectedGames.has(game.tabName)}
+                          disabled={isFull}
+                          onChange={e => {
+                            // Create new Set to trigger state update
+                            const newSelected = new Set(selectedGames);
+
+                            // Add or remove game from selected set
+                            if (e.target.checked) {
+                              newSelected.add(game.tabName);
+                            } else {
+                              newSelected.delete(game.tabName);
+                            }
+
+                            // Update selected games state
+                            setSelectedGames(newSelected);
                           }}
-                          className={`mt-2 inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-white rounded ${badgeColor} hover:opacity-90 transition-opacity`}
-                        >
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                          </svg>
-                          View / Add
-                        </button>
-                      </div>
+                          className="w-4 h-4 text-blue-500 rounded focus:ring-blue-500 disabled:cursor-not-allowed"
+                        />
+
+                        {/* Label shows current entry status or full message */}
+                        <span className={`text-sm font-medium ${isFull ? 'text-gray-400' : 'text-blue-500'}`}>
+                          {isFull ? 'Game is full' : (game.userEntered ? 'Entered' : 'Enter this game')}
+                        </span>
+                      </label>
                     );
                   })()}
 
-                  {/* For played games, show final score */}
-                  {game.status === 'P' && game.bhbcScore !== undefined && game.opponentScore !== undefined && (
-                    <p className="text-lg font-bold">
-                      Score: <span className="text-blue-600">{game.bhbcScore}</span> - <span className="text-gray-700">{game.opponentScore}</span>
-                    </p>
+                  {/* For Selected, Played, Cancelled, or Abandoned games, show View Details button */}
+                  {['S', 'P', 'C', 'A'].includes(game.status) && game.userEntered && (
+                    <Link
+                      href={`/friendlies/game/${game.tabName}`}
+                      className={`block w-full text-center ${getButtonClasses('primary', 'md')}`}
+                    >
+                      View Details
+                    </Link>
                   )}
                 </div>
-
-                {/* For open games, show checkbox to enter/withdraw (only if eligible) */}
-                {game.status === 'O' && memberType && canEnterGame(memberType, game.ladiesMen as GameGender) && (() => {
-                  // Check if game is full and user hasn't already entered
-                  const capacity = calculateCapacity(game);
-                  const isFull = capacity.isFull && !game.userEntered;
-
-                  return (
-                    <label className={`flex items-center space-x-2 ${isFull ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
-                      <input
-                        type="checkbox"
-                        checked={selectedGames.has(game.tabName)}
-                        disabled={isFull}
-                        onChange={e => {
-                          // Create new Set to trigger state update
-                          const newSelected = new Set(selectedGames);
-
-                          // Add or remove game from selected set
-                          if (e.target.checked) {
-                            newSelected.add(game.tabName);
-                          } else {
-                            newSelected.delete(game.tabName);
-                          }
-
-                          // Update selected games state
-                          setSelectedGames(newSelected);
-                        }}
-                        className="w-4 h-4 text-blue-500 rounded focus:ring-blue-500 disabled:cursor-not-allowed"
-                      />
-
-                      {/* Label shows current entry status or full message */}
-                      <span className={`text-sm font-medium ${isFull ? 'text-gray-400' : 'text-blue-500'}`}>
-                        {isFull ? 'Game is full' : (game.userEntered ? 'Entered' : 'Enter this game')}
-                      </span>
-                    </label>
-                  );
-                })()}
-
-                {/* For Selected, Played, Cancelled, or Abandoned games, show View Details button */}
-                {['S', 'P', 'C', 'A'].includes(game.status) && game.userEntered && (
-                  <Link
-                    href={`/friendlies/game/${game.tabName}`}
-                    className={`block w-full text-center ${getButtonClasses('primary', 'md')}`}
-                  >
-                    View Details
-                  </Link>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
@@ -613,10 +769,13 @@ export default function FriendliesPage() {
             onClose={() => {
               setIsModalOpen(false);
               setSelectedGameForModal(null);
+              setPairedGameIdsForModal([]);
+              setModalGameName('');
             }}
             gameId={selectedGameForModal.tabName}
+            pairedGameIds={pairedGameIdsForModal}
             gameType="friendlies"
-            gameName={`${selectedGameForModal.clubName} - ${selectedGameForModal.date}`}
+            gameName={modalGameName}
             ladiesMen={selectedGameForModal.ladiesMen}
             currentUserRole={session?.user?.role}
             maxPlayers={selectedGameForModal.maxPlayers}

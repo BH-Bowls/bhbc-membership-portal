@@ -384,6 +384,9 @@ export async function getGames(statusFilter?: GameStatus): Promise<Game[]> {
     const lastModifiedBy = get(row, 'last_modified_by') || '';     // Who last changed this game
     const lastModifiedDate = get(row, 'last_modified_date') || ''; // When it was last changed
 
+    // Extract paired flag (Y if paired with another game on same date)
+    const paired = get(row, 'paired') || '';
+
     // Build complete Game object
     const game: Game = {
       rowNumber,
@@ -409,6 +412,7 @@ export async function getGames(statusFilter?: GameStatus): Promise<Game[]> {
       who,
       lastModifiedBy,
       lastModifiedDate,
+      paired,
     };
 
     // Add game to array
@@ -1766,8 +1770,12 @@ export async function getAllPlayers(playingMembersOnly: boolean = true): Promise
  * This is called when a game transitions from Open (O) to Selecting (X) status
  * The template sheet contains pre-formatted columns for team selection (Selected, Team, Position, etc.)
  * Returns the count of players added to the sheet
+ *
+ * @param tabName - The game tab name (e.g., "Felbridge 25 Sep 25")
+ * @param playerFilter - Optional list of userNames to include. If provided, only these players
+ *   are added to the game sheet (used for paired game allocation). If omitted, all E/M players are included.
  */
-export async function createGameSheet(tabName: string): Promise<{ enteredCount: number }> {
+export async function createGameSheet(tabName: string, playerFilter?: string[]): Promise<{ enteredCount: number }> {
   // Initialize Google Sheets API client
   const sheets = getSheetsClient();
 
@@ -1906,6 +1914,8 @@ export async function createGameSheet(tabName: string): Promise<{ enteredCount: 
   // Build list of players who entered this game
   // Store userName for referential integrity (UI will look up full names for display)
   // Include players with status 'E' (self-entered) or 'M' (manually added)
+  // If playerFilter is provided, only include players in that list (used for paired game allocation)
+  const playerFilterSet = playerFilter ? new Set(playerFilter.map(p => p.toLowerCase())) : null;
   const enteredPlayers: string[] = [];
 
   // Loop through all player rows (skip header at index 0)
@@ -1918,6 +1928,10 @@ export async function createGameSheet(tabName: string): Promise<{ enteredCount: 
 
       // Only add if userName exists (skip empty rows)
       if (userName) {
+        // If filtering, only include players in the filter list
+        if (playerFilterSet && !playerFilterSet.has(userName.toLowerCase())) {
+          continue;
+        }
         enteredPlayers.push(userName);
       }
     }
@@ -1934,6 +1948,7 @@ export async function createGameSheet(tabName: string): Promise<{ enteredCount: 
     const pickedColIndex = gameSheetColMap['picked'];
     const percentPlayedColIndex = gameSheetColMap['percent_played'];
     const driverBarColIndex = gameSheetColMap['driver_bar'];
+    const selectedColIndex = gameSheetColMap['selected'];
 
     // Fetch Members sheet for driver/bar lookups
     const membersSpreadsheetId = getMembersSpreadsheetId();
@@ -1999,6 +2014,16 @@ export async function createGameSheet(tabName: string): Promise<{ enteredCount: 
           batchUpdates.push({
             range: `'${tabName}'!${col}${currentRow}`,
             values: [[driverBar.code]],
+          });
+        }
+
+        // Set all players to Reserve ('R') by default when game is closed
+        // Captain then promotes players to Playing ('Y') or Reserve Team ('T')
+        if (selectedColIndex !== undefined) {
+          const col = getColumnLetter(selectedColIndex);
+          batchUpdates.push({
+            range: `'${tabName}'!${col}${currentRow}`,
+            values: [['R']],
           });
         }
 
@@ -3169,9 +3194,9 @@ export async function getClubDetails(clubName: string): Promise<ClubDetails | nu
     clubName: get(matchingRow, 'club_name') || '',         // Official club name
     clubNumber: get(matchingRow, 'club_number') || '',     // Club phone number
     clubMobile: get(matchingRow, 'club_mobile') || '',     // Club mobile number
-    clubEmail: get(matchingRow, 'club_email') || '',       // Club email address
+    clubEmail: get(matchingRow, 'club_email_address') || get(matchingRow, 'club_email') || '',       // Club email address
     clubEmailNote: get(matchingRow, 'club_email_note') || '', // Notes about email usage
-    generalInfo: get(matchingRow, 'general_info') || '',   // General notes about club
+    generalInfo: get(matchingRow, 'general_information') || get(matchingRow, 'general_info') || '',   // General notes about club
 
     // Driving information
     drivingBand: drivingBand,  // Distance band (A-D)

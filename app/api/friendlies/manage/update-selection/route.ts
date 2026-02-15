@@ -77,6 +77,7 @@ export async function POST(request: NextRequest) {
       driving: s.driving,             // Driving status: D=Driver, B=Bar, blank=neither
       carNumber: s.car_number,        // Car number for drivers
       captain: s.captain,             // Captain of day: Y or blank
+      status: s.status,               // Confirmation status: Y=Confirmed, W=Withdrawn
     }));
 
     // Update the game sheet with all selection changes in a single batch operation

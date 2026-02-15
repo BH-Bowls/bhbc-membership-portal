@@ -90,6 +90,9 @@ export function parseFriendlyGameRow(
 
     // Internal tracking
     _rowNumber: rowNumber,
+
+    // Paired game flag
+    paired: get('paired'),
   };
 }
 

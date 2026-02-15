@@ -426,12 +426,12 @@ export default function SuggestionDetailPage({ params }: { params: Promise<{ id:
           <div className="flex justify-between items-start mb-4">
             <div className="flex-1 mr-4">
               {isEditing && (canEditAdminFields || canEditBasicFields) ? (
-                <input
-                  type="text"
+                <textarea
                   value={current.title}
                   onChange={(e) => handleChange('title', e.target.value)}
                   disabled={isFormDisabled}
-                  className="text-2xl font-bold mb-2 w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  rows={2}
+                  className="text-2xl font-bold mb-2 w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed resize-none"
                   placeholder="Suggestion title"
                 />
               ) : (

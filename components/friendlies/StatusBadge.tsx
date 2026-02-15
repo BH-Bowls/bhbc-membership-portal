@@ -9,6 +9,7 @@ export function StatusBadge({ status, className = '' }: StatusBadgeProps) {
   const badges: { [key in GameStatus]: { label: string; color: string } } = {
     '': { label: 'Upcoming', color: 'bg-gray-500' },
     'O': { label: 'Open', color: 'bg-green-500' },
+    'L': { label: 'Allocating', color: 'bg-amber-500' },
     'X': { label: 'Selecting', color: 'bg-yellow-500' },
     'S': { label: 'Selected', color: 'bg-blue-500' },
     'P': { label: 'Played', color: 'bg-purple-500' },

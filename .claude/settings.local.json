@@ -19,7 +19,9 @@
       "Bash(git merge:*)",
       "Bash(git push:*)",
       "Bash(git add:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(python3:*)",
+      "Bash(npx next build:*)"
     ]
   }
 }
