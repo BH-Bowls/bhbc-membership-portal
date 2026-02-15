@@ -197,10 +197,11 @@ export async function deleteAttachment(
   try {
     const colMap = await getColumnMap('MemberSuggestionsAttachments');
     const sheets = getGoogleSheetsClient();
+    const spreadsheetId = getSpreadsheetId();
 
     // Get all attachments to find the row
     const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: getSpreadsheetId(),
+      spreadsheetId,
       range: ATTACHMENTS_SHEET_RANGE,
     });
 
@@ -220,14 +221,32 @@ export async function deleteAttachment(
       return { success: false, error: 'Attachment not found' };
     }
 
-    // Mark as deleted
-    const colLetter = getColumnLetter(colMap['is_deleted']);
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: getSpreadsheetId(),
-      range: `MemberSuggestionsAttachments!${colLetter}${targetRow}`,
-      valueInputOption: 'USER_ENTERED',
+    // Get the numeric sheet ID for the deleteDimension request
+    const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
+    const attachmentsSheet = spreadsheet.data.sheets?.find(
+      (s) => s.properties?.title === 'MemberSuggestionsAttachments'
+    );
+
+    if (!attachmentsSheet?.properties?.sheetId && attachmentsSheet?.properties?.sheetId !== 0) {
+      return { success: false, error: 'Attachments sheet not found' };
+    }
+
+    // Delete the row from the sheet
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
       requestBody: {
-        values: [['TRUE']],
+        requests: [
+          {
+            deleteDimension: {
+              range: {
+                sheetId: attachmentsSheet.properties.sheetId,
+                dimension: 'ROWS',
+                startIndex: targetRow - 1, // 0-indexed
+                endIndex: targetRow,
+              },
+            },
+          },
+        ],
       },
     });
 

@@ -3,7 +3,7 @@
 
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { SuggestionAttachment } from '@/types/attachments';
 import { ConfirmDialog } from './ConfirmDialog';
 
@@ -14,6 +14,32 @@ interface AttachmentsListProps {
   onDelete: () => void;
 }
 
+// MIME types / extensions that browsers can display inline
+const VIEWABLE_MIME_TYPES = ['application/pdf'];
+const VIEWABLE_EXTENSIONS = ['.pdf'];
+
+function isViewableInBrowser(attachment: SuggestionAttachment): boolean {
+  if (attachment.type === 'image' || attachment.type === 'link') return true;
+  const mime = (attachment.mimeType || '').toLowerCase();
+  if (VIEWABLE_MIME_TYPES.includes(mime)) return true;
+  const name = (attachment.fileName || '').toLowerCase();
+  return VIEWABLE_EXTENSIONS.some((ext) => name.endsWith(ext));
+}
+
+/**
+ * Build the server-side proxy URL for an attachment.
+ *   ?inline=true  → Content-Disposition: inline  (view in browser)
+ *   (default)     → Content-Disposition: attachment (download)
+ */
+function getProxyUrl(
+  suggestionId: string,
+  attachment: SuggestionAttachment,
+  inline: boolean
+): string {
+  const base = `/api/suggestions/${suggestionId}/attachments/${attachment.attachmentId}`;
+  return inline ? `${base}?inline=true` : base;
+}
+
 export function AttachmentsList({
   suggestionId,
   attachments,
@@ -21,6 +47,7 @@ export function AttachmentsList({
   onDelete,
 }: AttachmentsListProps) {
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
     attachmentId: string | null;
@@ -30,6 +57,15 @@ export function AttachmentsList({
     attachmentId: null,
     description: '',
   });
+
+  // Auto-dismiss toast
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
+  // ---- Handlers ----
 
   const handleDeleteClick = (attachment: SuggestionAttachment) => {
     setConfirmDialog({
@@ -67,13 +103,38 @@ export function AttachmentsList({
     }
   };
 
+  /**
+   * Handle clicking a document attachment.
+   * Viewable files (PDF): open via proxy with ?inline=true in a new tab.
+   * Other documents: navigate to proxy URL which triggers download with correct filename.
+   */
+  const handleDocumentClick = (
+    e: React.MouseEvent,
+    attachment: SuggestionAttachment
+  ) => {
+    e.preventDefault();
+
+    if (isViewableInBrowser(attachment)) {
+      // Open inline in new tab — the server sets Content-Disposition: inline
+      window.open(getProxyUrl(suggestionId, attachment, true), '_blank');
+    } else {
+      // Trigger download — the server sets Content-Disposition: attachment with filename
+      // Using a hidden link avoids popup blockers
+      const a = document.createElement('a');
+      a.href = getProxyUrl(suggestionId, attachment, false);
+      a.download = ''; // browser will use the Content-Disposition filename
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      const filename = attachment.fileName || attachment.description;
+      setToast(`Downloaded "${filename}"`);
+    }
+  };
+
+  // ---- Helpers ----
+
   const getThumbnailUrl = (attachment: SuggestionAttachment) => {
-    // For images, Cloudinary will automatically generate optimized thumbnails
-    // The URL stored in attachment.url is already optimized by Cloudinary
     if (attachment.type === 'image' && attachment.url) {
-      // Cloudinary URL is already optimized, just use it
-      // If we want a specific thumbnail size, we could use the publicId to generate one
-      // but for now, the stored URL works great
       return attachment.url;
     }
     return null;
@@ -122,6 +183,8 @@ export function AttachmentsList({
     return null;
   };
 
+  // ---- Render ----
+
   if (attachments.length === 0) {
     return (
       <div className="text-center py-8 text-gray-500">
@@ -145,151 +208,159 @@ export function AttachmentsList({
 
   return (
     <div className="space-y-3">
-      {attachments.map((attachment) => (
-        <div
-          key={attachment.attachmentId}
-          className={`flex items-start gap-4 p-4 rounded-lg border ${
-            attachment.isDeleted
-              ? 'bg-red-50 border-red-200'
-              : 'bg-gray-50 border-gray-200 hover:bg-gray-100'
-          }`}
-        >
-          {/* Thumbnail or Icon */}
-          <div className="flex-shrink-0">
-            {attachment.type === 'image' && !attachment.isDeleted ? (
-              <a
-                href={attachment.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="block"
-              >
-                <img
-                  src={getThumbnailUrl(attachment) || ''}
-                  alt={attachment.description}
-                  className="w-16 h-16 object-cover rounded border border-gray-300 hover:opacity-80 transition-opacity"
-                  onError={(e) => {
-                    // Fallback if thumbnail fails
-                    e.currentTarget.src =
-                      'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"%3E%3Cpath strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"%3E%3C/path%3E%3C/svg%3E';
-                  }}
-                />
-              </a>
-            ) : (
-              <div className="w-16 h-16 flex items-center justify-center">
-                {getIcon(attachment)}
-              </div>
-            )}
-          </div>
+      {attachments.map((attachment) => {
+        const isDocument = attachment.type === 'document';
 
-          {/* Details */}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex-1 min-w-0">
-                {attachment.isDeleted ? (
-                  <div>
-                    <p className="text-sm font-medium text-red-700">
-                      {attachment.description}
-                    </p>
-                    <p className="text-xs text-red-600 mt-1">
-                      File no longer available
-                    </p>
-                  </div>
-                ) : (
-                  <a
-                    href={attachment.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline block truncate"
-                  >
-                    {attachment.description}
-                  </a>
-                )}
-
-                {/* Metadata */}
-                <div className="flex flex-wrap items-center gap-2 mt-1 text-xs text-gray-500">
-                  <span className="capitalize">{attachment.type}</span>
-                  {attachment.fileName && (
-                    <>
-                      <span>•</span>
-                      <span className="truncate max-w-[200px]">
-                        {attachment.fileName}
-                      </span>
-                    </>
-                  )}
-                  {attachment.fileSize && (
-                    <>
-                      <span>•</span>
-                      <span>{(attachment.fileSize / 1024 / 1024).toFixed(2)} MB</span>
-                    </>
-                  )}
-                  <span>•</span>
-                  <span>
-                    Added by {attachment.addedByUsername}
-                  </span>
-                </div>
-              </div>
-
-              {/* Delete Button */}
-              {canDelete && !attachment.isDeleted && (
-                <button
-                  onClick={() => handleDeleteClick(attachment)}
-                  disabled={deletingId === attachment.attachmentId}
-                  className="flex-shrink-0 p-2 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-md transition-colors disabled:opacity-50"
-                  title="Delete attachment"
+        return (
+          <div
+            key={attachment.attachmentId}
+            className={`flex items-start gap-4 p-4 rounded-lg border ${
+              attachment.isDeleted
+                ? 'bg-red-50 border-red-200'
+                : 'bg-gray-50 border-gray-200 hover:bg-gray-100'
+            }`}
+          >
+            {/* Thumbnail or Icon */}
+            <div className="flex-shrink-0">
+              {attachment.type === 'image' && !attachment.isDeleted ? (
+                <a
+                  href={attachment.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block"
                 >
-                  {deletingId === attachment.attachmentId ? (
-                    <svg
-                      className="animate-spin h-5 w-5"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                    >
-                      <circle
-                        className="opacity-25"
-                        cx="12"
-                        cy="12"
-                        r="10"
-                        stroke="currentColor"
-                        strokeWidth="4"
-                      />
-                      <path
-                        className="opacity-75"
-                        fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                      />
-                    </svg>
-                  ) : (
-                    <svg
-                      className="h-5 w-5"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                      />
-                    </svg>
-                  )}
-                </button>
+                  <img
+                    src={getThumbnailUrl(attachment) || ''}
+                    alt={attachment.description}
+                    className="w-16 h-16 object-cover rounded border border-gray-300 hover:opacity-80 transition-opacity"
+                    onError={(e) => {
+                      e.currentTarget.src =
+                        'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"%3E%3Cpath strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"%3E%3C/path%3E%3C/svg%3E';
+                    }}
+                  />
+                </a>
+              ) : (
+                <div className="w-16 h-16 flex items-center justify-center">
+                  {getIcon(attachment)}
+                </div>
               )}
             </div>
+
+            {/* Details */}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1 min-w-0">
+                  {attachment.isDeleted ? (
+                    <div>
+                      <p className="text-sm font-medium text-red-700">
+                        {attachment.description}
+                      </p>
+                      <p className="text-xs text-red-600 mt-1">
+                        File no longer available
+                      </p>
+                    </div>
+                  ) : isDocument ? (
+                    <button
+                      onClick={(e) => handleDocumentClick(e, attachment)}
+                      className="text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline block truncate text-left"
+                    >
+                      {attachment.description}
+                    </button>
+                  ) : (
+                    <a
+                      href={attachment.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline block truncate"
+                    >
+                      {attachment.description}
+                    </a>
+                  )}
+
+                  {/* Metadata */}
+                  <div className="flex flex-wrap items-center gap-2 mt-1 text-xs text-gray-500">
+                    <span className="capitalize">{attachment.type}</span>
+                    {attachment.fileName && (
+                      <>
+                        <span>•</span>
+                        <span className="truncate max-w-[200px]">
+                          {attachment.fileName}
+                        </span>
+                      </>
+                    )}
+                    {attachment.fileSize && (
+                      <>
+                        <span>•</span>
+                        <span>{(attachment.fileSize / 1024 / 1024).toFixed(2)} MB</span>
+                      </>
+                    )}
+                    <span>•</span>
+                    <span>
+                      Added by {attachment.addedByUsername}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Delete Button */}
+                {canDelete && !attachment.isDeleted && (
+                  <button
+                    onClick={() => handleDeleteClick(attachment)}
+                    disabled={deletingId === attachment.attachmentId}
+                    className={`flex-shrink-0 px-3 py-1.5 text-sm font-medium rounded-md transition-colors disabled:opacity-50 ${
+                      deletingId === attachment.attachmentId
+                        ? 'text-red-400'
+                        : 'text-red-600 hover:text-red-700 hover:bg-red-50'
+                    }`}
+                    title="Delete attachment"
+                  >
+                    {deletingId === attachment.attachmentId ? (
+                      <span className="flex items-center gap-1.5">
+                        <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        Deleting...
+                      </span>
+                    ) : (
+                      'Delete'
+                    )}
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
+        );
+      })}
+
+      {/* Download toast */}
+      {toast && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3 bg-gray-800 text-white px-5 py-3 rounded-lg shadow-lg animate-fade-in">
+          <svg className="h-5 w-5 text-green-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+          </svg>
+          <span className="text-sm">{toast}</span>
+          <button onClick={() => setToast(null)} className="ml-2 text-gray-400 hover:text-white">
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
-      ))}
+      )}
 
       {/* Confirm Dialog */}
       <ConfirmDialog
         isOpen={confirmDialog.isOpen}
         title="Delete Attachment"
         message={`Are you sure you want to delete "${confirmDialog.description}"? This will permanently remove the file.`}
-        confirmLabel="Delete"
+        confirmLabel={deletingId ? 'Deleting...' : 'Delete'}
+        confirmDisabled={!!deletingId}
         confirmVariant="danger"
         onConfirm={handleDeleteConfirm}
-        onCancel={() =>
-          setConfirmDialog({ isOpen: false, attachmentId: null, description: '' })
-        }
+        onCancel={() => {
+          if (!deletingId) {
+            setConfirmDialog({ isOpen: false, attachmentId: null, description: '' });
+          }
+        }}
       />
     </div>
   );

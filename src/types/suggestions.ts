@@ -34,7 +34,7 @@ export type FinalOutcome =
   | 'Cancelled'
   | 'On Hold';
 
-export type CommitteeAcceptance = 'Yes' | 'No' | '';
+export type CommitteeAcceptance = 'Y' | '';
 
 export interface MemberSuggestion {
   // Public fields (anyone can submit)
@@ -48,6 +48,7 @@ export interface MemberSuggestion {
   createdAt: string;
 
   // Admin/Committee fields
+  committeeOnly?: string;
   dateReceived?: string | null;
   committeeAcceptance?: CommitteeAcceptance;
   committeeAcceptanceReason?: string | null;
@@ -75,7 +76,7 @@ export interface MemberSuggestion {
 
 // Status types for filtering/display
 export type SuggestionStatus =
-  | 'new'        // Not accepted yet (committeeAcceptance !== 'Yes')
+  | 'new'        // Not accepted yet (committeeAcceptance !== 'Y')
   | 'ongoing'    // Accepted and not complete/cancelled/on hold
   | 'review'     // Past review date
   | 'complete'   // finalOutcome === 'Completed'
@@ -93,7 +94,7 @@ export function getSuggestionStatus(suggestion: MemberSuggestion): SuggestionSta
   if (suggestion.finalOutcome === 'On Hold') return 'on_hold';
 
   // Check if accepted by committee
-  if (suggestion.committeeAcceptance !== 'Yes') return 'new';
+  if (suggestion.committeeAcceptance !== 'Y') return 'new';
 
   // Check if past review date (needs attention)
   if (suggestion.reviewDate) {

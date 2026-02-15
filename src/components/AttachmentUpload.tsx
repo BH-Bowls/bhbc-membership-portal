@@ -54,13 +54,12 @@ export function AttachmentUpload({
       return;
     }
 
-    // Validate image type if needed
-    if (type === 'image') {
-      const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-      if (!allowedTypes.includes(selectedFile.type)) {
-        setError('Invalid image type. Allowed: JPEG, PNG, GIF, WebP');
-        return;
-      }
+    // Auto-detect type from the file
+    const imageTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    if (imageTypes.includes(selectedFile.type)) {
+      setType('image');
+    } else {
+      setType('document');
     }
 
     setFile(selectedFile);
@@ -141,36 +140,24 @@ export function AttachmentUpload({
             <label className="flex items-center">
               <input
                 type="radio"
-                value="image"
-                checked={type === 'image'}
-                onChange={(e) => {
-                  setType(e.target.value as AttachmentType);
+                value="file"
+                checked={type !== 'link'}
+                onChange={() => {
+                  setType('image');
                   setFile(null);
+                  setUrl('');
                 }}
                 className="mr-2"
               />
-              Image
-            </label>
-            <label className="flex items-center">
-              <input
-                type="radio"
-                value="document"
-                checked={type === 'document'}
-                onChange={(e) => {
-                  setType(e.target.value as AttachmentType);
-                  setFile(null);
-                }}
-                className="mr-2"
-              />
-              Document
+              File
             </label>
             <label className="flex items-center">
               <input
                 type="radio"
                 value="link"
                 checked={type === 'link'}
-                onChange={(e) => {
-                  setType(e.target.value as AttachmentType);
+                onChange={() => {
+                  setType('link');
                   setFile(null);
                 }}
                 className="mr-2"
@@ -230,10 +217,11 @@ export function AttachmentUpload({
             >
               <input
                 ref={fileInputRef}
+                id="attachment-file-input"
                 type="file"
                 onChange={handleFileInputChange}
-                accept={type === 'image' ? 'image/jpeg,image/png,image/gif,image/webp' : '*'}
-                className="hidden"
+                accept="*"
+                className="sr-only"
               />
               {file ? (
                 <div className="space-y-2">
@@ -265,17 +253,16 @@ export function AttachmentUpload({
                     />
                   </svg>
                   <div className="text-sm text-gray-600">
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      className="text-blue-600 hover:text-blue-700 font-medium"
+                    <label
+                      htmlFor="attachment-file-input"
+                      className="text-blue-600 hover:text-blue-700 font-medium cursor-pointer"
                     >
                       Choose a file
-                    </button>{' '}
+                    </label>{' '}
                     or drag and drop
                   </div>
                   <p className="text-xs text-gray-500">
-                    {type === 'image' ? 'JPEG, PNG, GIF, WebP' : 'Any file type'} up to 50MB
+                    Images, PDFs, documents, spreadsheets — up to 50MB
                   </p>
                 </div>
               )}

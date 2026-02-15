@@ -147,7 +147,7 @@ export default function SuggestionDetailPage({ params }: { params: Promise<{ id:
         const canAdd =
           data.isCommittee ||
           isCoordinator ||
-          (isOwner && data.suggestion.committeeAcceptance !== 'Yes');
+          (isOwner && data.suggestion.committeeAcceptance !== 'Y');
         setCanAddAttachment(canAdd);
 
         // Restore draft if exists (using suggestion-specific key)
@@ -513,32 +513,44 @@ export default function SuggestionDetailPage({ params }: { params: Promise<{ id:
         </div>
 
         {/* Admin Section (Committee + Coordinator) */}
-        {(canEdit || current.committeeAcceptance === 'Yes') && (
+        {(canEdit || current.committeeAcceptance === 'Y') && (
           <div className="bg-white rounded-lg shadow p-6">
             <h2 className="text-xl font-bold mb-4">Committee Review</h2>
 
             <div className="space-y-4">
+              {/* Committee Only flag */}
+              {canEditAdminFields && (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="committeeOnly"
+                    checked={current.committeeOnly === 'Y'}
+                    onChange={(e) => handleChange('committeeOnly', e.target.checked ? 'Y' : '')}
+                    disabled={isFormDisabled}
+                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                  <label htmlFor="committeeOnly" className="text-sm font-medium text-gray-700">
+                    Committee Only
+                  </label>
+                  <span className="text-xs text-gray-500">(hidden from regular members)</span>
+                </div>
+              )}
+
               {/* Committee Acceptance */}
               {(canEditAdminFields || current.committeeAcceptance) && (
                 <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Committee Acceptance
+                  <div className="flex items-center gap-2 pt-1">
+                    <input
+                      type="checkbox"
+                      id="committeeAcceptance"
+                      checked={current.committeeAcceptance === 'Y'}
+                      onChange={(e) => handleChange('committeeAcceptance', e.target.checked ? 'Y' : '')}
+                      disabled={!isEditing || !canEditAdminFields || isSaving}
+                      className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                    />
+                    <label htmlFor="committeeAcceptance" className="text-sm font-medium text-gray-700">
+                      Committee Accepted
                     </label>
-                    {isEditing && canEditAdminFields ? (
-                      <select
-                        value={current.committeeAcceptance || ''}
-                        onChange={(e) => handleChange('committeeAcceptance', e.target.value)}
-                        disabled={isFormDisabled}
-                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        <option value="">Not Reviewed</option>
-                        <option value="Yes">Yes</option>
-                        <option value="No">No</option>
-                      </select>
-                    ) : (
-                      <div className="text-gray-900">{current.committeeAcceptance || '-'}</div>
-                    )}
                   </div>
 
                   <div>
