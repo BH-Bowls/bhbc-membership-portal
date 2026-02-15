@@ -274,7 +274,7 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
 //    },
   ];
 
-  // Use kiosk or regular navigation based on role
+  // Use kiosk or regular navigation based on role.
   const navigationItems = isKiosk ? kioskNavigationItems : regularNavigationItems;
 
   const isActive = (href: string) => {
