@@ -55,6 +55,7 @@ function parseSuggestionRow(
     createdAt: get('created_at') || '',
 
     // Admin fields
+    committeeOnly: get('committee_only') || '',
     dateReceived: get('date_received') || null,
     committeeAcceptance: (get('committee_acceptance') || '') as CommitteeAcceptance,
     committeeAcceptanceReason: get('committee_acceptance_reason') || null,
@@ -199,6 +200,7 @@ export async function createSuggestion(data: {
   description: string;
   reasonForImprovement: string;
   createdByUsername: string;
+  committeeOnly?: string;
 }): Promise<{ success: boolean; suggestionId?: string; error?: string }> {
   try {
     const colMap = await getColumnMap('MemberSuggestions');
@@ -226,6 +228,7 @@ export async function createSuggestion(data: {
     newRow[colMap['description']] = data.description;
     newRow[colMap['reason_for_improvement']] = data.reasonForImprovement;
     newRow[colMap['created_by_username']] = data.createdByUsername;
+    newRow[colMap['committee_only']] = data.committeeOnly || '';
     newRow[colMap['created_at']] = now;
     newRow[colMap['updated_at']] = now;
     newRow[colMap['updated_by_username']] = data.createdByUsername;
@@ -274,6 +277,7 @@ export async function updateSuggestion(
     // Field mapping (camelCase to snake_case)
     // Note: coordinatorFullName and createdByFullName are NOT stored - they're computed fields
     const fieldToColumnMap: Record<string, string> = {
+      committeeOnly: 'committee_only',
       title: 'title',
       category: 'category',
       description: 'description',

@@ -142,7 +142,7 @@ export async function POST(
     const canAddAttachment =
       isCommittee ||
       isCoordinator ||
-      (isOwner && suggestion.committeeAcceptance !== 'Yes');
+      (isOwner && suggestion.committeeAcceptance !== 'Y');
 
     if (!canAddAttachment) {
       return NextResponse.json(

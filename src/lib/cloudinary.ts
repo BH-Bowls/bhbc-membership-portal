@@ -79,8 +79,11 @@ export async function uploadFileToCloudinary(
     // Build folder path: bhbc-suggestions/2026-001
     const folder = `bhbc-suggestions/${suggestionId}`;
 
-    // Generate a clean filename (remove extension, Cloudinary adds it back)
-    const cleanFileName = fileName.replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9-_]/g, '_');
+    // Generate a clean filename, keeping the extension for raw resources
+    // (Cloudinary only auto-appends extensions for image/video, not raw)
+    const ext = fileName.match(/\.[^/.]+$/)?.[0] || '';
+    const baseName = fileName.replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9-_]/g, '_');
+    const cleanFileName = resourceType === 'raw' ? `${baseName}${ext}` : baseName;
 
     // Upload to Cloudinary
     return new Promise((resolve, reject) => {
@@ -136,21 +139,17 @@ export async function deleteFileFromCloudinary(publicId: string): Promise<void> 
   configureCloudinary();
 
   try {
-    // Determine resource type from public_id
-    // Images are in bhbc-suggestions folder, others might be 'raw'
-    let resourceType: 'image' | 'video' | 'raw' = 'image';
+    // Try to delete as image first
+    const imageResult = await cloudinary.uploader.destroy(publicId, { resource_type: 'image' });
+    if (imageResult?.result === 'ok') return;
 
-    // Try to delete as image first, then raw if it fails
-    try {
-      await cloudinary.uploader.destroy(publicId, { resource_type: 'image' });
-      return;
-    } catch (imageError) {
-      // If not found as image, try as raw resource
-      await cloudinary.uploader.destroy(publicId, { resource_type: 'raw' });
-      return;
-    }
+    // If not found as image, try as raw resource (documents, PDFs, etc.)
+    const rawResult = await cloudinary.uploader.destroy(publicId, { resource_type: 'raw' });
+    if (rawResult?.result === 'ok') return;
+
+    // Neither worked — file may already be deleted
+    console.log(`[deleteFileFromCloudinary] File ${publicId} not found (already deleted)`);
   } catch (error: any) {
-    // If file not found, consider it already deleted
     if (error?.http_code === 404) {
       console.log(`[deleteFileFromCloudinary] File ${publicId} not found (already deleted)`);
       return;
@@ -186,53 +185,79 @@ export async function checkFileExists(publicId: string): Promise<boolean> {
 }
 
 /**
- * Get file metadata from Cloudinary
+ * Build a signed Cloudinary download-API URL.
+ * Endpoint: https://api.cloudinary.com/v1_1/{cloud}/{resourceType}/download
  */
-export async function getFileMetadata(publicId: string): Promise<{
-  publicId: string;
-  format: string;
-  bytes: number;
-  url: string;
-  secureUrl: string;
-} | null> {
-  configureCloudinary();
+function buildDownloadUrl(
+  publicId: string,
+  format: string,
+  resourceType: string
+): string {
+  const timestamp = Math.floor(Date.now() / 1000);
+  const params: Record<string, string> = {
+    public_id: publicId,
+    timestamp: String(timestamp),
+    type: 'upload',
+  };
+  if (format) params.format = format;
 
-  try {
-    // Try as image first
-    let resource;
-    try {
-      resource = await cloudinary.api.resource(publicId, { resource_type: 'image' });
-    } catch (imageError) {
-      // Try as raw resource
-      resource = await cloudinary.api.resource(publicId, { resource_type: 'raw' });
-    }
+  const signature = cloudinary.utils.api_sign_request(params, getApiSecret());
 
-    return {
-      publicId: resource.public_id,
-      format: resource.format,
-      bytes: resource.bytes,
-      url: resource.url,
-      secureUrl: resource.secure_url,
-    };
-  } catch (error: any) {
-    if (error?.http_code === 404 || error?.error?.http_code === 404) {
-      return null;
-    }
-    console.error(`[getFileMetadata] Error getting metadata for ${publicId}:`, error);
-    return null;
-  }
+  const qs = new URLSearchParams({
+    ...params,
+    api_key: getApiKey(),
+    signature: signature as string,
+  });
+
+  return `https://api.cloudinary.com/v1_1/${getCloudName()}/${resourceType}/download?${qs}`;
 }
 
 /**
- * Get thumbnail URL for an image file
+ * Fetch a file from Cloudinary by publicId and return the buffer + metadata.
+ * Uses the authenticated download API endpoint which bypasses CDN restrictions
+ * that cause 401 on raw resources.
+ *
+ * Tries multiple URL forms because raw public_ids include the file extension
+ * while image public_ids do not.
  */
-export function getThumbnailUrl(publicId: string, size: number = 200): string {
+export async function fetchFileFromCloudinary(
+  publicId: string,
+  resourceType: 'image' | 'raw' = 'raw'
+): Promise<{ buffer: Buffer; contentType: string }> {
   configureCloudinary();
 
-  return cloudinary.url(publicId, {
-    width: size,
-    crop: 'fit',
-    quality: 'auto',
-    fetch_format: 'auto',
-  });
+  // Build a list of download URLs to try in order.
+  const attempts: string[] = [];
+
+  // Attempt 1 — full public_id as-is (correct for raw where ext is part of id)
+  attempts.push(buildDownloadUrl(publicId, '', resourceType));
+
+  // Attempt 2 — split extension into format param (correct for some SDK uploads)
+  if (resourceType === 'raw') {
+    const extMatch = publicId.match(/\.([^/.]+)$/);
+    if (extMatch) {
+      const format = extMatch[1];
+      const cleanId = publicId.slice(0, -extMatch[0].length);
+      attempts.push(buildDownloadUrl(cleanId, format, resourceType));
+    }
+  }
+
+  for (const downloadUrl of attempts) {
+    console.log(`[fetchFileFromCloudinary] Trying: ${downloadUrl}`);
+    const response = await fetch(downloadUrl);
+
+    if (response.ok) {
+      const arrayBuffer = await response.arrayBuffer();
+      const contentType =
+        response.headers.get('content-type') || 'application/octet-stream';
+      return { buffer: Buffer.from(arrayBuffer), contentType };
+    }
+
+    console.log(`[fetchFileFromCloudinary] Got ${response.status}, trying next…`);
+  }
+
+  throw new Error(
+    `Failed to fetch file from Cloudinary – all attempts failed for ${publicId}`
+  );
 }
+

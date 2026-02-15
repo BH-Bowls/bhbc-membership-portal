@@ -41,6 +41,9 @@ export async function GET(request: NextRequest) {
     const filteredSuggestions = isCommittee
       ? allSuggestions // Committee members see all suggestions
       : allSuggestions.filter((s) => {
+          // Hide committee-only suggestions from regular members
+          if (s.committeeOnly === 'Y') return false;
+
           // Regular members can see:
           // 1. Suggestions they created
           if (s.createdByUsername === userName) return true;
@@ -98,6 +101,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Determine if creator is a committee member
+    const role = session.user.role || 'Member';
+    const isCommittee = role !== 'Member' && role !== '';
+
     // Create suggestion with default category "Other"
     const result = await createSuggestion({
       title,
@@ -105,6 +112,7 @@ export async function POST(request: NextRequest) {
       description,
       reasonForImprovement,
       createdByUsername: session.user.userName,
+      committeeOnly: isCommittee ? 'Y' : '',
     });
 
     if (!result.success) {

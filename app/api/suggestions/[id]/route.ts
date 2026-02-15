@@ -44,6 +44,11 @@ export async function GET(
       return NextResponse.json({ error: 'Suggestion not found' }, { status: 404 });
     }
 
+    // Block non-committee access to committee-only suggestions
+    if (!isCommittee && suggestion.committeeOnly === 'Y') {
+      return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+    }
+
     // Check access permissions
     const isOwner = suggestion.createdByUsername === userName;
     const isCoordinator = suggestion.coordinatorUsername === userName;
@@ -66,7 +71,7 @@ export async function GET(
     const canEditAdminFields = isCommittee; // Only committee can edit admin fields
     const canEditCoordinatorFields = isCoordinator; // Coordinator can edit specific fields
     // Owner can edit basic fields (title, description, why) until committee accepts
-    const canEditBasicFields = isOwner && suggestion.committeeAcceptance !== 'Yes';
+    const canEditBasicFields = isOwner && suggestion.committeeAcceptance !== 'Y';
 
     // Get all members for coordinator dropdown (committee only)
     let allMembers: Array<{ userName: string; fullName: string }> = [];
@@ -129,7 +134,7 @@ export async function PUT(
     // Check permissions
     const isOwner = suggestion.createdByUsername === userName;
     const isCoordinator = suggestion.coordinatorUsername === userName;
-    const canEditBasicFields = isOwner && suggestion.committeeAcceptance !== 'Yes';
+    const canEditBasicFields = isOwner && suggestion.committeeAcceptance !== 'Y';
 
     if (!isCommittee && !isCoordinator && !canEditBasicFields) {
       return NextResponse.json(
@@ -147,6 +152,7 @@ export async function PUT(
       // Committee can edit all admin fields
       // Note: coordinatorFullName is computed from coordinatorUsername, not stored
       allowedFields = [
+        'committeeOnly',
         'title',
         'description',
         'reasonForImprovement',
