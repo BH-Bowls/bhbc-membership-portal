@@ -22,7 +22,7 @@ import {
  * This spreadsheet contains club details and contacts
  * @returns Spreadsheet ID string
  */
-function getMatchDayContactsSpreadsheetId(): string {
+export function getMatchDayContactsSpreadsheetId(): string {
   const id = process.env.MATCH_DAY_CONTACTS_SPREADSHEET_ID;
   if (!id) {
     throw new Error('MATCH_DAY_CONTACTS_SPREADSHEET_ID environment variable is not set');

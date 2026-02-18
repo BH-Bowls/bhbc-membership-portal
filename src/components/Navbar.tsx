@@ -98,6 +98,7 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
       items.push({ name: 'Banking', href: '/banking' });
       items.push({ name: 'Friendly Management', href: '/friendlies/manage' });
       items.push({ name: 'Internal Games Management', href: '/internal-games/manage' });
+      items.push({ name: 'Data Export', href: '/data-export' });
     } else {
       // Non-admins get role-specific items
       if (canAccessBanking) {

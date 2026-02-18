@@ -86,17 +86,24 @@ export default function ManageGamesPage() {
   const [publishDialog, setPublishDialog] = useState<{
     isOpen: boolean;
     tabName: string;
+    isHomeGame: boolean;
     sendEmail: boolean;
+    sendTeaRotaEmail: boolean;
     submitting: boolean;
     result: {
       emailsSent?: number;
       playersWithoutEmail?: string[];
       emailError?: string;
+      teaRotaEmailsSent?: number;
+      teaRotaMembersWithoutEmail?: string[];
+      teaRotaEmailError?: string;
     } | null;
   }>({
     isOpen: false,
     tabName: '',
-    sendEmail: false, // Default to not sending email
+    isHomeGame: false,
+    sendEmail: false,
+    sendTeaRotaEmail: false,
     submitting: false,
     result: null,
   });
@@ -320,11 +327,13 @@ export default function ManageGamesPage() {
    * Handle Publish Selection button click
    * Opens the publish dialog with email option
    */
-  function handlePublishSelection(tabName: string) {
+  function handlePublishSelection(game: Game) {
     setPublishDialog({
       isOpen: true,
-      tabName,
-      sendEmail: false, // Default to not sending email
+      tabName: game.tabName,
+      isHomeGame: game.homeAway === 'H',
+      sendEmail: false,
+      sendTeaRotaEmail: false,
       submitting: false,
       result: null,
     });
@@ -334,7 +343,7 @@ export default function ManageGamesPage() {
    * Submit the publish action from the publish dialog
    */
   async function submitPublish() {
-    const { tabName, sendEmail } = publishDialog;
+    const { tabName, sendEmail, sendTeaRotaEmail } = publishDialog;
 
     // Show submitting state
     setPublishDialog(prev => ({ ...prev, submitting: true }));
@@ -347,14 +356,17 @@ export default function ManageGamesPage() {
           tab_name: tabName,
           action: 'publish',
           send_email: sendEmail,
+          send_tea_rota_email: sendTeaRotaEmail,
         }),
       });
 
       const data = await response.json();
 
       if (response.ok) {
-        // If email was sent, show the result
-        if (sendEmail && (data.emails_sent > 0 || data.players_without_email?.length > 0 || data.email_error)) {
+        const hasEmailResult = sendEmail && (data.emails_sent > 0 || data.players_without_email?.length > 0 || data.email_error);
+        const hasTeaRotaResult = sendTeaRotaEmail && (data.tea_rota_emails_sent > 0 || data.tea_rota_members_without_email?.length > 0 || data.tea_rota_email_error);
+
+        if (hasEmailResult || hasTeaRotaResult) {
           setPublishDialog(prev => ({
             ...prev,
             submitting: false,
@@ -362,6 +374,9 @@ export default function ManageGamesPage() {
               emailsSent: data.emails_sent,
               playersWithoutEmail: data.players_without_email,
               emailError: data.email_error,
+              teaRotaEmailsSent: data.tea_rota_emails_sent,
+              teaRotaMembersWithoutEmail: data.tea_rota_members_without_email,
+              teaRotaEmailError: data.tea_rota_email_error,
             },
           }));
         } else {
@@ -387,7 +402,9 @@ export default function ManageGamesPage() {
     setPublishDialog({
       isOpen: false,
       tabName: '',
+      isHomeGame: false,
       sendEmail: false,
+      sendTeaRotaEmail: false,
       submitting: false,
       result: null,
     });
@@ -813,7 +830,7 @@ export default function ManageGamesPage() {
                               Select Team
                             </Link>
                             <button
-                              onClick={() => handlePublishSelection(game.tabName)}
+                              onClick={() => handlePublishSelection(game)}
                               disabled={actionLoading === game.tabName}
                               className="text-blue-600 hover:text-blue-800 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                             >
@@ -1065,6 +1082,35 @@ export default function ManageGamesPage() {
                         <p className="text-sm">{publishDialog.result.emailError}</p>
                       </div>
                     )}
+
+                    {publishDialog.result.teaRotaEmailsSent !== undefined && publishDialog.result.teaRotaEmailsSent > 0 && (
+                      <div className="flex items-center gap-2 text-green-700 bg-green-50 p-3 rounded">
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        <span>Tea rota email sent to {publishDialog.result.teaRotaEmailsSent} member{publishDialog.result.teaRotaEmailsSent !== 1 ? 's' : ''}</span>
+                      </div>
+                    )}
+
+                    {publishDialog.result.teaRotaMembersWithoutEmail && publishDialog.result.teaRotaMembersWithoutEmail.length > 0 && (
+                      <div className="bg-yellow-50 p-3 rounded">
+                        <p className="text-yellow-800 font-medium mb-1">
+                          {publishDialog.result.teaRotaMembersWithoutEmail.length} tea rota member{publishDialog.result.teaRotaMembersWithoutEmail.length !== 1 ? 's' : ''} without email:
+                        </p>
+                        <ul className="text-yellow-700 text-sm list-disc list-inside">
+                          {publishDialog.result.teaRotaMembersWithoutEmail.map((name, i) => (
+                            <li key={i}>{name}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {publishDialog.result.teaRotaEmailError && (
+                      <div className="bg-red-50 p-3 rounded text-red-700">
+                        <p className="font-medium">Tea rota email error:</p>
+                        <p className="text-sm">{publishDialog.result.teaRotaEmailError}</p>
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex justify-end mt-6">
@@ -1100,6 +1146,24 @@ export default function ManageGamesPage() {
                       </p>
                     </div>
                   </label>
+
+                  {publishDialog.isHomeGame && (
+                    <label className="flex items-center gap-3 p-3 mt-2 bg-gray-50 rounded cursor-pointer hover:bg-gray-100">
+                      <input
+                        type="checkbox"
+                        checked={publishDialog.sendTeaRotaEmail}
+                        onChange={(e) => setPublishDialog(prev => ({ ...prev, sendTeaRotaEmail: e.target.checked }))}
+                        disabled={publishDialog.submitting}
+                        className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"
+                      />
+                      <div>
+                        <span className="font-medium text-gray-900">Email tea rota</span>
+                        <p className="text-sm text-gray-600">
+                          Notify members on tea duty with game details and rota assignments
+                        </p>
+                      </div>
+                    </label>
+                  )}
 
                   <div className="flex justify-end gap-3 mt-6">
                     <button

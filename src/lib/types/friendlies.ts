@@ -397,6 +397,7 @@ export interface ChangeStatusRequest {
   reason?: string;          // Reason for cancellation/abandonment (required for 'cancel' and 'abandon')
   who?: string;             // Who initiated cancellation (required for 'cancel')
   send_email?: boolean;     // Whether to send email notification to players (for 'publish' action)
+  send_tea_rota_email?: boolean; // Whether to send email notification to tea rota members (for 'publish' action, home games only)
 }
 
 /**

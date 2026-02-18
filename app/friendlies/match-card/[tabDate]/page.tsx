@@ -346,135 +346,120 @@ export default function MatchCardPage() {
                   </div>
                 )}
 
-                {/* Tea Rota for home games */}
-                {game.homeAway === 'H' && teaRota && (
-                  <div className="mt-4 border-2 border-green-400 bg-green-50 p-3">
-                    <p className="font-bold text-sm mb-1">Tea Duty</p>
-                    <p className="text-sm">Lead: {teaRota.lead}</p>
-                    <p className="text-sm">Second: {teaRota.second}</p>
-                    {teaRota.third && <p className="text-sm">Third: {teaRota.third}</p>}
-                  </div>
-                )}
               </div>
 
               {/* ======================================================== */}
               {/* RIGHT COLUMN - Details (Back when folded) */}
               {/* ======================================================== */}
               <div className="p-4">
-                {/* Away game content */}
-                {game.homeAway === 'A' && (
-                  <>
-                    {/* Opposition Club Details Box */}
-                    {clubDetails && (
-                      <div className="border-2 border-gray-400 mb-4">
-                        <div className="border-b border-gray-400 p-2">
-                          <p className="text-sm font-bold">{game.clubName}</p>
-                        </div>
-                        <div className="border-b border-gray-400 p-2">
-                          <p className="text-sm">
-                            {clubDetails.address}
-                            {clubDetails.postCode && `, ${clubDetails.postCode}`}
-                          </p>
-                        </div>
-                        <div className="p-2 text-sm">
-                          {clubDetails.clubNumber && (
-                            <p>Club Number: {clubDetails.clubNumber}</p>
-                          )}
-                          {clubDetails.clubMobile && (
-                            <p>Club Mobile: {clubDetails.clubMobile}</p>
-                          )}
-                          {clubDetails.clubEmail && (
-                            <p>Club Email: {clubDetails.clubEmail}</p>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Club Contacts */}
-                    {clubContacts && clubContacts.length > 0 && (
-                      <div className="border-2 border-gray-400 mb-4">
-                        <div className="border-b border-gray-400 p-2">
-                          <p className="font-bold text-sm">{game.clubName} Contact Details</p>
-                        </div>
-                        <div className="p-2 text-sm space-y-1">
-                          {clubContacts.map((contact, idx) => (
-                            <p key={idx}>
-                              {contact.role}, {contact.name}
-                              {contact.mobile && `, ${contact.mobile}`}
-                              {contact.phone && `, ${contact.phone}`}
-                              {contact.email && (
-                                <>
-                                  , <span className="break-all">{contact.email}</span>
-                                </>
-                              )}
-                            </p>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Car Sharing Section */}
-                    {(carGroups.length > 0 || ownTransport.length > 0) && (
-                      <div className="border-2 border-gray-400 mb-4">
-                        <div className="border-b border-gray-400 p-2">
-                          <p className="font-bold text-sm">
-                            Car Sharing - Petrol : £{clubDetails?.petrolCost?.toFixed(2) || '0.00'}
-                          </p>
-                        </div>
-
-                        {/* Car Groups */}
-                        <div className="text-sm">
-                          {carGroups.map((group, idx) => (
-                            <div key={idx} className={`p-2 ${idx < carGroups.length - 1 || ownTransport.length > 0 ? 'border-b border-gray-300' : ''}`}>
-                              <p>
-                                {group.passengers
-                                  .filter(p => p !== group.driver)
-                                  .slice(0, 1)
-                                  .join(', ')}
-                                {group.passengers.filter(p => p !== group.driver).length > 0 && ', '}
-                                {group.driver && `${group.driver}(Driver)`}
-                                {group.passengers
-                                  .filter(p => p !== group.driver)
-                                  .slice(1)
-                                  .map(p => `, ${p}`)
-                                  .join('')}
-                              </p>
-                            </div>
-                          ))}
-                        </div>
-
-                        {/* Own Transport */}
-                        {ownTransport.length > 0 && (
-                          <div className="p-2">
-                            <p className="font-bold text-sm text-center mb-1">Own Transport</p>
-                            <p className="text-sm">{ownTransport.join(', ')}</p>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* General Information */}
-                    {clubDetails?.generalInfo && (
-                      <div className="border-2 border-gray-400 mb-4">
-                        <div className="border-b border-gray-400 p-2">
-                          <p className="font-bold text-sm">General Information</p>
-                        </div>
-                        <div className="p-2">
-                          <p className="text-sm whitespace-pre-line">{clubDetails.generalInfo}</p>
-                        </div>
-                      </div>
-                    )}
-                  </>
+                {/* Opposition Club Details Box */}
+                {clubDetails && (
+                  <div className="border-2 border-gray-400 mb-4">
+                    <div className="border-b border-gray-400 p-2">
+                      <p className="text-sm font-bold">{game.clubName}</p>
+                    </div>
+                    <div className="border-b border-gray-400 p-2">
+                      <p className="text-sm">
+                        {clubDetails.address}
+                        {clubDetails.postCode && `, ${clubDetails.postCode}`}
+                      </p>
+                    </div>
+                    <div className="p-2 text-sm">
+                      {clubDetails.clubNumber && (
+                        <p>Club Number: {clubDetails.clubNumber}</p>
+                      )}
+                      {clubDetails.clubMobile && (
+                        <p>Club Mobile: {clubDetails.clubMobile}</p>
+                      )}
+                      {clubDetails.clubEmail && (
+                        <p>Club Email: {clubDetails.clubEmail}</p>
+                      )}
+                    </div>
+                  </div>
                 )}
 
-                {/* Home game - right side can show venue info or be minimal */}
-                {game.homeAway === 'H' && (
-                  <div className="text-center text-gray-500 text-sm">
-                    <p className="mb-4 font-bold">Home Game</p>
-                    <p>Burgess Hill Bowls Club</p>
-                    <p>St John's Park</p>
-                    <p>Burgess Hill</p>
-                    <p>RH15 8HE</p>
+                {/* Club Contacts */}
+                {clubContacts && clubContacts.length > 0 && (
+                  <div className="border-2 border-gray-400 mb-4">
+                    <div className="border-b border-gray-400 p-2">
+                      <p className="font-bold text-sm">{game.clubName} Contact Details</p>
+                    </div>
+                    <div className="p-2 text-sm space-y-1">
+                      {clubContacts.map((contact, idx) => (
+                        <p key={idx}>
+                          {contact.role}, {contact.name}
+                          {contact.mobile && `, ${contact.mobile}`}
+                          {contact.phone && `, ${contact.phone}`}
+                          {contact.email && (
+                            <>
+                              , <span className="break-all">{contact.email}</span>
+                            </>
+                          )}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Car Sharing Section (away games only) */}
+                {game.homeAway === 'A' && (carGroups.length > 0 || ownTransport.length > 0) && (
+                  <div className="border-2 border-gray-400 mb-4">
+                    <div className="border-b border-gray-400 p-2">
+                      <p className="font-bold text-sm">
+                        Car Sharing - Petrol : £{clubDetails?.petrolCost?.toFixed(2) || '0.00'}
+                      </p>
+                    </div>
+
+                    {/* Car Groups */}
+                    <div className="text-sm">
+                      {carGroups.map((group, idx) => (
+                        <div key={idx} className={`p-2 ${idx < carGroups.length - 1 || ownTransport.length > 0 ? 'border-b border-gray-300' : ''}`}>
+                          <p>
+                            {group.passengers
+                              .filter(p => p !== group.driver)
+                              .slice(0, 1)
+                              .join(', ')}
+                            {group.passengers.filter(p => p !== group.driver).length > 0 && ', '}
+                            {group.driver && `${group.driver}(Driver)`}
+                            {group.passengers
+                              .filter(p => p !== group.driver)
+                              .slice(1)
+                              .map(p => `, ${p}`)
+                              .join('')}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Own Transport */}
+                    {ownTransport.length > 0 && (
+                      <div className="p-2">
+                        <p className="font-bold text-sm text-center mb-1">Own Transport</p>
+                        <p className="text-sm">{ownTransport.join(', ')}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* General Information */}
+                {clubDetails?.generalInfo && (
+                  <div className="border-2 border-gray-400 mb-4">
+                    <div className="border-b border-gray-400 p-2">
+                      <p className="font-bold text-sm">General Information</p>
+                    </div>
+                    <div className="p-2">
+                      <p className="text-sm whitespace-pre-line">{clubDetails.generalInfo}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Tea Rota for home games */}
+                {game.homeAway === 'H' && teaRota && (
+                  <div className="border-2 border-green-400 bg-green-50 p-3 mb-4">
+                    <p className="font-bold text-sm mb-1">Tea Duty</p>
+                    <p className="text-sm">Lead: {teaRota.lead}</p>
+                    <p className="text-sm">Second: {teaRota.second}</p>
+                    {teaRota.third && <p className="text-sm">Third: {teaRota.third}</p>}
                   </div>
                 )}
               </div>

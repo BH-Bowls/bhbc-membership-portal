@@ -253,9 +253,9 @@ export async function GET(
       }
     }
 
-    // Add club details and contacts for AWAY games (optional - don't fail if not available)
-    if (game.homeAway === 'A') {
-      console.log('[match-card] Fetching club details for AWAY game:', { clubName: game.clubName });
+    // Add club details and contacts for all games (optional - don't fail if not available)
+    {
+      console.log('[match-card] Fetching club details:', { clubName: game.clubName, homeAway: game.homeAway });
       let clubDetails;
       let clubContacts;
       try {

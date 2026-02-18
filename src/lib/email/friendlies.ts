@@ -417,6 +417,146 @@ Friendlies Management System
 }
 
 /**
+ * Send tea rota notification email to members assigned to tea duty for a home game
+ * Sends individual To: emails to each member who has an email address
+ * All members' names and phone numbers are listed in every email so they can contact each other
+ * @param game The game object containing match details
+ * @param teaMembers Array of all tea rota members (including those without email)
+ * @param appUrl The base URL of the application for building links
+ * @returns Object with success status, count of emails sent, and any members without emails
+ */
+export async function sendTeaRotaEmail(
+  game: Game,
+  teaMembers: Array<{ role: string; fullName: string; email: string | null; phone: string | null }>,
+  appUrl: string
+): Promise<{ success: boolean; emailsSent: number; membersWithoutEmail: string[]; error?: string }> {
+  try {
+    const membersWithEmail = teaMembers.filter(m => m.email && m.email.trim() !== '');
+    const membersWithoutEmail = teaMembers.filter(m => !m.email || m.email.trim() === '').map(m => m.fullName);
+
+    if (membersWithEmail.length === 0) {
+      console.warn('No tea rota members with email addresses for notification');
+      return { success: true, emailsSent: 0, membersWithoutEmail };
+    }
+
+    const { getEmailTransporter, isEmailConfigured } = await import('./mailer');
+
+    if (!isEmailConfigured()) {
+      return { success: false, emailsSent: 0, membersWithoutEmail, error: 'Email service not configured' };
+    }
+
+    const transporter = getEmailTransporter();
+    const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}`;
+    const subject = `Tea Duty - ${game.clubName} ${game.date}`;
+
+    // Build the rota contact list (all members, with phone numbers, for the email body)
+    const rotaTextLines = teaMembers
+      .map(m => {
+        const phone = m.phone ? `  ${m.phone}` : '';
+        return `${m.role}: ${m.fullName}${phone}`;
+      })
+      .join('\n');
+
+    const rotaHtmlRows = teaMembers
+      .map(m => {
+        const phone = m.phone
+          ? `<br><span style="color:#555;font-size:0.9em;">${m.phone}</span>`
+          : '';
+        return `<tr>
+          <td style="padding:6px 12px 6px 0;font-weight:bold;white-space:nowrap;">${m.role}</td>
+          <td style="padding:6px 0;">${m.fullName}${phone}</td>
+        </tr>`;
+      })
+      .join('\n');
+
+    const text = `
+Tea Duty Reminder
+
+You are on tea duty for the upcoming home game against ${game.clubName}.
+
+Date: ${game.date}
+Time: ${game.time}
+Format: ${game.format}
+
+Tea Rota:
+${rotaTextLines}
+
+View game details:
+${gameUrl}
+
+---
+Burgess Hill Bowls Club
+Friendlies Management System
+    `.trim();
+
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background-color: #0066cc; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+    .content { background-color: #f9f9f9; padding: 20px; border: 1px solid #ddd; }
+    .details { background-color: white; padding: 15px; margin: 15px 0; border-left: 4px solid #0066cc; }
+    .rota { background-color: white; padding: 15px; margin: 15px 0; border-left: 4px solid #e6a817; }
+    .button { display: inline-block; background-color: #0066cc; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; margin-top: 15px; }
+    .footer { text-align: center; padding: 15px; color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h2>Tea Duty Reminder</h2>
+    </div>
+    <div class="content">
+      <p>You are on tea duty for the upcoming home game against <strong>${game.clubName}</strong>.</p>
+      <div class="details">
+        <p><strong>Date:</strong> ${game.date}</p>
+        <p><strong>Time:</strong> ${game.time}</p>
+        <p><strong>Format:</strong> ${game.format}</p>
+      </div>
+      <div class="rota">
+        <p><strong>Tea Rota:</strong></p>
+        <table style="border-collapse:collapse;">
+          ${rotaHtmlRows}
+        </table>
+      </div>
+      <a href="${gameUrl}" class="button">View Game Details</a>
+    </div>
+    <div class="footer">
+      <p>Burgess Hill Bowls Club - Friendlies Management System</p>
+    </div>
+  </div>
+</body>
+</html>
+    `.trim();
+
+    // Send a single email with all recipients in To: so they can see each other's addresses
+    const toList = membersWithEmail.map(m => m.email).join(', ');
+
+    await transporter.sendMail({
+      from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
+      to: toList,
+      subject,
+      text,
+      html,
+    });
+
+    console.log(`✓ Tea rota notification sent to ${membersWithEmail.length} member(s) for ${game.tabName}`);
+    return { success: true, emailsSent: sent, membersWithoutEmail };
+  } catch (error) {
+    console.error('Error sending tea rota email:', error);
+    return {
+      success: false,
+      emailsSent: 0,
+      membersWithoutEmail: [],
+      error: error instanceof Error ? error.message : 'Failed to send email',
+    };
+  }
+}
+
+/**
  * Send game status change notification (future enhancement placeholder)
  * Currently just logs the status change - not yet implemented
  * Future use: notify all entered players when game status changes

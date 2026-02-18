@@ -14,8 +14,9 @@ import {
   createGameColumn,
   createGameSheet,
   getGameSheet,
+  getTeaRotaEntry,
 } from '@/lib/friendlies-sheets';
-import { sendGamePublishedEmail } from '@/lib/email/friendlies';
+import { sendGamePublishedEmail, sendTeaRotaEmail } from '@/lib/email/friendlies';
 import { getAllUsers } from '@/lib/sheets';
 import { ChangeStatusRequest, ChangeStatusResponse, GameStatus } from '@/lib/types/friendlies';
 
@@ -37,7 +38,7 @@ export async function POST(request: NextRequest) {
 
     // Parse request body
     const body: ChangeStatusRequest = await request.json();
-    const { tab_name, row_number, action, bhbc_score, opponent_score, reason, who, send_email } = body;
+    const { tab_name, row_number, action, bhbc_score, opponent_score, reason, who, send_email, send_tea_rota_email } = body;
 
     // Fetch all games from Games sheet
     const games = await getGames();
@@ -131,6 +132,7 @@ export async function POST(request: NextRequest) {
     let newStatus: GameStatus = currentStatus;
     let gameSheetCreated = false;
     let emailResult: { emailsSent?: number; playersWithoutEmail?: string[]; emailError?: string } = {};
+    let teaRotaEmailResult: { emailsSent?: number; membersWithoutEmail?: string[]; emailError?: string } = {};
 
     // Handle different status transition actions with validation and sheet operations
     switch (action) {
@@ -239,6 +241,54 @@ export async function POST(request: NextRequest) {
             emailResult.emailError = emailError instanceof Error ? emailError.message : 'Failed to send emails';
           }
         }
+
+        // If tea rota email requested and this is a home game, email those on duty
+        if (send_tea_rota_email && game.homeAway === 'H') {
+          try {
+            const teaEntry = await getTeaRotaEntry(game.rowNumber);
+
+            if (teaEntry) {
+              const allUsersForRota = await getAllUsers();
+              const rotaEmailMap = new Map<string, string>();
+              const rotaNameMap = new Map<string, string>();
+              const rotaPhoneMap = new Map<string, string>();
+              for (const user of allUsersForRota) {
+                if (user.userName) {
+                  if (user.emailAddress) rotaEmailMap.set(user.userName.toLowerCase(), user.emailAddress);
+                  rotaNameMap.set(user.userName.toLowerCase(), user.fullName || user.userName);
+                  // Prefer mobile, fall back to landline
+                  const phone = user.mobile || user.landline || null;
+                  if (phone) rotaPhoneMap.set(user.userName.toLowerCase(), phone);
+                }
+              }
+
+              const teaMembers = [
+                { role: 'Tea Lead', userName: teaEntry.teaLead },
+                { role: 'Tea First', userName: teaEntry.teaFirst },
+                { role: 'Tea Second', userName: teaEntry.teaSecond },
+              ]
+                .filter(m => m.userName && m.userName.trim() !== '')
+                .map(m => ({
+                  role: m.role,
+                  fullName: rotaNameMap.get(m.userName.toLowerCase()) || m.userName,
+                  email: rotaEmailMap.get(m.userName.toLowerCase()) || null,
+                  phone: rotaPhoneMap.get(m.userName.toLowerCase()) || null,
+                }));
+
+              const appUrl = process.env.NEXTAUTH_URL || 'https://members.burgesshillbowlsclub.com';
+              const rotaResult = await sendTeaRotaEmail(game, teaMembers, appUrl);
+
+              teaRotaEmailResult = {
+                emailsSent: rotaResult.emailsSent,
+                membersWithoutEmail: rotaResult.membersWithoutEmail,
+                emailError: rotaResult.error,
+              };
+            }
+          } catch (teaEmailError) {
+            console.error('Error sending tea rota notification email:', teaEmailError);
+            teaRotaEmailResult.emailError = teaEmailError instanceof Error ? teaEmailError.message : 'Failed to send tea rota email';
+          }
+        }
         break;
 
       // PLAYED: Transition from 'S' (Selected) to 'P' (Played/Completed)
@@ -322,6 +372,9 @@ export async function POST(request: NextRequest) {
       emails_sent?: number;
       players_without_email?: string[];
       email_error?: string;
+      tea_rota_emails_sent?: number;
+      tea_rota_members_without_email?: string[];
+      tea_rota_email_error?: string;
     } = {
       success: true,
       new_status: newStatus,            // The new status code (O, X, S, P, C, or A)
@@ -337,6 +390,17 @@ export async function POST(request: NextRequest) {
     }
     if (emailResult.emailError) {
       response.email_error = emailResult.emailError;
+    }
+
+    // Add tea rota email results if applicable
+    if (teaRotaEmailResult.emailsSent !== undefined) {
+      response.tea_rota_emails_sent = teaRotaEmailResult.emailsSent;
+    }
+    if (teaRotaEmailResult.membersWithoutEmail && teaRotaEmailResult.membersWithoutEmail.length > 0) {
+      response.tea_rota_members_without_email = teaRotaEmailResult.membersWithoutEmail;
+    }
+    if (teaRotaEmailResult.emailError) {
+      response.tea_rota_email_error = teaRotaEmailResult.emailError;
     }
 
     // Return success response to client
