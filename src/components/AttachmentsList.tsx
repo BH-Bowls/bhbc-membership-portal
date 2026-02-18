@@ -4,12 +4,12 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import type { SuggestionAttachment } from '@/types/attachments';
+import type { Attachment } from '@/types/attachments';
 import { ConfirmDialog } from './ConfirmDialog';
 
 interface AttachmentsListProps {
-  suggestionId: string;
-  attachments: SuggestionAttachment[];
+  apiBasePath: string; // e.g. "/api/suggestions/2026-001" or "/api/invite-games/IG-2026-001"
+  attachments: Attachment[];
   canDelete: boolean;
   onDelete: () => void;
 }
@@ -18,7 +18,7 @@ interface AttachmentsListProps {
 const VIEWABLE_MIME_TYPES = ['application/pdf'];
 const VIEWABLE_EXTENSIONS = ['.pdf'];
 
-function isViewableInBrowser(attachment: SuggestionAttachment): boolean {
+function isViewableInBrowser(attachment: Attachment): boolean {
   if (attachment.type === 'image' || attachment.type === 'link') return true;
   const mime = (attachment.mimeType || '').toLowerCase();
   if (VIEWABLE_MIME_TYPES.includes(mime)) return true;
@@ -32,16 +32,16 @@ function isViewableInBrowser(attachment: SuggestionAttachment): boolean {
  *   (default)     → Content-Disposition: attachment (download)
  */
 function getProxyUrl(
-  suggestionId: string,
-  attachment: SuggestionAttachment,
+  apiBasePath: string,
+  attachment: Attachment,
   inline: boolean
 ): string {
-  const base = `/api/suggestions/${suggestionId}/attachments/${attachment.attachmentId}`;
+  const base = `${apiBasePath}/attachments/${attachment.attachmentId}`;
   return inline ? `${base}?inline=true` : base;
 }
 
 export function AttachmentsList({
-  suggestionId,
+  apiBasePath,
   attachments,
   canDelete,
   onDelete,
@@ -67,7 +67,7 @@ export function AttachmentsList({
 
   // ---- Handlers ----
 
-  const handleDeleteClick = (attachment: SuggestionAttachment) => {
+  const handleDeleteClick = (attachment: Attachment) => {
     setConfirmDialog({
       isOpen: true,
       attachmentId: attachment.attachmentId,
@@ -82,7 +82,7 @@ export function AttachmentsList({
 
     try {
       const response = await fetch(
-        `/api/suggestions/${suggestionId}/attachments/${confirmDialog.attachmentId}`,
+        `${apiBasePath}/attachments/${confirmDialog.attachmentId}`,
         {
           method: 'DELETE',
         }
@@ -110,18 +110,18 @@ export function AttachmentsList({
    */
   const handleDocumentClick = (
     e: React.MouseEvent,
-    attachment: SuggestionAttachment
+    attachment: Attachment
   ) => {
     e.preventDefault();
 
     if (isViewableInBrowser(attachment)) {
       // Open inline in new tab — the server sets Content-Disposition: inline
-      window.open(getProxyUrl(suggestionId, attachment, true), '_blank');
+      window.open(getProxyUrl(apiBasePath, attachment, true), '_blank');
     } else {
       // Trigger download — the server sets Content-Disposition: attachment with filename
       // Using a hidden link avoids popup blockers
       const a = document.createElement('a');
-      a.href = getProxyUrl(suggestionId, attachment, false);
+      a.href = getProxyUrl(apiBasePath, attachment, false);
       a.download = ''; // browser will use the Content-Disposition filename
       document.body.appendChild(a);
       a.click();
@@ -133,14 +133,14 @@ export function AttachmentsList({
 
   // ---- Helpers ----
 
-  const getThumbnailUrl = (attachment: SuggestionAttachment) => {
+  const getThumbnailUrl = (attachment: Attachment) => {
     if (attachment.type === 'image' && attachment.url) {
       return attachment.url;
     }
     return null;
   };
 
-  const getIcon = (attachment: SuggestionAttachment) => {
+  const getIcon = (attachment: Attachment) => {
     if (attachment.isDeleted) {
       return (
         <svg className="h-8 w-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">

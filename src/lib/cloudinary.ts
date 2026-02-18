@@ -53,10 +53,11 @@ function configureCloudinary() {
  * Folder structure: bhbc-suggestions/{suggestionId}/filename
  */
 export async function uploadFileToCloudinary(
-  suggestionId: string,
+  entityId: string,
   fileBuffer: Buffer,
   fileName: string,
-  mimeType: string
+  mimeType: string,
+  folderPrefix: string = 'bhbc-suggestions'
 ): Promise<{
   publicId: string;
   url: string;
@@ -76,8 +77,8 @@ export async function uploadFileToCloudinary(
       resourceType = 'video';
     }
 
-    // Build folder path: bhbc-suggestions/2026-001
-    const folder = `bhbc-suggestions/${suggestionId}`;
+    // Build folder path e.g. bhbc-suggestions/2026-001 or bhbc-invite-games/IG-2026-001
+    const folder = `${folderPrefix}/${entityId}`;
 
     // Generate a clean filename, keeping the extension for raw resources
     // (Cloudinary only auto-appends extensions for image/video, not raw)

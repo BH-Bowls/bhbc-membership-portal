@@ -927,7 +927,7 @@ export default function SuggestionDetailPage({ params }: { params: Promise<{ id:
           {showUploadForm && (
             <div className="mb-6">
               <AttachmentUpload
-                suggestionId={suggestionId}
+                apiBasePath={`/api/suggestions/${suggestionId}`}
                 onUploadComplete={handleUploadComplete}
                 onCancel={() => setShowUploadForm(false)}
               />
@@ -936,7 +936,7 @@ export default function SuggestionDetailPage({ params }: { params: Promise<{ id:
 
           {/* Attachments List */}
           <AttachmentsList
-            suggestionId={suggestionId}
+            apiBasePath={`/api/suggestions/${suggestionId}`}
             attachments={attachments}
             canDelete={canAddAttachment}
             onDelete={fetchAttachments}

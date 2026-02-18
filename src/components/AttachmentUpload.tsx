@@ -7,13 +7,13 @@ import { useState, useRef } from 'react';
 import type { AttachmentType } from '@/types/attachments';
 
 interface AttachmentUploadProps {
-  suggestionId: string;
+  apiBasePath: string; // e.g. "/api/suggestions/2026-001" or "/api/invite-games/IG-2026-001"
   onUploadComplete: () => void;
   onCancel: () => void;
 }
 
 export function AttachmentUpload({
-  suggestionId,
+  apiBasePath,
   onUploadComplete,
   onCancel,
 }: AttachmentUploadProps) {
@@ -106,7 +106,7 @@ export function AttachmentUpload({
         formData.append('file', file);
       }
 
-      const response = await fetch(`/api/suggestions/${suggestionId}/attachments`, {
+      const response = await fetch(`${apiBasePath}/attachments`, {
         method: 'POST',
         body: formData,
       });

@@ -544,7 +544,7 @@ Friendlies Management System
     });
 
     console.log(`✓ Tea rota notification sent to ${membersWithEmail.length} member(s) for ${game.tabName}`);
-    return { success: true, emailsSent: sent, membersWithoutEmail };
+    return { success: true, emailsSent: membersWithEmail.length, membersWithoutEmail };
   } catch (error) {
     console.error('Error sending tea rota email:', error);
     return {

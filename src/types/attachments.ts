@@ -1,21 +1,24 @@
 // src/types/attachments.ts
-// Type definitions for Member Suggestion Attachments
+// Type definitions for attachments (shared between Member Suggestions and Invite Games)
 
 export type AttachmentType = 'link' | 'image' | 'document';
 
-export interface SuggestionAttachment {
+/**
+ * Generic attachment — used by AttachmentsList and AttachmentUpload components.
+ * Entity-specific types (SuggestionAttachment, InviteGameAttachment) extend this.
+ */
+export interface Attachment {
   // Identification
-  attachmentId: string; // Format: ATT-NNNNNN
-  suggestionId: string;
+  attachmentId: string;
 
   // Attachment details
   type: AttachmentType;
-  driveFileId?: string | null; // Cloudinary publicId (kept as driveFileId for backward compatibility)
-  url: string; // Cloudinary URL or external URL
+  driveFileId?: string | null; // Cloudinary publicId
+  url: string;
   description: string;
-  fileName?: string | null; // Original filename for uploaded files
-  mimeType?: string | null; // MIME type for uploaded files
-  fileSize?: number | null; // File size in bytes
+  fileName?: string | null;
+  mimeType?: string | null;
+  fileSize?: number | null;
 
   // Ordering and metadata
   displayOrder: number;
@@ -23,10 +26,18 @@ export interface SuggestionAttachment {
   addedByUsername: string;
 
   // Status
-  isDeleted?: boolean; // True if Drive file no longer exists
+  isDeleted?: boolean;
 
   // Internal
   _rowNumber?: number;
+}
+
+export interface SuggestionAttachment extends Attachment {
+  suggestionId: string;
+}
+
+export interface InviteGameAttachment extends Attachment {
+  inviteGameId: string;
 }
 
 export interface AttachmentUploadRequest {

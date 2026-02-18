@@ -110,9 +110,10 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
       }
     }
 
-    // All committee members (Role != "Member") get Member Suggestions
+    // All committee members (Role != "Member") get Member Suggestions and Invite Games
     if (isCommittee) {
       items.push({ name: 'Member Suggestions', href: '/member-suggestions' });
+      items.push({ name: 'Invite Games', href: '/invite-games' });
     }
 
     return items;
