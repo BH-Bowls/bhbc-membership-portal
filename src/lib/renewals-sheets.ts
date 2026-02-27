@@ -83,6 +83,7 @@ export interface Renewal {
   drawnPairsSub: boolean;
   australianPairsSub: boolean;
   drawnTriplesSub: boolean;
+  renewalsClosed: boolean;
   confirmationEmailDate?: string | null;
   createdAt?: string | null;
   dateUpdated?: string | null;
@@ -191,6 +192,7 @@ function parseRenewalRow(
     drawnPairsSub: getBool('sub_drawn_pairs'),
     australianPairsSub: getBool('sub_australian_pairs'),
     drawnTriplesSub: getBool('sub_drawn_triples'),
+    renewalsClosed: get('renewing_membership') === 'X',
     confirmationEmailDate: get('confirmation_email_date'),
     createdAt: get('created_at'),
     dateUpdated: get('updated_at'),

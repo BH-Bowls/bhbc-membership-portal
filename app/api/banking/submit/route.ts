@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Update Renewal Payments sheet
+    // Update RenewalPayments sheet
     // Track successes and failures for better error reporting
     for (const payment of matchedPayments as MatchedPayment[]) {
       try {

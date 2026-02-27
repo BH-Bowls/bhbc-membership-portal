@@ -89,6 +89,7 @@ export interface User {
   otherSkills: string | null;
   gmc: string | null; // "GMC" or blank - General Management Committee member
   profileUpdatedDate: string | null;
+  handicap: number | null; // Integer 0-10, null if not set (Playing members only)
 
   // Renewal Email Fields
   include: string | null; // "Y" or "N" - controls whether member receives renewal emails
@@ -398,6 +399,61 @@ export async function updateEmailSentStatus(
 }
 
 /**
+ * Update a single member's handicap value in the Members sheet.
+ * Prefer batchUpdateMemberHandicaps when updating multiple members at once.
+ */
+export async function updateMemberHandicap(
+  userName: string,
+  handicap: number | null
+): Promise<void> {
+  await batchUpdateMemberHandicaps([{ userName, handicap }]);
+}
+
+/**
+ * Update handicaps for multiple members in a single Sheets batchUpdate call.
+ * Avoids hitting the per-minute write quota when saving many rows at once.
+ */
+export async function batchUpdateMemberHandicaps(
+  updates: { userName: string; handicap: number | null }[]
+): Promise<void> {
+  if (updates.length === 0) return;
+
+  const [users, colMap] = await Promise.all([
+    getAllUsers(),
+    getColumnMap('Members'),
+  ]);
+
+  const colIndex = colMap['handicap'];
+  if (colIndex === undefined) {
+    throw new Error('Handicap column not found in Members sheet — add a "Handicap" column header');
+  }
+  const colLetter = getColumnLetter(colIndex);
+
+  const userMap = new Map(users.map((u) => [u.userName.toLowerCase(), u]));
+
+  const data: { range: string; values: string[][] }[] = [];
+  for (const { userName, handicap } of updates) {
+    const user = userMap.get(userName.toLowerCase());
+    if (!user || !user._rowNumber) continue;
+    data.push({
+      range: `Members!${colLetter}${user._rowNumber}`,
+      values: [[handicap === null ? '' : String(handicap)]],
+    });
+  }
+
+  if (data.length === 0) return;
+
+  const sheets = getGoogleSheetsClient();
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId: getSpreadsheetId(),
+    requestBody: {
+      valueInputOption: 'USER_ENTERED',
+      data,
+    },
+  });
+}
+
+/**
  * Update user password hash
  */
 export async function updatePasswordHash(
@@ -562,6 +618,12 @@ function parseUserRow(row: any[], rowNumber: number, colMap: { [key: string]: nu
     otherSkills: get('other_skills'),
     gmc: get('gmc'),
     profileUpdatedDate: get('profile_updated_date'),
+    handicap: (() => {
+      const val = get('handicap');
+      if (!val) return null;
+      const parsed = parseInt(val, 10);
+      return isNaN(parsed) ? null : parsed;
+    })(),
 
     // Renewal Email Fields
     include: get('include'), // "Y" or "N" - controls who receives renewal emails

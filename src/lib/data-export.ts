@@ -291,23 +291,62 @@ export async function executeReport(definition: ReportDefinition): Promise<RunRe
       const filterColName = filter.column.substring(dotIndex + 1);
 
       const sheetRow = expandedRow[filterSheetKey];
-      if (!sheetRow) return false; // null joined row fails filter
 
-      let colIndex: number | undefined;
-      if (filterSheetKey === definition.primarySheet) {
-        colIndex = primaryData.columnMap[filterColName];
-      } else if (joinedData[filterSheetKey]) {
-        colIndex = joinedData[filterSheetKey].columnMap[filterColName];
+      // Helper to resolve cell value (returns null if row/column missing)
+      function getCellValue(): string | null {
+        if (!sheetRow) return null;
+        let colIndex: number | undefined;
+        if (filterSheetKey === definition.primarySheet) {
+          colIndex = primaryData.columnMap[filterColName];
+        } else if (joinedData[filterSheetKey]) {
+          colIndex = joinedData[filterSheetKey].columnMap[filterColName];
+        }
+        if (colIndex === undefined) return null;
+        return (sheetRow[colIndex] || '').trim();
       }
 
-      if (colIndex === undefined) return false;
+      if (filter.operator === 'is_blank') {
+        // True when there is no joined row at all, or the cell is empty
+        if (!sheetRow) return true;
+        const v = getCellValue();
+        return v === null || v === '';
+      }
 
-      const cellValue = (sheetRow[colIndex] || '').trim();
+      if (filter.operator === 'is_not_blank') {
+        if (!sheetRow) return false;
+        const v = getCellValue();
+        return v !== null && v !== '';
+      }
 
-      // OR within values (case-insensitive)
-      return filter.values.some(
-        (v) => v.trim().toLowerCase() === cellValue.toLowerCase()
-      );
+      if (!sheetRow) return false; // remaining operators need a row
+
+      const cellValue = getCellValue() ?? '';
+
+      if (filter.operator === 'in') {
+        return filter.values.some(
+          (v) => v.trim().toLowerCase() === cellValue.toLowerCase()
+        );
+      }
+
+      if (filter.operator === 'not_in') {
+        return !filter.values.some(
+          (v) => v.trim().toLowerCase() === cellValue.toLowerCase()
+        );
+      }
+
+      if (filter.operator === 'contains') {
+        return filter.values.some(
+          (v) => cellValue.toLowerCase().includes(v.trim().toLowerCase())
+        );
+      }
+
+      if (filter.operator === 'not_contains') {
+        return filter.values.every(
+          (v) => !cellValue.toLowerCase().includes(v.trim().toLowerCase())
+        );
+      }
+
+      return false;
     });
   });
 

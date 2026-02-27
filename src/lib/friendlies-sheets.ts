@@ -13,6 +13,7 @@ import {
   ClubDetails,
   ClubContact,
   GameStatus,
+  GameType,
   PlayerEntryStatus,
 } from './types/friendlies';
 import { parseNormalizedDate, normalizeToUKDate } from './date-utils';
@@ -288,7 +289,7 @@ export function clearColumnMapCacheForSheet(spreadsheetId: string, sheetName: st
  * Returns array of Game objects with all game details
  * Status codes: O=Open, X=Selecting, S=Selected, P=Played, C=Cancelled, A=Abandoned
  */
-export async function getGames(statusFilter?: GameStatus): Promise<Game[]> {
+export async function getGames(statusFilter?: GameStatus, typeFilter?: GameType[]): Promise<Game[]> {
   // Get Friendlies spreadsheet ID from environment
   const spreadsheetId = getFriendliesSpreadsheetId();
 
@@ -387,6 +388,12 @@ export async function getGames(statusFilter?: GameStatus): Promise<Game[]> {
     // Extract paired flag (Y if paired with another game on same date)
     const paired = get(row, 'paired') || '';
 
+    // Extract game type (defaults to 'Friendly' for backward compatibility)
+    const gameType = (get(row, 'type') || 'Friendly') as GameType;
+
+    // Extract club suffix (appended to club name in UI, e.g. 'A' → 'Henfield A')
+    const clubSuffix = get(row, 'club_suffix') || '';
+
     // Build complete Game object
     const game: Game = {
       rowNumber,
@@ -413,6 +420,8 @@ export async function getGames(statusFilter?: GameStatus): Promise<Game[]> {
       lastModifiedBy,
       lastModifiedDate,
       paired,
+      gameType,
+      clubSuffix,
     };
 
     // Add game to array
@@ -420,23 +429,26 @@ export async function getGames(statusFilter?: GameStatus): Promise<Game[]> {
   }
 
   // Apply status filter if provided
+  let result = games;
   if (statusFilter !== undefined) {
-    // Build filtered array containing only games matching the requested status
-    const filteredGames: Game[] = [];
-
-    // Loop through all games
-    for (const game of games) {
-      // Check if this game's status matches the filter
-      if (game.status === statusFilter) {
-        filteredGames.push(game);
-      }
-    }
-
-    return filteredGames;
+    result = result.filter(g => g.status === statusFilter);
   }
 
-  // Return all games (no filter applied)
-  return games;
+  // Apply type filter if provided
+  if (typeFilter && typeFilter.length > 0) {
+    result = result.filter(g => typeFilter.includes(g.gameType));
+  }
+
+  return result;
+}
+
+/**
+ * Build display name for a club by appending suffix if present
+ * e.g. displayClubName('Henfield', 'A') → 'Henfield A'
+ *      displayClubName('Lindfield', '') → 'Lindfield'
+ */
+export function displayClubName(clubName: string, clubSuffix: string): string {
+  return [clubName, clubSuffix].filter(Boolean).join(' ');
 }
 
 /**
@@ -3377,6 +3389,10 @@ export async function getTeaRotaList(): Promise<TeaRotaEntry[]> {
     const status = get(row, 'status') || '';
     if (status === 'C') continue;
 
+    // Only include Friendly games (tea rota doesn't apply to league/events)
+    const gameType = get(row, 'type') || 'Friendly';
+    if (gameType !== 'Friendly') continue;
+
     // Extract game data - normalize date to DD/MM/YYYY immediately
     const date = normalizeToUKDate(get(row, 'date') || '');
     const time = get(row, 'time') || '';
@@ -3782,4 +3798,194 @@ export async function getTeaRotaEntry(rowNumber: number): Promise<TeaRotaEntry |
     teaFirst: get('tea_first') || '',
     teaSecond: get('tea_second') || '',
   };
+}
+
+// ============================================================================
+// FIXTURE CRUD OPERATIONS
+// ============================================================================
+
+/**
+ * Create a new fixture row in the Games sheet
+ * Appends a new row with the provided fixture data
+ * Used by Fixtures Management page for captains/admins
+ */
+export async function createFixture(data: {
+  date: string;
+  time?: string;
+  type?: GameType;
+  clubName: string;
+  clubSuffix?: string;
+  homeAway?: 'H' | 'A';
+  format?: string;
+  ladiesMen?: string;
+  dress?: string;
+  paired?: string;
+  maxPlayers?: number;
+  tabDate?: string;
+  tabName?: string;
+  status?: string;
+}): Promise<void> {
+  const spreadsheetId = getFriendliesSpreadsheetId();
+  const colMap = await getColumnMap(spreadsheetId, 'Games');
+  const sheets = getSheetsClient();
+
+  // Build a sparse row array mapping fields to their column positions
+  const maxColIndex = Math.max(...Object.values(colMap));
+  const row: string[] = new Array(maxColIndex + 1).fill('');
+
+  const set = (field: string, value: string | number | undefined | null) => {
+    if (value === undefined || value === null) return;
+    const idx = colMap[field];
+    if (idx !== undefined) {
+      row[idx] = String(value);
+    }
+  };
+
+  set('date', data.date);
+  set('time', data.time ?? '');
+  set('type', data.type ?? 'Friendly');
+  set('club_name', data.clubName);
+  set('club_suffix', data.clubSuffix ?? '');
+  if (colMap['home_away'] !== undefined) {
+    set('home_away', data.homeAway ?? 'H');
+  } else {
+    set('h_a', data.homeAway ?? 'H');
+  }
+  set('format', data.format ?? '');
+  set('ladies_men', data.ladiesMen ?? '');
+  set('dress', data.dress ?? '');
+  set('paired', data.paired ?? '');
+  if (data.maxPlayers !== undefined) set('max_capacity', data.maxPlayers);
+  set('tab_date', data.tabDate ?? '');
+  set('tab_name', data.tabName ?? '');
+  set('status', data.status ?? '');
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: 'Games!A:A',
+    valueInputOption: 'USER_ENTERED',
+    requestBody: {
+      values: [row],
+    },
+  });
+}
+
+/**
+ * Update specific fields in an existing Games sheet row
+ * Uses batch update to efficiently update only the changed columns
+ * @param rowNumber Row number in the Games sheet (1-indexed, row 1 is header)
+ * @param fields Fields to update (only provided fields are changed)
+ */
+export async function updateFixture(
+  rowNumber: number,
+  fields: {
+    date?: string;
+    time?: string;
+    type?: GameType;
+    clubName?: string;
+    clubSuffix?: string;
+    homeAway?: 'H' | 'A';
+    format?: string;
+    ladiesMen?: string;
+    dress?: string;
+    paired?: string;
+    maxPlayers?: number;
+    tabDate?: string;
+    tabName?: string;
+    status?: string;
+  }
+): Promise<void> {
+  const spreadsheetId = getFriendliesSpreadsheetId();
+  const colMap = await getColumnMap(spreadsheetId, 'Games');
+  const sheets = getSheetsClient();
+
+  const updates: { range: string; values: any[][] }[] = [];
+
+  const addUpdate = (field: string, value: string | number | undefined) => {
+    if (value === undefined) return;
+    const idx = colMap[field];
+    if (idx !== undefined) {
+      updates.push({
+        range: `Games!${getColumnLetter(idx)}${rowNumber}`,
+        values: [[value]],
+      });
+    }
+  };
+
+  addUpdate('date', fields.date);
+  addUpdate('time', fields.time);
+  addUpdate('type', fields.type);
+  addUpdate('club_name', fields.clubName);
+  addUpdate('club_suffix', fields.clubSuffix);
+  if (colMap['home_away'] !== undefined) {
+    addUpdate('home_away', fields.homeAway);
+  } else {
+    addUpdate('h_a', fields.homeAway);
+  }
+  addUpdate('format', fields.format);
+  addUpdate('ladies_men', fields.ladiesMen);
+  addUpdate('dress', fields.dress);
+  addUpdate('paired', fields.paired);
+  addUpdate('max_capacity', fields.maxPlayers);
+  addUpdate('tab_date', fields.tabDate);
+  addUpdate('tab_name', fields.tabName);
+  addUpdate('status', fields.status);
+
+  if (updates.length > 0) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        data: updates,
+        valueInputOption: 'USER_ENTERED',
+      },
+    });
+  }
+}
+
+/**
+ * Physically delete a row from the Games sheet
+ * Uses the Sheets API batchUpdate deleteDimension request
+ * @param rowNumber Row number in the Games sheet (1-indexed, row 1 is header)
+ */
+export async function deleteFixtureRow(rowNumber: number): Promise<void> {
+  const spreadsheetId = getFriendliesSpreadsheetId();
+  const sheets = getSheetsClient();
+
+  // Get spreadsheet metadata to find the numeric sheetId of the 'Games' tab
+  const metadata = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: 'sheets.properties',
+  });
+
+  const gamesSheet = metadata.data.sheets?.find(
+    s => s.properties?.title === 'Games'
+  );
+
+  if (!gamesSheet || gamesSheet.properties?.sheetId === undefined) {
+    throw new Error('Games sheet not found in spreadsheet');
+  }
+
+  const sheetId = gamesSheet.properties.sheetId;
+
+  // Delete the row (0-indexed: rowNumber - 1 to rowNumber)
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [
+        {
+          deleteDimension: {
+            range: {
+              sheetId,
+              dimension: 'ROWS',
+              startIndex: rowNumber - 1,
+              endIndex: rowNumber,
+            },
+          },
+        },
+      ],
+    },
+  });
+
+  // Clear the column map cache for Games sheet since row positions have changed
+  clearColumnMapCacheForSheet(spreadsheetId, 'Games');
 }

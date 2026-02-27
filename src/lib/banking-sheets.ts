@@ -182,11 +182,11 @@ function getColumnLetter(colIndex: number): string {
 }
 
 // ============================================================================
-// Payment Operations (Renewal Payments Sheet)
+// Payment Operations (RenewalPayments Sheet)
 // ============================================================================
 
 /**
- * Parse a row from Renewal Payments sheet
+ * Parse a row from RenewalPayments sheet
  */
 function parsePaymentRow(row: any[], rowNumber: number, colMap: Record<string, number>): Payment {
   const get = createRowFieldGetter(row, colMap);
@@ -205,16 +205,16 @@ function parsePaymentRow(row: any[], rowNumber: number, colMap: Record<string, n
 }
 
 /**
- * Get all unmatched payments from Renewal Payments sheet
+ * Get all unmatched payments from RenewalPayments sheet
  */
 export async function getUnmatchedPayments(): Promise<Payment[]> {
   try {
-    const colMap = await getColumnMap('Renewal Payments');
+    const colMap = await getColumnMap('RenewalPayments');
     const sheets = getGoogleSheetsClient();
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: getSpreadsheetId(),
-      range: 'Renewal Payments!A2:G', // 7 columns: A-G
+      range: 'RenewalPayments!A2:G', // 7 columns: A-G
     });
 
     const rows = response.data.values || [];
@@ -225,7 +225,7 @@ export async function getUnmatchedPayments(): Promise<Payment[]> {
   } catch (error) {
     console.error('[getUnmatchedPayments] Failed to retrieve unmatched payments:', error);
     throw wrapError(
-      'Failed to retrieve unmatched payments from Renewal Payments sheet',
+      'Failed to retrieve unmatched payments from RenewalPayments sheet',
       error
     );
   }
@@ -247,12 +247,12 @@ export async function getUnmatchedPayments(): Promise<Payment[]> {
  */
 export async function generateNextPaymentId(): Promise<string> {
   try {
-    const colMap = await getColumnMap('Renewal Payments');
+    const colMap = await getColumnMap('RenewalPayments');
     const sheets = getGoogleSheetsClient();
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: getSpreadsheetId(),
-      range: 'Renewal Payments!A2:A', // Just payment_id column
+      range: 'RenewalPayments!A2:A', // Just payment_id column
     });
 
     const rows = response.data.values || [];
@@ -288,7 +288,7 @@ export async function generateNextPaymentId(): Promise<string> {
 }
 
 /**
- * Add payment to Renewal Payments sheet
+ * Add payment to RenewalPayments sheet
  *
  * Validates payment data before insertion:
  * - Checks for duplicate payment_id
@@ -331,21 +331,21 @@ export async function addPaymentToSheet(payment: Omit<Payment, '_rowNumber'>): P
 
     await sheets.spreadsheets.values.append({
       spreadsheetId: getSpreadsheetId(),
-      range: 'Renewal Payments!A:G',
+      range: 'RenewalPayments!A:G',
       valueInputOption: 'USER_ENTERED',
       requestBody: { values },
     });
   } catch (error) {
     console.error(`[addPaymentToSheet] Failed to add payment ${payment.payment_id}:`, error);
     throw wrapError(
-      `Failed to add payment ${payment.payment_id} to Renewal Payments sheet`,
+      `Failed to add payment ${payment.payment_id} to RenewalPayments sheet`,
       error
     );
   }
 }
 
 /**
- * Add multiple payments to Renewal Payments sheet in a single batch operation
+ * Add multiple payments to RenewalPayments sheet in a single batch operation
  *
  * This function avoids Google Sheets API quota limits by writing all payments
  * in a single API call instead of individual writes for each payment.
@@ -383,8 +383,8 @@ export async function addPaymentsToSheet(payments: Omit<Payment, '_rowNumber'>[]
       }
     }
 
-    // Get column mapping for Renewal Payments sheet
-    const colMap = await getColumnMap('Renewal Payments');
+    // Get column mapping for RenewalPayments sheet
+    const colMap = await getColumnMap('RenewalPayments');
 
     // Get Google Sheets client
     const sheets = getGoogleSheetsClient();
@@ -393,7 +393,7 @@ export async function addPaymentsToSheet(payments: Omit<Payment, '_rowNumber'>[]
     // This allows us to check for duplicates in one API call instead of many
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: getSpreadsheetId(),
-      range: 'Renewal Payments!A2:A', // Column A, starting from row 2 (skip header)
+      range: 'RenewalPayments!A2:A', // Column A, starting from row 2 (skip header)
     });
 
     // Build a Set of existing payment IDs for fast lookup
@@ -434,7 +434,7 @@ export async function addPaymentsToSheet(payments: Omit<Payment, '_rowNumber'>[]
     // This avoids hitting the 60 writes/minute quota limit
     await sheets.spreadsheets.values.append({
       spreadsheetId: getSpreadsheetId(),
-      range: 'Renewal Payments!A:G', // Append to columns A-G
+      range: 'RenewalPayments!A:G', // Append to columns A-G
       valueInputOption: 'USER_ENTERED', // Parse values as if user typed them
       requestBody: { values },
     });
@@ -444,27 +444,27 @@ export async function addPaymentsToSheet(payments: Omit<Payment, '_rowNumber'>[]
 
     // Wrap error with additional context and throw
     throw wrapError(
-      `Failed to add ${payments.length} payments to Renewal Payments sheet`,
+      `Failed to add ${payments.length} payments to RenewalPayments sheet`,
       error
     );
   }
 }
 
 /**
- * Update payment in Renewal Payments sheet
+ * Update payment in RenewalPayments sheet
  */
 export async function updatePaymentInSheet(
   payment_id: string,
   updates: Partial<Payment>
 ): Promise<void> {
   try {
-    const colMap = await getColumnMap('Renewal Payments');
+    const colMap = await getColumnMap('RenewalPayments');
     const sheets = getGoogleSheetsClient();
 
     // Find payment row
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: getSpreadsheetId(),
-      range: 'Renewal Payments!A2:G',
+      range: 'RenewalPayments!A2:G',
     });
 
     const rows = response.data.values || [];
@@ -496,7 +496,7 @@ export async function updatePaymentInSheet(
       if (columnName && colMap[columnName] !== undefined) {
         const columnLetter = getColumnLetter(colMap[columnName]);
         updateData.push({
-          range: `Renewal Payments!${columnLetter}${rowNumber}`,
+          range: `RenewalPayments!${columnLetter}${rowNumber}`,
           values: [[value]],
         });
       }
@@ -514,7 +514,7 @@ export async function updatePaymentInSheet(
   } catch (error) {
     console.error(`[updatePaymentInSheet] Failed to update payment ${payment_id}:`, error);
     throw wrapError(
-      `Failed to update payment ${payment_id} in Renewal Payments sheet`,
+      `Failed to update payment ${payment_id} in RenewalPayments sheet`,
       error
     );
   }
@@ -528,12 +528,12 @@ export async function updatePaymentInSheet(
  */
 export async function getPayment(payment_id: string): Promise<Payment | null> {
   try {
-    const colMap = await getColumnMap('Renewal Payments');
+    const colMap = await getColumnMap('RenewalPayments');
     const sheets = getGoogleSheetsClient();
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: getSpreadsheetId(),
-      range: 'Renewal Payments!A2:G',
+      range: 'RenewalPayments!A2:G',
     });
 
     const rows = response.data.values || [];
@@ -551,7 +551,7 @@ export async function getPayment(payment_id: string): Promise<Payment | null> {
     // Actual error occurred (network, API, parsing, etc.) - throw, don't return null
     console.error(`[getPayment] Failed to retrieve payment ${payment_id}:`, error);
     throw wrapError(
-      `Failed to retrieve payment ${payment_id} from Renewal Payments sheet`,
+      `Failed to retrieve payment ${payment_id} from RenewalPayments sheet`,
       error
     );
   }

@@ -210,10 +210,10 @@ export async function GET(request: NextRequest) {
     }
 
     // Fetch Payments data
-    const paymentsColMap = await getColumnMap('Renewal Payments');
+    const paymentsColMap = await getColumnMap('RenewalPayments');
     const paymentsResponse = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: 'Renewal Payments!A2:G',
+      range: 'RenewalPayments!A2:G',
     });
     const paymentsRows = paymentsResponse.data.values || [];
 

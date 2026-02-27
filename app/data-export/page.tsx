@@ -207,7 +207,9 @@ export default function DataExportPage() {
       primarySheet,
       joins: joinedSheets,
       selectedColumns,
-      filters: filters.filter((f) => f.values.length > 0),
+      filters: filters.filter((f) =>
+        f.operator === 'is_blank' || f.operator === 'is_not_blank' || f.values.length > 0
+      ),
     };
   }
 
@@ -510,7 +512,7 @@ export default function DataExportPage() {
               {primarySheet && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Select Columns ({selectedColumns.length} selected)
+                    Select Columns
                   </label>
                   <div className="space-y-4 max-h-96 overflow-y-auto border border-gray-200 rounded-md p-4">
                     {activeSchemas.map((schema) => {
@@ -565,6 +567,85 @@ export default function DataExportPage() {
                   </div>
                 </div>
               )}
+
+              {/* Output Column Order */}
+              {selectedColumns.length > 0 && (
+                <div className="mt-6">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Output Column Order ({selectedColumns.length} columns)
+                  </label>
+                  <div className="border border-gray-200 rounded-md divide-y divide-gray-100">
+                    {selectedColumns.map((qualified, index) => {
+                      const dotIndex = qualified.indexOf('.');
+                      const sheetKey = qualified.substring(0, dotIndex);
+                      const colName = qualified.substring(dotIndex + 1);
+                      const schema = activeSchemas.find((s) => s.key === sheetKey);
+                      const col = schema?.columns.find((c) => c.name === colName);
+                      const sheetLabel = schema?.label ?? sheetKey;
+                      const colLabel = col?.originalHeader ?? colName;
+
+                      return (
+                        <div
+                          key={qualified}
+                          className="flex items-center gap-2 px-3 py-2 bg-white hover:bg-gray-50"
+                        >
+                          {/* Position */}
+                          <span className="text-xs text-gray-400 w-5 text-right shrink-0">
+                            {index + 1}
+                          </span>
+
+                          {/* Label */}
+                          <span className="flex-1 text-sm text-gray-700 min-w-0 truncate">
+                            <span className="text-gray-400">{sheetLabel} › </span>
+                            {colLabel}
+                          </span>
+
+                          {/* Up / Down / Remove */}
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              onClick={() => {
+                                if (index === 0) return;
+                                setSelectedColumns((prev) => {
+                                  const next = [...prev];
+                                  [next[index - 1], next[index]] = [next[index], next[index - 1]];
+                                  return next;
+                                });
+                              }}
+                              disabled={index === 0}
+                              title="Move up"
+                              className="p-1 rounded text-gray-400 hover:text-gray-700 disabled:opacity-25 disabled:cursor-not-allowed"
+                            >
+                              ▲
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (index === selectedColumns.length - 1) return;
+                                setSelectedColumns((prev) => {
+                                  const next = [...prev];
+                                  [next[index], next[index + 1]] = [next[index + 1], next[index]];
+                                  return next;
+                                });
+                              }}
+                              disabled={index === selectedColumns.length - 1}
+                              title="Move down"
+                              className="p-1 rounded text-gray-400 hover:text-gray-700 disabled:opacity-25 disabled:cursor-not-allowed"
+                            >
+                              ▼
+                            </button>
+                            <button
+                              onClick={() => handleColumnToggle(qualified)}
+                              title="Remove column"
+                              className="p-1 rounded text-red-400 hover:text-red-600 ml-1"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Card 2: Filters */}
@@ -605,21 +686,60 @@ export default function DataExportPage() {
                             </option>
                           ))}
                         </select>
-                        <span className="text-sm text-gray-500 font-medium">IN</span>
-                        <input
-                          type="text"
-                          value={filter.values.join(', ')}
+                        <select
+                          value={filter.operator}
                           onChange={(e) =>
                             updateFilter(index, {
-                              values: e.target.value
-                                .split(',')
-                                .map((v) => v.trim())
-                                .filter((v) => v),
+                              operator: e.target.value as ReportFilter['operator'],
+                              values: [],
                             })
                           }
-                          placeholder="Value1, Value2, ..."
-                          className="flex-1 border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500 w-full"
-                        />
+                          className="border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500"
+                        >
+                          <option value="in">IN</option>
+                          <option value="not_in">NOT IN</option>
+                          <option value="is_blank">IS BLANK</option>
+                          <option value="is_not_blank">IS NOT BLANK</option>
+                          <option value="contains">CONTAINS</option>
+                          <option value="not_contains">NOT CONTAINS</option>
+                        </select>
+                        {(filter.operator === 'in' || filter.operator === 'not_in') && (
+                          <input
+                            type="text"
+                            value={filter.values.join(', ')}
+                            onChange={(e) =>
+                              updateFilter(index, {
+                                values: e.target.value
+                                  .split(',')
+                                  .map((v) => v.trim())
+                                  .filter((v) => v),
+                              })
+                            }
+                            placeholder="Value1, Value2, ..."
+                            className="flex-1 border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500 w-full"
+                          />
+                        )}
+                        {(filter.operator === 'contains' || filter.operator === 'not_contains') && (
+                          <input
+                            type="text"
+                            value={filter.values.join(', ')}
+                            onChange={(e) =>
+                              updateFilter(index, {
+                                values: e.target.value
+                                  .split(',')
+                                  .map((v) => v.trim())
+                                  .filter((v) => v),
+                              })
+                            }
+                            placeholder="Text to search for..."
+                            className="flex-1 border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500 w-full"
+                          />
+                        )}
+                        {(filter.operator === 'is_blank' || filter.operator === 'is_not_blank') && (
+                          <span className="flex-1 text-sm text-gray-400 italic">
+                            (no value needed)
+                          </span>
+                        )}
                         <button
                           onClick={() => removeFilter(index)}
                           className="text-red-500 hover:text-red-700 text-sm font-medium whitespace-nowrap"

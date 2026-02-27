@@ -82,7 +82,10 @@ function LoginForm() {
       <div className="max-w-md w-full space-y-8">
         {/* Header */}
         <div>
-          <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
+          <div className="flex justify-center">
+            <img src="/bhbc-logo.jpg" alt="BHBC Logo" className="h-24 w-auto" />
+          </div>
+          <h2 className="mt-4 text-center text-3xl font-extrabold text-gray-900">
             Burgess Hill Bowls Club
           </h2>
           <p className="mt-2 text-center text-sm text-gray-600">

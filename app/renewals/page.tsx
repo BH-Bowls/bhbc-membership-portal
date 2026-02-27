@@ -53,6 +53,7 @@ interface Renewal {
   outstanding?: number | null;
   banking?: number | null;
   dateReceived?: string | null;
+  renewalsClosed?: boolean;
 }
 
 interface FeeBreakdown {
@@ -401,7 +402,25 @@ export default function RenewalsPage() {
   // Check if payment has been received (form should be read-only)
   // Admins can edit even after payment is received
   const isAdmin = session?.user?.role === 'Admin' || session?.user?.role === 'Super Admin';
+  const isImpersonating = session?.user?.isImpersonating || false;
   const paymentReceived = (renewal.banking !== null && renewal.banking !== undefined) && !isAdmin;
+
+  // Renewals closed check — show closed message to non-admin, non-impersonating users
+  if (renewal.renewalsClosed && !isAdmin && !isImpersonating) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <Navbar userName={session?.user?.name ?? undefined} userRole={session?.user?.role ?? undefined} />
+        <main className="max-w-3xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
+          <div className="bg-white shadow rounded-lg p-8 text-center">
+            <p className="text-gray-700 text-lg">
+              Sorry. Membership renewals are now closed for this season.
+              Please contact the Membership Secretary.
+            </p>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   // Helper variables: use edited values when editing, otherwise use saved values
   const currentRenewal = isEditing ? editedRenewal : renewal;
@@ -411,7 +430,6 @@ export default function RenewalsPage() {
 
   // Success message after submission
   if (isSubmitted && renewal.renewingMembership) {
-    const isImpersonating = session?.user?.isImpersonating || false;
 
     return (
       <div className="min-h-screen bg-gray-50">
@@ -903,6 +921,19 @@ export default function RenewalsPage() {
 
                     {/* Competition Checkboxes */}
                     <div className="space-y-3">
+                      {(() => {
+                        const mainToSubKey: Record<string, keyof Renewal> = {
+                          drawnPairs: 'drawnPairsSub',
+                          australianPairs: 'australianPairsSub',
+                          drawnTriples: 'drawnTriplesSub',
+                        };
+                        const subToMainKey: Record<string, keyof Renewal> = {
+                          drawnPairsSub: 'drawnPairs',
+                          australianPairsSub: 'australianPairs',
+                          drawnTriplesSub: 'drawnTriples',
+                        };
+                        return (
+                          <>
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                         {[
                           { key: 'mensChampionship', label: "Men's Championship" },
@@ -924,7 +955,7 @@ export default function RenewalsPage() {
                                 type="checkbox"
                                 checked={currentRenewal[key as keyof Renewal] as boolean}
                                 onChange={(e) => handleChange(key as keyof Renewal, e.target.checked)}
-                                disabled={!eligibility.canEnterCompetitions || paymentReceived}
+                                disabled={!eligibility.canEnterCompetitions || paymentReceived || !!(mainToSubKey[key] && currentRenewal[mainToSubKey[key] as keyof Renewal])}
                                 className="h-4 w-4 text-blue-500 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                               />
                               <label className={`ml-2 text-sm ${
@@ -939,7 +970,7 @@ export default function RenewalsPage() {
                       {/* Substitutions (no fee) - Also require 8+ friendlies */}
                       <div className="mt-6 pt-6 border-t">
                         <p className="text-sm font-medium text-gray-700 mb-3">
-                          Substitutes (no fee unless called upon to play)
+                          Eligible Players not entering PAIRS and TRIPLES are invited to register as substitutes to be called upon in case of holidays or illness to playing participants. £2.00 will be charged if called upon to play in any competition.
                         </p>
                         <div className="space-y-2">
                           {[
@@ -952,7 +983,7 @@ export default function RenewalsPage() {
                                 type="checkbox"
                                 checked={currentRenewal[key as keyof Renewal] as boolean}
                                 onChange={(e) => handleChange(key as keyof Renewal, e.target.checked)}
-                                disabled={!eligibility.canEnterCompetitions || paymentReceived}
+                                disabled={!eligibility.canEnterCompetitions || paymentReceived || !!(subToMainKey[key] && currentRenewal[subToMainKey[key] as keyof Renewal])}
                                 className="h-4 w-4 text-blue-500 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                               />
                               <label className={`ml-2 text-sm ${
@@ -971,6 +1002,9 @@ export default function RenewalsPage() {
                           {formatCurrency(fees.compsFee)}
                         </span>
                       </div>
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
                 )}
@@ -986,6 +1020,23 @@ export default function RenewalsPage() {
                     {formatCurrency(fees.total)}
                   </span>
                 </div>
+              </div>
+            )}
+
+            {/* Payment Details — shown under Total Fee Payable when renewing and payment not yet received */}
+            {currentRenewal?.renewingMembership && !paymentReceived && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6">
+                <h3 className="text-lg font-medium text-blue-900 mb-3">Payment Details</h3>
+                <div className="space-y-1 text-sm text-blue-800">
+                  <p><span className="font-medium">Bank:</span> HSBC</p>
+                  <p><span className="font-medium">Sort Code:</span> 40-15-16</p>
+                  <p><span className="font-medium">Account Number:</span> 81554948</p>
+                  <p><span className="font-medium">Account Name:</span> Burgess Hill Bowls Club</p>
+                  <p><span className="font-medium">Reference:</span> SUBS {profile?.lastName.toUpperCase()}</p>
+                </div>
+                <p className="mt-4 text-sm text-blue-700">
+                  Please make payment at your earliest convenience. Card payments are also accepted at the bar.
+                </p>
               </div>
             )}
 

@@ -35,8 +35,8 @@ export async function GET(request: NextRequest) {
       gamesToFetch = undefined;
     }
 
-    // Fetch games from Games sheet (optionally filtered by status)
-    const games = await getGames(gamesToFetch);
+    // Fetch games from Games sheet (optionally filtered by status), only Friendly type
+    const games = await getGames(gamesToFetch, ['Friendly']);
 
     // Get current user's username from session
     const userName = session.user.userName;

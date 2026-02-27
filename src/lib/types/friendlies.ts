@@ -78,6 +78,14 @@ export type Position = '' | 'S' | '1' | '2' | '3';
  */
 export type HomeAway = 'H' | 'A';
 
+/**
+ * Game type - distinguishes friendlies from league fixtures and events
+ * Used to filter games on different pages and in different management workflows
+ */
+export type GameType = 'Friendly' | 'N/S A' | 'N/S B' | 'MSL' | 'JSL' | 'BL' | 'Event';
+export const LEAGUE_GAME_TYPES: GameType[] = ['N/S A', 'N/S B', 'MSL', 'JSL', 'BL'];
+export const ALL_GAME_TYPES: GameType[] = ['Friendly', 'N/S A', 'N/S B', 'MSL', 'JSL', 'BL', 'Event'];
+
 // ============================================================================
 // CORE DATA INTERFACES
 // ============================================================================
@@ -112,6 +120,8 @@ export interface Game {
   lastModifiedBy: string;       // Username of last person to modify
   lastModifiedDate: string;     // Date of last modification
   paired?: string;              // 'Y' if this game is paired with another game on the same date
+  gameType: GameType;           // Type of game: Friendly, N/S A, N/S B, MSL, JSL, BL, or Event
+  clubSuffix: string;           // Suffix appended to clubName in UI (e.g. 'A' → 'Henfield A')
 }
 
 /**

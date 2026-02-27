@@ -37,7 +37,7 @@ export interface SheetSchema {
 
 export interface ReportFilter {
   column: string;        // Qualified column: "Members.member_type"
-  operator: 'in';
+  operator: 'in' | 'not_in' | 'is_blank' | 'is_not_blank' | 'contains' | 'not_contains';
   values: string[];
 }
 
