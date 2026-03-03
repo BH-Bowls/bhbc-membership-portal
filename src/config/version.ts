@@ -3,8 +3,8 @@
 // Update this file before deploying using: npm run update-version
 
 export const version = {
-  number: '1.3.0',
-  buildDate: '2026-02-06', // This gets auto-updated by the update-version script
+  number: '1.4.0',
+  buildDate: '2026-03-03', // This gets auto-updated by the update-version script
 } as const;
 
 export function getVersionString(): string {
