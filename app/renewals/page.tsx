@@ -414,7 +414,7 @@ export default function RenewalsPage() {
           <div className="bg-white shadow rounded-lg p-8 text-center">
             <p className="text-gray-700 text-lg">
               Sorry. Membership renewals are now closed for this season.
-              Please contact the Membership Secretary.
+              Please contact the Club Secretary.
             </p>
           </div>
         </main>

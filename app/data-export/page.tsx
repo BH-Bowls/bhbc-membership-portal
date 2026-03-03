@@ -445,6 +445,31 @@ export default function DataExportPage() {
             >
               {saving ? 'Saving...' : loadedDefinitionId ? 'Update' : 'Save'}
             </button>
+            {loadedDefinitionId && (
+              <>
+                <button
+                  onClick={() => setLoadedDefinitionId(null)}
+                  className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                >
+                  New
+                </button>
+                <button
+                  onClick={() => {
+                    setPrimarySheet('');
+                    setJoinedSheets([]);
+                    setSelectedColumns([]);
+                    setFilters([]);
+                    setSaveName('');
+                    setLoadedDefinitionId(null);
+                    setResults(null);
+                    setRunError(null);
+                  }}
+                  className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                >
+                  Clear
+                </button>
+              </>
+            )}
           </div>
         </div>
 
@@ -702,6 +727,8 @@ export default function DataExportPage() {
                           <option value="is_not_blank">IS NOT BLANK</option>
                           <option value="contains">CONTAINS</option>
                           <option value="not_contains">NOT CONTAINS</option>
+                          <option value="gt">GREATER THAN</option>
+                          <option value="lt">LESS THAN</option>
                         </select>
                         {(filter.operator === 'in' || filter.operator === 'not_in') && (
                           <input
@@ -732,6 +759,17 @@ export default function DataExportPage() {
                               })
                             }
                             placeholder="Text to search for..."
+                            className="flex-1 border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500 w-full"
+                          />
+                        )}
+                        {(filter.operator === 'gt' || filter.operator === 'lt') && (
+                          <input
+                            type="text"
+                            value={filter.values[0] ?? ''}
+                            onChange={(e) =>
+                              updateFilter(index, { values: [e.target.value] })
+                            }
+                            placeholder="e.g. 100"
                             className="flex-1 border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500 w-full"
                           />
                         )}

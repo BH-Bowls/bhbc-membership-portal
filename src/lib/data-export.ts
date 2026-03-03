@@ -334,6 +334,16 @@ export async function executeReport(definition: ReportDefinition): Promise<RunRe
         );
       }
 
+      if (filter.operator === 'gt' || filter.operator === 'lt') {
+        // Strip currency symbols, commas, and whitespace then parse as float
+        const parseNumeric = (s: string) =>
+          parseFloat(s.replace(/[£$,\s]/g, ''));
+        const cellNum = parseNumeric(getCellValue() ?? '');
+        const threshold = parseNumeric(filter.values[0] ?? '');
+        if (isNaN(cellNum) || isNaN(threshold)) return false;
+        return filter.operator === 'gt' ? cellNum > threshold : cellNum < threshold;
+      }
+
       if (filter.operator === 'contains') {
         return filter.values.some(
           (v) => cellValue.toLowerCase().includes(v.trim().toLowerCase())
