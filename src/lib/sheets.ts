@@ -16,6 +16,14 @@ export function getSpreadsheetId(): string {
   return id;
 }
 
+export function getCompetitionsSpreadsheetId(): string {
+  const id = process.env.COMPETITIONS_SPREADSHEET_ID;
+  if (!id) {
+    throw new Error('COMPETITIONS_SPREADSHEET_ID environment variable is not set. Check your .env.local file.');
+  }
+  return id;
+}
+
 function getServiceAccountEmail(): string {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   if (!email) {
@@ -134,12 +142,14 @@ let columnMapCache: Map<string, { [key: string]: number }> = new Map();
  * @param sheetName Name of the sheet tab (default: 'Members')
  * @returns Object mapping normalized column names to zero-based indices
  */
-export async function getColumnMap(sheetName: string = 'Members'): Promise<{ [key: string]: number }> {
+export async function getColumnMap(sheetName: string = 'Members', spreadsheetId?: string): Promise<{ [key: string]: number }> {
+  const sid = spreadsheetId ?? getSpreadsheetId();
+  const cacheKey = `${sid}:${sheetName}`;
   // Check if we have already cached the column map for this sheet
   // This avoids unnecessary API calls on repeated access
-  if (columnMapCache.has(sheetName)) {
+  if (columnMapCache.has(cacheKey)) {
     // Get the cached map (we know it exists from the check above)
-    const cachedMap = columnMapCache.get(sheetName);
+    const cachedMap = columnMapCache.get(cacheKey);
     if (cachedMap) {
       return cachedMap;
     }
@@ -152,7 +162,7 @@ export async function getColumnMap(sheetName: string = 'Members'): Promise<{ [ke
     // Fetch only the header row (row 1) from the sheet
     // This is much faster than fetching all data
     const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: getSpreadsheetId(),
+      spreadsheetId: sid,
       range: `${sheetName}!1:1`, // Row 1 contains column headers
     });
 
@@ -184,7 +194,7 @@ export async function getColumnMap(sheetName: string = 'Members'): Promise<{ [ke
 
     // Cache this sheet's column map for future use
     // Avoids making the same API call repeatedly
-    columnMapCache.set(sheetName, map);
+    columnMapCache.set(cacheKey, map);
 
     return map;
   } catch (error) {

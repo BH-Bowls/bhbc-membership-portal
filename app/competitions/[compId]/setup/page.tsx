@@ -26,6 +26,7 @@ interface DrawEntry {
   side1: string[];  // usernames, length = playersPerSide
   side2: string[];  // usernames, length = playersPerSide — all empty = bye
   playByDate: string;
+  isBye?: boolean;  // true = prelim bye slot; false = real match (overrides empty-side2 check)
 }
 
 // ============================================================================
@@ -403,10 +404,14 @@ export default function CompetitionSetupPage({
 
         const pps = playersPerSideFor(comp.compType);
 
+        const loadedEntrants: CompMemberInfo[] = !entrantData.error ? (entrantData.entrants || []) : [];
         if (!entrantData.error) {
-          setEntrants(entrantData.entrants || []);
+          setEntrants(loadedEntrants);
           setSubs(entrantData.subs || []);
         }
+
+        const loadedSideCount = Math.ceil(loadedEntrants.length / pps);
+        const { prelimRealMatches: loadedPrelimRealMatches } = computeBracketInfo(loadedSideCount);
 
         const membersObj = memberData.members as Record<string, CompMemberInfo>;
         const memberList = Object.values(membersObj)
@@ -458,8 +463,12 @@ export default function CompetitionSetupPage({
             side1: padToLength(m.side1Usernames, pps),
             side2: m.side2Usernames ? padToLength(m.side2Usernames, pps) : emptySide(pps),
             playByDate: m.playByDate || '',
+            isBye: m.round === 'Prelim' ? m.position > loadedPrelimRealMatches : undefined,
           })));
           setHasUnsaved(false);
+        } else {
+          // No saved draw in API — clear any stale entries (e.g. after discarding)
+          setDrawEntries([]);
         }
       })
       .catch((err) => setError(err.message))
@@ -642,7 +651,7 @@ export default function CompetitionSetupPage({
     if (!competition) return;
     const pps = playersPerSideFor(competition.compType);
     const sideCount = Math.ceil(entrants.length / pps);
-    const { firstRound, totalSlots } = computeBracketInfo(sideCount);
+    const { firstRound, totalSlots, prelimRealMatches } = computeBracketInfo(sideCount);
 
     // Use the date that matches the first round
     const defaultDate = firstRound === 'Prelim' ? prelimPlayBy : r1PlayBy;
@@ -656,6 +665,8 @@ export default function CompetitionSetupPage({
         side1: emptySide(pps),
         side2: emptySide(pps),
         playByDate: defaultDate,
+        // First prelimRealMatches slots are real matches; the rest are bye slots
+        isBye: firstRound === 'Prelim' ? i >= prelimRealMatches : undefined,
       }))
     );
   }
@@ -727,10 +738,17 @@ export default function CompetitionSetupPage({
         };
       });
 
+      const warnings: string[] = [];
       for (const m of matches) {
         if (m.side1Usernames.length === 0) {
-          throw new Error(`Match #${m.position}: Side 1 has no players selected`);
+          warnings.push(`Match #${m.position}: Side 1 has no players selected`);
         }
+      }
+      if (warnings.length > 0) {
+        const ok = window.confirm(
+          `Some matches are incomplete:\n\n${warnings.join('\n')}\n\nSave anyway?`
+        );
+        if (!ok) { setSaving(false); return; }
       }
 
       const res = await fetch(`/api/competitions/${compId}/setup`, {
@@ -881,16 +899,16 @@ export default function CompetitionSetupPage({
                       <li>
                         <span className="font-medium">Preliminary:</span>{' '}
                         {bracketInfo.prelimRealMatches} match{bracketInfo.prelimRealMatches !== 1 ? 'es' : ''}
-                        {' '}({bracketInfo.totalSlots - bracketInfo.prelimRealMatches} players get byes to Round 1)
+                        {' '}({bracketInfo.totalSlots - bracketInfo.prelimRealMatches} {pps > 1 ? 'team' : 'player'}{bracketInfo.totalSlots - bracketInfo.prelimRealMatches !== 1 ? 's' : ''} get byes to Round 1)
                         {' '}— set a Preliminary play-by date below
                       </li>
                       <li>
                         <span className="font-medium">Round 1 onwards:</span>{' '}
-                        {bracketInfo.totalSlots} players
+                        {bracketInfo.totalSlots} {pps > 1 ? 'team' : 'player'}{bracketInfo.totalSlots !== 1 ? 's' : ''}
                       </li>
                     </>
                   ) : (
-                    <li>No Preliminary round needed — {sideCount} teams fit a clean bracket.</li>
+                    <li>No Preliminary round needed — {sideCount} teams fit the draw sheet cleanly.</li>
                   )}
                 </ul>
               </div>
@@ -1037,15 +1055,22 @@ export default function CompetitionSetupPage({
                 <div className="mt-2 pt-2 border-t border-gray-100">
                   <p className="text-xs text-gray-400 mb-1">Substitutes</p>
                   <div className="flex flex-wrap gap-1.5">
-                    {subs.map((s) => (
-                      <span
-                        key={s.username}
-                        className="text-xs bg-orange-50 text-orange-700 border border-orange-200 px-2 py-0.5 rounded-full"
-                        title={s.username}
-                      >
-                        {s.fullName}
-                      </span>
-                    ))}
+                    {subs.map((s) => {
+                      const used = (assignedCounts.get(s.username.toLowerCase()) ?? 0) > 0;
+                      return (
+                        <span
+                          key={s.username}
+                          className={`text-xs border px-2 py-0.5 rounded-full ${
+                            used
+                              ? 'bg-orange-50 text-orange-400 border-orange-200 line-through opacity-60'
+                              : 'bg-orange-50 text-orange-700 border-orange-200'
+                          }`}
+                          title={s.username}
+                        >
+                          {s.fullName}
+                        </span>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -1073,7 +1098,7 @@ export default function CompetitionSetupPage({
             ) : (
               <div className="space-y-3">
                 {drawEntries.map((entry, idx) => {
-                  const isByeEntry = entry.side2.every((s) => !s);
+                  const isByeEntry = entry.side2.every((s) => !s) && entry.isBye !== false;
                   return (
                     <div key={entry.matchId} className="bg-white rounded-xl border border-gray-200 p-4">
                       <div className="flex items-center justify-between mb-3">
@@ -1205,7 +1230,7 @@ export default function CompetitionSetupPage({
                 {saving
                   ? 'Saving…'
                   : isEditingFirstRound
-                  ? 'Save draw & go to bracket'
+                  ? 'Save draw & go to draw sheet'
                   : `Save ${COMP_ROUND_LABELS[selectedEditRound!] ?? 'round'} changes`}
               </button>
             </div>

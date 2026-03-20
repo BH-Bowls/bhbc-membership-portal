@@ -84,9 +84,10 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
   const isTreasurer = userRole === 'T' || userRole === 'Treasurer';
   const isCaptain = userRole === 'Captain';
   const isKiosk = userRole === 'Kiosk';
+  const isRowland = userRole === 'Rowland';
   const canAccessBanking = isAdmin || isTreasurer;
   const canAccessCaptainTools = isAdmin || isCaptain;
-  const isCommittee = userRole && userRole !== 'Member' && userRole !== '' && !isKiosk;
+  const isCommittee = userRole && userRole !== 'Member' && userRole !== '' && !isKiosk && !isRowland;
 
   // Build admin menu items based on role
   const getAdminMenuItems = (): SubMenuItem[] => {
@@ -150,7 +151,7 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
   // - Admins (can switch to anyone)
   // - Regular users who have buddies (people who set them as buddy)
   // - Never for kiosk users
-  const canShowImpersonation = !isKiosk && (isAdmin || hasBuddies);
+  const canShowImpersonation = !isKiosk && !isRowland && (isAdmin || hasBuddies);
 
   // Kiosk navigation items - simplified for clubhouse tablet
   const kioskNavigationItems: NavItem[] = [
@@ -302,8 +303,21 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
 //    },
   ];
 
-  // Use kiosk or regular navigation based on role.
-  const navigationItems = isKiosk ? kioskNavigationItems : regularNavigationItems;
+  // Rowland navigation items — Clubs only
+  const rowlandNavigationItems: NavItem[] = [
+    {
+      name: 'Clubs',
+      href: '/clubs',
+      icon: (
+        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+        </svg>
+      ),
+    },
+  ];
+
+  // Use role-appropriate navigation items.
+  const navigationItems = isRowland ? rowlandNavigationItems : isKiosk ? kioskNavigationItems : regularNavigationItems;
 
   const isActive = (href: string) => {
     if (href === '/') {
@@ -641,11 +655,11 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
               {profileMenuOpen && (
                 <div className="absolute right-0 mt-2 w-56 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-50">
                   <div className="py-1">
-                    {/* Kiosk mode header - but show full menu if impersonating */}
-                    {isKiosk && !isImpersonating ? (
+                    {/* Kiosk / Rowland mode header - show minimal menu */}
+                    {(isKiosk || isRowland) && !isImpersonating ? (
                       <>
                         <div className="px-4 py-2 text-sm font-medium text-blue-700 border-b border-gray-200 bg-blue-50">
-                          Kiosk Mode
+                          {isRowland ? 'Rowland Cup' : 'Kiosk Mode'}
                         </div>
                         <button
                           onClick={handleLogout}
@@ -869,12 +883,12 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
               ))}
             </div>
             <div className="pt-4 pb-3 border-t border-gray-200">
-              {isKiosk && !isImpersonating ? (
-                /* Kiosk mode mobile menu - but show full menu if impersonating */
+              {(isKiosk || isRowland) && !isImpersonating ? (
+                /* Kiosk / Rowland mode mobile menu */
                 <>
                   <div className="px-4 mb-3">
                     <div className="text-sm font-medium text-blue-700 bg-blue-50 px-3 py-2 rounded-md">
-                      Kiosk Mode
+                      {isRowland ? 'Rowland Cup' : 'Kiosk Mode'}
                     </div>
                   </div>
                   <div className="px-2 space-y-1">

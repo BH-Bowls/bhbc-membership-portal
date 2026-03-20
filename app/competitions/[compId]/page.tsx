@@ -265,7 +265,7 @@ export default function CompetitionBracketPage({
         {/* Bracket */}
         {loading ? (
           <div className="print:hidden bg-white rounded-xl shadow-sm border border-gray-200 p-12 text-center text-gray-400">
-            Loading bracket…
+            Loading draw sheet…
           </div>
         ) : matches.length === 0 ? (
           <div className="print:hidden bg-white rounded-xl shadow-sm border border-gray-200 p-12 text-center text-gray-400">

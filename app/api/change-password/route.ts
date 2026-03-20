@@ -59,6 +59,15 @@ export async function POST(request: NextRequest) {
     const isAdminManaging = session.user?.isImpersonating &&
                            session.user?.originalAdmin?.role === 'Admin';
 
+    // Rowland login is managed by committee — password changes not permitted
+    // (except when an admin is managing the account via Switch User)
+    if (session.user?.role === 'Rowland' && !isAdminManaging) {
+      return NextResponse.json(
+        { error: 'Password changes are not permitted for this account' },
+        { status: 403 }
+      );
+    }
+
     // Parse request body
     const body = await request.json();
     const { currentPassword, newPassword } = body as ChangePasswordRequest;

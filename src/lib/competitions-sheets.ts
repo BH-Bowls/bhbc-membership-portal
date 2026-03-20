@@ -12,6 +12,7 @@
 import { google } from 'googleapis';
 import {
   getSpreadsheetId,
+  getCompetitionsSpreadsheetId,
   getGoogleSheetsClient,
   getColumnMap,
   getColumnLetter,
@@ -211,11 +212,11 @@ function parseMatchRow(
  * Get all competitions from CompetitionsControl sheet.
  */
 export async function getAllCompetitions(): Promise<Competition[]> {
-  const colMap = await getColumnMap('CompetitionsControl');
+  const colMap = await getColumnMap('CompetitionsControl', getCompetitionsSpreadsheetId());
   const sheets = getGoogleSheetsClient();
 
   const response = await sheets.spreadsheets.values.get({
-    spreadsheetId: getSpreadsheetId(),
+    spreadsheetId: getCompetitionsSpreadsheetId(),
     range: 'CompetitionsControl!A2:Z',
     valueRenderOption: 'FORMATTED_VALUE',
   });
@@ -243,12 +244,12 @@ export async function getCompetitionById(compId: string): Promise<Competition | 
  * Finds the row with the matching compId and overwrites it.
  */
 export async function updateCompetition(comp: Competition): Promise<void> {
-  const colMap = await getColumnMap('CompetitionsControl');
+  const colMap = await getColumnMap('CompetitionsControl', getCompetitionsSpreadsheetId());
   const sheets = getGoogleSheetsClient();
 
   // Find the row number
   const response = await sheets.spreadsheets.values.get({
-    spreadsheetId: getSpreadsheetId(),
+    spreadsheetId: getCompetitionsSpreadsheetId(),
     range: 'CompetitionsControl!A2:A',
     valueRenderOption: 'FORMATTED_VALUE',
   });
@@ -283,7 +284,7 @@ export async function updateCompetition(comp: Competition): Promise<void> {
 
   const endCol = getColumnLetter(maxCol - 1);
   await sheets.spreadsheets.values.update({
-    spreadsheetId: getSpreadsheetId(),
+    spreadsheetId: getCompetitionsSpreadsheetId(),
     range: `CompetitionsControl!A${rowNumber}:${endCol}${rowNumber}`,
     valueInputOption: 'USER_ENTERED',
     requestBody: { values: [rowValues] },
@@ -297,11 +298,11 @@ export async function updateCompetitionStatus(
   compId: string,
   status: CompStatus
 ): Promise<void> {
-  const colMap = await getColumnMap('CompetitionsControl');
+  const colMap = await getColumnMap('CompetitionsControl', getCompetitionsSpreadsheetId());
   const sheets = getGoogleSheetsClient();
 
   const response = await sheets.spreadsheets.values.get({
-    spreadsheetId: getSpreadsheetId(),
+    spreadsheetId: getCompetitionsSpreadsheetId(),
     range: 'CompetitionsControl!A2:A',
     valueRenderOption: 'FORMATTED_VALUE',
   });
@@ -313,7 +314,7 @@ export async function updateCompetitionStatus(
 
   const statusCol = getColumnLetter(colMap['status']);
   await sheets.spreadsheets.values.update({
-    spreadsheetId: getSpreadsheetId(),
+    spreadsheetId: getCompetitionsSpreadsheetId(),
     range: `CompetitionsControl!${statusCol}${rowNumber}`,
     valueInputOption: 'USER_ENTERED',
     requestBody: { values: [[status]] },
@@ -331,11 +332,11 @@ export async function getCompetitionMatches(compId: string): Promise<CompMatch[]
   const cfg = COMP_SHEET_CONFIG[compId];
   if (!cfg) throw new Error(`Unknown competition: ${compId}`);
 
-  const colMap = await getColumnMap(cfg.sheetName);
+  const colMap = await getColumnMap(cfg.sheetName, getCompetitionsSpreadsheetId());
   const sheets = getGoogleSheetsClient();
 
   const response = await sheets.spreadsheets.values.get({
-    spreadsheetId: getSpreadsheetId(),
+    spreadsheetId: getCompetitionsSpreadsheetId(),
     range: `${cfg.sheetName}!A2:M`,
     valueRenderOption: 'FORMATTED_VALUE',
   });
@@ -495,7 +496,7 @@ export async function saveCompetitionSetup(
     }
   }
 
-  const colMap = await getColumnMap(cfg.sheetName);
+  const colMap = await getColumnMap(cfg.sheetName, getCompetitionsSpreadsheetId());
   const sheets = getGoogleSheetsClient();
 
   // Build rows in column-map order
@@ -523,14 +524,14 @@ export async function saveCompetitionSetup(
 
   // Clear existing data rows (keep header)
   await sheets.spreadsheets.values.clear({
-    spreadsheetId: getSpreadsheetId(),
+    spreadsheetId: getCompetitionsSpreadsheetId(),
     range: `${cfg.sheetName}!A2:Z`,
   });
 
   if (rows.length > 0) {
     const endCol = getColumnLetter(maxCol - 1);
     await sheets.spreadsheets.values.update({
-      spreadsheetId: getSpreadsheetId(),
+      spreadsheetId: getCompetitionsSpreadsheetId(),
       range: `${cfg.sheetName}!A2:${endCol}${rows.length + 1}`,
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: rows },
@@ -603,12 +604,12 @@ export async function updateMatch(
   const cfg = COMP_SHEET_CONFIG[compId];
   if (!cfg) throw new Error(`Unknown competition: ${compId}`);
 
-  const colMap = await getColumnMap(cfg.sheetName);
+  const colMap = await getColumnMap(cfg.sheetName, getCompetitionsSpreadsheetId());
   const sheets = getGoogleSheetsClient();
 
   // Find the row with this matchId
   const response = await sheets.spreadsheets.values.get({
-    spreadsheetId: getSpreadsheetId(),
+    spreadsheetId: getCompetitionsSpreadsheetId(),
     range: `${cfg.sheetName}!A2:A`,
     valueRenderOption: 'FORMATTED_VALUE',
   });
@@ -639,7 +640,7 @@ export async function updateMatch(
   if (data.length === 0) return;
 
   await sheets.spreadsheets.values.batchUpdate({
-    spreadsheetId: getSpreadsheetId(),
+    spreadsheetId: getCompetitionsSpreadsheetId(),
     requestBody: { data, valueInputOption: 'USER_ENTERED' },
   });
 

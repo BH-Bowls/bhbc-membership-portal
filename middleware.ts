@@ -26,6 +26,11 @@ export default withAuth(
     // Get current URL pathname
     const pathname = req.nextUrl.pathname;
 
+    // Restrict Rowland role to /clubs only (not when admin is impersonating)
+    if (token?.role === 'Rowland' && !token?.isImpersonating && !pathname.startsWith('/clubs') && !pathname.startsWith('/api/')) {
+      return NextResponse.redirect(new URL('/clubs', req.url));
+    }
+
     // Protect /friendlies/manage routes - Captain or Admin only
     // These routes allow team selection and game management
     if (pathname.startsWith('/friendlies/manage')) {

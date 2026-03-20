@@ -213,34 +213,6 @@ export async function executeReport(definition: ReportDefinition): Promise<RunRe
     joinIndexes[sheetKey] = index;
   }
 
-  // Parse selected columns into { sheetKey, columnName } pairs
-  const selectedCols = definition.selectedColumns.map((col) => {
-    const dotIndex = col.indexOf('.');
-    return {
-      sheetKey: col.substring(0, dotIndex),
-      columnName: col.substring(dotIndex + 1),
-      qualified: col,
-    };
-  });
-
-  // Build output headers using original header names.
-  // Only prefix with sheet label when the same original header appears in multiple sheets.
-  const resolvedHeaders: { original: string; sheetKey: string }[] = [];
-  for (const col of selectedCols) {
-    let original = col.columnName;
-    if (col.sheetKey === definition.primarySheet) {
-      const headerIdx = primaryData.headers.indexOf(col.columnName);
-      if (headerIdx !== -1) original = primaryData.originalHeaders[headerIdx];
-    } else if (joinedData[col.sheetKey]) {
-      const data = joinedData[col.sheetKey];
-      const headerIdx = data.headers.indexOf(col.columnName);
-      if (headerIdx !== -1) original = data.originalHeaders[headerIdx];
-    }
-    resolvedHeaders.push({ original, sheetKey: col.sheetKey });
-  }
-
-  const outputHeaders = resolvedHeaders.map((h) => h.original);
-
   // Perform LEFT JOIN: iterate primary rows, expand with joined data
   const primaryJoinColIndex = primaryData.columnMap[primaryDescriptor.joinKey];
   let joinedRows: { [sheetKey: string]: string[] | null }[] = [];
@@ -283,96 +255,129 @@ export async function executeReport(definition: ReportDefinition): Promise<RunRe
     joinedRows.push(...expansions);
   }
 
-  // Apply filters (AND across filters, OR within each filter's values)
+  // Helper: evaluate a single filter against an expanded row
+  function applyFilter(
+    filter: ReportFilter,
+    expandedRow: { [sheetKey: string]: string[] | null }
+  ): boolean {
+    const dotIndex = filter.column.indexOf('.');
+    const filterSheetKey = filter.column.substring(0, dotIndex);
+    const filterColName = filter.column.substring(dotIndex + 1);
+    const sheetRow = expandedRow[filterSheetKey];
+
+    function getCellValue(): string | null {
+      if (!sheetRow) return null;
+      let colIndex: number | undefined;
+      if (filterSheetKey === definition.primarySheet) {
+        colIndex = primaryData.columnMap[filterColName];
+      } else if (joinedData[filterSheetKey]) {
+        colIndex = joinedData[filterSheetKey].columnMap[filterColName];
+      }
+      if (colIndex === undefined) return null;
+      return (sheetRow[colIndex] || '').trim();
+    }
+
+    if (filter.operator === 'is_blank') {
+      if (!sheetRow) return true;
+      const v = getCellValue();
+      return v === null || v === '';
+    }
+    if (filter.operator === 'is_not_blank') {
+      if (!sheetRow) return false;
+      const v = getCellValue();
+      return v !== null && v !== '';
+    }
+    if (!sheetRow) return false;
+    const cellValue = getCellValue() ?? '';
+    if (filter.operator === 'in') {
+      return filter.values.some((v) => v.trim().toLowerCase() === cellValue.toLowerCase());
+    }
+    if (filter.operator === 'not_in') {
+      return !filter.values.some((v) => v.trim().toLowerCase() === cellValue.toLowerCase());
+    }
+    if (filter.operator === 'gt' || filter.operator === 'lt') {
+      const parseNumeric = (s: string) => parseFloat(s.replace(/[£$,\s]/g, ''));
+      const cellNum = parseNumeric(getCellValue() ?? '');
+      const threshold = parseNumeric(filter.values[0] ?? '');
+      if (isNaN(cellNum) || isNaN(threshold)) return false;
+      return filter.operator === 'gt' ? cellNum > threshold : cellNum < threshold;
+    }
+    if (filter.operator === 'contains') {
+      return filter.values.some((v) => cellValue.toLowerCase().includes(v.trim().toLowerCase()));
+    }
+    if (filter.operator === 'not_contains') {
+      return filter.values.every((v) => !cellValue.toLowerCase().includes(v.trim().toLowerCase()));
+    }
+    return false;
+  }
+
+  // Apply filters (AND or OR across filters)
+  const filterMode = definition.filterMode || 'AND';
   const filteredRows = joinedRows.filter((expandedRow) => {
-    return definition.filters.every((filter) => {
-      const dotIndex = filter.column.indexOf('.');
-      const filterSheetKey = filter.column.substring(0, dotIndex);
-      const filterColName = filter.column.substring(dotIndex + 1);
-
-      const sheetRow = expandedRow[filterSheetKey];
-
-      // Helper to resolve cell value (returns null if row/column missing)
-      function getCellValue(): string | null {
-        if (!sheetRow) return null;
-        let colIndex: number | undefined;
-        if (filterSheetKey === definition.primarySheet) {
-          colIndex = primaryData.columnMap[filterColName];
-        } else if (joinedData[filterSheetKey]) {
-          colIndex = joinedData[filterSheetKey].columnMap[filterColName];
-        }
-        if (colIndex === undefined) return null;
-        return (sheetRow[colIndex] || '').trim();
-      }
-
-      if (filter.operator === 'is_blank') {
-        // True when there is no joined row at all, or the cell is empty
-        if (!sheetRow) return true;
-        const v = getCellValue();
-        return v === null || v === '';
-      }
-
-      if (filter.operator === 'is_not_blank') {
-        if (!sheetRow) return false;
-        const v = getCellValue();
-        return v !== null && v !== '';
-      }
-
-      if (!sheetRow) return false; // remaining operators need a row
-
-      const cellValue = getCellValue() ?? '';
-
-      if (filter.operator === 'in') {
-        return filter.values.some(
-          (v) => v.trim().toLowerCase() === cellValue.toLowerCase()
-        );
-      }
-
-      if (filter.operator === 'not_in') {
-        return !filter.values.some(
-          (v) => v.trim().toLowerCase() === cellValue.toLowerCase()
-        );
-      }
-
-      if (filter.operator === 'gt' || filter.operator === 'lt') {
-        // Strip currency symbols, commas, and whitespace then parse as float
-        const parseNumeric = (s: string) =>
-          parseFloat(s.replace(/[£$,\s]/g, ''));
-        const cellNum = parseNumeric(getCellValue() ?? '');
-        const threshold = parseNumeric(filter.values[0] ?? '');
-        if (isNaN(cellNum) || isNaN(threshold)) return false;
-        return filter.operator === 'gt' ? cellNum > threshold : cellNum < threshold;
-      }
-
-      if (filter.operator === 'contains') {
-        return filter.values.some(
-          (v) => cellValue.toLowerCase().includes(v.trim().toLowerCase())
-        );
-      }
-
-      if (filter.operator === 'not_contains') {
-        return filter.values.every(
-          (v) => !cellValue.toLowerCase().includes(v.trim().toLowerCase())
-        );
-      }
-
-      return false;
-    });
+    if (definition.filters.length === 0) return true;
+    if (filterMode === 'OR') {
+      return definition.filters.some((f) => applyFilter(f, expandedRow));
+    }
+    return definition.filters.every((f) => applyFilter(f, expandedRow));
   });
+
+  // Build unified output column specs from columnOrder (or fall back to selectedColumns)
+  const unifiedOrder =
+    definition.columnOrder && definition.columnOrder.length > 0
+      ? definition.columnOrder
+      : definition.selectedColumns;
+
+  const fixedColMap = new Map(
+    (definition.fixedColumns || []).map((fc) => [fc.id, fc])
+  );
+
+  interface OutputColSpec {
+    header: string;
+    type: 'field' | 'fixed';
+    sheetKey?: string;
+    columnName?: string;
+    fixedValue?: string;
+  }
+
+  const outputColSpecs: OutputColSpec[] = [];
+  for (const colKey of unifiedOrder) {
+    if (colKey.startsWith('fixed:')) {
+      const fixedId = colKey.substring(6);
+      const fc = fixedColMap.get(fixedId);
+      if (!fc) continue;
+      const alias = definition.columnAliases?.[colKey];
+      outputColSpecs.push({ header: alias || fc.name || '', type: 'fixed', fixedValue: fc.value });
+    } else {
+      const dot = colKey.indexOf('.');
+      const sheetKey = colKey.substring(0, dot);
+      const columnName = colKey.substring(dot + 1);
+      let originalHeader = columnName;
+      if (sheetKey === definition.primarySheet) {
+        const idx = primaryData.headers.indexOf(columnName);
+        if (idx !== -1) originalHeader = primaryData.originalHeaders[idx];
+      } else if (joinedData[sheetKey]) {
+        const idx = joinedData[sheetKey].headers.indexOf(columnName);
+        if (idx !== -1) originalHeader = joinedData[sheetKey].originalHeaders[idx];
+      }
+      const alias = definition.columnAliases?.[colKey];
+      outputColSpecs.push({ header: alias || originalHeader, type: 'field', sheetKey, columnName });
+    }
+  }
+
+  const outputHeaders = outputColSpecs.map((c) => c.header);
 
   // Select columns from filtered rows
   const outputRows: string[][] = filteredRows.map((expandedRow) => {
-    return selectedCols.map((col) => {
-      const sheetRow = expandedRow[col.sheetKey];
+    return outputColSpecs.map((col) => {
+      if (col.type === 'fixed') return col.fixedValue || '';
+      const sheetRow = expandedRow[col.sheetKey!];
       if (!sheetRow) return '';
-
       let colIndex: number | undefined;
       if (col.sheetKey === definition.primarySheet) {
-        colIndex = primaryData.columnMap[col.columnName];
-      } else if (joinedData[col.sheetKey]) {
-        colIndex = joinedData[col.sheetKey].columnMap[col.columnName];
+        colIndex = primaryData.columnMap[col.columnName!];
+      } else if (joinedData[col.sheetKey!]) {
+        colIndex = joinedData[col.sheetKey!].columnMap[col.columnName!];
       }
-
       if (colIndex === undefined) return '';
       return sheetRow[colIndex] || '';
     });

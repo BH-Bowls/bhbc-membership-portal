@@ -28,7 +28,10 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const definition: ReportDefinition = body.definition;
 
-    if (!definition || !definition.primarySheet || !definition.selectedColumns?.length) {
+    const hasColumns =
+      (definition.columnOrder && definition.columnOrder.length > 0) ||
+      definition.selectedColumns?.length > 0;
+    if (!definition || !definition.primarySheet || !hasColumns) {
       return NextResponse.json(
         { error: 'Invalid report definition: primarySheet and selectedColumns are required' },
         { status: 400 }

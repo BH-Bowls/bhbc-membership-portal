@@ -48,6 +48,10 @@ export interface ReportDefinition {
   joins: string[];       // Sheet keys to join, e.g., ["Renewals", "Players"]
   selectedColumns: string[]; // Qualified columns: "Members.user_name", "Renewals.amount"
   filters: ReportFilter[];
+  filterMode?: 'AND' | 'OR';  // How filters are combined (default: AND)
+  columnAliases?: { [qualified: string]: string }; // Override output header names
+  fixedColumns?: { id: string; name: string; value: string }[]; // Static value columns
+  columnOrder?: string[]; // Unified output order: qualified names OR 'fixed:{id}' entries
   createdAt?: string;
   updatedAt?: string;
 }

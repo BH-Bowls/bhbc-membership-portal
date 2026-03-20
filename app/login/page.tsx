@@ -7,24 +7,32 @@ import { useState, useEffect, Suspense } from 'react';
 import { signIn, useSession } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { getButtonClasses, getLinkClasses, getInputClasses } from '@/config/theme-helpers';
+import { useImpersonation } from '@/hooks/useImpersonation';
 
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { data: session, status } = useSession();
+  const { stopImpersonation } = useImpersonation();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  // Redirect if already logged in
+  // Redirect if already logged in — but if in a buddy switch, exit it first
   useEffect(() => {
     if (status === 'authenticated') {
-      const callbackUrl = searchParams.get('callbackUrl') || '/';
-      router.push(callbackUrl);
+      if (session?.user?.isImpersonating) {
+        // Stop the buddy switch; stopImpersonation reloads the page which
+        // brings us back to /login, then the normal redirect fires below
+        stopImpersonation();
+      } else {
+        const callbackUrl = searchParams.get('callbackUrl') || '/';
+        router.push(callbackUrl);
+      }
     }
-  }, [status, router, searchParams]);
+  }, [status, session?.user?.isImpersonating, router, searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

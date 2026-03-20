@@ -36,10 +36,10 @@ export default function ClubDetailPage({ params }: PageProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Kiosk users cannot edit, even if API says they can
+  // Kiosk / Rowland users cannot edit, even if API says they can
   const userRole = session?.user?.role || 'Member';
   const isKiosk = userRole === 'Kiosk';
-  const canEdit = canEditFromApi && !isKiosk;
+  const canEdit = canEditFromApi && !isKiosk && userRole !== 'Rowland';
 
   // Edit states
   const [isEditingClub, setIsEditingClub] = useState(false);

@@ -678,7 +678,7 @@ export default function RenewalsPage() {
                   </div>
 
                   {/* Full-time Education Checkbox (only for 18-24) */}
-                  {ageDemographic === '18-24' && (
+                  {currentAgeDemographic === '18-24' && (
                     <div className="mt-4 pt-4 border-t">
                       <div className="flex items-center">
                         <input

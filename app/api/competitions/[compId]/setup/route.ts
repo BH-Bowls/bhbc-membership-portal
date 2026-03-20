@@ -39,9 +39,9 @@ export async function POST(
 
     // Basic validation
     for (const m of matches) {
-      if (!m.matchId || !m.round || !m.position || !m.side1Usernames?.length) {
+      if (!m.matchId || !m.round || !m.position) {
         return NextResponse.json(
-          { error: 'Each match must have matchId, round, position, and side1Usernames' },
+          { error: 'Each match must have matchId, round, and position' },
           { status: 400 }
         );
       }
