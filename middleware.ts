@@ -6,6 +6,7 @@
 
 import { withAuth } from 'next-auth/middleware';
 import { NextResponse } from 'next/server';
+import { hasRole } from './src/lib/role-utils';
 
 /**
  * Middleware function that runs on every protected route
@@ -26,36 +27,24 @@ export default withAuth(
     // Get current URL pathname
     const pathname = req.nextUrl.pathname;
 
-    // Restrict Rowland role to /clubs only (not when admin is impersonating)
-    if (token?.role === 'Rowland' && !token?.isImpersonating && !pathname.startsWith('/clubs') && !pathname.startsWith('/api/')) {
-      return NextResponse.redirect(new URL('/clubs', req.url));
+    // Force password change if token is flagged (not when admin is impersonating)
+    if (token?.mustChangePassword && !token?.isImpersonating) {
+      if (!pathname.startsWith('/change-password') && !pathname.startsWith('/api/')) {
+        return NextResponse.redirect(new URL('/change-password', req.url));
+      }
+    }
+
+    // Restrict Club role to /clubs and /rowland (not when admin is impersonating)
+    if (token?.role === 'Club' && !token?.isImpersonating) {
+      const allowed = ['/clubs', '/rowland', '/api/', '/change-password', '/help'];
+      if (!allowed.some((p) => pathname.startsWith(p))) {
+        return NextResponse.redirect(new URL('/clubs', req.url));
+      }
     }
 
     // Protect /friendlies/manage routes - Captain or Admin only
-    // These routes allow team selection and game management
     if (pathname.startsWith('/friendlies/manage')) {
-      // Check if user is authenticated
-      if (!token) {
-        // Not authenticated - redirect to friendlies home
-        return NextResponse.redirect(new URL('/friendlies', req.url));
-      }
-
-      // Check if user has Captain or Admin role
-      const userRole = token.role as string;
-      let hasRequiredRole = false;
-
-      // Check if user is Captain
-      if (userRole === 'Captain') {
-        hasRequiredRole = true;
-      }
-
-      // Check if user is Admin
-      if (userRole === 'Admin') {
-        hasRequiredRole = true;
-      }
-
-      // If user doesn't have required role, redirect to friendlies home
-      if (!hasRequiredRole) {
+      if (!token || !hasRole(token.role as string, 'Captain', 'Admin')) {
         return NextResponse.redirect(new URL('/friendlies', req.url));
       }
     }
@@ -63,18 +52,7 @@ export default withAuth(
     // Protect /admin/emails routes - Admin only
     // These routes allow sending bulk emails to members
     if (pathname.startsWith('/admin/emails')) {
-      // Check if user is authenticated
-      if (!token) {
-        // Not authenticated - redirect to home page
-        return NextResponse.redirect(new URL('/', req.url));
-      }
-
-      // Check if user has Admin role
-      const userRole = token.role as string;
-
-      // Only allow Admin role to access admin email routes
-      if (userRole !== 'Admin') {
-        // Not an admin - redirect to home page
+      if (!token || !hasRole(token.role as string, 'Admin')) {
         return NextResponse.redirect(new URL('/', req.url));
       }
     }
@@ -122,6 +100,6 @@ export default withAuth(
  */
 export const config = {
   matcher: [
-    '/((?!api/auth|api/apply|login|forgot-password|reset-password|kiosk|apply|_next/static|_next/image|favicon.ico|bhbc-logo.jpg).*)',
+    '/((?!api/auth|api/apply|login|clublogin|forgot-password|reset-password|kiosk|apply|help/login|_next/static|_next/image|favicon.ico|bhbc-logo.jpg).*)',
   ],
 };

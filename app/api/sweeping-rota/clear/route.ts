@@ -7,6 +7,7 @@ import { authOptions } from '@/lib/auth';
 import { batchClearSweepingEntries } from '@/lib/sweeping-sheets';
 import { generatePatternDates, parseDate } from '@/lib/sweeping-patterns';
 import { ClearDaysRequest, ClearDaysResponse } from '@/lib/types/sweeping';
+import { isMember } from '@/lib/role-utils';
 
 /**
  * POST /api/sweeping-rota/clear
@@ -22,7 +23,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Non-members only (Admin, superadmin, Kiosk, etc.)
-    if (session.user.role === 'Member') {
+    if (isMember(session.user.role)) {
       return NextResponse.json({ error: 'Forbidden - Non-members only' }, { status: 403 });
     }
 

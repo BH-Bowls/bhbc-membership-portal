@@ -23,7 +23,8 @@ export default function ClubsPage() {
 
   // Check if user can create/edit clubs
   const userRole = session?.user?.role || 'Member';
-  const canEdit = userRole !== 'Member' && userRole !== 'Kiosk' && userRole !== 'Rowland';
+  const canEdit = userRole !== 'Member' && userRole !== 'Kiosk' && userRole !== 'Club'
+    && !userRole.split(',').some(r => r.trim() === 'RowlandOrganiser' || r.trim() === 'RowlandPlayer');
 
   // Check for draft and redirect to club being edited
   useEffect(() => {

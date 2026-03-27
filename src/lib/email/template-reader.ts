@@ -214,3 +214,49 @@ export function getAttachmentTemplatePath(templateId: string): string | null {
 
   return filePath;
 }
+
+// ============================================================================
+// Club Email Template Functions
+// ============================================================================
+
+// Path for club email templates
+const CLUB_EMAIL_TEMPLATES_PATH = path.join(process.cwd(), 'src', 'lib', 'email', 'templates', 'Club Emails', 'Email Templates');
+
+/**
+ * Get all available club email templates
+ * Reads HTML files from Club Emails/Email Templates folder
+ */
+export function getClubEmailTemplates(): EmailTemplate[] {
+  const templates: EmailTemplate[] = [];
+
+  if (!fs.existsSync(CLUB_EMAIL_TEMPLATES_PATH)) {
+    return templates;
+  }
+
+  const files = fs.readdirSync(CLUB_EMAIL_TEMPLATES_PATH);
+
+  for (const file of files) {
+    if (!file.endsWith('.html')) continue;
+
+    const filePath = path.join(CLUB_EMAIL_TEMPLATES_PATH, file);
+    const id = file.replace('.html', '');
+    const name = id;
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const subjectMatch = content.match(/<!--\s*Subject:\s*(.+?)\s*-->/);
+    const subject = subjectMatch ? subjectMatch[1] : name;
+
+    templates.push({ id, name, subject, filePath });
+  }
+
+  templates.sort((a, b) => a.name.localeCompare(b.name));
+  return templates;
+}
+
+/**
+ * Get club email template content by ID
+ */
+export function getClubEmailTemplateContent(templateId: string): string | null {
+  const filePath = path.join(CLUB_EMAIL_TEMPLATES_PATH, `${templateId}.html`);
+  if (!fs.existsSync(filePath)) return null;
+  return fs.readFileSync(filePath, 'utf-8');
+}

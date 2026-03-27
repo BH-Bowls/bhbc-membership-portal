@@ -24,6 +24,14 @@ export function getCompetitionsSpreadsheetId(): string {
   return id;
 }
 
+export function getRowlandSpreadsheetId(): string {
+  const id = process.env.ROWLAND_SPREADSHEET_ID;
+  if (!id) {
+    throw new Error('ROWLAND_SPREADSHEET_ID environment variable is not set. Check your .env.local file.');
+  }
+  return id;
+}
+
 function getServiceAccountEmail(): string {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   if (!email) {

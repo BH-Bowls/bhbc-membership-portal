@@ -7,6 +7,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { updateContact, deleteContact } from '@/lib/clubs-sheets';
 import { UpdateContactRequest } from '@/lib/types/clubs';
+import { isMember } from '@/lib/role-utils';
 
 interface RouteParams {
   params: Promise<{ clubName: string; rowNumber: string }>;
@@ -25,9 +26,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Check if user is non-member
-    const role = session.user.role || 'Member';
-    if (role === 'Member') {
+    if (isMember(session.user.role)) {
       return NextResponse.json(
         { error: 'Only committee members can update contacts' },
         { status: 403 }
@@ -75,9 +74,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Check if user is non-member
-    const role = session.user.role || 'Member';
-    if (role === 'Member') {
+    if (isMember(session.user.role)) {
       return NextResponse.json(
         { error: 'Only committee members can delete contacts' },
         { status: 403 }

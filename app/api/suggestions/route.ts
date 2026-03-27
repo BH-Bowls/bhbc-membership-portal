@@ -11,6 +11,7 @@ import {
 } from '@/lib/suggestions-sheets';
 import { getSuggestionStatus } from '@/types/suggestions';
 import type { MemberSuggestion } from '@/types/suggestions';
+import { hasRole } from '@/lib/role-utils';
 
 /**
  * GET /api/suggestions
@@ -31,8 +32,7 @@ export async function GET(request: NextRequest) {
     const userName = session.user.userName;
     // Check if user is committee member
     // Committee = anyone with a Role that is not "Member" (or empty)
-    const role = session.user.role || 'Member';
-    const isCommittee = role !== 'Member' && role !== '';
+    const isCommittee = hasRole(session.user.role, 'GMC', 'Admin');
 
     // Get all suggestions from sheet
     const allSuggestions = await getAllSuggestions();
@@ -102,8 +102,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Determine if creator is a committee member
-    const role = session.user.role || 'Member';
-    const isCommittee = role !== 'Member' && role !== '';
+    const isCommittee = hasRole(session.user.role, 'GMC', 'Admin');
 
     // Create suggestion with default category "Other"
     const result = await createSuggestion({

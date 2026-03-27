@@ -7,6 +7,8 @@ import { NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import { authenticateUser } from './auth-sheets';
 import { clearColumnMapCache } from './sheets';
+import { authenticateClub } from './clubs-sheets';
+import { parseRoles } from './role-utils';
 
 /**
  * NextAuth configuration object
@@ -68,25 +70,27 @@ export const authOptions: NextAuthOptions = {
           userAgent
         );
 
-        // Check if authentication succeeded
-        if (!result.success) {
-          // Get error message from authentication result
-          let errorMessage = result.error;
-          if (!errorMessage) {
-            errorMessage = 'Authentication failed';
-          }
-
-          // Throw error with the specific message from authenticateUser
-          throw new Error(errorMessage);
-        }
-
-        // Return user object for successful authentication
-        // If user is null, return null to indicate failure
-        if (result.user) {
+        // Check if member authentication succeeded
+        if (result.success && result.user) {
           return result.user;
-        } else {
-          return null;
         }
+
+        // Member auth failed — try club login
+        const clubResult = await authenticateClub(credentials.identifier, credentials.password);
+        if (clubResult.success && clubResult.club) {
+          return {
+            id: clubResult.club.clubId,
+            userName: clubResult.club.clubId,
+            name: clubResult.club.clubName,
+            email: '',
+            role: 'Club',
+            clubId: clubResult.club.clubId,
+            mustChangePassword: clubResult.club.mustChangePassword,
+          };
+        }
+
+        // Both failed — throw the member auth error (more informative)
+        throw new Error(result.error || 'Invalid username or password');
       },
     }),
   ],
@@ -111,8 +115,11 @@ export const authOptions: NextAuthOptions = {
         // These will be available in the session callback
         token.userName = user.userName;
         token.role = user.role;
+        token.roles = parseRoles(user.role);
         token.name = user.name;
         token.email = user.email;
+        token.clubId = user.clubId; // set for Club role, undefined otherwise
+        token.mustChangePassword = user.mustChangePassword ?? false;
 
         // Store login time for absolute expiration check
         // Used to enforce 90-day maximum session duration
@@ -130,8 +137,12 @@ export const authOptions: NextAuthOptions = {
         // Refresh user data from database (for role changes, etc.)
         if (session.action === 'REFRESH_USER_DATA' && session.userData) {
           token.role = session.userData.role;
+          token.roles = parseRoles(session.userData.role);
           token.name = session.userData.name;
           token.email = session.userData.email;
+          if ('mustChangePassword' in session.userData) {
+            token.mustChangePassword = session.userData.mustChangePassword;
+          }
         }
 
         // Start impersonation
@@ -142,6 +153,7 @@ export const authOptions: NextAuthOptions = {
             email: token.email as string,
             name: token.name as string,
             role: token.role as string,
+            roles: (token.roles as string[]) ?? parseRoles(token.role as string),
           };
 
           // Switch to impersonated user
@@ -149,6 +161,9 @@ export const authOptions: NextAuthOptions = {
           token.email = session.targetUser.email;
           token.name = session.targetUser.name;
           token.role = session.targetUser.role;
+          token.roles = parseRoles(session.targetUser.role);
+          token.clubId = session.targetUser.clubId ?? undefined;
+          token.mustChangePassword = session.targetUser.mustChangePassword ?? false;
           token.isImpersonating = true;
           token.impersonationStartTime = Date.now();
           token.impersonationSessionId = session.sessionId;
@@ -162,6 +177,7 @@ export const authOptions: NextAuthOptions = {
             token.email = token.originalAdmin.email;
             token.name = token.originalAdmin.name;
             token.role = token.originalAdmin.role;
+            token.roles = parseRoles(token.originalAdmin.role);
           }
 
           // Clear impersonation fields
@@ -169,6 +185,8 @@ export const authOptions: NextAuthOptions = {
           token.originalAdmin = undefined;
           token.impersonationStartTime = undefined;
           token.impersonationSessionId = undefined;
+          token.clubId = undefined;
+          token.mustChangePassword = false; // admins never have temp passwords
         }
       }
 
@@ -186,8 +204,8 @@ export const authOptions: NextAuthOptions = {
      */
     async session({ session, token }) {
       // If token is missing required fields, it's invalid (e.g., decryption failed)
-      // Throw error to invalidate the session
-      if (!token.userName || !token.role) {
+      // Throw error to invalidate the session. Role can legitimately be empty (= regular member).
+      if (!token.userName) {
         throw new Error('Invalid session token');
       }
 
@@ -211,9 +229,12 @@ export const authOptions: NextAuthOptions = {
       // Session object is what client-side code can access
       if (session.user) {
         session.user.userName = token.userName as string;
-        session.user.role = token.role as string;
+        session.user.role = (token.role as string) ?? '';
+        session.user.roles = (token.roles as string[]) ?? parseRoles(token.role as string);
         session.user.name = token.name as string;
         session.user.email = token.email as string;
+        session.user.clubId = token.clubId as string | undefined;
+        session.user.mustChangePassword = (token.mustChangePassword as boolean | undefined) ?? false;
 
         // Add impersonation fields to session
         session.user.isImpersonating = token.isImpersonating || false;

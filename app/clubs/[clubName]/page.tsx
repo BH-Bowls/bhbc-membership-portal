@@ -39,7 +39,9 @@ export default function ClubDetailPage({ params }: PageProps) {
   // Kiosk / Rowland users cannot edit, even if API says they can
   const userRole = session?.user?.role || 'Member';
   const isKiosk = userRole === 'Kiosk';
-  const canEdit = canEditFromApi && !isKiosk && userRole !== 'Rowland';
+  const userRoles = userRole.split(',').map(r => r.trim());
+  const canEdit = canEditFromApi && !isKiosk && userRole !== 'Club'
+    && !userRoles.some(r => r === 'RowlandOrganiser' || r === 'RowlandPlayer');
 
   // Edit states
   const [isEditingClub, setIsEditingClub] = useState(false);

@@ -1,0 +1,287 @@
+// src/components/rowland/RowlandMatchDialog.tsx
+// Modal for entering Rowland Cup match results and player names
+
+'use client';
+
+import { useState, useEffect, useRef } from 'react';
+import type { CompMatch } from '@/types/competitions';
+import type { RowlandMatch } from '@/types/rowland';
+import { ROWLAND_ROUND_LABELS } from '@/types/rowland';
+
+export interface RowlandResultData {
+  homePlayers?: string[];
+  awayPlayers?: string[];
+  homeScore?: number;
+  awayScore?: number;
+  winnerSide?: 1 | 2;
+  status?: 'Played' | 'Walkover';
+  playedDate?: string;
+}
+
+interface RowlandMatchDialogProps {
+  compMatch: CompMatch;
+  rawMatch: RowlandMatch;
+  /** Which side the logged-in club is on — used to auto-focus their player 1 */
+  myTeamSide?: 'home' | 'away' | null;
+  onSubmit: (matchId: string, data: RowlandResultData) => Promise<void>;
+  onClose: () => void;
+  saving?: boolean;
+}
+
+function initPlayers(existing: string[]): string[] {
+  const result = [...existing];
+  while (result.length < 4) result.push('');
+  return result.slice(0, 4);
+}
+
+export function RowlandMatchDialog({
+  compMatch,
+  rawMatch,
+  myTeamSide,
+  onSubmit,
+  onClose,
+  saving = false,
+}: RowlandMatchDialogProps) {
+  const isBye = compMatch.side2Usernames?.[0] === 'Bye';
+
+  const [homePlayers, setHomePlayers] = useState<string[]>(() => initPlayers(rawMatch.homePlayers));
+  const [awayPlayers, setAwayPlayers] = useState<string[]>(() => initPlayers(rawMatch.awayPlayers));
+  const [homeScore, setHomeScore] = useState(rawMatch.homeScore != null ? String(rawMatch.homeScore) : '');
+  const [awayScore, setAwayScore] = useState(rawMatch.awayScore != null ? String(rawMatch.awayScore) : '');
+  const [playedDate, setPlayedDate] = useState(
+    rawMatch.playedDate ?? new Date().toISOString().split('T')[0]
+  );
+  const [showWalkover, setShowWalkover] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const homeName = compMatch.side1Usernames[0] ?? 'Home';
+  const awayName = isBye ? 'Bye' : (compMatch.side2Usernames?.[0] ?? 'Away');
+  const roundLabel = ROWLAND_ROUND_LABELS[rawMatch.round] ?? rawMatch.round;
+
+  // Auto-focus first input of the logged-in club's column
+  const homePlayer0Ref = useRef<HTMLInputElement>(null);
+  const awayPlayer0Ref = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (myTeamSide === 'home') {
+      homePlayer0Ref.current?.focus();
+    } else if (myTeamSide === 'away') {
+      awayPlayer0Ref.current?.focus();
+    }
+  }, [myTeamSide]);
+
+  async function handleSave() {
+    setError(null);
+
+    const s1raw = homeScore.trim();
+    const s2raw = awayScore.trim();
+    const s1 = parseInt(s1raw, 10);
+    const s2 = parseInt(s2raw, 10);
+    const hasScore = s1raw !== '' && s2raw !== '' && !isNaN(s1) && !isNaN(s2);
+
+    if (hasScore) {
+      if (s1 < 0 || s2 < 0) { setError('Scores cannot be negative'); return; }
+      if (s1 === s2) { setError('Scores cannot be equal — there must be a winner'); return; }
+      await onSubmit(compMatch.matchId, {
+        homeScore: s1,
+        awayScore: s2,
+        winnerSide: s1 > s2 ? 1 : 2,
+        status: 'Played',
+        homePlayers: homePlayers.filter(Boolean),
+        awayPlayers: awayPlayers.filter(Boolean),
+        playedDate,
+      });
+    } else {
+      await onSubmit(compMatch.matchId, {
+        homePlayers: homePlayers.filter(Boolean),
+        awayPlayers: awayPlayers.filter(Boolean),
+        playedDate,
+      });
+    }
+  }
+
+  async function handleWalkover(winnerSide: 1 | 2) {
+    await onSubmit(compMatch.matchId, {
+      winnerSide,
+      status: 'Walkover',
+      homePlayers: homePlayers.filter(Boolean),
+      awayPlayers: awayPlayers.filter(Boolean),
+      playedDate,
+    });
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[90vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b shrink-0">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">{roundLabel}</h2>
+            <p className="text-sm text-gray-500">{homeName} vs {awayName}</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="overflow-y-auto flex-1">
+          {!showWalkover ? (
+            <div className="p-5 space-y-5">
+              {/* Players */}
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Players</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-xs text-gray-500 mb-1.5 truncate">{homeName}</p>
+                    {homePlayers.map((p, i) => (
+                      <input
+                        key={i}
+                        ref={i === 0 ? homePlayer0Ref : undefined}
+                        type="text"
+                        value={p}
+                        onChange={e => {
+                          const next = [...homePlayers];
+                          next[i] = e.target.value;
+                          setHomePlayers(next);
+                        }}
+                        placeholder={`Player ${i + 1}`}
+                        className="w-full border border-gray-300 rounded px-2 py-1 text-sm mb-1 focus:outline-none focus:border-blue-400"
+                      />
+                    ))}
+                  </div>
+                  {!isBye && (
+                    <div>
+                      <p className="text-xs text-gray-500 mb-1.5 truncate">{awayName}</p>
+                      {awayPlayers.map((p, i) => (
+                        <input
+                          key={i}
+                          ref={i === 0 ? awayPlayer0Ref : undefined}
+                          type="text"
+                          value={p}
+                          onChange={e => {
+                            const next = [...awayPlayers];
+                            next[i] = e.target.value;
+                            setAwayPlayers(next);
+                          }}
+                          placeholder={`Player ${i + 1}`}
+                          className="w-full border border-gray-300 rounded px-2 py-1 text-sm mb-1 focus:outline-none focus:border-blue-400"
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Score + date */}
+              {!isBye && (
+                <div className="space-y-3 border-t border-gray-100 pt-4">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Result</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1 truncate">{homeName}</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={homeScore}
+                        onChange={e => setHomeScore(e.target.value)}
+                        placeholder="Score"
+                        className="w-full border border-gray-300 rounded px-2 py-2 text-base font-mono text-center focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1 truncate">{awayName}</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={awayScore}
+                        onChange={e => setAwayScore(e.target.value)}
+                        placeholder="Score"
+                        className="w-full border border-gray-300 rounded px-2 py-2 text-base font-mono text-center focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">Date played</label>
+                    <input
+                      type="date"
+                      value={playedDate}
+                      onChange={e => setPlayedDate(e.target.value)}
+                      className="border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-blue-400"
+                    />
+                  </div>
+
+                  {error && <p className="text-sm text-red-600">{error}</p>}
+
+                  <div className="flex items-center justify-between pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowWalkover(true)}
+                      className="text-sm text-orange-600 hover:text-orange-700"
+                    >
+                      Record walkover instead
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSave}
+                      disabled={saving}
+                      className="px-4 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      {saving ? 'Saving…' : 'Save'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Bye — just save players */}
+              {isBye && (
+                <div className="border-t border-gray-100 pt-4 flex justify-end">
+                  <button
+                    onClick={handleSave}
+                    disabled={saving}
+                    className="px-4 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {saving ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="p-5 space-y-4">
+              <p className="text-sm text-gray-600">Which team advances by walkover?</p>
+              <div className="space-y-2">
+                <button
+                  onClick={() => handleWalkover(1)}
+                  disabled={saving}
+                  className="w-full text-left px-4 py-3 rounded-lg border border-orange-200 bg-orange-50 hover:bg-orange-100 text-sm font-medium text-orange-800 disabled:opacity-50"
+                >
+                  {homeName} advances
+                </button>
+                {!isBye && (
+                  <button
+                    onClick={() => handleWalkover(2)}
+                    disabled={saving}
+                    className="w-full text-left px-4 py-3 rounded-lg border border-orange-200 bg-orange-50 hover:bg-orange-100 text-sm font-medium text-orange-800 disabled:opacity-50"
+                  >
+                    {awayName} advances
+                  </button>
+                )}
+              </div>
+              <button
+                onClick={() => setShowWalkover(false)}
+                className="text-sm text-gray-500 hover:text-gray-700"
+              >
+                ← Back to score entry
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

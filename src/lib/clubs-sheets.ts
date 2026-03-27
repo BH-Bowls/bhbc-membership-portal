@@ -3,6 +3,7 @@
 // for clubs and their contacts from the Match Day Contacts spreadsheet
 
 import { google } from 'googleapis';
+import bcrypt from 'bcryptjs';
 import {
   Club,
   ClubContact,
@@ -766,4 +767,343 @@ export async function deleteContact(clubName: string, rowNumber: number): Promis
   }
 
   await deleteContactByRowNumber(rowNumber);
+}
+
+// ============================================================================
+// CLUB AUTHENTICATION
+// ============================================================================
+
+export interface ClubLoginRecord {
+  rowNumber: number;
+  clubId: string;
+  clubName: string;
+  passwordHash: string;
+  mustChangePassword: boolean;
+}
+
+export interface ClubAuthResult {
+  success: boolean;
+  club?: { clubId: string; clubName: string; mustChangePassword: boolean };
+  error?: string;
+}
+
+/** Fetch a club's login record by club_id (case-insensitive). */
+export async function getClubLoginRecord(clubId: string): Promise<ClubLoginRecord | null> {
+  const spreadsheetId = getMatchDayContactsSpreadsheetId();
+  const colMap = await getColumnMap(spreadsheetId, 'clubs');
+  const sheets = getSheetsClient();
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: 'clubs!A:ZZ',
+  });
+
+  const rows = response.data.values ?? [];
+  if (rows.length < 2) return null;
+
+  const clubIdCol = colMap['club_id'];
+  const clubNameCol = colMap['club_name'];
+  const passwordCol = colMap['password'];
+  const mustChangeCol = colMap['is_temp_password'];
+  if (clubIdCol === undefined) return null;
+
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if ((row[clubIdCol] ?? '').toString().toLowerCase() === clubId.toLowerCase()) {
+      const mustChangeRaw = mustChangeCol !== undefined ? (row[mustChangeCol] ?? '') : '';
+      return {
+        rowNumber: i + 1,
+        clubId: row[clubIdCol] ?? '',
+        clubName: clubNameCol !== undefined ? (row[clubNameCol] ?? '') : '',
+        passwordHash: passwordCol !== undefined ? (row[passwordCol] ?? '') : '',
+        mustChangePassword: mustChangeRaw.toString().toUpperCase() === 'Y',
+      };
+    }
+  }
+  return null;
+}
+
+/** Authenticate a club login. */
+export async function authenticateClub(clubId: string, password: string): Promise<ClubAuthResult> {
+  try {
+    const record = await getClubLoginRecord(clubId);
+    if (!record) return { success: false, error: 'Invalid username or password' };
+    if (!record.passwordHash) return { success: false, error: 'Account not configured — contact BHBC admin' };
+    // Plain text temp password or bcrypt
+    const valid = record.mustChangePassword && !record.passwordHash.startsWith('$2b$')
+      ? password === record.passwordHash
+      : await bcrypt.compare(password, record.passwordHash);
+    if (!valid) return { success: false, error: 'Invalid username or password' };
+    return { success: true, club: { clubId: record.clubId, clubName: record.clubName, mustChangePassword: record.mustChangePassword } };
+  } catch {
+    return { success: false, error: 'Authentication error' };
+  }
+}
+
+/** Change a club's password. Pass currentPassword for self-service; omit for admin override.
+ *  isTempPassword: when true, sets must_change_password = Y so the club is forced to change on next login.
+ */
+export async function changeClubPassword(
+  clubId: string,
+  newPassword: string,
+  currentPassword?: string,
+  isTempPassword: boolean = false,
+): Promise<{ success: boolean; error?: string }> {
+  const record = await getClubLoginRecord(clubId);
+  if (!record) return { success: false, error: 'Club not found' };
+
+  if (currentPassword) {
+    if (!record.passwordHash) return { success: false, error: 'No password set' };
+    const valid = record.mustChangePassword && !record.passwordHash.startsWith('$2b$')
+      ? currentPassword === record.passwordHash
+      : await bcrypt.compare(currentPassword, record.passwordHash);
+    if (!valid) return { success: false, error: 'Current password is incorrect' };
+    if (currentPassword === newPassword) return { success: false, error: 'New password must be different from current' };
+  }
+
+  // Store plain text for temp passwords (admin-set), bcrypt for permanent
+  const hash = isTempPassword ? newPassword : await bcrypt.hash(newPassword, 10);
+
+  const spreadsheetId = getMatchDayContactsSpreadsheetId();
+  const colMap = await getColumnMap(spreadsheetId, 'clubs');
+  const passwordCol = colMap['password'];
+  if (passwordCol === undefined) return { success: false, error: 'Password column not found in sheet' };
+
+  const sheets = getSheetsClient();
+  const updates: { range: string; values: string[][] }[] = [
+    {
+      range: `clubs!${getColumnLetter(passwordCol)}${record.rowNumber}`,
+      values: [[hash]],
+    },
+  ];
+
+  // Write is_temp_password flag if the column exists
+  const mustChangeCol = colMap['is_temp_password'];
+  if (mustChangeCol !== undefined) {
+    // Self-service change always clears the flag; admin can set it
+    const flagValue = currentPassword ? 'N' : (isTempPassword ? 'Y' : 'N');
+    updates.push({
+      range: `clubs!${getColumnLetter(mustChangeCol)}${record.rowNumber}`,
+      values: [[flagValue]],
+    });
+  }
+
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: { data: updates, valueInputOption: 'RAW' },
+  });
+
+  return { success: true };
+}
+
+/** Return all clubs that have a club_id set (for the impersonation modal). */
+export async function getAllClubsForImpersonation(): Promise<{ clubId: string; clubName: string }[]> {
+  const spreadsheetId = getMatchDayContactsSpreadsheetId();
+  const colMap = await getColumnMap(spreadsheetId, 'clubs');
+  const sheets = getSheetsClient();
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: 'clubs!A:ZZ',
+  });
+
+  const rows = response.data.values ?? [];
+  if (rows.length < 2) return [];
+
+  const clubIdCol = colMap['club_id'];
+  const clubNameCol = colMap['club_name'];
+  if (clubIdCol === undefined) return [];
+
+  return rows.slice(1)
+    .filter((r) => r[clubIdCol]?.toString().trim())
+    .map((r) => ({
+      clubId: r[clubIdCol] ?? '',
+      clubName: clubNameCol !== undefined ? (r[clubNameCol] ?? '') : '',
+    }));
+}
+
+/** Get all contacts with Include = Y, enriched with their club's credentials. */
+export async function getClubContactsToEmail(): Promise<ContactWithCredentials[]> {
+  const spreadsheetId = getMatchDayContactsSpreadsheetId();
+  const sheets = getSheetsClient();
+
+  const [contactsColMap, clubsColMap] = await Promise.all([
+    getColumnMap(spreadsheetId, 'Contacts'),
+    getColumnMap(spreadsheetId, 'clubs'),
+  ]);
+
+  const [contactsResponse, clubsResponse] = await Promise.all([
+    sheets.spreadsheets.values.get({ spreadsheetId, range: 'Contacts!A:ZZ' }),
+    sheets.spreadsheets.values.get({ spreadsheetId, range: 'clubs!A:ZZ' }),
+  ]);
+
+  const getField = (colMap: { [key: string]: number }, row: any[], field: string): string => {
+    const index = colMap[field];
+    return index !== undefined ? (row[index] || '') : '';
+  };
+
+  const credMap = new Map<string, { clubId: string; password: string }>();
+  const clubRows = clubsResponse.data.values || [];
+  for (let i = 1; i < clubRows.length; i++) {
+    const row = clubRows[i];
+    const clubName = getField(clubsColMap, row, 'club_name');
+    if (clubName) {
+      credMap.set(clubName.toLowerCase(), {
+        clubId: getField(clubsColMap, row, 'club_id'),
+        password: getField(clubsColMap, row, 'password'),
+      });
+    }
+  }
+
+  const contactRows = contactsResponse.data.values || [];
+  const includeCol = contactsColMap['include'];
+  const results: ContactWithCredentials[] = [];
+
+  for (let i = 1; i < contactRows.length; i++) {
+    const row = contactRows[i];
+    if (includeCol !== undefined) {
+      const include = (row[includeCol] || '').toString().toUpperCase().trim();
+      if (include !== 'Y') continue;
+    }
+
+    const clubName = getField(contactsColMap, row, 'club_name');
+    const creds = credMap.get(clubName.toLowerCase());
+    const email = getField(contactsColMap, row, 'email');
+    const clubId = creds?.clubId || '';
+    const password = creds?.password || '';
+
+    results.push({
+      contact: {
+        clubName,
+        role: getField(contactsColMap, row, 'role'),
+        firstName: getField(contactsColMap, row, 'first_name'),
+        lastName: getField(contactsColMap, row, 'last_name'),
+        name: getField(contactsColMap, row, 'name'),
+        email,
+        phoneNumber: getField(contactsColMap, row, 'phone_number'),
+        mobileNumber: getField(contactsColMap, row, 'mobile_number'),
+        notes: getField(contactsColMap, row, 'notes'),
+        _rowNumber: i + 1,
+      },
+      clubId,
+      password,
+      canEmail: !!(email && clubId),
+    });
+  }
+
+  return results;
+}
+
+/** Get all distinct roles from the Contacts sheet, sorted alphabetically. */
+export async function getDistinctContactRoles(): Promise<string[]> {
+  const spreadsheetId = getMatchDayContactsSpreadsheetId();
+  const colMap = await getColumnMap(spreadsheetId, 'Contacts');
+  const sheets = getSheetsClient();
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: 'Contacts!A:ZZ',
+  });
+
+  const rows = response.data.values || [];
+  if (rows.length <= 1) return [];
+
+  const roleCol = colMap['role'];
+  if (roleCol === undefined) return [];
+
+  const roles = new Set<string>();
+  for (let i = 1; i < rows.length; i++) {
+    const role = rows[i][roleCol]?.toString().trim();
+    if (role) roles.add(role);
+  }
+
+  return Array.from(roles).sort();
+}
+
+export interface ContactWithCredentials {
+  contact: {
+    clubName: string;
+    role: string;
+    firstName: string;
+    lastName: string;
+    name: string;
+    email: string;
+    phoneNumber: string;
+    mobileNumber: string;
+    notes: string;
+    _rowNumber: number;
+  };
+  clubId: string;
+  password: string;
+  canEmail: boolean;
+}
+
+/** Get contacts matching a given role, enriched with their club's credentials. */
+export async function getContactsWithCredentialsByRole(role: string): Promise<ContactWithCredentials[]> {
+  const spreadsheetId = getMatchDayContactsSpreadsheetId();
+  const sheets = getSheetsClient();
+
+  const [contactsColMap, clubsColMap] = await Promise.all([
+    getColumnMap(spreadsheetId, 'Contacts'),
+    getColumnMap(spreadsheetId, 'clubs'),
+  ]);
+
+  const [contactsResponse, clubsResponse] = await Promise.all([
+    sheets.spreadsheets.values.get({ spreadsheetId, range: 'Contacts!A:ZZ' }),
+    sheets.spreadsheets.values.get({ spreadsheetId, range: 'clubs!A:ZZ' }),
+  ]);
+
+  const getField = (colMap: { [key: string]: number }, row: any[], field: string): string => {
+    const index = colMap[field];
+    return index !== undefined ? (row[index] || '') : '';
+  };
+
+  // Build credentials map: clubName.toLowerCase() -> { clubId, password }
+  const credMap = new Map<string, { clubId: string; password: string }>();
+  const clubRows = clubsResponse.data.values || [];
+  for (let i = 1; i < clubRows.length; i++) {
+    const row = clubRows[i];
+    const clubName = getField(clubsColMap, row, 'club_name');
+    if (clubName) {
+      credMap.set(clubName.toLowerCase(), {
+        clubId: getField(clubsColMap, row, 'club_id'),
+        password: getField(clubsColMap, row, 'password'),
+      });
+    }
+  }
+
+  const contactRows = contactsResponse.data.values || [];
+  const results: ContactWithCredentials[] = [];
+
+  for (let i = 1; i < contactRows.length; i++) {
+    const row = contactRows[i];
+    const rowRole = getField(contactsColMap, row, 'role');
+    if (rowRole.trim() !== role.trim()) continue;
+
+    const clubName = getField(contactsColMap, row, 'club_name');
+    const creds = credMap.get(clubName.toLowerCase());
+    const email = getField(contactsColMap, row, 'email');
+    const clubId = creds?.clubId || '';
+    const password = creds?.password || '';
+
+    results.push({
+      contact: {
+        clubName,
+        role: rowRole,
+        firstName: getField(contactsColMap, row, 'first_name'),
+        lastName: getField(contactsColMap, row, 'last_name'),
+        name: getField(contactsColMap, row, 'name'),
+        email,
+        phoneNumber: getField(contactsColMap, row, 'phone_number'),
+        mobileNumber: getField(contactsColMap, row, 'mobile_number'),
+        notes: getField(contactsColMap, row, 'notes'),
+        _rowNumber: i + 1,
+      },
+      clubId,
+      password,
+      canEmail: !!(email && clubId),
+    });
+  }
+
+  return results;
 }

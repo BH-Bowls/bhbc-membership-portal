@@ -217,6 +217,13 @@ function LoginForm() {
             <li>• Your username with periods (e.g., john.smith)</li>
           </ul>
         </div>
+
+        {/* Help Link */}
+        <div className="text-center mt-4">
+          <a href="/help/login" className="text-xs text-blue-600 hover:text-blue-800">
+            Need help signing in?
+          </a>
+        </div>
       </div>
     </div>
   );

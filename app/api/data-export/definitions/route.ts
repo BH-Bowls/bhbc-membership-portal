@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { listDefinitions, saveDefinition } from '@/lib/data-export';
+import { hasRole } from '@/lib/role-utils';
 
 export async function GET() {
   try {
@@ -18,7 +19,7 @@ export async function GET() {
       );
     }
 
-    if (session.user?.role !== 'Admin') {
+    if (!hasRole(session.user?.role, 'Admin')) {
       return NextResponse.json(
         { error: 'Forbidden - Admin access required' },
         { status: 403 }
@@ -47,7 +48,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (session.user?.role !== 'Admin') {
+    if (!hasRole(session.user?.role, 'Admin')) {
       return NextResponse.json(
         { error: 'Forbidden - Admin access required' },
         { status: 403 }

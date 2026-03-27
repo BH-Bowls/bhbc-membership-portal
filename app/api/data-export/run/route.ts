@@ -6,6 +6,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { executeReport } from '@/lib/data-export';
 import { ReportDefinition } from '@/lib/types/data-export';
+import { hasRole } from '@/lib/role-utils';
 
 export async function POST(request: NextRequest) {
   try {
@@ -18,7 +19,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (session.user?.role !== 'Admin') {
+    if (!hasRole(session.user?.role, 'Admin')) {
       return NextResponse.json(
         { error: 'Forbidden - Admin access required' },
         { status: 403 }

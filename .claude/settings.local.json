@@ -21,7 +21,10 @@
       "Bash(git add:*)",
       "Bash(npx tsc:*)",
       "Bash(python3:*)",
-      "Bash(npx next build:*)"
+      "Bash(npx next build:*)",
+      "Bash(find \"C:\\\\Users\\\\liam\\\\Documents\\\\bhbc-membership-portal\\\\src\\\\lib\" -name \"*clubs*\" -type f 2>/dev/null | head -20)",
+      "Bash(git -C \"C:\\\\Users\\\\liam\\\\Documents\\\\bhbc-membership-portal\" diff --stat HEAD)",
+      "Bash(git -C \"C:\\\\Users\\\\liam\\\\Documents\\\\bhbc-membership-portal\" diff HEAD -- app/api/admin/emails/ src/lib/email/ app/api/rowland/ app/rowland/ 2>&1 | grep \"^diff --git\")"
     ]
   }
 }

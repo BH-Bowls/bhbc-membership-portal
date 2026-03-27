@@ -8,6 +8,7 @@ import { getAllUsers, updateEmailSentStatus, logMemberEmail } from '@/lib/sheets
 import { sendMemberEmail } from '@/lib/email/member-mailer';
 import { getEmailTemplates } from '@/lib/email/template-reader';
 import { getEmailTransporter } from '@/lib/email/mailer';
+import { hasRole } from '@/lib/role-utils';
 
 // ============================================================================
 // Type Definitions
@@ -66,7 +67,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Check authorization: Admin only
-    if (session.user?.role !== 'Admin') {
+    if (!hasRole(session.user?.role, 'Admin')) {
       return NextResponse.json(
         { error: 'Forbidden - Admin access required' },
         { status: 403 }

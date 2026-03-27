@@ -11,6 +11,7 @@ import {
 } from '@/lib/invite-games-sheets';
 import { getAttachmentsByInviteGameId, deleteInviteGameAttachment } from '@/lib/invite-games-attachments-sheets';
 import { deleteFileFromCloudinary } from '@/lib/cloudinary';
+import { hasRole } from '@/lib/role-utils';
 
 /**
  * GET /api/invite-games/[id]
@@ -35,8 +36,7 @@ export async function GET(
       return NextResponse.json({ error: 'Invite game not found' }, { status: 404 });
     }
 
-    const role = session.user.role || 'Member';
-    const isCommittee = role !== 'Member' && role !== '';
+    const isCommittee = hasRole(session.user.role, 'GMC', 'Admin');
 
     return NextResponse.json({ game, isCommittee });
   } catch (error) {
@@ -62,8 +62,7 @@ export async function PUT(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const role = session.user.role || 'Member';
-    const isCommittee = role !== 'Member' && role !== '';
+    const isCommittee = hasRole(session.user.role, 'GMC', 'Admin');
 
     if (!isCommittee) {
       return NextResponse.json(
@@ -123,8 +122,7 @@ export async function DELETE(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const role = session.user.role || 'Member';
-    const isCommittee = role !== 'Member' && role !== '';
+    const isCommittee = hasRole(session.user.role, 'GMC', 'Admin');
 
     if (!isCommittee) {
       return NextResponse.json(

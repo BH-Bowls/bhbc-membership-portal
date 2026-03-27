@@ -356,6 +356,12 @@ export default function CompetitionSetupPage({
   const [qfPlayBy, setQfPlayBy] = useState('');
   const [sfPlayBy, setSfPlayBy] = useState('');
 
+  // Comp start date (when the first round begins; leave blank if fixed-day like Triples)
+  const [compStartDate, setCompStartDate] = useState('');
+
+  // Manual draw count — used when there are no renewals entrants (e.g. centenary)
+  const [manualDrawCount, setManualDrawCount] = useState('');
+
   // Draw entries
   const [drawEntries, setDrawEntries] = useState<DrawEntry[]>([]);
   const [allCompMatches, setAllCompMatches] = useState<CompMatch[]>([]);
@@ -401,6 +407,8 @@ export default function CompetitionSetupPage({
         setR2PlayBy(comp.r2PlayBy || '');
         setQfPlayBy(comp.qfPlayBy || '');
         setSfPlayBy(comp.sfPlayBy || '');
+        setCompStartDate(comp.compStartDate || '');
+        if (comp.drawSideCount) setManualDrawCount(String(comp.drawSideCount));
 
         const pps = playersPerSideFor(comp.compType);
 
@@ -415,7 +423,7 @@ export default function CompetitionSetupPage({
 
         const membersObj = memberData.members as Record<string, CompMemberInfo>;
         const memberList = Object.values(membersObj)
-          .filter((m) => m.memberType === 'PM' || m.memberType === 'PL')
+          .filter((m) => m.memberType === 'Playing Man' || m.memberType === 'Playing Lady')
           .sort((a, b) => {
             const t = (x: CompMemberInfo) => x.memberType === 'PM' ? 1 : 2;
             return t(a) - t(b) || a.fullName.localeCompare(b.fullName);
@@ -632,6 +640,10 @@ export default function CompetitionSetupPage({
           r2PlayBy: r2PlayBy || null,
           qfPlayBy: qfPlayBy || null,
           sfPlayBy: sfPlayBy || null,
+          compStartDate: compStartDate || null,
+          ...(entrants.length === 0 && manualDrawCount
+            ? { drawSideCount: parseInt(manualDrawCount, 10) || null }
+            : {}),
         }),
       });
       if (!res.ok) {
@@ -646,11 +658,50 @@ export default function CompetitionSetupPage({
     }
   }
 
-  // ── Initialise empty match slots from entrant count ────────────────────────
-  function initialiseSlots() {
+  // ── Rebuild slots preserving existing player assignments ───────────────────
+  // Used when entrant count changes after the bracket was already created.
+  // Keeps existing assignments by position; adds empty slots for new positions.
+  function rebuildSlots() {
     if (!competition) return;
     const pps = playersPerSideFor(competition.compType);
-    const sideCount = Math.ceil(entrants.length / pps);
+    const entrySideCount = Math.ceil(entrants.length / pps);
+    const manualN = parseInt(manualDrawCount, 10);
+    const sideCount = entrySideCount > 0 ? entrySideCount : (manualN >= 2 ? manualN : entrySideCount);
+    const { firstRound, totalSlots, prelimRealMatches } = computeBracketInfo(sideCount);
+    const defaultDate = firstRound === 'Prelim' ? prelimPlayBy : r1PlayBy;
+
+    // Use saved matches (allCompMatches) as the source of existing player data
+    const savedFirstRound = ([...new Set(allCompMatches.map((m) => m.round))] as CompRound[])
+      .sort((a, b) => ROUND_ORDER.indexOf(a) - ROUND_ORDER.indexOf(b))[0];
+    const savedByPosition = new Map(
+      allCompMatches
+        .filter((m) => m.round === savedFirstRound)
+        .map((m) => [m.position, m])
+    );
+
+    setHasUnsaved(true);
+    setDrawEntries(
+      Array.from({ length: totalSlots }, (_, i) => {
+        const pos = i + 1;
+        const saved = savedByPosition.get(pos);
+        return {
+          matchId: buildMatchId(compId, firstRound, pos),
+          round: firstRound,
+          position: pos,
+          side1: saved ? padToLength(saved.side1Usernames, pps) : emptySide(pps),
+          side2: saved?.side2Usernames ? padToLength(saved.side2Usernames, pps) : emptySide(pps),
+          playByDate: saved?.playByDate || defaultDate,
+          isBye: firstRound === 'Prelim' ? i >= prelimRealMatches : undefined,
+        };
+      })
+    );
+  }
+
+  // ── Initialise empty match slots from entrant count ────────────────────────
+  function initialiseSlots(overrideSideCount?: number) {
+    if (!competition) return;
+    const pps = playersPerSideFor(competition.compType);
+    const sideCount = overrideSideCount ?? Math.ceil(entrants.length / pps);
     const { firstRound, totalSlots, prelimRealMatches } = computeBracketInfo(sideCount);
 
     // Use the date that matches the first round
@@ -754,7 +805,7 @@ export default function CompetitionSetupPage({
       const res = await fetch(`/api/competitions/${compId}/setup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ matches }),
+        body: JSON.stringify({ matches, drawSideCount: sideCount }),
       });
 
       if (!res.ok) {
@@ -842,10 +893,15 @@ export default function CompetitionSetupPage({
 
   // Bracket info for the dates panel
   const sideCount = Math.ceil(entrants.length / pps);
-  const bracketInfo = entrants.length > 0 ? computeBracketInfo(sideCount) : null;
-  const requiredRounds: CompRound[] = entrants.length > 0
-    ? computeRequiredRounds(sideCount)
-    : ['R1', 'QF', 'SF', 'F']; // sensible default when no entrants loaded yet
+  const manualN = parseInt(manualDrawCount, 10);
+  const effectiveSideCount = entrants.length > 0 ? sideCount : (manualN >= 2 ? manualN : 0);
+  const bracketInfo = effectiveSideCount >= 2 ? computeBracketInfo(effectiveSideCount) : null;
+  // Derive required rounds: prefer computed bracket, else use rounds already present in saved matches
+  const requiredRounds: CompRound[] = effectiveSideCount >= 2
+    ? computeRequiredRounds(effectiveSideCount)
+    : allCompMatches.length > 0
+      ? ROUND_ORDER.filter((r) => allCompMatches.some((m) => m.round === r))
+      : ['R1', 'QF', 'SF', 'F'];
   const dateOpts = scheduledDateOptions();
 
   return (
@@ -890,8 +946,10 @@ export default function CompetitionSetupPage({
             {bracketInfo && (
               <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm">
                 <p className="font-semibold text-blue-900 mb-2">
-                  {entrants.length} entrant{entrants.length !== 1 ? 's' : ''}
-                  {pps > 1 && ` · ${sideCount} team${sideCount !== 1 ? 's' : ''}`}
+                  {entrants.length > 0
+                    ? <>{entrants.length} entrant{entrants.length !== 1 ? 's' : ''}{pps > 1 && ` · ${sideCount} team${sideCount !== 1 ? 's' : ''}`}</>
+                    : <>{effectiveSideCount} player{effectiveSideCount !== 1 ? 's' : ''} in draw</>
+                  }
                 </p>
                 <ul className="text-blue-700 space-y-0.5 text-xs">
                   {bracketInfo.needsPrelim ? (
@@ -908,11 +966,30 @@ export default function CompetitionSetupPage({
                       </li>
                     </>
                   ) : (
-                    <li>No Preliminary round needed — {sideCount} teams fit the draw sheet cleanly.</li>
+                    <li>No Preliminary round needed — {effectiveSideCount} players fit the draw sheet cleanly.</li>
                   )}
                 </ul>
               </div>
             )}
+
+            {/* Entrant count mismatch — bracket needs rebuilding */}
+            {bracketInfo && allCompMatches.length > 0 && competition?.drawSideCount != null &&
+              effectiveSideCount > 0 && effectiveSideCount !== competition.drawSideCount && (
+                <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 text-sm">
+                  <p className="font-semibold text-amber-800 mb-1">Entrant count has changed</p>
+                  <p className="text-amber-700">
+                    The bracket was drawn for <strong>{competition.drawSideCount}</strong> player{competition.drawSideCount !== 1 ? 's' : ''} but there{' '}
+                    {effectiveSideCount === 1 ? 'is' : 'are'} now <strong>{effectiveSideCount}</strong> player{effectiveSideCount !== 1 ? 's' : ''}.
+                    {' '}Rebuilding will adjust the preliminary round — existing player assignments will be preserved where possible.
+                  </p>
+                  <button
+                    onClick={() => { rebuildSlots(); setStep('draw'); }}
+                    className="mt-3 px-4 py-1.5 bg-amber-600 text-white rounded-md hover:bg-amber-700 text-sm font-medium"
+                  >
+                    Rebuild Bracket
+                  </button>
+                </div>
+              )}
 
             <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
               <h2 className="font-semibold text-gray-900 mb-2">Play-by dates &amp; finals</h2>
@@ -958,6 +1035,55 @@ export default function CompetitionSetupPage({
                   </div>
                 ))}
               </div>
+
+              <div className="border-t border-gray-100 pt-4">
+                <div className="sm:w-1/2">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Comp start date
+                    <span className="ml-1 text-xs text-gray-400 font-normal">
+                      — challengers must offer 3 dates within 7 days. Leave blank if first round is a fixed day (e.g. Triples).
+                    </span>
+                  </label>
+                  <input
+                    type="date"
+                    value={compStartDate}
+                    onChange={(e) => setCompStartDate(e.target.value)}
+                    className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
+                  />
+                </div>
+              </div>
+
+              {/* Number of players — open-draw comps only (no renewals entrant list) */}
+              {entrants.length === 0 && (() => {
+                const n = parseInt(manualDrawCount, 10);
+                const info = n >= 2 ? computeBracketInfo(n) : null;
+                return (
+                  <div className="border-t border-gray-100 pt-4">
+                    <div className="sm:w-1/2">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Number of players in draw
+                        <span className="ml-1 text-xs text-gray-400 font-normal">— required to create the bracket</span>
+                      </label>
+                      <input
+                        type="number"
+                        min={2}
+                        max={128}
+                        value={manualDrawCount}
+                        onChange={(e) => setManualDrawCount(e.target.value)}
+                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
+                        placeholder="e.g. 16"
+                      />
+                      {info && (
+                        <p className="mt-1.5 text-xs text-gray-500">
+                          {info.needsPrelim
+                            ? `Preliminary round: ${info.prelimRealMatches} match${info.prelimRealMatches !== 1 ? 'es' : ''}, ${info.totalSlots - info.prelimRealMatches} bye${info.totalSlots - info.prelimRealMatches !== 1 ? 's' : ''}`
+                            : `No preliminary round — all ${n} players go straight to Round 1`}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
 
               <div className="flex justify-end pt-2">
                 <button
@@ -1022,17 +1148,20 @@ export default function CompetitionSetupPage({
             <div className="bg-white rounded-xl border border-gray-200 p-4">
               <div className="flex items-center justify-between mb-2">
                 <h2 className="font-semibold text-gray-900 text-sm">
-                  Entrants — {entrants.length - unassignedEntrants.length}/{entrants.length} assigned across all rounds
+                  {entrants.length > 0
+                    ? `Entrants — ${entrants.length - unassignedEntrants.length}/${entrants.length} assigned across all rounds`
+                    : 'Draw — open draw (all members eligible)'}
                 </h2>
                 {isEditingFirstRound && drawEntries.length === 0 && entrants.length > 0 && (
                   <button
-                    onClick={initialiseSlots}
+                    onClick={() => initialiseSlots()}
                     className="text-xs text-blue-600 hover:text-blue-800 font-medium"
                   >
                     Create match slots from entrant count
                   </button>
                 )}
               </div>
+
               <div className="flex flex-wrap gap-1.5">
                 {entrants.map((e) => {
                   const assigned = allRoundsAssigned.has(e.username.toLowerCase());
@@ -1082,12 +1211,25 @@ export default function CompetitionSetupPage({
                 {isEditingFirstRound ? (
                   <>
                     <p className="text-gray-400 text-sm mb-4">No match slots yet.</p>
-                    <button
-                      onClick={initialiseSlots}
-                      className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm font-medium"
-                    >
-                      Create slots from entrant count ({entrants.length} entrants)
-                    </button>
+                    {entrants.length > 0 ? (
+                      <button
+                        onClick={() => initialiseSlots()}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm font-medium"
+                      >
+                        Create slots from entrant count ({entrants.length} entrants)
+                      </button>
+                    ) : parseInt(manualDrawCount, 10) >= 2 ? (
+                      <button
+                        onClick={() => initialiseSlots(parseInt(manualDrawCount, 10))}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm font-medium"
+                      >
+                        Create slots for {parseInt(manualDrawCount, 10)} players
+                      </button>
+                    ) : (
+                      <p className="text-gray-400 text-sm">
+                        Set the number of players on the dates page first.
+                      </p>
+                    )}
                   </>
                 ) : (
                   <p className="text-gray-400 text-sm">
@@ -1169,35 +1311,34 @@ export default function CompetitionSetupPage({
                           </div>
                         </div>
 
-                        {/* VS divider */}
-                        <div className="flex items-center pt-5 text-gray-300 font-bold text-sm">vs</div>
+                        {/* VS divider + Side 2 — hidden for bye slots */}
+                        {!isByeEntry && (
+                          <>
+                            <div className="flex items-center pt-5 text-gray-300 font-bold text-sm">vs</div>
 
-                        {/* Side 2 — leave all empty for Bye */}
-                        <div className="flex-1 min-w-[180px]">
-                          <p className="text-xs text-gray-400 mb-1">
-                            Side 2
-                            <span className="ml-1 text-gray-300 font-normal normal-case">(leave blank for Bye)</span>
-                          </p>
-                          <div className="space-y-1.5">
-                            {entry.side2.map((username, slotIdx) => (
-                              <div key={slotIdx}>
-                                {pps > 1 && (
-                                  <p className="text-xs text-gray-400 mb-0.5">{slotLabels[slotIdx]}</p>
-                                )}
-                                <PlayerSelect
-                                  value={username}
-                                  onChange={(v) => setPlayer(idx, 'side2', slotIdx, v)}
-                                  entrants={entrants}
-                                  subs={subs}
-                                  allMembers={allMembers}
-                                  assignedCounts={assignedCounts}
-                                  selfUsername={username}
-                                  placeholder="— Bye —"
-                                />
+                            <div className="flex-1 min-w-[180px]">
+                              <p className="text-xs text-gray-400 mb-1">Side 2</p>
+                              <div className="space-y-1.5">
+                                {entry.side2.map((username, slotIdx) => (
+                                  <div key={slotIdx}>
+                                    {pps > 1 && (
+                                      <p className="text-xs text-gray-400 mb-0.5">{slotLabels[slotIdx]}</p>
+                                    )}
+                                    <PlayerSelect
+                                      value={username}
+                                      onChange={(v) => setPlayer(idx, 'side2', slotIdx, v)}
+                                      entrants={entrants}
+                                      subs={subs}
+                                      allMembers={allMembers}
+                                      assignedCounts={assignedCounts}
+                                      selfUsername={username}
+                                    />
+                                  </div>
+                                ))}
                               </div>
-                            ))}
-                          </div>
-                        </div>
+                            </div>
+                          </>
+                        )}
                       </div>
                     </div>
                   );

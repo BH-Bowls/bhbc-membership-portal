@@ -6,6 +6,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { removeSweepingAssignment, getSweepingRotaEntry } from '@/lib/sweeping-sheets';
 import { parseDate } from '@/lib/sweeping-patterns';
+import { isMember } from '@/lib/role-utils';
 
 interface RouteContext {
   params: Promise<{ date: string }>;
@@ -51,7 +52,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     }
 
     // Non-members can cancel any assignment
-    const isNonMember = session.user.role !== 'Member';
+    const isNonMember = !isMember(session.user.role);
 
     const result = await removeSweepingAssignment(
       decodedDate,

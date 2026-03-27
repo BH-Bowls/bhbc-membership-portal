@@ -521,21 +521,44 @@ export default function ProfilePage() {
                 {isAdminManaging && (
                   <div>
                     <label className="block text-sm font-medium text-gray-700">Role</label>
-                    {isEditing ? (
-                      <select
-                        value={editedProfile.role || ''}
-                        onChange={(e) => handleChange('role', e.target.value)}
-                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border text-gray-900"
-                      >
-                        <option value="Member">Member</option>
-                        <option value="Captain">Captain</option>
-                        <option value="Treasurer">Treasurer</option>
-                        <option value="GMC">GMC</option>
-                        <option value="Admin">Admin</option>
-                      </select>
-                    ) : (
-                      <p className="mt-1 text-sm text-gray-900">{profile.role}</p>
-                    )}
+                    {(() => {
+                      const currentRole = isEditing ? (editedProfile.role ?? '') : (profile.role ?? '');
+                      const isKiosk = currentRole === 'Kiosk';
+                      const activeRoles = isKiosk ? [] : currentRole.split(',').map(r => r.trim()).filter(Boolean);
+                      const availableRoles = ['Captain', 'Treasurer', 'GMC', 'RowlandOrganiser', 'RowlandPlayer', 'Admin'];
+
+                      if (isKiosk) {
+                        return <p className="mt-1 text-sm text-gray-500 italic">Kiosk (managed in sheet)</p>;
+                      }
+
+                      const toggleRole = (role: string, checked: boolean) => {
+                        const updated = checked
+                          ? [...activeRoles, role]
+                          : activeRoles.filter(r => r !== role);
+                        handleChange('role', updated.join(','));
+                      };
+
+                      return isEditing ? (
+                        <div className="mt-2 space-y-2">
+                          {availableRoles.map(r => (
+                            <label key={r} className="flex items-center gap-2 text-sm text-gray-700">
+                              <input
+                                type="checkbox"
+                                checked={activeRoles.includes(r)}
+                                onChange={(e) => toggleRole(r, e.target.checked)}
+                                className="h-4 w-4 text-blue-500 border-gray-300 rounded"
+                              />
+                              {r}
+                            </label>
+                          ))}
+                          <p className="text-xs text-gray-400 mt-1">No roles selected = regular member</p>
+                        </div>
+                      ) : (
+                        <p className="mt-1 text-sm text-gray-900">
+                          {activeRoles.length > 0 ? activeRoles.join(', ') : 'Member'}
+                        </p>
+                      );
+                    })()}
                   </div>
                 )}
 

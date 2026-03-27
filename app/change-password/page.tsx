@@ -9,12 +9,15 @@ import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
 
 export default function ChangePasswordPage() {
-  const { data: session, status } = useSession();
+  const { data: session, status, update } = useSession();
   const router = useRouter();
 
   // Check if admin is managing another user
   const isAdminManaging = session?.user?.isImpersonating &&
                          session?.user?.originalAdmin?.role === 'Admin';
+
+  // True when the user was forced here because their password is temporary
+  const isForcedChange = !isAdminManaging && session?.user?.mustChangePassword === true;
 
   // Form state
   const [currentPassword, setCurrentPassword] = useState('');
@@ -28,6 +31,9 @@ export default function ChangePasswordPage() {
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  // Admin option to mark the new password as temporary (force change on next login)
+  const [forceChangeOnNextLogin, setForceChangeOnNextLogin] = useState(true);
 
   // Track if any fields have been filled (for unsaved changes warning)
   const hasUnsavedChanges = !success && (
@@ -45,12 +51,6 @@ export default function ChangePasswordPage() {
     // Validate passwords match
     if (newPassword !== confirmPassword) {
       setError('New passwords do not match');
-      return;
-    }
-
-    // Validate password length (skip for admin managing another user)
-    if (!isAdminManaging && newPassword.length < 8) {
-      setError('New password must be at least 8 characters');
       return;
     }
 
@@ -72,6 +72,7 @@ export default function ChangePasswordPage() {
         body: JSON.stringify({
           currentPassword: isAdminManaging ? undefined : currentPassword,
           newPassword,
+          forceChangeOnNextLogin: isAdminManaging ? forceChangeOnNextLogin : undefined,
         }),
       });
 
@@ -83,6 +84,17 @@ export default function ChangePasswordPage() {
         setCurrentPassword('');
         setNewPassword('');
         setConfirmPassword('');
+
+        // Clear mustChangePassword flag from the JWT so middleware no longer intercepts
+        await update({
+          action: 'REFRESH_USER_DATA',
+          userData: {
+            role: session?.user?.role,
+            name: session?.user?.name,
+            email: session?.user?.email,
+            mustChangePassword: false,
+          },
+        });
 
         // Redirect to home after 2 seconds
         setTimeout(() => {
@@ -100,7 +112,7 @@ export default function ChangePasswordPage() {
     }
   };
 
-  // Handle cancel - navigate back to home
+  // Handle cancel - navigate back to home (not available during forced change)
   const handleCancel = () => {
     router.push('/');
   };
@@ -137,7 +149,7 @@ export default function ChangePasswordPage() {
             disabled: success,
             variant: 'primary' as const,
           },
-          secondary: {
+          secondary: isForcedChange ? undefined : {
             label: 'Cancel',
             onClick: handleCancel,
             disabled: isSubmitting,
@@ -160,6 +172,15 @@ export default function ChangePasswordPage() {
                   : 'Update your password to keep your account secure'}
               </p>
             </div>
+
+            {/* Forced change notice */}
+            {isForcedChange && (
+              <div className="mb-6 p-4 bg-amber-50 border border-amber-300 rounded-lg">
+                <p className="text-sm font-medium text-amber-800">
+                  You have been assigned a temporary password. Please set a permanent password before continuing.
+                </p>
+              </div>
+            )}
 
             {/* Change Password Form */}
             <div className="bg-white shadow rounded-lg p-6">
@@ -235,9 +256,6 @@ export default function ChangePasswordPage() {
                       )}
                     </button>
                   </div>
-                  {!isAdminManaging && (
-                    <p className="mt-1 text-xs text-gray-500">Must be at least 8 characters</p>
-                  )}
                 </div>
 
                 {/* Confirm New Password */}
@@ -275,6 +293,20 @@ export default function ChangePasswordPage() {
                     </button>
                   </div>
                 </div>
+
+                {/* Force change on next login — admin only */}
+                {isAdminManaging && (
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={forceChangeOnNextLogin}
+                      onChange={(e) => setForceChangeOnNextLogin(e.target.checked)}
+                      disabled={isSubmitting || success}
+                      className="h-4 w-4 rounded border-gray-300 accent-blue-600"
+                    />
+                    <span className="text-sm text-gray-700">User must change password on next login</span>
+                  </label>
+                )}
 
                 {/* Error Message */}
                 {error && (
@@ -317,7 +349,6 @@ export default function ChangePasswordPage() {
               <div className="mt-4 text-sm text-gray-600">
                 <p>Password requirements:</p>
                 <ul className="list-disc list-inside mt-2 space-y-1">
-                  <li>At least 8 characters long</li>
                   <li>Must be different from your current password</li>
                 </ul>
               </div>

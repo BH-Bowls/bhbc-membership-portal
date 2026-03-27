@@ -80,14 +80,20 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
     stopImpersonation
   } = useImpersonation();
 
-  const isAdmin = userRole === 'Admin' || userRole === 'superadmin';
-  const isTreasurer = userRole === 'T' || userRole === 'Treasurer';
-  const isCaptain = userRole === 'Captain';
+  // Parse comma-separated role string into individual roles
+  const roles = userRole ? userRole.split(',').map(r => r.trim()).filter(Boolean) : [];
+  const isAdmin = roles.includes('Admin') || userRole === 'superadmin';
+  const isTreasurer = roles.includes('Treasurer') || userRole === 'T';
+  const isCaptain = roles.includes('Captain');
   const isKiosk = userRole === 'Kiosk';
-  const isRowland = userRole === 'Rowland';
+  const isClub = userRole === 'Club'; // external club login (always a single value)
+  const isRowlandOrganiser = roles.includes('RowlandOrganiser'); // BHBC Rowland competition organiser
+  const isRowlandPlayer = roles.includes('RowlandPlayer'); // BHBC member who plays in Rowland Cup
+  const isGMC = roles.includes('GMC');
   const canAccessBanking = isAdmin || isTreasurer;
   const canAccessCaptainTools = isAdmin || isCaptain;
-  const isCommittee = userRole && userRole !== 'Member' && userRole !== '' && !isKiosk && !isRowland;
+  // Committee = has at least one committee role (Rowland roles are specialist only, not general committee)
+  const isCommittee = !isKiosk && !isClub && roles.some(r => ['Captain', 'Treasurer', 'GMC', 'Admin'].includes(r));
 
   // Build admin menu items based on role
   const getAdminMenuItems = (): SubMenuItem[] => {
@@ -117,12 +123,22 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
       items.push({ name: 'Fixtures Management', href: '/fixtures/manage' });
     }
 
-    // All committee members (Role != "Member") get Member Suggestions, Invite Games, and Competitions admin
-    if (isCommittee) {
+    // GMC and Admin get Member Suggestions and Invite Games and Club-related admin
+    if (isGMC || isAdmin) {
       items.push({ name: 'Member Suggestions', href: '/member-suggestions' });
       items.push({ name: 'Invite Games', href: '/invite-games' });
+    }
+
+    // Captains and Admins get Competitions Admin and Handicaps
+    if (isCaptain || isAdmin) {
       items.push({ name: 'Competitions Admin', href: '/competitions/admin' });
       items.push({ name: 'Handicaps', href: '/competitions/handicaps' });
+    }
+
+    // Admin and RowlandOrganiser get Rowland Admin
+    if (isAdmin || isRowlandOrganiser) {
+      items.push({ name: 'Rowland Admin', href: '/rowland/admin' });
+      items.push({ name: 'Rowland Help', href: '/help/rowland' });
     }
 
     return items;
@@ -132,8 +148,8 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
 
   // Check if regular users have buddies to manage (not for kiosk)
   useEffect(() => {
-    // Only check for non-admin, non-kiosk users
-    if (!isAdmin && !isKiosk && userName) {
+    // Only check for non-admin, non-kiosk, non-club users
+    if (!isAdmin && !isKiosk && !isClub && userName) {
       fetch('/api/admin/impersonate/users')
         .then(res => res.json())
         .then(data => {
@@ -151,7 +167,7 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
   // - Admins (can switch to anyone)
   // - Regular users who have buddies (people who set them as buddy)
   // - Never for kiosk users
-  const canShowImpersonation = !isKiosk && !isRowland && (isAdmin || hasBuddies);
+  const canShowImpersonation = !isKiosk && !isClub && (isAdmin || isRowlandOrganiser || hasBuddies);
 
   // Kiosk navigation items - simplified for clubhouse tablet
   const kioskNavigationItems: NavItem[] = [
@@ -201,24 +217,6 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
         </svg>
       ),
     },
-    {
-      name: 'Profile',
-      href: '/profile',
-      icon: (
-        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-        </svg>
-      ),
-    },
-    {
-      name: 'Renewals',
-      href: '/renewals',
-      icon: (
-        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-        </svg>
-      ),
-    },
     // Suggestions - TEMPORARILY DISABLED - Will be re-enabled after committee approval
     // {
     //   name: 'Suggestions',
@@ -229,18 +227,6 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
     //     </svg>
     //   ),
     // },
-    // Admin submenu - shows role-based admin functions (only appears if user has items to access)
-
-    ...(adminMenuItems.length > 0 ? [{
-      name: 'Admin',
-      icon: (
-        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-        </svg>
-      ),
-      subItems: adminMenuItems,
-    }] : []),
 //    {
 //      name: 'Competitions',
 //      href: '/competitions',
@@ -250,15 +236,6 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
 //        </svg>
 //      ),
 //    },
-    {
-      name: 'Fixtures',
-      href: '/fixtures',
-      icon: (
-        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-        </svg>
-      ),
-    },
     {
       name: 'Friendlies',
       href: '/friendlies',
@@ -287,10 +264,40 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
       subItems: [
         { name: 'Members', href: '/members' },
         { name: 'Clubs', href: '/clubs' },
+        { name: 'Fixtures', href: '/fixtures' },
         { name: 'Tea Rota', href: '/tea-rota' },
         { name: 'Cleaning Rota', href: '/cleaning-rota' },
         { name: 'Sweeping Rota', href: '/sweeping-rota' },
       ],
+    },
+    ...(isRowlandPlayer ? [{
+      name: 'Rowland Cup',
+      href: '/rowland',
+      icon: (
+        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+        </svg>
+      ),
+    }] : []),
+    // Admin submenu - shows role-based admin functions (only appears if user has items to access)
+    ...(adminMenuItems.length > 0 ? [{
+      name: 'Admin',
+      icon: (
+        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+      ),
+      subItems: adminMenuItems,
+    }] : []),
+    {
+      name: 'Help',
+      href: '/help',
+      icon: (
+        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      ),
     },
 //    {
 //      name: 'Social Events',
@@ -303,8 +310,8 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
 //    },
   ];
 
-  // Rowland navigation items — Clubs only
-  const rowlandNavigationItems: NavItem[] = [
+  // Club navigation items — Clubs and Rowland Cup only
+  const clubNavigationItems: NavItem[] = [
     {
       name: 'Clubs',
       href: '/clubs',
@@ -314,10 +321,28 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
         </svg>
       ),
     },
+    {
+      name: 'Rowland Cup',
+      href: '/rowland',
+      icon: (
+        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+        </svg>
+      ),
+    },
+    {
+      name: 'Help',
+      href: '/help/club',
+      icon: (
+        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      ),
+    },
   ];
 
   // Use role-appropriate navigation items.
-  const navigationItems = isRowland ? rowlandNavigationItems : isKiosk ? kioskNavigationItems : regularNavigationItems;
+  const navigationItems = isClub ? clubNavigationItems : isKiosk ? kioskNavigationItems : regularNavigationItems;
 
   const isActive = (href: string) => {
     if (href === '/') {
@@ -336,7 +361,7 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
   };
 
   const handleSignOut = () => {
-    signOut({ callbackUrl: '/login' });
+    signOut({ callbackUrl: userRole === 'Club' ? '/clublogin' : '/login' });
   };
 
   // Get user initials from name (e.g., "Liam Dasey" -> "LD")
@@ -445,12 +470,12 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
   };
 
   // Wrapper for impersonation that clears drafts and navigates to home after switching
-  const handleImpersonateUser = async (userName: string) => {
+  const handleImpersonateUser = async (id: string, type: 'user' | 'club' = 'user') => {
     // Clear drafts again just before impersonation (belt and suspenders approach)
     clearAllDrafts();
-    await startImpersonation(userName);
-    // Navigate to home to force clean state after switching users
-    router.push('/');
+    await startImpersonation(id, type);
+    // Navigate to home (or /clubs for club impersonation) to force clean state
+    router.push(type === 'club' ? '/clubs' : '/');
   };
 
   // Handle exit switch with unsaved changes warning
@@ -655,12 +680,21 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
               {profileMenuOpen && (
                 <div className="absolute right-0 mt-2 w-56 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-50">
                   <div className="py-1">
-                    {/* Kiosk / Rowland mode header - show minimal menu */}
-                    {(isKiosk || isRowland) && !isImpersonating ? (
+                    {/* Kiosk / Club mode header - show minimal menu */}
+                    {(isKiosk || isClub) && !isImpersonating ? (
                       <>
                         <div className="px-4 py-2 text-sm font-medium text-blue-700 border-b border-gray-200 bg-blue-50">
-                          {isRowland ? 'Rowland Cup' : 'Kiosk Mode'}
+                          {isClub ? (userName || 'Club Login') : 'Kiosk Mode'}
                         </div>
+                        {isClub && (
+                          <a
+                            href="/change-password"
+                            className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                            onClick={() => setProfileMenuOpen(false)}
+                          >
+                            Change Password
+                          </a>
+                        )}
                         <button
                           onClick={handleLogout}
                           className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
@@ -691,6 +725,28 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
                             Logged in as: {originalAdmin.name}
                           </div>
                         )}
+
+                        {/* Profile & Renewals */}
+                        <Link
+                          href="/profile"
+                          onClick={(e) => {
+                            handleNavigation(e, '/profile');
+                            setProfileMenuOpen(false);
+                          }}
+                          className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                        >
+                          My Profile
+                        </Link>
+                        <Link
+                          href="/renewals"
+                          onClick={(e) => {
+                            handleNavigation(e, '/renewals');
+                            setProfileMenuOpen(false);
+                          }}
+                          className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 border-b border-gray-200"
+                        >
+                          Renewals
+                        </Link>
 
                         {/* Impersonation controls */}
                         {(canShowImpersonation || isImpersonating) && (
@@ -883,15 +939,24 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
               ))}
             </div>
             <div className="pt-4 pb-3 border-t border-gray-200">
-              {(isKiosk || isRowland) && !isImpersonating ? (
-                /* Kiosk / Rowland mode mobile menu */
+              {(isKiosk || isClub) && !isImpersonating ? (
+                /* Kiosk / Club mode mobile menu */
                 <>
                   <div className="px-4 mb-3">
                     <div className="text-sm font-medium text-blue-700 bg-blue-50 px-3 py-2 rounded-md">
-                      {isRowland ? 'Rowland Cup' : 'Kiosk Mode'}
+                      {isClub ? (userName || 'Club Login') : 'Kiosk Mode'}
                     </div>
                   </div>
                   <div className="px-2 space-y-1">
+                    {isClub && (
+                      <a
+                        href="/change-password"
+                        className="block px-3 py-2 text-base font-medium text-gray-700 hover:bg-gray-100 rounded-md"
+                        onClick={() => setMobileMenuOpen(false)}
+                      >
+                        Change Password
+                      </a>
+                    )}
                     <button
                       onClick={handleLogout}
                       className="block w-full text-left px-3 py-2 text-base font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-md"
@@ -927,6 +992,28 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
                     </div>
                   )}
                   <div className="px-2 space-y-1">
+                    {/* Profile & Renewals */}
+                    <Link
+                      href="/profile"
+                      onClick={(e) => {
+                        handleNavigation(e, '/profile');
+                        setMobileMenuOpen(false);
+                      }}
+                      className="block px-3 py-2 text-base font-medium text-gray-700 hover:bg-gray-100 rounded-md"
+                    >
+                      My Profile
+                    </Link>
+                    <Link
+                      href="/renewals"
+                      onClick={(e) => {
+                        handleNavigation(e, '/renewals');
+                        setMobileMenuOpen(false);
+                      }}
+                      className="block px-3 py-2 text-base font-medium text-gray-700 hover:bg-gray-100 rounded-md"
+                    >
+                      Renewals
+                    </Link>
+
                     {/* Impersonation controls */}
                     {(canShowImpersonation || isImpersonating) && (
                       <>
@@ -993,6 +1080,7 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
         isOpen={impersonationModalOpen}
         onClose={() => setImpersonationModalOpen(false)}
         onImpersonate={handleImpersonateUser}
+        showClubOption={isAdmin || isRowlandOrganiser}
       />
 
       {/* Confirmation Dialog */}

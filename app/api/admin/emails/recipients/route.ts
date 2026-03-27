@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getAllUsers } from '@/lib/sheets';
+import { hasRole } from '@/lib/role-utils';
 
 /**
  * GET /api/admin/emails/recipients
@@ -26,7 +27,7 @@ export async function GET() {
     }
 
     // Verify user is admin
-    if (session.user?.role !== 'Admin') {
+    if (!hasRole(session.user?.role, 'Admin')) {
       return NextResponse.json(
         { error: 'Forbidden - Admin access required' },
         { status: 403 }

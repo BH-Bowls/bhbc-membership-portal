@@ -109,7 +109,6 @@ select:disabled {
   /* Page settings */
   @page {
     margin: 1cm;
-    size: landscape;
   }
 
   /* Prevent page breaks in table rows */

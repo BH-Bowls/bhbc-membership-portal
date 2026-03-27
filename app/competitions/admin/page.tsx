@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
+import { ExportSheetDialog } from '@/components/competitions/ExportSheetDialog';
 import type { Competition, CompStatus, CompType } from '@/types/competitions';
 
 const STATUS_STYLES: Record<CompStatus, string> = {
@@ -29,8 +30,12 @@ export default function CompetitionsAdminPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const sessionLoading = !session && loading;
   const role = session?.user?.role ?? '';
   const isCommittee = role !== 'Member' && role !== '';
+  const isAdmin = role === 'Admin';
+
+  const [exportComp, setExportComp] = useState<Competition | null>(null);
 
   useEffect(() => {
     if (!isCommittee && !loading) {
@@ -56,6 +61,7 @@ export default function CompetitionsAdminPage() {
   };
 
   return (
+    <>
     <div className="min-h-screen bg-gray-50">
       <Navbar
         userName={session?.user?.name ?? undefined}
@@ -114,6 +120,14 @@ export default function CompetitionsAdminPage() {
                           >
                             View
                           </button>
+                          {isAdmin && (
+                            <button
+                              onClick={() => setExportComp(comp)}
+                              className="px-3 py-1.5 text-xs border border-green-300 text-green-700 rounded-md hover:bg-green-50 font-medium"
+                            >
+                              Export Sheet
+                            </button>
+                          )}
                           <button
                             onClick={() => router.push(`/competitions/${comp.compId}/setup`)}
                             className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium"
@@ -131,5 +145,13 @@ export default function CompetitionsAdminPage() {
         )}
       </div>
     </div>
+
+    {exportComp && (
+      <ExportSheetDialog
+        competition={exportComp}
+        onClose={() => setExportComp(null)}
+      />
+    )}
+    </>
   );
 }

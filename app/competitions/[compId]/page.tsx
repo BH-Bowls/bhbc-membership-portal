@@ -58,9 +58,23 @@ export default function CompetitionBracketPage({
   const [error, setError] = useState<string | null>(null);
   const [activeMatch, setActiveMatch] = useState<CompMatch | null>(null);
   const [saving, setSaving] = useState(false);
+  const [printOrientation, setPrintOrientation] = useState<'landscape' | 'portrait'>('landscape');
+
+  function handlePrint() {
+    const styleId = 'print-orientation-style';
+    let style = document.getElementById(styleId) as HTMLStyleElement | null;
+    if (!style) {
+      style = document.createElement('style');
+      style.id = styleId;
+      document.head.appendChild(style);
+    }
+    style.textContent = `@page { size: ${printOrientation}; }`;
+    window.print();
+  }
 
   const role = session?.user?.role ?? '';
-  const isCommittee = role !== 'Member' && role !== '';
+  // Only Captains and Admins can manage/enter competition results on behalf of players
+  const isCommittee = (role.split(',').map(r => r.trim())).some(r => ['Captain', 'Admin'].includes(r));
   const currentUsername = session?.user?.userName ?? '';
 
   // ── Data loading ───────────────────────────────────────────────────────────
@@ -193,9 +207,26 @@ export default function CompetitionBracketPage({
             )}
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center flex-wrap">
+            {/* Orientation toggle */}
+            <div className="flex rounded-md border border-gray-300 overflow-hidden text-sm">
+              <button
+                onClick={() => setPrintOrientation('landscape')}
+                className={`px-3 py-2 ${printOrientation === 'landscape' ? 'bg-gray-100 text-gray-800 font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
+              >
+                Landscape
+              </button>
+              <button
+                onClick={() => setPrintOrientation('portrait')}
+                className={`px-3 py-2 border-l border-gray-300 ${printOrientation === 'portrait' ? 'bg-gray-100 text-gray-800 font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
+              >
+                Portrait
+              </button>
+            </div>
+
+            {/* Print button */}
             <button
-              onClick={() => window.print()}
+              onClick={handlePrint}
               className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-md text-gray-600 hover:bg-gray-50"
             >
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -285,6 +316,7 @@ export default function CompetitionBracketPage({
               onMatchClick={setActiveMatch}
               isCommittee={isCommittee}
               roundPlayByDates={roundPlayByDates}
+              printOrientation={printOrientation}
             />
           </div>
         )}

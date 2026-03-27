@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getManageableUsers } from '@/lib/buddies-sheets';
+import { hasRole } from '@/lib/role-utils';
 
 /**
  * GET /api/buddies
@@ -36,7 +37,7 @@ export async function GET(request: NextRequest) {
         isSelf: u.userName === session.user.userName,
       })),
       currentUserName: session.user.userName,
-      isAdmin: session.user.role === 'Admin',
+      isAdmin: hasRole(session.user.role, 'Admin'),
     });
   } catch (error) {
     console.error('Error fetching manageable users:', error);

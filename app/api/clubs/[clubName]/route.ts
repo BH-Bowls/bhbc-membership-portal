@@ -7,6 +7,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getClubWithContacts, updateClub, deleteClub } from '@/lib/clubs-sheets';
 import { UpdateClubRequest } from '@/lib/types/clubs';
+import { isMember } from '@/lib/role-utils';
 
 interface RouteParams {
   params: Promise<{ clubName: string }>;
@@ -68,8 +69,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     }
 
     // Check if user is non-member
-    const role = session.user.role || 'Member';
-    if (role === 'Member') {
+    if (isMember(session.user.role)) {
       return NextResponse.json(
         { error: 'Only committee members can update clubs' },
         { status: 403 }
@@ -110,8 +110,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     }
 
     // Check if user is non-member
-    const role = session.user.role || 'Member';
-    if (role === 'Member') {
+    if (isMember(session.user.role)) {
       return NextResponse.json(
         { error: 'Only committee members can delete clubs' },
         { status: 403 }

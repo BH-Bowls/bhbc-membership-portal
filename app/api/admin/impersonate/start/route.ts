@@ -1,5 +1,5 @@
 // app/api/admin/impersonate/start/route.ts
-// API endpoint to start impersonating another user
+// API endpoint to start impersonating another user or club
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
@@ -7,19 +7,17 @@ import { authOptions } from '@/lib/auth';
 import { getUserByUsername } from '@/lib/sheets';
 import { canImpersonate } from '@/lib/buddies-sheets';
 import { logImpersonationEvent } from '@/lib/sheets';
+import { getClubLoginRecord } from '@/lib/clubs-sheets';
 import { v4 as uuidv4 } from 'uuid';
 
 export async function POST(request: NextRequest) {
   try {
-    // Get current session
     const session = await getServerSession(authOptions);
 
-    // Auth check - must be logged in with a userName
     if (!session?.user?.userName || !session?.user?.role) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Check if already impersonating
     if (session.user.isImpersonating) {
       return NextResponse.json(
         { error: 'Already impersonating. Exit current session first.' },
@@ -27,27 +25,71 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get target user from request body
-    const { targetUserName } = await request.json();
+    const body = await request.json();
+    const { targetUserName, targetClubId, targetType } = body as {
+      targetUserName?: string;
+      targetClubId?: string;
+      targetType?: 'user' | 'club';
+    };
 
+    const isClubImpersonation = targetType === 'club' && !!targetClubId;
+
+    // ── Club impersonation ────────────────────────────────────────────────────
+    if (isClubImpersonation) {
+      // Only Admin or RowlandOrganiser can impersonate clubs
+      const callerRole = session.user.role;
+      const callerRoles = callerRole.split(',').map((r: string) => r.trim());
+      if (!callerRoles.some((r: string) => r === 'Admin' || r === 'RowlandOrganiser' || r === 'superadmin')) {
+        return NextResponse.json(
+          { error: 'You do not have permission to switch to a club' },
+          { status: 403 }
+        );
+      }
+
+      const club = await getClubLoginRecord(targetClubId!);
+      if (!club) {
+        return NextResponse.json({ error: 'Club not found' }, { status: 404 });
+      }
+
+      const sessionId = uuidv4();
+
+      await logImpersonationEvent({
+        sessionId,
+        action: 'START',
+        adminUserName: session.user.userName,
+        adminName: session.user.name || '',
+        adminRole: session.user.role,
+        targetUserName: club.clubId,
+        targetName: club.clubName,
+        targetRole: 'Club',
+        ipAddress: request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || '',
+        userAgent: request.headers.get('user-agent') || '',
+      });
+
+      return NextResponse.json({
+        success: true,
+        action: 'START_IMPERSONATION',
+        targetUser: {
+          userName: club.clubId,
+          email: '',
+          name: club.clubName,
+          role: 'Club',
+          clubId: club.clubId,
+        },
+        sessionId,
+      });
+    }
+
+    // ── User impersonation (existing behaviour) ───────────────────────────────
     if (!targetUserName) {
-      return NextResponse.json(
-        { error: 'Target userName required' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Target userName required' }, { status: 400 });
     }
 
-    // Fetch target user from database
     const targetUser = await getUserByUsername(targetUserName);
-
     if (!targetUser) {
-      return NextResponse.json(
-        { error: 'User not found' },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
-    // Validate impersonation permission using buddy+admin rules
     const canImpersonateUser = await canImpersonate(
       session.user.userName,
       session.user.role,
@@ -61,10 +103,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Generate unique session ID for audit trail
     const sessionId = uuidv4();
 
-    // Log impersonation start event
     await logImpersonationEvent({
       sessionId,
       action: 'START',
@@ -74,14 +114,10 @@ export async function POST(request: NextRequest) {
       targetUserName: targetUser.userName,
       targetName: targetUser.fullName,
       targetRole: targetUser.role,
-      ipAddress: request.headers.get('x-forwarded-for') ||
-                 request.headers.get('x-real-ip') ||
-                 '',
+      ipAddress: request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || '',
       userAgent: request.headers.get('user-agent') || '',
     });
 
-    // Return data for JWT update
-    // This will be passed to the JWT callback via update()
     return NextResponse.json({
       success: true,
       action: 'START_IMPERSONATION',
@@ -96,9 +132,6 @@ export async function POST(request: NextRequest) {
 
   } catch (error) {
     console.error('Error starting impersonation:', error);
-    return NextResponse.json(
-      { error: 'Failed to start impersonation' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to start impersonation' }, { status: 500 });
   }
 }

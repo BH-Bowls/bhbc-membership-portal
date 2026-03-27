@@ -7,6 +7,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { createClub } from '@/lib/clubs-sheets';
 import { CreateClubRequest } from '@/lib/types/clubs';
+import { isMember } from '@/lib/role-utils';
 
 /**
  * POST /api/clubs/create
@@ -22,8 +23,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Check if user is non-member (role !== "Member")
-    const role = session.user.role || 'Member';
-    if (role === 'Member') {
+    if (isMember(session.user.role)) {
       return NextResponse.json(
         { error: 'Only committee members can create clubs' },
         { status: 403 }

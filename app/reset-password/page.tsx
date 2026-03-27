@@ -28,8 +28,8 @@ function ResetPasswordForm() {
   }, [token]);
 
   const validatePassword = (pwd: string): string | null => {
-    if (pwd.length < 8) {
-      return 'Password must be at least 8 characters long';
+    if (!pwd) {
+      return 'Please enter a password';
     }
     return null;
   };
@@ -221,12 +221,6 @@ function ResetPasswordForm() {
             </div>
           </div>
 
-          <div className="text-sm text-gray-600">
-            <p>Password requirements:</p>
-            <ul className="list-disc list-inside mt-1 space-y-1">
-              <li>At least 8 characters long</li>
-            </ul>
-          </div>
 
           {error && (
             <div className="rounded-md bg-red-50 p-4">

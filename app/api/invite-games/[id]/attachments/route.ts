@@ -11,6 +11,7 @@ import {
 } from '@/lib/invite-games-attachments-sheets';
 import { getInviteGameById } from '@/lib/invite-games-sheets';
 import { uploadFileToCloudinary } from '@/lib/cloudinary';
+import { hasRole } from '@/lib/role-utils';
 import sharp from 'sharp';
 
 /**
@@ -97,10 +98,7 @@ export async function POST(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const role = session.user.role || 'Member';
-    const isCommittee = role !== 'Member' && role !== '';
-
-    if (!isCommittee) {
+    if (!hasRole(session.user.role, 'GMC', 'Admin')) {
       return NextResponse.json(
         { error: 'Only committee members can add attachments to invite games' },
         { status: 403 }

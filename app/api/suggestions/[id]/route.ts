@@ -10,6 +10,7 @@ import {
   getAllMembersForCoordinator,
 } from '@/lib/suggestions-sheets';
 import { getSuggestionStatus } from '@/types/suggestions';
+import { hasRole } from '@/lib/role-utils';
 
 /**
  * GET /api/suggestions/[id]
@@ -32,10 +33,8 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     const userName = session.user.userName;
-    // Check if user is committee member
-    // Committee = anyone with a Role that is not "Member" (or empty)
-    const role = session.user.role || 'Member';
-    const isCommittee = role !== 'Member' && role !== '';
+    // GMC and Admin have committee-level access to suggestions
+    const isCommittee = hasRole(session.user.role, 'GMC', 'Admin');
 
     // Get suggestion
     const suggestion = await getSuggestionById(suggestionId);
@@ -119,10 +118,8 @@ export async function PUT(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     const userName = session.user.userName;
-    // Check if user is committee member
-    // Committee = anyone with a Role that is not "Member" (or empty)
-    const role = session.user.role || 'Member';
-    const isCommittee = role !== 'Member' && role !== '';
+    // GMC and Admin have committee-level access to suggestions
+    const isCommittee = hasRole(session.user.role, 'GMC', 'Admin');
 
     // Get existing suggestion
     const suggestion = await getSuggestionById(suggestionId);

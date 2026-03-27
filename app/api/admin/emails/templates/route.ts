@@ -1,54 +1,37 @@
 // app/api/admin/emails/templates/route.ts
-// API endpoint to get available email and attachment templates
-
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getEmailTemplates, getAttachmentTemplates } from '@/lib/email/template-reader';
+import { getEmailTemplates, getAttachmentTemplates, getClubEmailTemplates } from '@/lib/email/template-reader';
+import { hasRole } from '@/lib/role-utils';
 
-/**
- * GET /api/admin/emails/templates
- * Get list of available email templates and attachment templates
- *
- * Authorization: Admin only
- * Response: { emailTemplates: EmailTemplate[], attachmentTemplates: AttachmentTemplate[] }
- */
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    // Verify user is authenticated
     const session = await getServerSession(authOptions);
 
     if (!session) {
-      return NextResponse.json(
-        { error: 'Unauthorized - Please log in' },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: 'Unauthorized - Please log in' }, { status: 401 });
     }
 
-    // Verify user is admin
-    if (session.user?.role !== 'Admin') {
-      return NextResponse.json(
-        { error: 'Forbidden - Admin access required' },
-        { status: 403 }
-      );
+    if (!hasRole(session.user?.role, 'Admin')) {
+      return NextResponse.json({ error: 'Forbidden - Admin access required' }, { status: 403 });
     }
 
-    // Get all email templates
-    const emailTemplates = getEmailTemplates();
+    const type = request.nextUrl.searchParams.get('type');
 
-    // Get all attachment templates
-    const attachmentTemplates = getAttachmentTemplates();
+    if (type === 'club') {
+      return NextResponse.json({
+        emailTemplates: getClubEmailTemplates(),
+        attachmentTemplates: [],
+      });
+    }
 
-    // Return template lists
     return NextResponse.json({
-      emailTemplates,
-      attachmentTemplates,
+      emailTemplates: getEmailTemplates(),
+      attachmentTemplates: getAttachmentTemplates(),
     });
   } catch (error) {
     console.error('Error in GET /api/admin/emails/templates:', error);
-    return NextResponse.json(
-      { error: 'Failed to load templates' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to load templates' }, { status: 500 });
   }
 }

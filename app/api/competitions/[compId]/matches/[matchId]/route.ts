@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompetitionMatches, updateMatch, propagateWinnerToNextRound } from '@/lib/competitions-sheets';
+import { hasRole } from '@/lib/role-utils';
 
 export async function PATCH(
   request: NextRequest,
@@ -23,8 +24,7 @@ export async function PATCH(
     }
 
     const { compId, matchId } = await params;
-    const role = session.user.role || 'Member';
-    const committee = role !== 'Member' && role !== '';
+    const committee = hasRole(session.user.role, 'Captain', 'Admin');
     const currentUsername = session.user.userName;
 
     // Load the current match to check permissions

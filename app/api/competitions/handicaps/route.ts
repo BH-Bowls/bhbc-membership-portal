@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getAllUsers, batchUpdateMemberHandicaps } from '@/lib/sheets';
+import { hasRole } from '@/lib/role-utils';
 
 export async function GET(request: NextRequest) {
   try {
@@ -14,9 +15,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const role = session.user.role || 'Member';
-    if (role === 'Member' || role === '') {
-      return NextResponse.json({ error: 'Committee access required' }, { status: 403 });
+    if (!hasRole(session.user.role, 'Captain', 'Admin')) {
+      return NextResponse.json({ error: 'Captain access required' }, { status: 403 });
     }
 
     const users = await getAllUsers();
@@ -52,9 +52,8 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const role = session.user.role || 'Member';
-    if (role === 'Member' || role === '') {
-      return NextResponse.json({ error: 'Committee access required' }, { status: 403 });
+    if (!hasRole(session.user.role, 'Captain', 'Admin')) {
+      return NextResponse.json({ error: 'Captain access required' }, { status: 403 });
     }
 
     const body = await request.json();

@@ -6,6 +6,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getGoogleSheetsClient, getSpreadsheetId, getColumnMap } from '@/lib/sheets';
 import { createRowFieldGetter, createRowNumberGetter } from '@/lib/banking-sheets';
+import { hasRole } from '@/lib/role-utils';
 
 export interface RenewalReportRow {
   userName: string;
@@ -66,7 +67,7 @@ export async function GET(request: NextRequest) {
     const session = await getServerSession(authOptions);
 
     // Check authorization: Admin OR Treasurer
-    if (session?.user?.role !== 'Admin' && session?.user?.role !== 'T') {
+    if (!hasRole(session?.user?.role, 'Admin', 'Treasurer')) {
       return NextResponse.json(
         { error: 'Forbidden - Admin or Treasurer access required' },
         { status: 403 }

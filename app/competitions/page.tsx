@@ -77,14 +77,24 @@ export default function CompetitionsPage() {
               </p>
             )}
           </div>
-          {isCommittee && (
-            <button
-              onClick={() => router.push('/competitions/admin')}
-              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium text-sm"
-            >
-              Manage
-            </button>
-          )}
+          <div className="flex gap-2">
+            {!!role && (
+              <button
+                onClick={() => router.push('/competitions/my')}
+                className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 font-medium text-sm"
+              >
+                My Progress
+              </button>
+            )}
+            {isCommittee && (
+              <button
+                onClick={() => router.push('/competitions/admin')}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium text-sm"
+              >
+                Manage
+              </button>
+            )}
+          </div>
         </div>
 
         {loading && (

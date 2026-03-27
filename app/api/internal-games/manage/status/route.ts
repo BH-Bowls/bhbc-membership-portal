@@ -67,36 +67,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
 
-    // Generate effectiveTabName
-    // Format: "GameName DD MMM YY" (e.g., "Club Championship 13 Jan 25")
-    let tabDatePart = game.tabDate || '';
-
-    if (!tabDatePart || tabDatePart.trim() === '') {
-      // Parse date from DD/MM/YYYY format
-      const formatTabDate = (dateStr: string): string => {
-        if (!dateStr) return '';
-
-        const parts = dateStr.split('/');
-        if (parts.length === 3) {
-          const day = parts[0].padStart(2, '0');
-          const month = parts[1];
-          let year = parts[2];
-          if (year.length === 4) {
-            year = year.slice(-2);
-          }
-          const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-          const monthIndex = parseInt(month, 10) - 1;
-          const monthName = monthNames[monthIndex] || month;
-          return `${day} ${monthName} ${year}`;
-        }
-
-        return '';
-      };
-
-      tabDatePart = formatTabDate(game.date);
-    }
-
-    const effectiveTabName = `${game.gameName} ${tabDatePart}`.trim();
+    // Use the game's own tabName as the authoritative sheet tab name
+    const effectiveTabName = game.tabName;
 
     // Get current status
     let currentStatus = game.status;

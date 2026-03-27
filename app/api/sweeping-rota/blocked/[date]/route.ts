@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { unblockSweepingDate } from '@/lib/sweeping-sheets';
+import { hasRole } from '@/lib/role-utils';
 
 interface RouteContext {
   params: Promise<{ date: string }>;
@@ -23,7 +24,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     }
 
     // Admin only
-    const isAdmin = session.user.role === 'Admin' || session.user.role === 'superadmin';
+    const isAdmin = hasRole(session.user.role, 'Admin') || session.user.role === 'superadmin';
     if (!isAdmin) {
       return NextResponse.json({ error: 'Forbidden - Admin only' }, { status: 403 });
     }

@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getAllInviteGames, createInviteGame } from '@/lib/invite-games-sheets';
+import { hasRole } from '@/lib/role-utils';
 
 /**
  * GET /api/invite-games
@@ -38,10 +39,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const role = session.user.role || 'Member';
-    const isCommittee = role !== 'Member' && role !== '';
-
-    if (!isCommittee) {
+    if (!hasRole(session.user.role, 'GMC', 'Admin')) {
       return NextResponse.json(
         { error: 'Only committee members can create invite games' },
         { status: 403 }

@@ -65,6 +65,18 @@ export interface Competition {
   // Triples day (fixed date for first games)
   triplesFixedDay?: boolean;
   triplesFixedDate?: string | null;
+
+  // Side count recorded when the bracket was last created/rebuilt
+  drawSideCount?: number | null;
+
+  // When the competition starts (first round start date).
+  // Challenger must offer 3 dates within 7 days. Subsequent round starts are
+  // derived from the previous round's play-by date.
+  // Leave blank for Triples (first round is a fixed day) or Finals-only comps.
+  compStartDate?: string | null;
+
+  // Short description shown to members, e.g. "Singles, play to 21 points"
+  compDescription?: string | null;
 }
 
 /**

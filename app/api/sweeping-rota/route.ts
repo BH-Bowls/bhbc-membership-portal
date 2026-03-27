@@ -11,6 +11,7 @@ import {
 } from '@/lib/sweeping-sheets';
 import { generatePatternDates, parseDate, formatDate } from '@/lib/sweeping-patterns';
 import { AddEntriesRequest, AddEntriesResponse } from '@/lib/types/sweeping';
+import { hasRole, isMember } from '@/lib/role-utils';
 
 /**
  * GET /api/sweeping-rota
@@ -41,7 +42,7 @@ export async function GET(request: NextRequest) {
 
     const entries = await getSweepingRotaForDateRange(startDate, endDate);
 
-    const isAdmin = session.user.role === 'Admin' || session.user.role === 'superadmin';
+    const isAdmin = hasRole(session.user.role, 'Admin') || session.user.role === 'superadmin';
 
     return NextResponse.json({
       entries,
@@ -112,7 +113,7 @@ export async function POST(request: NextRequest) {
     let targetUserName = session.user.userName;
 
     // Non-members can specify a different user
-    const isNonMember = session.user.role !== 'Member';
+    const isNonMember = !isMember(session.user.role);
     if (isNonMember && body.userName) {
       targetUserName = body.userName;
     }

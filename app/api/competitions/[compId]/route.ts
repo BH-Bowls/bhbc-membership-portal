@@ -11,10 +11,7 @@ import {
   updateCompetition,
 } from '@/lib/competitions-sheets';
 import type { Competition } from '@/types/competitions';
-
-function isCommittee(role: string | null | undefined): boolean {
-  return !!role && role !== 'Member';
-}
+import { isMember } from '@/lib/role-utils';
 
 export async function GET(
   request: NextRequest,
@@ -53,7 +50,7 @@ export async function PATCH(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    if (!isCommittee(session.user.role)) {
+    if (isMember(session.user.role)) {
       return NextResponse.json({ error: 'Committee access required' }, { status: 403 });
     }
 

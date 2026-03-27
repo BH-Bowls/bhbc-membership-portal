@@ -32,7 +32,7 @@ import { ROUND_ORDER } from '@/types/competitions';
  */
 export const COMP_SHEET_CONFIG: Record<string, {
   sheetName: string;
-  renewalColumn: string;
+  renewalColumn?: string; // Omit for comps where all playing members are eligible (e.g. centenary)
   subRenewalColumn?: string; // For pairs/triples substitute column
 }> = {
   'mens-championship': {
@@ -82,6 +82,10 @@ export const COMP_SHEET_CONFIG: Record<string, {
     renewalColumn: 'comp_drawn_triples',
     subRenewalColumn: 'sub_drawn_triples',
   },
+  'centenary': {
+    sheetName: 'CompCentenary',
+    // No renewalColumn — all playing members are eligible; draw is from a hat
+  },
 };
 
 // ============================================================================
@@ -124,8 +128,8 @@ function normalizeDate(raw: string | null): string | null {
     return `${y}-${m}-${d}`;
   }
 
-  // Return as-is and let the caller deal with it
-  return raw;
+  // Unrecognised format — treat as missing rather than returning garbage
+  return null;
 }
 
 function parseSide(raw: string | null | undefined): string[] | null {
@@ -168,6 +172,9 @@ function parseCompetitionRow(
     sfPlayBy: normalizeDate(get('sf_play_by')),
     triplesFixedDay: getBool('triples_fixed_day'),
     triplesFixedDate: normalizeDate(get('triples_fixed_date')),
+    drawSideCount: get('draw_side_count') ? parseInt(get('draw_side_count')!, 10) : null,
+    compStartDate: normalizeDate(get('comp_start')),
+    compDescription: get('comp_description'),
   };
 }
 
@@ -281,6 +288,9 @@ export async function updateCompetition(comp: Competition): Promise<void> {
   setCol('sf_play_by', comp.sfPlayBy || '');
   setCol('triples_fixed_day', comp.triplesFixedDay ? 'Y' : '');
   setCol('triples_fixed_date', comp.triplesFixedDate || '');
+  setCol('draw_side_count', comp.drawSideCount != null ? String(comp.drawSideCount) : '');
+  setCol('comp_start', comp.compStartDate || '');
+  setCol('comp_description', comp.compDescription || '');
 
   const endCol = getColumnLetter(maxCol - 1);
   await sheets.spreadsheets.values.update({
@@ -288,6 +298,40 @@ export async function updateCompetition(comp: Competition): Promise<void> {
     range: `CompetitionsControl!A${rowNumber}:${endCol}${rowNumber}`,
     valueInputOption: 'USER_ENTERED',
     requestBody: { values: [rowValues] },
+  });
+}
+
+/**
+ * Update only the draw_side_count of a competition (safe single-cell update).
+ */
+export async function updateDrawSideCount(
+  compId: string,
+  drawSideCount: number
+): Promise<void> {
+  const colMap = await getColumnMap('CompetitionsControl', getCompetitionsSpreadsheetId());
+  const colIdx = colMap['draw_side_count'];
+  if (colIdx === undefined) {
+    throw new Error(`'Draw Side Count' column not found in CompetitionsControl — add the column header`);
+  }
+
+  const sheets = getGoogleSheetsClient();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId: getCompetitionsSpreadsheetId(),
+    range: 'CompetitionsControl!A2:A',
+    valueRenderOption: 'FORMATTED_VALUE',
+  });
+
+  const idRows = response.data.values || [];
+  const rowIndex = idRows.findIndex((r) => r[0] === compId);
+  if (rowIndex === -1) throw new Error(`Competition '${compId}' not found`);
+  const rowNumber = rowIndex + 2;
+
+  const col = getColumnLetter(colIdx);
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: getCompetitionsSpreadsheetId(),
+    range: `CompetitionsControl!${col}${rowNumber}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[drawSideCount]] },
   });
 }
 
@@ -669,6 +713,12 @@ export async function getEntrantsFromRenewals(compId: string): Promise<{
 }> {
   const cfg = COMP_SHEET_CONFIG[compId];
   if (!cfg) throw new Error(`Unknown competition: ${compId}`);
+
+  // No renewal column = open draw from a hat; no pre-set entrants list.
+  // Members will appear under "Other members" in the player search.
+  if (!cfg.renewalColumn) {
+    return { entrants: [], subs: [] };
+  }
 
   const colMap = await getColumnMap('Renewals');
   const sheets = getGoogleSheetsClient();

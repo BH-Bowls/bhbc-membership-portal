@@ -105,12 +105,18 @@ function legacyXORHash(password: string): string {
 export async function verifyPassword(
   password: string,
   storedHash: string,
-  userName: string
+  userName: string,
+  isTempPassword?: boolean
 ): Promise<boolean> {
   // Check if it's a bcrypt hash (bcrypt hashes start with $2b$)
   if (storedHash.startsWith('$2b$')) {
     // Modern bcrypt hash - verify using bcrypt
     return bcrypt.compare(password, storedHash);
+  }
+
+  // Plain text temp password (set by admin in sheet or via UI with "force change" checked)
+  if (isTempPassword) {
+    return password === storedHash;
   }
 
   // Legacy XOR hash - compute XOR hash and compare
@@ -120,18 +126,10 @@ export async function verifyPassword(
   // If password is valid with legacy XOR, migrate to bcrypt automatically
   if (isValid) {
     try {
-      // Hash password with bcrypt
       const newHash = await hashPassword(password);
-
-      // Update Google Sheets with new bcrypt hash
-      // Pass false for isTemporary since this is their real password
       await updatePasswordHash(userName, newHash, false);
-
-      // Log successful migration for monitoring
       console.log(`✓ Migrated ${userName} from XOR to bcrypt`);
     } catch (error) {
-      // Log migration failure but don't fail the login
-      // User can still login with XOR, we'll try migration again next time
       console.error(`Failed to migrate password for ${userName}:`, error);
     }
   }
@@ -171,6 +169,7 @@ export async function authenticateUser(
     email: string;
     userName: string;
     role: string;
+    mustChangePassword: boolean;
   };
   error?: string;
 }> {
@@ -236,8 +235,8 @@ export async function authenticateUser(
       };
     }
 
-    // Verify password against stored hash (bcrypt or legacy XOR)
-    const isValid = await verifyPassword(password, user.passwordHash, user.userName);
+    // Verify password against stored hash (bcrypt, plain text temp, or legacy XOR)
+    const isValid = await verifyPassword(password, user.passwordHash, user.userName, user.isTempPassword);
 
     // Check if password was correct
     if (!isValid) {
@@ -288,6 +287,7 @@ export async function authenticateUser(
         email: email,                    // Email address
         userName: user.userName,         // Username for authorization checks
         role: user.role,                 // Role for permission checks
+        mustChangePassword: user.isTempPassword, // Force password change if temp
       },
     };
   } catch (error) {
@@ -460,7 +460,8 @@ export async function setTemporaryPassword(
 export async function changePassword(
   userName: string,
   newPassword: string,
-  oldPassword?: string
+  oldPassword?: string,
+  isTempPassword: boolean = false
 ): Promise<{ success: boolean; error?: string }> {
   try {
     // Get user profile from Google Sheets
@@ -477,7 +478,7 @@ export async function changePassword(
     // If oldPassword provided, verify it first (security check)
     // This prevents unauthorized password changes if session is hijacked
     if (oldPassword) {
-      const isValid = await verifyPassword(oldPassword, user.passwordHash, userName);
+      const isValid = await verifyPassword(oldPassword, user.passwordHash, userName, user.isTempPassword);
 
       // Check if current password is correct
       if (!isValid) {
@@ -488,12 +489,11 @@ export async function changePassword(
       }
     }
 
-    // Hash new password with bcrypt
-    const newHash = await hashPassword(newPassword);
+    // Hash new password with bcrypt, or store plain text if it's a temporary password
+    const newHash = isTempPassword ? newPassword : await hashPassword(newPassword);
 
     // Update password in Google Sheets
-    // Pass false for isTemporary - this is their permanent password now
-    await updatePasswordHash(userName, newHash, false);
+    await updatePasswordHash(userName, newHash, isTempPassword);
 
     // Password changed successfully
     return { success: true };

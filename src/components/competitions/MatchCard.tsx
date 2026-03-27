@@ -11,22 +11,28 @@ interface MatchCardProps {
   match: CompMatch;
   topY: number;
   x: number;
+  matchHeight?: number; // overrides the default MATCH_HEIGHT for pairs/triples
   getInfo: (username: string) => CompMemberInfo;
   currentUsername?: string;
   showHandicap?: boolean;
   onClick?: (match: CompMatch) => void;
   canInteract: boolean; // true if this user can enter a score for this match
+  roundPlayByDate?: string; // play-by date for the round — suppress match date if identical
+  showFullNames?: boolean; // show all names for pairs/triples instead of "+N"
 }
 
 export function MatchCard({
   match,
   topY,
   x,
+  matchHeight = MATCH_HEIGHT,
   getInfo,
   currentUsername,
   showHandicap = false,
   onClick,
   canInteract,
+  roundPlayByDate,
+  showFullNames = false,
 }: MatchCardProps) {
   const side1 = match.side1Usernames;
   const side2 = match.side2Usernames;
@@ -45,16 +51,14 @@ export function MatchCard({
   const side2Won = isComplete && match.winnerSide === 2;
 
   const borderColor = isMyMatch && isPending
-    ? 'border-blue-400'
-    : isComplete
-    ? 'border-gray-300'
-    : 'border-gray-200';
+    ? 'border-blue-400 print:border-gray-400'
+    : 'border-gray-400';
 
   const bgColor = isMyMatch && isPending
-    ? 'bg-blue-50'
+    ? 'bg-blue-50 print:bg-white'
     : 'bg-white';
 
-  const clickable = canInteract && isPending;
+  const clickable = canInteract;
 
   function renderSide(
     usernames: string[],
@@ -66,8 +70,8 @@ export function MatchCard({
     if (usernames.length === 0 || !usernames[0]) {
       return (
         <div
-          className={`px-2 py-1 text-xs text-gray-300 italic ${
-            side === 1 ? 'border-b border-gray-100' : ''
+          className={`px-2 py-1 text-xs text-gray-300 italic print:text-transparent ${
+            side === 1 ? 'border-b border-gray-300' : ''
           }`}
         >
           — TBD —
@@ -77,7 +81,10 @@ export function MatchCard({
 
     const info = getInfo(usernames[0]);
     const extraCount = usernames.length - 1;
-    const otherNames = extraCount > 0
+    const allNames = showFullNames && extraCount > 0
+      ? usernames.map((u) => getInfo(u).fullName).join(' + ')
+      : null;
+    const otherNames = !showFullNames && extraCount > 0
       ? usernames.slice(1).map((u) => getInfo(u).fullName).join(', ')
       : '';
 
@@ -85,18 +92,18 @@ export function MatchCard({
       <div
         className={`flex items-center gap-1 px-2 py-1 rounded text-xs ${
           won ? 'font-bold text-gray-900' : 'text-gray-600'
-        } ${side === 1 ? 'border-b border-gray-100' : ''}`}
+        } ${side === 1 ? 'border-b border-gray-300' : ''}`}
       >
-        <span className="truncate flex-1 min-w-0">
+        <span className={`flex-1 min-w-0 ${showFullNames ? 'break-words' : 'truncate'}`}>
           {won && (
             <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500 mr-1 flex-shrink-0" />
           )}
-          {info.fullName}
+          {allNames ?? info.fullName}
           {showHandicap && info.handicap != null && (
             <span className="ml-1 text-gray-400">({info.handicap})</span>
           )}
         </span>
-        {extraCount > 0 && (
+        {!showFullNames && extraCount > 0 && (
           <span
             className="flex-shrink-0 text-gray-400 cursor-default"
             title={otherNames}
@@ -126,18 +133,18 @@ export function MatchCard({
         top: topY,
         left: x,
         width: MATCH_WIDTH,
-        height: MATCH_HEIGHT,
+        minHeight: matchHeight,
       }}
       onClick={clickable ? () => onClick?.(match) : undefined}
       className={`
         rounded border ${borderColor} ${bgColor}
-        flex flex-col justify-center overflow-hidden
+        flex flex-col justify-center overflow-visible
         ${clickable ? 'cursor-pointer hover:border-blue-500 hover:shadow-sm transition-all' : ''}
-        ${isMyMatch && isPending ? 'ring-1 ring-blue-300' : ''}
+        ${isMyMatch && isPending ? 'ring-1 ring-blue-300 print:ring-0' : ''}
       `}
     >
-      {/* Play-by date banner for pending matches */}
-      {isPending && match.playByDate && (
+      {/* Play-by date banner — only when different from the round-level date */}
+      {isPending && match.playByDate && match.playByDate !== roundPlayByDate && (
         <div className="px-2 pt-1 text-[10px] text-gray-400 leading-none">
           By {formatDate(match.playByDate)}
         </div>
@@ -154,7 +161,7 @@ export function MatchCard({
 
       {/* "Your match" indicator */}
       {isMyMatch && isPending && (
-        <div className="px-2 pb-1 text-[10px] text-blue-500 font-medium leading-none">
+        <div className="print:hidden px-2 pb-1 text-[10px] text-blue-500 font-medium leading-none">
           Your match · tap to enter score
         </div>
       )}

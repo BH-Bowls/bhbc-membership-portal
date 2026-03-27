@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { changePassword } from '@/lib/auth-sheets';
+import { changeClubPassword } from '@/lib/clubs-sheets';
 import { sendTemplateEmail, isEmailConfigured } from '@/lib/email/mailer';
 import { getUserByUsername, updateEmailSentStatus, logMemberEmail } from '@/lib/sheets';
 
@@ -18,6 +19,7 @@ import { getUserByUsername, updateEmailSentStatus, logMemberEmail } from '@/lib/
 interface ChangePasswordRequest {
   currentPassword?: string;  // Optional when admin is managing someone
   newPassword: string;
+  forceChangeOnNextLogin?: boolean; // Admin can mark the new password as temporary
 }
 
 // ============================================================================
@@ -56,21 +58,37 @@ export async function POST(request: NextRequest) {
     }
 
     // Check if admin is managing another user
+    const originalRole = session.user?.originalAdmin?.role ?? '';
+    const originalRoles = originalRole.split(',').map((r: string) => r.trim());
     const isAdminManaging = session.user?.isImpersonating &&
-                           session.user?.originalAdmin?.role === 'Admin';
+                           originalRoles.some((r: string) => r === 'Admin' || r === 'RowlandOrganiser' || r === 'superadmin');
 
-    // Rowland login is managed by committee — password changes not permitted
-    // (except when an admin is managing the account via Switch User)
-    if (session.user?.role === 'Rowland' && !isAdminManaging) {
-      return NextResponse.json(
-        { error: 'Password changes are not permitted for this account' },
-        { status: 403 }
+    // ── Club password change ────────────────────────────────────────────────
+    if (session.user?.role === 'Club') {
+      const body = await request.json();
+      const { currentPassword, newPassword, forceChangeOnNextLogin } = body as { currentPassword?: string; newPassword: string; forceChangeOnNextLogin?: boolean };
+
+      if (!isAdminManaging && (!currentPassword || typeof currentPassword !== 'string')) {
+        return NextResponse.json({ error: 'Current password is required' }, { status: 400 });
+      }
+      if (!newPassword || typeof newPassword !== 'string') {
+        return NextResponse.json({ error: 'New password is required' }, { status: 400 });
+      }
+
+      const result = await changeClubPassword(
+        userName,
+        newPassword,
+        isAdminManaging ? undefined : currentPassword,
+        isAdminManaging ? (forceChangeOnNextLogin ?? false) : false,
       );
+
+      if (result.success) return NextResponse.json({ success: true });
+      return NextResponse.json({ error: result.error || 'Failed to change password' }, { status: 400 });
     }
 
     // Parse request body
     const body = await request.json();
-    const { currentPassword, newPassword } = body as ChangePasswordRequest;
+    const { currentPassword, newPassword, forceChangeOnNextLogin } = body as ChangePasswordRequest;
 
     // Validate current password (only required if NOT admin managing someone)
     if (!isAdminManaging) {
@@ -90,14 +108,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate new password strength (skip for admin managing another user)
-    if (!isAdminManaging && newPassword.length < 8) {
-      return NextResponse.json(
-        { error: 'New password must be at least 8 characters' },
-        { status: 400 }
-      );
-    }
-
     // Check that new password is different from current (if current password provided)
     if (currentPassword && currentPassword === newPassword) {
       return NextResponse.json(
@@ -109,10 +119,13 @@ export async function POST(request: NextRequest) {
     // Change password using auth-sheets function
     // If admin managing someone, don't pass currentPassword (skips verification)
     // Otherwise, pass currentPassword for verification
+    // isTempPassword: admin can mark the new password as temporary (force change on next login)
+    const isTempPassword = isAdminManaging ? (forceChangeOnNextLogin ?? false) : false;
     const result = await changePassword(
       userName,
       newPassword,
-      isAdminManaging ? undefined : currentPassword
+      isAdminManaging ? undefined : currentPassword,
+      isTempPassword
     );
 
     // Check if password change was successful
