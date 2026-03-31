@@ -74,7 +74,7 @@ export default function CompetitionBracketPage({
 
   const role = session?.user?.role ?? '';
   // Only Captains and Admins can manage/enter competition results on behalf of players
-  const isCommittee = (role.split(',').map(r => r.trim())).some(r => ['Captain', 'Admin'].includes(r));
+  const canEnterScores = (role.split(',').map(r => r.trim())).some(r => ['Captain', 'Admin'].includes(r));
   const currentUsername = session?.user?.userName ?? '';
 
   // ── Data loading ───────────────────────────────────────────────────────────
@@ -236,7 +236,7 @@ export default function CompetitionBracketPage({
               Print
             </button>
 
-            {isCommittee && (
+            {canEnterScores && (
               <button
                 onClick={() => router.push(`/competitions/${compId}/setup`)}
                 className="px-3 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium"
@@ -279,12 +279,14 @@ export default function CompetitionBracketPage({
               })()}
               {myPending.playByDate && <> — play by {formatDate(myPending.playByDate)}</>}
             </span>
-            <button
-              onClick={() => setActiveMatch(myPending)}
-              className="ml-4 px-3 py-1 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700"
-            >
-              Enter Score
-            </button>
+            {canEnterScores && (
+              <button
+                onClick={() => setActiveMatch(myPending)}
+                className="ml-4 px-3 py-1 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700"
+              >
+                Enter Score
+              </button>
+            )}
           </div>
         )}
 
@@ -314,7 +316,7 @@ export default function CompetitionBracketPage({
               currentUsername={currentUsername}
               showHandicap={isHandicapComp}
               onMatchClick={setActiveMatch}
-              isCommittee={isCommittee}
+              canEnterScores={canEnterScores}
               roundPlayByDates={roundPlayByDates}
               printOrientation={printOrientation}
             />

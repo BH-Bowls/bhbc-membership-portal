@@ -16,6 +16,7 @@ export interface RowlandResultData {
   winnerSide?: 1 | 2;
   status?: 'Played' | 'Walkover';
   playedDate?: string;
+  scoreSheetUrl?: string;
 }
 
 interface RowlandMatchDialogProps {
@@ -26,6 +27,8 @@ interface RowlandMatchDialogProps {
   onSubmit: (matchId: string, data: RowlandResultData) => Promise<void>;
   onClose: () => void;
   saving?: boolean;
+  /** API path prefix for uploading score sheet, e.g. /api/rowland/edward-a/matches/edward-a-R1-1 */
+  uploadPath?: string;
 }
 
 function initPlayers(existing: string[]): string[] {
@@ -41,6 +44,7 @@ export function RowlandMatchDialog({
   onSubmit,
   onClose,
   saving = false,
+  uploadPath,
 }: RowlandMatchDialogProps) {
   const isBye = compMatch.side2Usernames?.[0] === 'Bye';
 
@@ -53,6 +57,15 @@ export function RowlandMatchDialog({
   );
   const [showWalkover, setShowWalkover] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Score sheet upload
+  const [scoreSheetFile, setScoreSheetFile] = useState<File | null>(null);
+  const [scoreSheetPreview, setScoreSheetPreview] = useState<string | null>(
+    rawMatch.scoreSheetUrl ?? null
+  );
+  const [uploading, setUploading] = useState(false);
+  const [uploadedUrl, setUploadedUrl] = useState<string | null>(rawMatch.scoreSheetUrl ?? null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const homeName = compMatch.side1Usernames[0] ?? 'Home';
   const awayName = isBye ? 'Bye' : (compMatch.side2Usernames?.[0] ?? 'Away');
@@ -70,8 +83,33 @@ export function RowlandMatchDialog({
     }
   }, [myTeamSide]);
 
+  async function uploadScoreSheet(): Promise<string | null> {
+    if (!scoreSheetFile || !uploadPath) return uploadedUrl;
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', scoreSheetFile);
+      const res = await fetch(`${uploadPath}/score-sheet`, { method: 'POST', body: fd });
+      if (!res.ok) {
+        const d = await res.json();
+        throw new Error(d.error || 'Upload failed');
+      }
+      const { url } = await res.json();
+      setUploadedUrl(url);
+      setScoreSheetFile(null);
+      return url;
+    } catch (err: any) {
+      setError(`Score sheet upload failed: ${err.message}`);
+      return null;
+    } finally {
+      setUploading(false);
+    }
+  }
+
   async function handleSave() {
     setError(null);
+
+    const sheetUrl = await uploadScoreSheet();
 
     const s1raw = homeScore.trim();
     const s2raw = awayScore.trim();
@@ -90,23 +128,27 @@ export function RowlandMatchDialog({
         homePlayers: homePlayers.filter(Boolean),
         awayPlayers: awayPlayers.filter(Boolean),
         playedDate,
+        scoreSheetUrl: sheetUrl ?? undefined,
       });
     } else {
       await onSubmit(compMatch.matchId, {
         homePlayers: homePlayers.filter(Boolean),
         awayPlayers: awayPlayers.filter(Boolean),
         playedDate,
+        scoreSheetUrl: sheetUrl ?? undefined,
       });
     }
   }
 
   async function handleWalkover(winnerSide: 1 | 2) {
+    const sheetUrl = await uploadScoreSheet();
     await onSubmit(compMatch.matchId, {
       winnerSide,
       status: 'Walkover',
       homePlayers: homePlayers.filter(Boolean),
       awayPlayers: awayPlayers.filter(Boolean),
       playedDate,
+      scoreSheetUrl: sheetUrl ?? undefined,
     });
   }
 
@@ -216,6 +258,67 @@ export function RowlandMatchDialog({
                     />
                   </div>
 
+                  {/* Score sheet upload */}
+                  {uploadPath && (
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Score sheet (optional)</label>
+                      {scoreSheetPreview ? (
+                        <div className="flex items-center gap-2">
+                          <a href={scoreSheetPreview} target="_blank" rel="noopener noreferrer">
+                            <img
+                              src={scoreSheetPreview}
+                              alt="Score sheet"
+                              className="h-16 w-auto rounded border border-gray-200 object-cover"
+                            />
+                          </a>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setScoreSheetPreview(null);
+                              setUploadedUrl(null);
+                              setScoreSheetFile(null);
+                            }}
+                            className="text-xs text-red-500 hover:text-red-700"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ) : (
+                        <div>
+                          <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept="image/*"
+                            capture="environment"
+                            className="hidden"
+                            onChange={(e) => {
+                              const f = e.target.files?.[0] ?? null;
+                              setScoreSheetFile(f);
+                              if (f) {
+                                const reader = new FileReader();
+                                reader.onload = (ev) => setScoreSheetPreview(ev.target?.result as string);
+                                reader.readAsDataURL(f);
+                              }
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => fileInputRef.current?.click()}
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-gray-300 rounded-md text-gray-600 hover:bg-gray-50"
+                          >
+                            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                                d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                                d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                            </svg>
+                            {scoreSheetFile ? scoreSheetFile.name : 'Add photo / take photo'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {error && <p className="text-sm text-red-600">{error}</p>}
 
                   <div className="flex items-center justify-between pt-1">
@@ -229,10 +332,10 @@ export function RowlandMatchDialog({
                     <button
                       type="button"
                       onClick={handleSave}
-                      disabled={saving}
+                      disabled={saving || uploading}
                       className="px-4 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
                     >
-                      {saving ? 'Saving…' : 'Save'}
+                      {uploading ? 'Uploading…' : saving ? 'Saving…' : 'Save'}
                     </button>
                   </div>
                 </div>

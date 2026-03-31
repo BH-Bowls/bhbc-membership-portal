@@ -18,6 +18,23 @@ interface PageProps {
   params: Promise<{ clubName: string }>;
 }
 
+interface ClubFixture {
+  tabName: string;
+  date: string;
+  time: string;
+  homeAway: 'H' | 'A';
+  clubName: string;
+  clubSuffix: string;
+  format: string;
+  ladiesMen: string;
+  league: string;
+  gameType: string;
+  status: string;
+  reason: string;
+  bhbcScore: number | null;
+  opponentScore: number | null;
+}
+
 export default function ClubDetailPage({ params }: PageProps) {
   const { clubName: encodedClubName } = use(params);
   const clubName = decodeURIComponent(encodedClubName);
@@ -35,6 +52,8 @@ export default function ClubDetailPage({ params }: PageProps) {
   const [canEditFromApi, setCanEditFromApi] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [fixtures, setFixtures] = useState<ClubFixture[]>([]);
+  const [fixturesLoading, setFixturesLoading] = useState(false);
 
   // Kiosk / Rowland users cannot edit, even if API says they can
   const userRole = session?.user?.role || 'Member';
@@ -120,6 +139,20 @@ export default function ClubDetailPage({ params }: PageProps) {
       setError('Failed to load club');
     } finally {
       setLoading(false);
+    }
+
+    // Fetch fixtures in parallel (non-blocking)
+    setFixturesLoading(true);
+    try {
+      const fRes = await fetch(`/api/clubs/${encodeURIComponent(clubName)}/fixtures`);
+      if (fRes.ok) {
+        const fData = await fRes.json();
+        setFixtures(fData.fixtures || []);
+      }
+    } catch {
+      // Fixtures are non-critical — silently ignore errors
+    } finally {
+      setFixturesLoading(false);
     }
   }
 
@@ -968,6 +1001,72 @@ export default function ClubDetailPage({ params }: PageProps) {
         )}
       </div>
 
+      {/* Fixtures section */}
+      <div className="bg-white rounded-lg shadow p-6 mb-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Fixtures</h2>
+        {fixturesLoading ? (
+          <p className="text-sm text-gray-400">Loading fixtures…</p>
+        ) : fixtures.length === 0 ? (
+          <p className="text-sm text-gray-500 italic">No fixtures recorded against this club.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">
+                  <th className="pb-2 pr-4">Date</th>
+                  <th className="pb-2 pr-4">Time</th>
+                  <th className="pb-2 pr-4">Type</th>
+                  <th className="pb-2 pr-4">Location</th>
+                  <th className="pb-2 pr-4">Format</th>
+                  <th className="pb-2 pr-4">Section</th>
+                  <th className="pb-2">Result</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {fixtures.map((f, idx) => {
+                  const opponentName = f.clubSuffix ? `${f.clubName} ${f.clubSuffix}` : f.clubName;
+                  const location = f.homeAway === 'H' ? 'BH' : opponentName;
+                  const typeLabel = f.league || (f.gameType !== 'Friendly' ? f.gameType : 'Friendly');
+                  const hasScore = f.bhbcScore != null && f.opponentScore != null;
+                  const scoreEl = hasScore ? (
+                    <span className={`font-medium ${
+                      f.bhbcScore! > f.opponentScore! ? 'text-green-600'
+                      : f.bhbcScore! < f.opponentScore! ? 'text-red-600'
+                      : 'text-gray-600'
+                    }`}>
+                      {f.bhbcScore} – {f.opponentScore}
+                    </span>
+                  ) : null;
+                  return (
+                    <tr key={f.tabName || idx} className="text-gray-700">
+                      <td className="py-2 pr-4 whitespace-nowrap">{formatFixtureDate(f.date)}</td>
+                      <td className="py-2 pr-4">{f.time || '—'}</td>
+                      <td className="py-2 pr-4 text-gray-500">{typeLabel}</td>
+                      <td className="py-2 pr-4">{location}</td>
+                      <td className="py-2 pr-4">{f.format || '—'}</td>
+                      <td className="py-2 pr-4">{f.ladiesMen || '—'}</td>
+                      <td className="py-2">
+                        {f.status === 'C' ? (
+                          <span className="text-xs text-gray-400">Cancelled{scoreEl ? <> · {scoreEl}</> : ''}</span>
+                        ) : f.status === 'P' ? (
+                          <span className="text-xs text-gray-400">Postponed{scoreEl ? <> · {scoreEl}</> : ''}</span>
+                        ) : f.reason?.toLowerCase().includes('abandon') ? (
+                          <span className="text-xs text-gray-500">Abandoned{scoreEl ? <> · {scoreEl}</> : ''}</span>
+                        ) : hasScore ? (
+                          scoreEl
+                        ) : (
+                          <span className="text-xs text-gray-400">Not played</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       {/* Delete Confirmation Dialog */}
       <ConfirmDialog
         isOpen={deleteConfirm.isOpen}
@@ -990,3 +1089,17 @@ export default function ClubDetailPage({ params }: PageProps) {
     </div>
   );
 }
+
+function formatFixtureDate(dateStr: string): string {
+  const parts = dateStr.split('/');
+  if (parts.length === 3) {
+    const [d, m, y] = parts;
+    try {
+      return new Date(`${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`).toLocaleDateString('en-GB', {
+        day: 'numeric', month: 'short', year: '2-digit',
+      });
+    } catch { return dateStr; }
+  }
+  return dateStr;
+}
+

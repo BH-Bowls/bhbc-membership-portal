@@ -96,9 +96,9 @@ export default function ChangePasswordPage() {
           },
         });
 
-        // Redirect to home after 2 seconds
+        // Force a full page reload so the updated JWT is read fresh by middleware
         setTimeout(() => {
-          router.push('/');
+          window.location.href = '/';
         }, 2000);
       } else {
         // Show error message

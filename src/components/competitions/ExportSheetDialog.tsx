@@ -16,7 +16,10 @@ export function ExportSheetDialog({ competition, onClose }: ExportSheetDialogPro
   const compType = competition.compType;
   const isPairsOrTriples = compType !== 'singles';
 
-  const [config, setConfig] = useState<SheetExportConfig>(() => defaultConfig(compType));
+  const [config, setConfig] = useState<SheetExportConfig>(() => ({
+    ...defaultConfig(compType),
+    includeHandicap: competition.compId === 'handicap',
+  }));
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{ sheetUrl: string; sheetTitle: string } | null>(null);
   const [error, setError] = useState<string | null>(null);

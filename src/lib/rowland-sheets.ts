@@ -129,6 +129,7 @@ function parseMatchRow(row: any[], colMap: Record<string, number>): RowlandMatch
     playByDate: normalizeDate(get('play_by_date')),
     playedDate: normalizeDate(get('played_date')),
     notes: get('notes') || '',
+    scoreSheetUrl: get('score_sheet_url') || null,
   };
 }
 
@@ -275,6 +276,7 @@ export async function updateRowlandMatch(
     status?: RowlandMatchStatus;
     playedDate?: string | null;
     notes?: string;
+    scoreSheetUrl?: string | null;
   }
 ): Promise<void> {
   const sheetName = ROWLAND_SHEET_NAMES[compId];
@@ -311,6 +313,7 @@ export async function updateRowlandMatch(
   if (updates.status !== undefined) fieldMap['status'] = updates.status;
   if (updates.playedDate !== undefined) fieldMap['played_date'] = updates.playedDate ?? '';
   if (updates.notes !== undefined) fieldMap['notes'] = updates.notes;
+  if (updates.scoreSheetUrl !== undefined) fieldMap['score_sheet_url'] = updates.scoreSheetUrl ?? '';
 
   const data = Object.entries(fieldMap)
     .filter(([col]) => colMap[col] !== undefined)

@@ -294,7 +294,7 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
               compType="singles"
               firstRoundCount={firstRoundCount}
               getInfo={getInfo}
-              isCommittee={isCommittee}
+              canEnterScores={isCommittee}
               currentUsername={myClubDisplayName}
               allowCompleteInteraction={isClub}
               onMatchClick={handleMatchClick}
@@ -318,6 +318,7 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
           onSubmit={handleResultSubmit}
           onClose={() => setActiveMatch(null)}
           saving={saving}
+          uploadPath={`/api/rowland/${compId}/matches/${activeMatch.matchId}`}
         />
       )}
     </div>

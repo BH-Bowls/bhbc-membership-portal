@@ -31,7 +31,7 @@ interface BracketViewProps {
   currentUsername?: string;
   showHandicap?: boolean;
   onMatchClick?: (match: CompMatch) => void;
-  isCommittee?: boolean;
+  canEnterScores?: boolean;
   /** If true, currentUsername's matches are clickable even when Complete (e.g. to update player names) */
   allowCompleteInteraction?: boolean;
   /** Map of round key (e.g. 'Prelim', 'R1', 'F') to play-by/finals date string */
@@ -117,7 +117,7 @@ export function BracketView({
   currentUsername,
   showHandicap = false,
   onMatchClick,
-  isCommittee = false,
+  canEnterScores = false,
   allowCompleteInteraction = false,
   roundPlayByDates = {},
   printOrientation = 'landscape',
@@ -210,11 +210,13 @@ export function BracketView({
 
   function canInteract(match: CompMatch): boolean {
     if (match.side1Usernames.length === 0) return false;
-    if (isCommittee) return match.status === 'Pending';
+    if (canEnterScores) return match.status === 'Pending';
+    // Participant interaction — only when explicitly enabled (e.g. clubs in Rowland)
+    if (!allowCompleteInteraction) return false;
     if (!currentUsername) return false;
     const allUsernames = [...match.side1Usernames, ...(match.side2Usernames ?? [])];
     if (!allUsernames.includes(currentUsername)) return false;
-    return allowCompleteInteraction || match.status === 'Pending';
+    return true;
   }
 
   // ── Print layout ─────────────────────────────────────────────────────────────

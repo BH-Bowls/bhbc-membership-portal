@@ -159,12 +159,6 @@ export function MatchCard({
           : renderSide([], match.score2, false, 2)}
       </div>
 
-      {/* "Your match" indicator */}
-      {isMyMatch && isPending && (
-        <div className="print:hidden px-2 pb-1 text-[10px] text-blue-500 font-medium leading-none">
-          Your match · tap to enter score
-        </div>
-      )}
     </div>
   );
 }

@@ -904,8 +904,13 @@ export default function DataExportPage() {
                           {(filter.operator === 'in' || filter.operator === 'not_in') && (
                             <input
                               type="text"
-                              value={filter.values.join(', ')}
+                              value={filter.values.join(',')}
                               onChange={(e) =>
+                                updateFilter(index, {
+                                  values: e.target.value.split(','),
+                                })
+                              }
+                              onBlur={(e) =>
                                 updateFilter(index, {
                                   values: e.target.value
                                     .split(',')

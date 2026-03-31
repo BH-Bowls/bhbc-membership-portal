@@ -135,10 +135,14 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
       items.push({ name: 'Handicaps', href: '/competitions/handicaps' });
     }
 
+    // Admin only — Print Labels
+    if (isAdmin) {
+      items.push({ name: 'Print Labels', href: '/labels' });
+    }
+
     // Admin and RowlandOrganiser get Rowland Admin
     if (isAdmin || isRowlandOrganiser) {
       items.push({ name: 'Rowland Admin', href: '/rowland/admin' });
-      items.push({ name: 'Rowland Help', href: '/help/rowland' });
     }
 
     return items;

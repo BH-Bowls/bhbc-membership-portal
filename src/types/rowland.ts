@@ -74,6 +74,7 @@ export interface RowlandMatch {
   playByDate: string | null; // YYYY-MM-DD
   playedDate: string | null; // YYYY-MM-DD
   notes: string;
+  scoreSheetUrl: string | null; // Cloudinary URL of uploaded score sheet image
 }
 
 /**
