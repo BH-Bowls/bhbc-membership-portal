@@ -150,7 +150,7 @@ async function sendRowlandResultEmail(compId: string, match: RowlandMatch): Prom
   const transporter = getEmailTransporter();
   await transporter.sendMail({
     from: process.env.SMTP_USER,
-    to: 'burgesshillbc@gmail.com',
+    to: 'rowlandsbhbc@gmail.com',
     subject: `Rowland Cup Result: ${compName} ${roundLabel} — ${homeName} vs ${awayName}`,
     html,
   });
