@@ -213,7 +213,7 @@ export function BracketView({
 
   function canInteract(match: CompMatch): boolean {
     if (match.side1Usernames.length === 0) return false;
-    if (canEnterScores) return match.status === 'Pending';
+    if (canEnterScores) return match.status !== 'Bye';
     // Participant interaction — only when explicitly enabled (e.g. clubs in Rowland)
     if (!allowCompleteInteraction) return false;
     if (!currentUsername) return false;
