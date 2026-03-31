@@ -91,8 +91,9 @@ export function RowlandMatchDialog({
       fd.append('file', scoreSheetFile);
       const res = await fetch(`${uploadPath}/score-sheet`, { method: 'POST', body: fd });
       if (!res.ok) {
-        const d = await res.json();
-        throw new Error(d.error || 'Upload failed');
+        let msg = 'Upload failed';
+        try { const d = await res.json(); msg = d.error || msg; } catch { /* non-JSON error body */ }
+        throw new Error(msg);
       }
       const { url } = await res.json();
       setUploadedUrl(url);

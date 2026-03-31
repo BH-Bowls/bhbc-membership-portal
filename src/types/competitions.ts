@@ -42,6 +42,7 @@ export interface CompMatch {
 
   playByDate?: string | null;
   playedDate?: string | null;
+  scoreSheetUrl?: string | null;
 }
 
 /**

@@ -39,6 +39,7 @@ function rowlandToCompMatch(m: RowlandMatch): CompMatch {
     status: isBye ? 'Pending' : m.status === 'Played' ? 'Complete' : (m.status as CompMatch['status']),
     playByDate: m.playByDate,
     playedDate: m.playedDate,
+    scoreSheetUrl: m.scoreSheetUrl,
   };
 }
 
@@ -72,6 +73,7 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
 
   const [activeMatch, setActiveMatch] = useState<CompMatch | null>(null);
   const [saving, setSaving] = useState(false);
+  const [scoreSheetPopup, setScoreSheetPopup] = useState<string | null>(null);
 
   const BHBC_CLUB_ID = 'burgess.hill';
 
@@ -300,10 +302,41 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
               onMatchClick={handleMatchClick}
               roundPlayByDates={roundPlayByDates}
               printOrientation={printOrientation}
+              onScoreSheetView={isCommittee ? (_matchId, url) => setScoreSheetPopup(url) : undefined}
             />
           </div>
         )}
       </div>
+
+      {/* Score sheet lightbox */}
+      {scoreSheetPopup && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setScoreSheetPopup(null)}
+        >
+          <div className="relative max-w-3xl w-full" onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => setScoreSheetPopup(null)}
+              className="absolute -top-8 right-0 text-white/80 hover:text-white text-sm"
+            >
+              ✕ Close
+            </button>
+            <img
+              src={scoreSheetPopup}
+              alt="Score sheet"
+              className="w-full h-auto rounded shadow-xl"
+            />
+            <a
+              href={scoreSheetPopup}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block mt-2 text-center text-xs text-white/60 hover:text-white/90"
+            >
+              Open full size ↗
+            </a>
+          </div>
+        </div>
+      )}
 
       {/* Result entry dialog */}
       {activeMatch && activeRawMatch && (

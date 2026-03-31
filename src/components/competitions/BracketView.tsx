@@ -38,6 +38,8 @@ interface BracketViewProps {
   roundPlayByDates?: Record<string, string>;
   /** Controls @page size set by the parent before printing */
   printOrientation?: 'landscape' | 'portrait';
+  /** Called when a score sheet icon is clicked on a completed match */
+  onScoreSheetView?: (matchId: string, url: string) => void;
 }
 
 function formatPlayByDate(d: string): string {
@@ -121,6 +123,7 @@ export function BracketView({
   allowCompleteInteraction = false,
   roundPlayByDates = {},
   printOrientation = 'landscape',
+  onScoreSheetView,
 }: BracketViewProps) {
   // Rounds present in this bracket (in order), excluding bye-only rounds
   const presentRounds = ROUND_ORDER.filter((r) =>
@@ -394,6 +397,7 @@ export function BracketView({
                   onClick={onMatchClick}
                   roundPlayByDate={roundPlayByDates[geo.match.round]}
                   showFullNames={true}
+                  onScoreSheetView={onScoreSheetView}
                 />
               ))}
           </div>

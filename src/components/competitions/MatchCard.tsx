@@ -19,6 +19,7 @@ interface MatchCardProps {
   canInteract: boolean; // true if this user can enter a score for this match
   roundPlayByDate?: string; // play-by date for the round — suppress match date if identical
   showFullNames?: boolean; // show all names for pairs/triples instead of "+N"
+  onScoreSheetView?: (matchId: string, url: string) => void;
 }
 
 export function MatchCard({
@@ -33,6 +34,7 @@ export function MatchCard({
   canInteract,
   roundPlayByDate,
   showFullNames = false,
+  onScoreSheetView,
 }: MatchCardProps) {
   const side1 = match.side1Usernames;
   const side2 = match.side2Usernames;
@@ -137,7 +139,7 @@ export function MatchCard({
       }}
       onClick={clickable ? () => onClick?.(match) : undefined}
       className={`
-        rounded border ${borderColor} ${bgColor}
+        relative rounded border ${borderColor} ${bgColor}
         flex flex-col justify-center overflow-visible
         ${clickable ? 'cursor-pointer hover:border-blue-500 hover:shadow-sm transition-all' : ''}
         ${isMyMatch && isPending ? 'ring-1 ring-blue-300 print:ring-0' : ''}
@@ -158,6 +160,22 @@ export function MatchCard({
           ? <div className="px-2 py-1 text-xs text-gray-400 italic">— bye —</div>
           : renderSide([], match.score2, false, 2)}
       </div>
+
+      {/* Score sheet indicator — only shown when callback is provided */}
+      {isComplete && match.scoreSheetUrl && onScoreSheetView && (
+        <button
+          type="button"
+          title="View score sheet"
+          onClick={(e) => { e.stopPropagation(); onScoreSheetView(match.matchId, match.scoreSheetUrl!); }}
+          className="absolute bottom-1 right-1 text-blue-400 hover:text-blue-600 print:hidden"
+        >
+          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+        </button>
+      )}
 
     </div>
   );
