@@ -31,6 +31,36 @@ interface RowlandMatchDialogProps {
   uploadPath?: string;
 }
 
+/** Resize + re-encode an image to JPEG at max 1920px on the long edge, ~82% quality.
+ *  Keeps file size well under 1 MB for typical score-card photos. */
+async function compressImage(file: File): Promise<{ blob: Blob; name: string }> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const MAX_DIM = 1920;
+      const scale = Math.min(1, MAX_DIM / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width  = Math.round(img.width  * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { reject(new Error('Canvas unavailable')); return; }
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(
+        (blob) => {
+          if (blob) resolve({ blob, name: file.name.replace(/\.[^/.]+$/, '') + '.jpg' });
+          else reject(new Error('Compression failed'));
+        },
+        'image/jpeg',
+        0.82,
+      );
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Image load failed')); };
+    img.src = url;
+  });
+}
+
 function initPlayers(existing: string[]): string[] {
   const result = [...existing];
   while (result.length < 4) result.push('');
@@ -87,8 +117,17 @@ export function RowlandMatchDialog({
     if (!scoreSheetFile || !uploadPath) return uploadedUrl;
     setUploading(true);
     try {
+      let uploadBlob: Blob = scoreSheetFile;
+      let uploadName = scoreSheetFile.name || 'score-sheet.jpg';
+      try {
+        const compressed = await compressImage(scoreSheetFile);
+        uploadBlob = compressed.blob;
+        uploadName = compressed.name;
+      } catch {
+        // compression failed — upload original and let the server enforce size limit
+      }
       const fd = new FormData();
-      fd.append('file', scoreSheetFile);
+      fd.append('file', uploadBlob, uploadName);
       const res = await fetch(`${uploadPath}/score-sheet`, { method: 'POST', body: fd });
       if (!res.ok) {
         let msg = 'Upload failed';
