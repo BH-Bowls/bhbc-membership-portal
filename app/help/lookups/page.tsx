@@ -54,6 +54,11 @@ export default function HelpLookupsPage() {
               rota is generated automatically when a friendly game is published by the Captain. It
               shows the date, opponent, and the members assigned.
             </Body>
+            <Body>
+              If you need to swap your tea duty with another member, tap <strong>Swap</strong> next
+              to your name, select the member you want to swap with, and confirm. An email
+              notification is sent to that member so they know about the swap.
+            </Body>
           </HelpSection>
 
           <HelpSection title="Cleaning Rota">
@@ -61,12 +66,46 @@ export default function HelpLookupsPage() {
               Lookups → Cleaning Rota shows the clubhouse cleaning schedule. Each entry shows the
               date and which members are assigned.
             </Body>
+            <Body>
+              If you need to swap your cleaning duty with another member, tap <strong>Swap</strong>
+              next to your name, select the member you want to swap with, and confirm. An email
+              notification is sent to that member so they know about the swap.
+            </Body>
           </HelpSection>
 
           <HelpSection title="Sweeping Rota">
             <Body>
-              Lookups → Sweeping Rota shows the green sweeping schedule, showing who is responsible
-              for sweeping on each date.
+              Lookups → Sweeping Rota shows a calendar of green sweeping duties. Use the arrow
+              buttons to navigate between months, or tap <strong>Today</strong> to return to the
+              current month.
+            </Body>
+            <Body>
+              <strong>Adding individual days</strong> — tap any available day on the calendar to
+              select it (it will be highlighted). You can tap multiple days before confirming. Once
+              you have selected all the days you want, tap the <strong>Add Selected</strong> button
+              to sign yourself up for all of them at once.
+            </Body>
+            <Body>
+              <strong>Removing yourself</strong> — tap any day you are already assigned to and
+              confirm the cancellation prompt to remove your name from that slot.
+            </Body>
+            <Body>
+              <strong>Adding a pattern</strong> — tap the <strong>Add Pattern</strong> button to
+              sign up for a recurring schedule without selecting days one by one. You can choose:
+            </Body>
+            <Body>
+              <em>Frequency</em> — Every week, First of month, Second, Third, Fourth, Last, or
+              1st &amp; 3rd / 2nd &amp; 4th fortnightly patterns.
+            </Body>
+            <Body>
+              <em>Day of week</em> — which day the pattern falls on (e.g. every Tuesday).
+            </Body>
+            <Body>
+              <em>Date range</em> — a from month and to month (up to 12 months ahead).
+            </Body>
+            <Body>
+              Before confirming, a preview of all the matching dates is shown so you can check
+              what you are signing up for. Tap <strong>Confirm</strong> to add them all at once.
             </Body>
           </HelpSection>
 

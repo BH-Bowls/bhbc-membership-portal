@@ -615,7 +615,7 @@ export default function ManageGamesPage() {
       <div className="container mx-auto px-4 py-8 max-w-7xl">
         {/* Page header with title and link to player view */}
         <div className="flex justify-between items-center mb-6">
-          <h1 className="text-3xl font-bold">Manage Friendly Matches</h1>
+          <h1 className="text-3xl font-bold text-gray-900">Manage Friendly Matches</h1>
 
           {/* Link to player view of friendlies */}
           <Link
@@ -899,7 +899,7 @@ export default function ManageGamesPage() {
           {/* Dialog */}
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-              <h2 className="text-xl font-bold mb-4">
+              <h2 className="text-xl font-bold mb-4 text-gray-900">
                 {outcomeDialog.gameStatus === 'S' ? 'Record Game Outcome' : 'Cancel Game'}
               </h2>
 

@@ -123,7 +123,7 @@ export default function ApplyPage() {
       {/* Header */}
       <div className="bg-green-700 text-white py-6">
         <div className="max-w-2xl mx-auto px-4">
-          <h1 className="text-2xl font-bold">Burgess Hill Bowls Club</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Burgess Hill Bowls Club</h1>
           <p className="text-green-100 mt-1">Membership Application</p>
         </div>
       </div>

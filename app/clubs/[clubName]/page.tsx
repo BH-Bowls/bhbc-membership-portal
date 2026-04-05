@@ -427,7 +427,7 @@ export default function ClubDetailPage({ params }: PageProps) {
                 </svg>
               </Link>
             )}
-            <h1 className="text-3xl font-bold">{club.clubName}</h1>
+            <h1 className="text-3xl font-bold text-gray-900">{club.clubName}</h1>
             {club.drivingBand && (
               <span className={`px-2 py-1 text-sm font-semibold text-white rounded ${
                 club.drivingBand === 'A' ? 'bg-green-500' :
@@ -462,7 +462,7 @@ export default function ClubDetailPage({ params }: PageProps) {
         <div className="grid md:grid-cols-2 gap-6 mb-6">
           {/* Contact Information */}
           <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-lg font-semibold mb-4">Contact Information</h2>
+            <h2 className="text-lg font-semibold mb-4 text-gray-900">Contact Information</h2>
 
             {isEditingClub ? (
               <div className="space-y-4">
@@ -560,7 +560,7 @@ export default function ClubDetailPage({ params }: PageProps) {
 
           {/* Map */}
           <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-lg font-semibold mb-4">Location</h2>
+            <h2 className="text-lg font-semibold mb-4 text-gray-900">Location</h2>
             {club.latitude && club.longitude ? (
               <>
                 <div className="aspect-video bg-gray-100 rounded-lg overflow-hidden mb-3">
@@ -616,7 +616,7 @@ export default function ClubDetailPage({ params }: PageProps) {
 
         {/* Address */}
         <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <h2 className="text-lg font-semibold mb-4">Address</h2>
+          <h2 className="text-lg font-semibold mb-4 text-gray-900">Address</h2>
           {isEditingClub ? (
             <div className="grid md:grid-cols-2 gap-4">
               <div>
@@ -714,7 +714,7 @@ export default function ClubDetailPage({ params }: PageProps) {
 
         {/* General Information */}
         <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <h2 className="text-lg font-semibold mb-4">General Information</h2>
+          <h2 className="text-lg font-semibold mb-4 text-gray-900">General Information</h2>
           {isEditingClub ? (
             <textarea
               value={editedClub.generalInformation || ''}
@@ -737,7 +737,7 @@ export default function ClubDetailPage({ params }: PageProps) {
         {/* Contacts */}
         <div className="bg-white rounded-lg shadow p-6">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-lg font-semibold">Contacts</h2>
+            <h2 className="text-lg font-semibold text-gray-900">Contacts</h2>
             {canEdit && !isAddingContact && (
               <button
                 onClick={() => setIsAddingContact(true)}
@@ -942,19 +942,19 @@ export default function ClubDetailPage({ params }: PageProps) {
                         <div className="text-sm text-gray-600 space-y-1">
                           {contact.phoneNumber && (
                             <div>
-                              <span className="text-gray-400">Phone:</span>{' '}
+                              <span className="text-gray-600">Phone:</span>{' '}
                               <a href={`tel:${contact.phoneNumber}`} className="text-blue-600 hover:underline">{contact.phoneNumber}</a>
                             </div>
                           )}
                           {contact.mobileNumber && (
                             <div>
-                              <span className="text-gray-400">Mobile:</span>{' '}
+                              <span className="text-gray-600">Mobile:</span>{' '}
                               <a href={`tel:${contact.mobileNumber}`} className="text-blue-600 hover:underline">{contact.mobileNumber}</a>
                             </div>
                           )}
                           {contact.email && (
                             <div>
-                              <span className="text-gray-400">Email:</span>{' '}
+                              <span className="text-gray-600">Email:</span>{' '}
                               <a href={`mailto:${contact.email}`} className="text-blue-600 hover:underline">{contact.email}</a>
                             </div>
                           )}
@@ -993,77 +993,67 @@ export default function ClubDetailPage({ params }: PageProps) {
           )}
         </div>
 
+        {/* Fixtures */}
+        <div className="bg-white rounded-lg shadow p-6 mt-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Fixtures</h2>
+          {fixturesLoading ? (
+            <p className="text-sm text-gray-500">Loading fixtures…</p>
+          ) : fixtures.length === 0 ? (
+            <p className="text-sm text-gray-500 italic">No fixtures recorded against this club.</p>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {fixtures.map((f, idx) => {
+                const opponentName = f.clubSuffix ? `${f.clubName} ${f.clubSuffix}` : f.clubName;
+                const venue = f.homeAway === 'H' ? 'BH' : opponentName;
+                const typeLabel = f.league || (f.gameType !== 'Friendly' ? f.gameType : 'Friendly');
+                const hasScore = f.bhbcScore != null && f.opponentScore != null;
+                const won = hasScore && f.bhbcScore! > f.opponentScore!;
+                const lost = hasScore && f.bhbcScore! < f.opponentScore!;
+
+                let resultEl: React.ReactNode;
+                if (f.status === 'C') {
+                  resultEl = <span className="text-xs text-gray-400">Cancelled</span>;
+                } else if (f.status === 'P') {
+                  resultEl = <span className="text-xs text-gray-400">Postponed</span>;
+                } else if (f.reason?.toLowerCase().includes('abandon')) {
+                  resultEl = <span className="text-xs text-gray-400">Abandoned</span>;
+                } else if (hasScore) {
+                  resultEl = (
+                    <span className={`text-sm font-semibold tabular-nums ${won ? 'text-green-600' : lost ? 'text-red-600' : 'text-gray-600'}`}>
+                      {f.bhbcScore} – {f.opponentScore}
+                    </span>
+                  );
+                } else {
+                  resultEl = null;
+                }
+
+                return (
+                  <div key={f.tabName || idx} className="flex items-center gap-3 py-2.5 text-sm">
+                    <span className="text-gray-500 w-20 shrink-0 text-xs">{formatFixtureDate(f.date)}</span>
+                    {f.time && <span className="text-gray-400 w-12 shrink-0 text-xs">{f.time}</span>}
+                    <span className="text-xs font-medium text-gray-600 w-24 shrink-0 truncate" title={venue}>{venue}</span>
+                    <div className="flex-1 min-w-0">
+                      <span className="text-gray-700">{typeLabel}</span>
+                      {f.ladiesMen && (
+                        <span className="text-gray-400 text-xs ml-1.5">{f.ladiesMen}</span>
+                      )}
+                      {f.format && (
+                        <span className="text-gray-400 text-xs ml-1.5">· {f.format}</span>
+                      )}
+                    </div>
+                    <div className="shrink-0 text-right">{resultEl}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
         {/* Last Updated */}
         {club.lastUpdated && (
           <p className="text-sm text-gray-500 mt-4 text-right">
             Last updated: {club.lastUpdated}
           </p>
-        )}
-      </div>
-
-      {/* Fixtures section */}
-      <div className="bg-white rounded-lg shadow p-6 mb-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Fixtures</h2>
-        {fixturesLoading ? (
-          <p className="text-sm text-gray-400">Loading fixtures…</p>
-        ) : fixtures.length === 0 ? (
-          <p className="text-sm text-gray-500 italic">No fixtures recorded against this club.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-200 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">
-                  <th className="pb-2 pr-4">Date</th>
-                  <th className="pb-2 pr-4">Time</th>
-                  <th className="pb-2 pr-4">Type</th>
-                  <th className="pb-2 pr-4">Location</th>
-                  <th className="pb-2 pr-4">Format</th>
-                  <th className="pb-2 pr-4">Section</th>
-                  <th className="pb-2">Result</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {fixtures.map((f, idx) => {
-                  const opponentName = f.clubSuffix ? `${f.clubName} ${f.clubSuffix}` : f.clubName;
-                  const location = f.homeAway === 'H' ? 'BH' : opponentName;
-                  const typeLabel = f.league || (f.gameType !== 'Friendly' ? f.gameType : 'Friendly');
-                  const hasScore = f.bhbcScore != null && f.opponentScore != null;
-                  const scoreEl = hasScore ? (
-                    <span className={`font-medium ${
-                      f.bhbcScore! > f.opponentScore! ? 'text-green-600'
-                      : f.bhbcScore! < f.opponentScore! ? 'text-red-600'
-                      : 'text-gray-600'
-                    }`}>
-                      {f.bhbcScore} – {f.opponentScore}
-                    </span>
-                  ) : null;
-                  return (
-                    <tr key={f.tabName || idx} className="text-gray-700">
-                      <td className="py-2 pr-4 whitespace-nowrap">{formatFixtureDate(f.date)}</td>
-                      <td className="py-2 pr-4">{f.time || '—'}</td>
-                      <td className="py-2 pr-4 text-gray-500">{typeLabel}</td>
-                      <td className="py-2 pr-4">{location}</td>
-                      <td className="py-2 pr-4">{f.format || '—'}</td>
-                      <td className="py-2 pr-4">{f.ladiesMen || '—'}</td>
-                      <td className="py-2">
-                        {f.status === 'C' ? (
-                          <span className="text-xs text-gray-400">Cancelled{scoreEl ? <> · {scoreEl}</> : ''}</span>
-                        ) : f.status === 'P' ? (
-                          <span className="text-xs text-gray-400">Postponed{scoreEl ? <> · {scoreEl}</> : ''}</span>
-                        ) : f.reason?.toLowerCase().includes('abandon') ? (
-                          <span className="text-xs text-gray-500">Abandoned{scoreEl ? <> · {scoreEl}</> : ''}</span>
-                        ) : hasScore ? (
-                          scoreEl
-                        ) : (
-                          <span className="text-xs text-gray-400">Not played</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
         )}
       </div>
 

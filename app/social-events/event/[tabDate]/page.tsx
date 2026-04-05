@@ -116,7 +116,7 @@ export default function EventDetailsPage() {
         <div className="bg-white rounded-lg shadow p-6 mb-6">
           <div className="flex justify-between items-start mb-4">
             <div>
-              <h1 className="text-3xl font-bold mb-2">{event.eventName}</h1>
+              <h1 className="text-3xl font-bold mb-2 text-gray-900">{event.eventName}</h1>
               <p className="text-lg text-gray-600">
                 {new Date(event.date).toLocaleDateString('en-GB', {
                   weekday: 'long',
@@ -169,7 +169,7 @@ export default function EventDetailsPage() {
           {/* Attending */}
           {attending.length > 0 && (
             <div className="bg-white rounded-lg shadow p-6">
-              <h2 className="text-xl font-bold mb-4 flex items-center">
+              <h2 className="text-xl font-bold mb-4 flex items-center text-gray-900">
                 <span className="inline-block w-3 h-3 rounded-full bg-green-500 mr-2"></span>
                 Attending ({attending.length})
               </h2>
@@ -186,7 +186,7 @@ export default function EventDetailsPage() {
           {/* Maybe */}
           {maybe.length > 0 && (
             <div className="bg-white rounded-lg shadow p-6">
-              <h2 className="text-xl font-bold mb-4 flex items-center">
+              <h2 className="text-xl font-bold mb-4 flex items-center text-gray-900">
                 <span className="inline-block w-3 h-3 rounded-full bg-yellow-500 mr-2"></span>
                 Maybe ({maybe.length})
               </h2>
@@ -203,7 +203,7 @@ export default function EventDetailsPage() {
           {/* Waitlist */}
           {waitlist.length > 0 && (
             <div className="bg-white rounded-lg shadow p-6">
-              <h2 className="text-xl font-bold mb-4 flex items-center">
+              <h2 className="text-xl font-bold mb-4 flex items-center text-gray-900">
                 <span className="inline-block w-3 h-3 rounded-full bg-blue-500 mr-2"></span>
                 Waitlist ({waitlist.length})
               </h2>
@@ -220,7 +220,7 @@ export default function EventDetailsPage() {
           {/* Not Attending */}
           {notAttending.length > 0 && (
             <div className="bg-white rounded-lg shadow p-6">
-              <h2 className="text-xl font-bold mb-4 flex items-center">
+              <h2 className="text-xl font-bold mb-4 flex items-center text-gray-900">
                 <span className="inline-block w-3 h-3 rounded-full bg-red-500 mr-2"></span>
                 Not Attending ({notAttending.length})
               </h2>

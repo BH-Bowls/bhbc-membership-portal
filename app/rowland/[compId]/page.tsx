@@ -221,7 +221,7 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
             {loading ? (
               <div className="h-7 w-48 bg-gray-200 rounded animate-pulse" />
             ) : (
-              <h1 className="text-2xl font-bold">
+              <h1 className="text-2xl font-bold text-gray-900">
                 {comp ? (ROWLAND_COMP_NAMES[comp.compId] ?? comp.compName) : compId}
               </h1>
             )}
@@ -275,7 +275,7 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
 
         {/* Print-only title */}
         <div className="hidden print:block mb-4">
-          <h1 className="text-2xl font-bold">
+          <h1 className="text-2xl font-bold text-gray-900">
             {comp ? (ROWLAND_COMP_NAMES[comp.compId] ?? comp.compName) : compId}
           </h1>
         </div>

@@ -79,7 +79,7 @@ export default function SocialEventsPage() {
 
       <div className="container mx-auto px-4 py-8 max-w-6xl">
         <div className="flex justify-between items-center mb-6">
-          <h1 className="text-3xl font-bold">Social Events</h1>
+          <h1 className="text-3xl font-bold text-gray-900">Social Events</h1>
 
           {session?.user.role && ['Admin'].includes(session.user.role) && (
             <Link
@@ -162,7 +162,7 @@ export default function SocialEventsPage() {
                         {event.eventName}
                       </h3>
                     ) : (
-                      <h3 className="font-bold text-lg">{event.eventName}</h3>
+                      <h3 className="font-bold text-lg text-gray-900">{event.eventName}</h3>
                     )}
                     <p className="text-sm text-gray-600">
                       {new Date(event.date).toLocaleDateString('en-GB', {
@@ -266,7 +266,7 @@ export default function SocialEventsPage() {
               <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl h-[80vh] flex flex-col">
                 <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
                   <div>
-                    <h2 className="text-xl font-semibold">{detailsModalEvent.eventName}</h2>
+                    <h2 className="text-xl font-semibold text-gray-900">{detailsModalEvent.eventName}</h2>
                     {detailsModalEvent.description && (
                       <p className="text-sm text-gray-600 mt-1">{detailsModalEvent.description}</p>
                     )}

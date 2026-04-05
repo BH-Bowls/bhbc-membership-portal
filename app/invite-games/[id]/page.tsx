@@ -309,7 +309,7 @@ export default function InviteGameDetailPage({
                   className="mt-1 text-2xl font-bold w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:opacity-50"
                 />
               ) : (
-                <h1 className="text-2xl font-bold mt-1">{current.title}</h1>
+                <h1 className="text-2xl font-bold mt-1 text-gray-900">{current.title}</h1>
               )}
             </div>
 
@@ -400,7 +400,7 @@ export default function InviteGameDetailPage({
         {/* Attachments Section */}
         <div className="bg-white rounded-lg shadow p-6">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-bold">Attachments</h2>
+            <h2 className="text-xl font-bold text-gray-900">Attachments</h2>
             {isCommittee && !showUploadForm && !isEditing && (
               <button
                 onClick={() => setShowUploadForm(true)}

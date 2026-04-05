@@ -3390,8 +3390,9 @@ export async function getTeaRotaList(): Promise<TeaRotaEntry[]> {
     if (status === 'C') continue;
 
     // Only include Friendly games (tea rota doesn't apply to league/events)
-    const gameType = get(row, 'type') || 'Friendly';
-    if (gameType !== 'Friendly') continue;
+    // Rows with no type set are treated as friendlies for backward compatibility.
+    const gameType = get(row, 'type') || '';
+    if (gameType && gameType !== 'Friendly') continue;
 
     // Extract game data - normalize date to DD/MM/YYYY immediately
     const date = normalizeToUKDate(get(row, 'date') || '');

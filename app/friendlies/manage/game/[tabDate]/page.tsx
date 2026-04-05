@@ -570,7 +570,7 @@ export default function TeamSelectionPage() {
             ← Back to Manage Games
           </Link>
 
-          <h1 className="text-3xl font-bold">{game.clubName} - Team Selection</h1>
+          <h1 className="text-3xl font-bold text-gray-900">{game.clubName} - Team Selection</h1>
 
           <div className="text-gray-600 mt-2">
             {parseUKDate(game.date).toLocaleDateString('en-GB', {

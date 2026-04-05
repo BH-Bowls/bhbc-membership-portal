@@ -111,15 +111,39 @@ export default function RowlandHelpPage() {
             </Step>
           </Section>
 
+          {/* Score sheet upload */}
+          <Section title="4. Score sheet photos">
+            <p className="text-sm text-gray-700 leading-relaxed mb-3">
+              When entering a result, a score sheet photo can be attached. The image is stored and a link is included in the result notification email.
+            </p>
+            <Step n={1}>
+              Open the match and fill in the result as normal.
+            </Step>
+            <Step n={2}>
+              Below the date, tap <strong>Add photo / take photo</strong>.
+              On a <strong>phone</strong> this opens the camera directly — take a photo of the score card.
+              On a <strong>PC</strong> this opens a file browser — select an image file.
+            </Step>
+            <Step n={3}>
+              A thumbnail preview appears. Click <strong>Save</strong> — the image is uploaded and the link is included in the result email to the organisers.
+            </Step>
+            <Step n={4}>
+              To view a score sheet after the result has been saved, look for the small <strong>camera icon</strong> in the corner of the match card on the draw. Click it to open the image.
+            </Step>
+            <Note>
+              You can also go back into a completed match to add or replace the score sheet photo at any time — open the match, tap the photo button, and save again.
+            </Note>
+          </Section>
+
           {/* Reviewing submissions */}
-          <Section title="4. Reviewing club submissions">
+          <Section title="6. Reviewing club submissions">
             <p className="text-sm text-gray-700 leading-relaxed">
               Clubs enter their own results and player names. You can review all submissions in the draw. If a result looks incorrect, tap the match to open it and make corrections — your changes will overwrite what the club submitted.
             </p>
           </Section>
 
           {/* Print */}
-          <Section title="5. Printing the draw">
+          <Section title="7. Printing the draw">
             <Step n={1}>
               Open the competition draw.
             </Step>

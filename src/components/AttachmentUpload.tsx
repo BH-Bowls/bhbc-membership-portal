@@ -25,6 +25,7 @@ export function AttachmentUpload({
   const [error, setError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -223,6 +224,14 @@ export function AttachmentUpload({
                 accept="*"
                 className="sr-only"
               />
+              <input
+                ref={cameraInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={handleFileInputChange}
+                className="sr-only"
+              />
               {file ? (
                 <div className="space-y-2">
                   <p className="text-sm font-medium text-gray-900">{file.name}</p>
@@ -260,6 +269,16 @@ export function AttachmentUpload({
                       Choose a file
                     </label>{' '}
                     or drag and drop
+                  </div>
+                  <div className="text-sm text-gray-500">
+                    or{' '}
+                    <button
+                      type="button"
+                      onClick={() => cameraInputRef.current?.click()}
+                      className="text-blue-600 hover:text-blue-700 font-medium"
+                    >
+                      take a photo
+                    </button>
                   </div>
                   <p className="text-xs text-gray-500">
                     Images, PDFs, documents, spreadsheets — up to 50MB

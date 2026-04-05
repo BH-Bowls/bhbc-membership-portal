@@ -69,7 +69,7 @@ export default function InviteGamesPage() {
       <div className="container mx-auto px-4 py-8 max-w-5xl">
         <div className="flex justify-between items-center mb-6">
           <div>
-            <h1 className="text-3xl font-bold">Invite Games</h1>
+            <h1 className="text-3xl font-bold text-gray-900">Invite Games</h1>
             <p className="text-gray-600 mt-1">
               External club competitions and invite events
             </p>
@@ -124,6 +124,7 @@ export default function InviteGamesPage() {
               <div
                 key={game.inviteGameId}
                 onClick={() => router.push(`/invite-games/${game.inviteGameId}`)}
+                title="View invite game details"
                 className="bg-white rounded-lg shadow p-5 cursor-pointer hover:shadow-md transition-shadow"
               >
                 <div className="flex items-start justify-between gap-4">

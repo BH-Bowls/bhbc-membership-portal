@@ -1,6 +1,7 @@
 // app/competitions/my/page.tsx
-// Personal competition progress summary — shows the current user's status,
-// partners, and opponents across all competitions they have entered.
+// Personal competition progress — shows the user's full journey through every
+// competition they have entered, including byes, wins/losses with scores,
+// handicap starting scores, and their current pending match.
 
 'use client';
 
@@ -9,7 +10,7 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
 import { COMP_ROUND_LABELS } from '@/types/competitions';
-import type { MyCompEntry, CompPosition } from '../../api/competitions/my/route';
+import type { MyCompEntry, CompPosition, JourneyStep } from '../../api/competitions/my/route';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -31,121 +32,197 @@ function posShort(pos: CompPosition): string {
   return '';
 }
 
-function nameWithPos(p: { fullName: string; position: CompPosition }): string {
+function nameWithPos(p: { fullName: string; position: CompPosition; handicap?: number | null }): string {
   const short = posShort(p.position);
-  return short ? `${p.fullName} (${short})` : p.fullName;
+  const hcp   = p.handicap != null ? ` [${p.handicap}]` : '';
+  return short ? `${p.fullName} (${short})${hcp}` : `${p.fullName}${hcp}`;
 }
 
-function nameList(people: { fullName: string; position: CompPosition }[]) {
+function nameList(people: { fullName: string; position: CompPosition; handicap?: number | null }[]) {
   return people.map(nameWithPos).join(' & ');
 }
 
-// ── Status badge ──────────────────────────────────────────────────────────────
+// ── Overall status badge ──────────────────────────────────────────────────────
 
 const STATUS_CONFIG = {
-  active:      { label: 'Active',          className: 'bg-blue-100 text-blue-700' },
-  awaiting:    { label: 'Awaiting draw',   className: 'bg-yellow-100 text-yellow-700' },
-  winner:      { label: 'Winner',          className: 'bg-green-100 text-green-700' },
-  'knocked-out': { label: 'Knocked out',   className: 'bg-gray-100 text-gray-500' },
+  active:       { label: 'Active',        className: 'bg-blue-100 text-blue-700' },
+  awaiting:     { label: 'Awaiting draw', className: 'bg-yellow-100 text-yellow-700' },
+  winner:       { label: 'Winner',        className: 'bg-green-100 text-green-700' },
+  'knocked-out':{ label: 'Knocked out',   className: 'bg-gray-100 text-gray-500' },
 } as const;
 
-// ── Card ──────────────────────────────────────────────────────────────────────
+// ── Journey step row ──────────────────────────────────────────────────────────
 
-function EntryCard({ entry, onClick }: { entry: MyCompEntry; onClick: () => void }) {
+function JourneyRow({ step }: { step: JourneyStep }) {
+  const { matchStatus, round, opponents, myScore, oppScore,
+          playByDate, playedDate, myHandicap, myStartScore, oppStartScore } = step;
+
+  const oppNames = opponents && opponents.length > 0 ? nameList(opponents) : null;
+
+  // Row accent colour
+  const isBye     = matchStatus === 'Bye';
+  const isWon     = matchStatus === 'Won' || matchStatus === 'WalkoverWon';
+  const isLost    = matchStatus === 'Lost' || matchStatus === 'WalkoverLost';
+  const isPending = matchStatus === 'Pending';
+
+  const roundPill = (
+    <span className="inline-block text-xs font-medium bg-gray-100 text-gray-600 rounded px-1.5 py-0.5 w-16 text-center shrink-0">
+      {roundLabel(round)}
+    </span>
+  );
+
+  // Handicap info line
+  const showHcp = myHandicap != null && opponents && opponents[0]?.handicap != null;
+  const oppHcp  = opponents?.[0]?.handicap ?? null;
+
+  const hcpLine = showHcp ? (
+    <span className="text-xs text-gray-400">
+      Hcp: you {myHandicap} / opp {oppHcp}
+      {myStartScore != null && oppStartScore != null && (
+        <span className="ml-1 text-gray-500">
+          · {isPending ? 'starts' : 'started'} {myStartScore}–{oppStartScore}
+        </span>
+      )}
+    </span>
+  ) : null;
+
+  if (isBye) {
+    return (
+      <div className="flex items-center gap-2 py-1.5">
+        {roundPill}
+        <span className="text-sm text-amber-600 font-medium">Bye — advanced</span>
+      </div>
+    );
+  }
+
+  if (isPending) {
+    return (
+      <div className="py-1.5 space-y-0.5">
+        <div className="flex items-start gap-2">
+          {roundPill}
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+              <span className="text-sm font-medium text-blue-700">
+                vs {oppNames ?? 'TBD'}
+              </span>
+            </div>
+            {playByDate && (
+              <p className="text-xs text-gray-500">Play by {formatDate(playByDate)}</p>
+            )}
+            {hcpLine && <p>{hcpLine}</p>}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Completed / walkover
+  const scoreStr = myScore != null && oppScore != null ? `${myScore}–${oppScore}` : null;
+  const isWalkover = matchStatus === 'WalkoverWon' || matchStatus === 'WalkoverLost';
+
+  return (
+    <div className="py-1.5 space-y-0.5">
+      <div className="flex items-start gap-2">
+        {roundPill}
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+            <span className={`text-sm font-medium ${isWon ? 'text-green-700' : 'text-red-600'}`}>
+              {isWon ? 'Beat' : 'Lost to'} {oppNames ?? '—'}
+            </span>
+            {scoreStr && (
+              <span className={`font-mono text-sm font-semibold ${isWon ? 'text-green-700' : 'text-red-600'}`}>
+                {scoreStr}
+              </span>
+            )}
+            {isWalkover && (
+              <span className="text-xs text-orange-500">(walkover)</span>
+            )}
+          </div>
+          {hcpLine && <p>{hcpLine}</p>}
+          {playedDate && (
+            <p className="text-xs text-gray-400">{formatDate(playedDate)}</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Entry card ────────────────────────────────────────────────────────────────
+
+const POS_ORDER: Record<string, number> = { 'Skip': 0, 'No. 2': 1, 'Lead': 2 };
+
+function buildTeamLine(
+  userName: string,
+  myPosition: CompPosition,
+  partners: { fullName: string; position: CompPosition }[],
+): string {
+  const members = [
+    { name: userName, position: myPosition },
+    ...partners.map((p) => ({ name: p.fullName, position: p.position })),
+  ].sort((a, b) => (POS_ORDER[a.position ?? ''] ?? 99) - (POS_ORDER[b.position ?? ''] ?? 99));
+
+  return members.map((m) => `${m.position ?? ''}: ${m.name}`).join(' · ');
+}
+
+function EntryCard({ entry, userName, onClick }: { entry: MyCompEntry; userName: string; onClick: () => void }) {
   const { label, className } = STATUS_CONFIG[entry.entryStatus];
-  const m = entry.match;
-  const isActive = entry.entryStatus === 'active';
+  const isActive     = entry.entryStatus === 'active';
   const isKnockedOut = entry.entryStatus === 'knocked-out';
+
+  const showTeam = entry.compType !== 'singles' && entry.match && entry.match.partners.length > 0;
+  const teamLine = showTeam
+    ? buildTeamLine(userName, entry.myPosition, entry.match!.partners)
+    : null;
 
   return (
     <button
       onClick={onClick}
-      className={`w-full text-left bg-white rounded-lg border p-4 transition-all hover:shadow-md ${
+      title="Show Draw"
+      className={`w-full text-left bg-white rounded-lg border p-4 transition-all hover:shadow-md cursor-pointer ${
         isActive ? 'border-blue-200 hover:border-blue-300' : 'border-gray-200 hover:border-gray-300'
-      } ${isKnockedOut ? 'opacity-60' : ''}`}
+      } ${isKnockedOut ? 'opacity-70' : ''}`}
     >
-      {/* Header row */}
+      {/* Header */}
       <div className="flex items-start justify-between gap-2 mb-3">
         <div>
-          <p className="font-semibold text-gray-900">
-            {entry.displayName}{entry.myPosition ? ` — ${entry.myPosition}` : ''}
-          </p>
-          <p className="text-xs text-gray-400 mt-0.5">
+          <p className="font-semibold text-gray-900">{entry.displayName}</p>
+          <p className="text-xs text-gray-600 mt-0.5">
             {entry.compDescription ?? entry.compType}
           </p>
         </div>
-        <div className="flex flex-col items-end gap-1 shrink-0">
-          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${className}`}>
-            {label}
-          </span>
-          <span className="text-xs text-gray-400">{roundLabel(entry.round)}</span>
-        </div>
+        <span className={`text-xs font-medium px-2 py-0.5 rounded-full shrink-0 ${className}`}>
+          {label}
+        </span>
       </div>
 
-      {/* Challenger / Opponent notice */}
-      {isActive && (
-        <div className="mb-2 text-xs text-blue-700 bg-blue-50 rounded px-2 py-1.5">
-          {entry.isChallenger ? 'You are the Challenger' : 'You are the Opponent'}
-          {entry.isChallenger && entry.offerByDate && (
-            <span className="font-medium"> — offer your opponent 3 dates by {formatDate(entry.offerByDate)}</span>
+      {/* Team composition (pairs / triples) + challenger notice */}
+      {(teamLine || isActive) && (
+        <div className="mb-3 space-y-1">
+          {teamLine && (
+            <p className="text-xs text-gray-600">{teamLine}</p>
           )}
-        </div>
-      )}
-
-      {m && (
-        <div className="space-y-1.5">
-          {/* Partners (pairs / triples) */}
-          {m.partners.length > 0 && (
-            <div className="flex items-baseline gap-1.5 text-sm">
-              <span className="text-gray-400 text-xs w-16 shrink-0">With</span>
-              <span className="text-gray-800 font-medium">{nameList(m.partners)}</span>
-            </div>
-          )}
-
-          {/* Opponent */}
-          {m.opponents && m.opponents.length > 0 ? (
-            <div className="flex items-baseline gap-1.5 text-sm">
-              <span className="text-gray-400 text-xs w-16 shrink-0">
-                {isActive ? 'Playing' : 'Played'}
-              </span>
-              <span className={`font-medium ${isActive ? 'text-gray-800' : 'text-gray-600'}`}>
-                {nameList(m.opponents)}
-              </span>
-            </div>
-          ) : m.status === 'Bye' ? (
-            <div className="text-sm text-amber-600 font-medium">Bye — advancing to next round</div>
-          ) : null}
-
-          {/* Score (if played) */}
-          {m.myScore != null && m.oppScore != null && (
-            <div className="flex items-baseline gap-1.5 text-sm">
-              <span className="text-gray-400 text-xs w-16 shrink-0">Score</span>
-              <span className={`font-mono font-semibold ${m.won ? 'text-green-700' : 'text-red-600'}`}>
-                {m.myScore} – {m.oppScore}
-              </span>
-              <span className="text-xs text-gray-400">
-                {m.won ? '(won)' : '(lost)'}
-              </span>
-            </div>
-          )}
-
-          {/* Play-by date */}
-          {isActive && m.playByDate && (
-            <div className="flex items-baseline gap-1.5 text-sm">
-              <span className="text-gray-400 text-xs w-16 shrink-0">Play by</span>
-              <span className="text-gray-700">{formatDate(m.playByDate)}</span>
-            </div>
-          )}
-
-          {/* Played date */}
-          {m.playedDate && !isActive && (
-            <div className="flex items-baseline gap-1.5 text-sm">
-              <span className="text-gray-400 text-xs w-16 shrink-0">Played</span>
-              <span className="text-gray-500">{formatDate(m.playedDate)}</span>
+          {isActive && (
+            <div className="text-xs text-blue-700 bg-blue-50 rounded px-2 py-1.5">
+              {entry.isChallenger ? 'You are the Challenger' : 'You are the Opponent'}
+              {entry.isChallenger && entry.offerByDate && (
+                <span className="font-medium"> — offer your opponent 3 dates by {formatDate(entry.offerByDate)}</span>
+              )}
             </div>
           )}
         </div>
       )}
+
+      {/* Journey timeline */}
+      {entry.journey.length > 0 && (
+        <div className="divide-y divide-gray-100">
+          {entry.journey.map((step) => (
+            <JourneyRow key={step.matchId} step={step} />
+          ))}
+        </div>
+      )}
+
+      <div className="mt-3 text-xs text-blue-600 text-right">Show Draw →</div>
     </button>
   );
 }
@@ -172,9 +249,9 @@ export default function MyCompetitionsPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  const active    = entries.filter((e) => e.entryStatus === 'active');
-  const awaiting  = entries.filter((e) => e.entryStatus === 'awaiting');
-  const winner    = entries.filter((e) => e.entryStatus === 'winner');
+  const active     = entries.filter((e) => e.entryStatus === 'active');
+  const awaiting   = entries.filter((e) => e.entryStatus === 'awaiting');
+  const winner     = entries.filter((e) => e.entryStatus === 'winner');
   const knockedOut = entries.filter((e) => e.entryStatus === 'knocked-out');
 
   return (
@@ -228,11 +305,7 @@ export default function MyCompetitionsPage() {
                 </h2>
                 <div className="space-y-3">
                   {active.map((e) => (
-                    <EntryCard
-                      key={e.compId}
-                      entry={e}
-                      onClick={() => router.push(`/competitions/${e.compId}`)}
-                    />
+                    <EntryCard key={e.compId} entry={e} userName={session?.user?.name ?? ''} onClick={() => router.push(`/competitions/${e.compId}`)} />
                   ))}
                 </div>
               </section>
@@ -245,11 +318,7 @@ export default function MyCompetitionsPage() {
                 </h2>
                 <div className="space-y-3">
                   {awaiting.map((e) => (
-                    <EntryCard
-                      key={e.compId}
-                      entry={e}
-                      onClick={() => router.push(`/competitions/${e.compId}`)}
-                    />
+                    <EntryCard key={e.compId} entry={e} userName={session?.user?.name ?? ''} onClick={() => router.push(`/competitions/${e.compId}`)} />
                   ))}
                 </div>
               </section>
@@ -262,11 +331,7 @@ export default function MyCompetitionsPage() {
                 </h2>
                 <div className="space-y-3">
                   {winner.map((e) => (
-                    <EntryCard
-                      key={e.compId}
-                      entry={e}
-                      onClick={() => router.push(`/competitions/${e.compId}`)}
-                    />
+                    <EntryCard key={e.compId} entry={e} userName={session?.user?.name ?? ''} onClick={() => router.push(`/competitions/${e.compId}`)} />
                   ))}
                 </div>
               </section>
@@ -279,11 +344,7 @@ export default function MyCompetitionsPage() {
                 </h2>
                 <div className="space-y-3">
                   {knockedOut.map((e) => (
-                    <EntryCard
-                      key={e.compId}
-                      entry={e}
-                      onClick={() => router.push(`/competitions/${e.compId}`)}
-                    />
+                    <EntryCard key={e.compId} entry={e} userName={session?.user?.name ?? ''} onClick={() => router.push(`/competitions/${e.compId}`)} />
                   ))}
                 </div>
               </section>

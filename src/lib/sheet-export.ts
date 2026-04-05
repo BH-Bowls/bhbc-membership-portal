@@ -103,6 +103,10 @@ export async function exportBracketToSheet(
 
   if (presentRounds.length === 0) throw new Error('No matches found for this competition');
 
+  // If any round has a play-by date, skip bye matches entirely — date-based column
+  // shifting can place R1 matches in the Prelim column, making bye boxes overlap.
+  const hasPlayByDates = presentRounds.some(r => !!getRoundPlayByDate(r as CompRound, competition));
+
   const firstRoundCount = inferFirstRoundCount(matches);
   const condensed = config.connectorColWidthPx === 0;
 
@@ -444,7 +448,7 @@ export async function exportBracketToSheet(
 
   // Match box borders + text format
   for (const mp of matchPositions) {
-    if (mp.match.status === 'Bye') continue;
+    if (mp.match.status === 'Bye' && (hasPlayByDates || mp.match.round !== 'Prelim')) continue;
 
     const sRowStart = sr(mp.boxStartRow);
     const sRowEnd   = sr(mp.boxEndRow) + 1; // exclusive
@@ -673,7 +677,7 @@ export async function exportBracketToSheet(
   // Match box values
   for (const mp of matchPositions) {
     const match = mp.match;
-    if (match.status === 'Bye') continue;
+    if (match.status === 'Bye' && (hasPlayByDates || match.round !== 'Prelim')) continue;
 
     const col        = getColumnLetter(mp.matchCol);
     // A1 offset: +1 title, +1 header, +1 dates, +1 blank, +1 for 1-indexed = content row + 5
@@ -682,7 +686,9 @@ export async function exportBracketToSheet(
 
     const isComplete = match.status === 'Complete' || match.status === 'Walkover';
     const s1 = sideRows(match.side1Usernames, isComplete ? match.score1 : null);
-    const s2 = sideRows(match.side2Usernames ?? [], isComplete ? match.score2 : null);
+    // For bye matches, show "Bye" as the opponent instead of "TBD"
+    const s2Usernames = match.status === 'Bye' ? ['Bye'] : (match.side2Usernames ?? []);
+    const s2 = sideRows(s2Usernames, isComplete ? match.score2 : null);
 
     s1.forEach((text, i) => {
       if (text) valueData.push({ range: `'${escapedTitle}'!${col}${s1StartRow + i}`, values: [[text]] });

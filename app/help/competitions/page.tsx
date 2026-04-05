@@ -14,63 +14,52 @@ export default function HelpCompetitionsPage() {
         <div className="mb-6">
           <BackLink href="/help" label="Help" />
           <h1 className="text-2xl font-bold text-gray-900">Competitions</h1>
-          <p className="text-gray-500 text-sm mt-1">Entering club competition results</p>
+          <p className="text-gray-500 text-sm mt-1">Viewing the draw and tracking your progress</p>
         </div>
         <div className="space-y-4">
 
-          <HelpSection title="Finding your competition">
-            <Step n={1}>
-              Go to <strong>Competitions → My Competitions</strong> to see the competitions you have
-              entered.
-            </Step>
-            <Step n={2}>
-              Tap a competition name to open the draw.
-            </Step>
+          <HelpSection title="Competitions summary">
+            <Body>
+              The Competitions page lists all club competitions — singles, pairs, and triples — grouped
+              by status (In Progress, Draw Done, Not Started, Complete). Tap any competition to open
+              its draw and see all matches and results.
+            </Body>
           </HelpSection>
 
           <HelpSection title="The draw">
             <Body>
-              The draw shows all matches in the competition as a bracket. Your match is highlighted
-              in blue. Each match shows the two players or teams, the play-by date, and the result if
-              it has been recorded.
+              The draw shows all matches in the competition. Your match is highlighted in blue. Each
+              match shows the two players or teams, and the result if it has been recorded.
             </Body>
-          </HelpSection>
-
-          <HelpSection title="Entering your result">
-            <Step n={1}>
-              Tap your highlighted match to open the result form.
-            </Step>
-            <Step n={2}>
-              Enter both players&apos; names — please use full names (e.g. Robert Smith, not Bob).
-            </Step>
-            <Step n={3}>
-              Enter the score for both sides.
-            </Step>
-            <Step n={4}>
-              Check the date played is correct (it defaults to today).
-            </Step>
-            <Step n={5}>
-              Tap <strong>Save</strong>. The winner automatically advances in the draw.
-            </Step>
-          </HelpSection>
-
-          <HelpSection title="If your opponent enters the result first">
             <Body>
-              Either player can enter the result. If your opponent has already entered the score, you
-              can still tap the match to add your player name if it is missing.
+              <strong>On a wide screen</strong> (tablet landscape or desktop), all rounds are shown
+              side by side with connecting lines so you can follow the path to the final at a glance.
+            </Body>
+            <Body>
+              <strong>On a phone</strong>, one round is shown at a time — the current round with
+              matches still to play is shown first. Tap the round buttons at the top to switch
+              between rounds, or tap the <strong>All Rounds</strong> button or the same round button
+              again to show all rounds at once.
+            </Body>
+            <Body>
+              Tap <strong>← All Competitions</strong> at the top of the screen to return to the
+              competitions summary.
             </Body>
           </HelpSection>
 
-          <HelpSection title="Walkovers">
-            <Step n={1}>
-              Tap your match.
-            </Step>
-            <Step n={2}>
-              Tap <strong>Record walkover instead</strong>.
-            </Step>
-            <Step n={3}>
-              Select which side advances. Contact the Captain if you are unsure.
-            </Step>
+          <HelpSection title="My Progress">
+            <Body>
+              On the Competitions page, tap <strong>My Progress</strong> (top right) to see a
+              summary of every competition you are entered in — your current round, who you are
+              playing, the score if recorded, and the play-by date for your next match.
+            </Body>
+            <Body>
+              Tap any entry to open the full draw for that competition.
+            </Body>
+            <Body>
+              Tap <strong>← All Competitions</strong> at the top of the screen to return to the
+              competitions summary.
+            </Body>
           </HelpSection>
 
           <HelpSection title="Play-by dates">
@@ -79,6 +68,10 @@ export default function HelpCompetitionsPage() {
               current round&apos;s deadline. If you are having difficulty arranging a match, contact the
               Captain.
             </Note>
+            <Body>
+              Results are entered by the Captain or committee — leave your score card in the box in
+              the clubhouse once your match has been played so they can record the result.
+            </Body>
           </HelpSection>
 
         </div>

@@ -150,9 +150,19 @@ export function BracketView({
   }
 
   function toggleRound(r: CompRound) {
+    const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
     if (isAll) {
       setSelectedRounds(new Set([r]));
+    } else if (isMobile) {
+      // Mobile: tap a round to show only that round; tap the same (only) round again to show all
+      const sr = selectedRounds as Set<CompRound>;
+      if (sr.has(r) && sr.size === 1) {
+        setSelectedRounds('all');
+      } else {
+        setSelectedRounds(new Set([r]));
+      }
     } else {
+      // Desktop: additive — clicking a round adds/removes it from the visible set
       const next = new Set(selectedRounds as Set<CompRound>);
       if (next.has(r)) {
         next.delete(r);
@@ -187,10 +197,12 @@ export function BracketView({
   // playByDate — a match assigned to an earlier round's date moves left into
   // that round's column.  Falls back to the natural round column if no date
   // is set or the date doesn't correspond to any known round.
-  function makeGetMatchX(mw: number, rg: number) {
+  // layoutRounds must be the rounds actually present in the layout (in order),
+  // so column indices are relative to what computeBracketLayout will see.
+  function makeGetMatchX(mw: number, rg: number, layoutRounds: CompRound[]) {
     // Map: date string → column index (first round that owns that date)
     const dateToCol = new Map<string, number>();
-    presentRounds.forEach((r, i) => {
+    layoutRounds.forEach((r, i) => {
       const d = roundPlayByDates[r];
       if (d && !dateToCol.has(d)) dateToCol.set(d, i);
     });
@@ -203,9 +215,11 @@ export function BracketView({
   }
 
   const layoutMatches = matches.filter((m) => layoutRoundSet.has(m.round));
+  // Rounds in layout order (subset of presentRounds that are in layoutRoundSet)
+  const layoutRoundsOrdered = presentRounds.filter((r) => layoutRoundSet.has(r));
   const layout = computeBracketLayout(
     layoutMatches, firstRoundCount, matchHeight, slotGap,
-    MATCH_WIDTH, ROUND_GAP, makeGetMatchX(MATCH_WIDTH, ROUND_GAP),
+    MATCH_WIDTH, ROUND_GAP, makeGetMatchX(MATCH_WIDTH, ROUND_GAP, layoutRoundsOrdered),
   );
   const { matchGeometries, connectors, totalWidth, totalHeight, roundLabels } = layout;
 
@@ -240,6 +254,7 @@ export function BracketView({
   });
 
   const printMatches = matches.filter((m) => printLayoutRoundSet.has(m.round));
+  const printRoundsOrdered = presentRounds.filter((r) => printLayoutRoundSet.has(r));
   const printLayout = computeBracketLayout(
     printMatches,
     firstRoundCount,
@@ -247,7 +262,7 @@ export function BracketView({
     slotGap,
     PRINT_MATCH_WIDTH,
     PRINT_ROUND_GAP,
-    makeGetMatchX(PRINT_MATCH_WIDTH, PRINT_ROUND_GAP),
+    makeGetMatchX(PRINT_MATCH_WIDTH, PRINT_ROUND_GAP, printRoundsOrdered),
   );
 
   // ── Print pagination ──────────────────────────────────────────────────────────
@@ -382,7 +397,15 @@ export function BracketView({
           {/* Match cards */}
           <div style={{ position: 'absolute', top: LABEL_HEIGHT, left: 0, width: totalWidth, height: totalHeight }}>
             {matchGeometries
-              .filter((geo) => geo.match.status !== 'Bye' && isRoundVisible(geo.match.round))
+              .filter((geo) => {
+                if (!isRoundVisible(geo.match.round)) return false;
+                if (geo.match.status !== 'Bye') return true;
+                // Show a bye card only when this round is visible but the next round is not —
+                // so the user can see who has a free pass when not displaying the following round.
+                const ri = presentRounds.indexOf(geo.match.round as CompRound);
+                const nextRound = ri >= 0 && ri + 1 < presentRounds.length ? presentRounds[ri + 1] : null;
+                return nextRound === null || !isRoundVisible(nextRound);
+              })
               .map((geo) => (
                 <MatchCard
                   key={geo.matchId}

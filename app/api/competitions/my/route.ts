@@ -1,8 +1,9 @@
 // app/api/competitions/my/route.ts
-// GET — return the current user's status and pending match across all competitions
+// GET — return the current user's full journey across all competitions they have entered.
 //
-// Loads all competition match sheets in parallel (one read per sheet),
-// then filters for matches containing the current user's username.
+// For each competition the user is in, returns every match they have played or
+// are due to play (byes, wins, losses, pending), together with handicap data
+// for themselves and their opponents so the client can show starting scores.
 
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
@@ -14,11 +15,27 @@ import {
   COMP_SHEET_CONFIG,
 } from '@/lib/competitions-sheets';
 import { ROUND_ORDER } from '@/types/competitions';
-import type { CompMatch, Competition } from '@/types/competitions';
+import type { CompMatch, Competition, CompRound } from '@/types/competitions';
 
 export type MyCompEntryStatus = 'active' | 'awaiting' | 'knocked-out' | 'winner';
-
 export type CompPosition = 'Skip' | 'Lead' | 'No. 2' | null;
+
+// One step in the user's journey through a competition (one match / bye).
+export interface JourneyStep {
+  round: CompRound;
+  matchId: string;
+  matchStatus: 'Pending' | 'Bye' | 'Won' | 'Lost' | 'WalkoverWon' | 'WalkoverLost';
+  partners: { username: string; fullName: string; position: CompPosition }[];
+  opponents: { username: string; fullName: string; position: CompPosition; handicap: number | null }[] | null;
+  myScore: number | null;
+  oppScore: number | null;
+  playedDate: string | null;
+  playByDate: string | null;
+  // Handicap context
+  myHandicap: number | null;
+  myStartScore: number | null;   // score the user starts on (0 if opponent has lesser hcp)
+  oppStartScore: number | null;  // score the opponent starts on (0 if user has lesser hcp)
+}
 
 export interface MyCompEntry {
   compId: string;
@@ -31,6 +48,8 @@ export interface MyCompEntry {
   isChallenger: boolean;
   myPosition: CompPosition;
   offerByDate: string | null;
+  myHandicap: number | null;
+  journey: JourneyStep[];
   match: {
     matchId: string;
     status: string;
@@ -71,13 +90,6 @@ function playByForRound(comp: Competition, round: string): string | null {
   }
 }
 
-/**
- * Return the date from which the 7-day offer window runs for a given round.
- * - Final: never needs an offer (returns null)
- * - No compStartDate set: no offer needed (returns null — e.g. Triples first round)
- * - First round: compStartDate
- * - Subsequent rounds: play-by date of the nearest previous round that has one
- */
 function roundStartDate(comp: Competition, round: string): string | null {
   if (round === 'F') return null;
   if (!comp.compStartDate) return null;
@@ -98,6 +110,20 @@ function addDays(dateStr: string, days: number): string {
   return d.toISOString().split('T')[0];
 }
 
+/**
+ * Calculate starting scores given two handicaps.
+ * The player with the lesser (lower) handicap starts with the difference.
+ * Equal handicaps → both start on 0.
+ * Either null → no starting scores.
+ */
+function calcStartScores(myHcp: number | null, oppHcp: number | null): { myStart: number | null; oppStart: number | null } {
+  if (myHcp === null || oppHcp === null) return { myStart: null, oppStart: null };
+  const diff = Math.abs(myHcp - oppHcp);
+  if (myHcp < oppHcp)  return { myStart: diff, oppStart: 0 };
+  if (oppHcp < myHcp)  return { myStart: 0,    oppStart: diff };
+  return { myStart: 0, oppStart: 0 };
+}
+
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
@@ -107,7 +133,7 @@ export async function GET() {
 
     const username = session.user.userName.toLowerCase();
 
-    // Load all competitions and member name map in parallel
+    // Load all competitions and member name/handicap map in parallel
     const [competitions, memberMap] = await Promise.all([
       getAllCompetitions(),
       getMemberInfoMap(),
@@ -118,7 +144,7 @@ export async function GET() {
       (c) => c.status !== 'Not Started' && COMP_SHEET_CONFIG[c.compId]
     );
 
-    // Fetch all match sheets in parallel — non-fatal per-comp errors
+    // Fetch all match sheets in parallel
     const matchResults = await Promise.all(
       activeComps.map((comp) =>
         getCompetitionMatches(comp.compId)
@@ -132,12 +158,19 @@ export async function GET() {
       matchesByComp.set(compId, matches);
     }
 
+    const myInfo = memberMap.get(username);
+    const myHandicapValue = myInfo?.handicap ?? null;
+
     const entries: MyCompEntry[] = [];
 
     for (const comp of activeComps) {
+      // Handicap data is only relevant for the Handicap competition
+      const isHandicapComp = comp.compId === 'handicap';
+      const myHandicap = isHandicapComp ? myHandicapValue : null;
+
       const matches = matchesByComp.get(comp.compId) ?? [];
 
-      // Matches where this user appears on either side
+      // All matches where this user appears on either side
       const userMatches = matches.filter((m) => {
         const s1 = m.side1Usernames.map((u) => u.toLowerCase());
         const s2 = (m.side2Usernames ?? []).map((u) => u.toLowerCase());
@@ -146,12 +179,74 @@ export async function GET() {
 
       if (userMatches.length === 0) continue;
 
-      // Sort matches by round depth, furthest first
+      // ── Build full journey (ascending round order) ──────────────────────────
+      const journeyMatches = [...userMatches].sort(
+        (a, b) => ROUND_ORDER.indexOf(a.round) - ROUND_ORDER.indexOf(b.round)
+      );
+
+      const journey: JourneyStep[] = journeyMatches.map((m) => {
+        const mySide = m.side1Usernames.map((u) => u.toLowerCase()).includes(username) ? 1 : 2;
+        const myUsernames  = mySide === 1 ? m.side1Usernames : (m.side2Usernames ?? []);
+        const oppUsernames = mySide === 1 ? (m.side2Usernames ?? []) : m.side1Usernames;
+
+        const partners = myUsernames
+          .map((u, idx) => ({ u, idx }))
+          .filter(({ u }) => u.toLowerCase() !== username)
+          .map(({ u, idx }) => ({
+            username: u,
+            fullName: memberMap.get(u.toLowerCase())?.fullName ?? u,
+            position: posLabel(idx, comp.compType),
+          }));
+
+        const opponents =
+          m.side2Usernames === null
+            ? null
+            : oppUsernames.map((u, idx) => ({
+                username: u,
+                fullName: memberMap.get(u.toLowerCase())?.fullName ?? u,
+                position: posLabel(idx, comp.compType),
+                handicap: isHandicapComp ? (memberMap.get(u.toLowerCase())?.handicap ?? null) : null,
+              }));
+
+        // Use the first opponent's handicap for the starting score calculation
+        // (the skip for pairs/triples, the sole player for singles).
+        const oppHcpForCalc = opponents?.[0]?.handicap ?? null;
+        const { myStart, oppStart } = calcStartScores(myHandicap, oppHcpForCalc);
+
+        let matchStatus: JourneyStep['matchStatus'];
+        if (m.status === 'Bye') {
+          matchStatus = 'Bye';
+        } else if (m.status === 'Pending') {
+          matchStatus = 'Pending';
+        } else {
+          const iWon = m.winnerSide === mySide;
+          matchStatus = m.status === 'Walkover'
+            ? (iWon ? 'WalkoverWon' : 'WalkoverLost')
+            : (iWon ? 'Won' : 'Lost');
+        }
+
+        return {
+          round: m.round,
+          matchId: m.matchId,
+          matchStatus,
+          partners,
+          opponents,
+          myScore:    (mySide === 1 ? m.score1 : m.score2) ?? null,
+          oppScore:   (mySide === 1 ? m.score2 : m.score1) ?? null,
+          playedDate: m.playedDate ?? null,
+          playByDate: m.playByDate ?? null,
+          myHandicap,
+          myStartScore:  myStart,
+          oppStartScore: oppStart,
+        };
+      });
+
+      // ── Determine overall entry status (same logic as before) ───────────────
       const sorted = [...userMatches].sort(
         (a, b) => ROUND_ORDER.indexOf(b.round) - ROUND_ORDER.indexOf(a.round)
       );
 
-      const pendingMatch = userMatches.find((m) => m.status === 'Pending');
+      const pendingMatch    = userMatches.find((m) => m.status === 'Pending');
       const latestCompleted = sorted.find(
         (m) => m.status === 'Complete' || m.status === 'Walkover'
       );
@@ -160,52 +255,42 @@ export async function GET() {
       let relevantMatch: CompMatch;
 
       if (pendingMatch) {
-        entryStatus = 'active';
-        relevantMatch = pendingMatch;
+        entryStatus    = 'active';
+        relevantMatch  = pendingMatch;
       } else if (latestCompleted) {
         const mySide = latestCompleted.side1Usernames
           .map((u) => u.toLowerCase())
-          .includes(username)
-          ? 1
-          : 2;
+          .includes(username) ? 1 : 2;
         const iWon = latestCompleted.winnerSide === mySide;
 
         if (iWon && latestCompleted.round === 'F') {
           entryStatus = 'winner';
         } else if (iWon) {
-          // Won but next round placeholder not yet set up
           entryStatus = 'awaiting';
         } else {
           entryStatus = 'knocked-out';
         }
         relevantMatch = latestCompleted;
       } else {
-        // Only bye matches — advancing but next round pending
-        entryStatus = 'awaiting';
+        entryStatus   = 'awaiting';
         relevantMatch = sorted[0];
       }
 
-      // Which side is the user on?
       const mySide = relevantMatch.side1Usernames
         .map((u) => u.toLowerCase())
-        .includes(username)
-        ? 1
-        : 2;
+        .includes(username) ? 1 : 2;
 
-      const myUsernames =
-        mySide === 1 ? relevantMatch.side1Usernames : (relevantMatch.side2Usernames ?? []);
-      const oppUsernames =
-        mySide === 1 ? (relevantMatch.side2Usernames ?? []) : relevantMatch.side1Usernames;
+      const myUsernames  = mySide === 1 ? relevantMatch.side1Usernames : (relevantMatch.side2Usernames ?? []);
+      const oppUsernames = mySide === 1 ? (relevantMatch.side2Usernames ?? []) : relevantMatch.side1Usernames;
 
-      const myIndex = myUsernames.findIndex((u) => u.toLowerCase() === username);
+      const myIndex      = myUsernames.findIndex((u) => u.toLowerCase() === username);
       const isChallenger = mySide === 1;
-      const myPosition = posLabel(myIndex, comp.compType);
+      const myPosition   = posLabel(myIndex, comp.compType);
 
-      const roundStart = roundStartDate(comp, relevantMatch.round);
-      const offerByDate =
-        entryStatus === 'active' && isChallenger && roundStart
-          ? addDays(roundStart, 7)
-          : null;
+      const roundStart  = roundStartDate(comp, relevantMatch.round);
+      const offerByDate = entryStatus === 'active' && isChallenger && roundStart
+        ? addDays(roundStart, 7)
+        : null;
 
       const partners = myUsernames
         .map((u, idx) => ({ u, idx }))
@@ -225,27 +310,26 @@ export async function GET() {
               position: posLabel(idx, comp.compType),
             }));
 
-      const myScore = (mySide === 1 ? relevantMatch.score1 : relevantMatch.score2) ?? null;
-      const oppScore = (mySide === 1 ? relevantMatch.score2 : relevantMatch.score1) ?? null;
-
       entries.push({
-        compId: comp.compId,
-        displayName: comp.displayName,
-        compType: comp.compType,
-        compStatus: comp.status,
+        compId:          comp.compId,
+        displayName:     comp.displayName,
+        compType:        comp.compType,
+        compStatus:      comp.status,
         compDescription: comp.compDescription ?? null,
         entryStatus,
-        round: relevantMatch.round,
+        round:           relevantMatch.round,
         isChallenger,
         myPosition,
         offerByDate,
+        myHandicap,
+        journey,
         match: {
-          matchId: relevantMatch.matchId,
-          status: relevantMatch.status,
+          matchId:    relevantMatch.matchId,
+          status:     relevantMatch.status,
           partners,
           opponents,
-          myScore,
-          oppScore,
+          myScore:    (mySide === 1 ? relevantMatch.score1 : relevantMatch.score2) ?? null,
+          oppScore:   (mySide === 1 ? relevantMatch.score2 : relevantMatch.score1) ?? null,
           playByDate: relevantMatch.playByDate ?? null,
           playedDate: relevantMatch.playedDate ?? null,
           won:

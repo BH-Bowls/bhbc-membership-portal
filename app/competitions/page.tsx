@@ -39,7 +39,7 @@ export default function CompetitionsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const role = session?.user?.role ?? '';
-  const isCommittee = role !== 'Member' && role !== '';
+  const isCommittee = role !== 'Member' && role !== '' && role !== 'Kiosk';
 
   useEffect(() => {
     fetch('/api/competitions')
@@ -69,7 +69,7 @@ export default function CompetitionsPage() {
       <div className="container mx-auto px-4 py-8 max-w-4xl">
         <div className="flex justify-between items-center mb-6">
           <div>
-            <h1 className="text-3xl font-bold">Competitions</h1>
+            <h1 className="text-3xl font-bold text-gray-900">Competitions</h1>
             {competitions.find((c) => c.finalsDate) && (
               <p className="text-gray-500 mt-1 text-sm">
                 Finals weekend:{' '}
@@ -78,10 +78,10 @@ export default function CompetitionsPage() {
             )}
           </div>
           <div className="flex gap-2">
-            {!!role && (
+            {!!role && role !== 'Kiosk' && (
               <button
                 onClick={() => router.push('/competitions/my')}
-                className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 font-medium text-sm"
+                className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 font-medium text-sm cursor-pointer"
               >
                 My Progress
               </button>
@@ -126,7 +126,8 @@ export default function CompetitionsPage() {
                     <button
                       key={comp.compId}
                       onClick={() => router.push(`/competitions/${comp.compId}`)}
-                      className="bg-white rounded-lg border border-gray-200 p-4 text-left hover:shadow-md hover:border-gray-300 transition-all"
+                      title={`View ${comp.displayName} draw`}
+                      className="bg-white rounded-lg border border-gray-200 p-4 text-left hover:shadow-md hover:border-gray-300 transition-all cursor-pointer"
                     >
                       <div className="flex items-start justify-between">
                         <div>

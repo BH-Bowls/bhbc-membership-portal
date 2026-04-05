@@ -194,7 +194,7 @@ export default function ManageInternalGamesPage() {
 
       <div className="container mx-auto px-4 py-8 max-w-6xl">
         <div className="flex justify-between items-center mb-6">
-          <h1 className="text-3xl font-bold">Manage Internal Games</h1>
+          <h1 className="text-3xl font-bold text-gray-900">Manage Internal Games</h1>
           <Link
             href="/internal-games"
             className={getButtonClasses('secondary', 'md')}
@@ -351,7 +351,7 @@ export default function ManageInternalGamesPage() {
       {confirmDialog.isOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-sm w-full mx-4">
-            <h3 className="text-lg font-bold mb-2">{confirmDialog.title}</h3>
+            <h3 className="text-lg font-bold mb-2 text-gray-900">{confirmDialog.title}</h3>
             <p className="text-gray-600 mb-4">{confirmDialog.message}</p>
             <div className="flex justify-end space-x-2">
               <button

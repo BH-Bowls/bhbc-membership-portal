@@ -435,9 +435,9 @@ export default function SuggestionDetailPage({ params }: { params: Promise<{ id:
                   placeholder="Suggestion title"
                 />
               ) : (
-                <h1 className="text-2xl font-bold mb-2">{current.title}</h1>
+                <h1 className="text-2xl font-bold mb-2 text-gray-900">{current.title}</h1>
               )}
-              <div className="flex items-center gap-4 text-sm text-gray-600">
+              <div className="flex items-center gap-4 text-sm text-gray-700">
                 <span className="font-mono">{current.suggestionId}</span>
                 <span>•</span>
                 <span>{formatDate(current.createdAt)}</span>
@@ -461,7 +461,7 @@ export default function SuggestionDetailPage({ params }: { params: Promise<{ id:
 
         {/* Public Section */}
         <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <h2 className="text-xl font-bold mb-4">Suggestion Details</h2>
+          <h2 className="text-xl font-bold mb-4 text-gray-900">Suggestion Details</h2>
 
           <div className="space-y-4">
             {/* Description */}
@@ -515,7 +515,7 @@ export default function SuggestionDetailPage({ params }: { params: Promise<{ id:
         {/* Admin Section (Committee + Coordinator) */}
         {(canEdit || current.committeeAcceptance === 'Y') && (
           <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-xl font-bold mb-4">Committee Review</h2>
+            <h2 className="text-xl font-bold mb-4 text-gray-900">Committee Review</h2>
 
             <div className="space-y-4">
               {/* Committee Only flag */}
@@ -532,7 +532,7 @@ export default function SuggestionDetailPage({ params }: { params: Promise<{ id:
                   <label htmlFor="committeeOnly" className="text-sm font-medium text-gray-700">
                     Committee Only
                   </label>
-                  <span className="text-xs text-gray-500">(hidden from regular members)</span>
+                  <span className="text-xs text-gray-600">(hidden from regular members)</span>
                 </div>
               )}
 
@@ -904,7 +904,7 @@ export default function SuggestionDetailPage({ params }: { params: Promise<{ id:
         {/* Attachments Section */}
         <div className="bg-white rounded-lg shadow p-6">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-bold">Attachments</h2>
+            <h2 className="text-xl font-bold text-gray-900">Attachments</h2>
             {canAddAttachment && !showUploadForm && !isEditing && (
               <button
                 onClick={() => setShowUploadForm(true)}
@@ -945,7 +945,7 @@ export default function SuggestionDetailPage({ params }: { params: Promise<{ id:
 
         {/* Last Updated */}
         {current.updatedAt && (
-          <div className="mt-4 text-sm text-gray-500 text-center">
+          <div className="mt-4 text-sm text-gray-600 text-center">
             Last updated: {formatDate(current.updatedAt)}
             {current.updatedByUsername && ` by ${current.updatedByUsername}`}
           </div>

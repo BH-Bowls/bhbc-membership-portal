@@ -302,7 +302,7 @@ export default function InternalGameSelectionPage() {
             <Link href="/internal-games/manage" className="text-blue-600 hover:text-blue-800 mb-2 inline-block">
               ← Back to Manage Games
             </Link>
-            <h1 className="text-3xl font-bold">{game.gameName}</h1>
+            <h1 className="text-3xl font-bold text-gray-900">{game.gameName}</h1>
             <p className="text-gray-600">
               {parseUKDate(game.date).toLocaleDateString('en-GB', {
                 weekday: 'long',
@@ -370,7 +370,7 @@ export default function InternalGameSelectionPage() {
         {/* Players list */}
         <div className="bg-white rounded-lg shadow overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-200">
-            <h2 className="text-xl font-semibold">Entered Players ({players.length})</h2>
+            <h2 className="text-xl font-semibold text-gray-900">Entered Players ({players.length})</h2>
           </div>
 
           {players.length === 0 ? (

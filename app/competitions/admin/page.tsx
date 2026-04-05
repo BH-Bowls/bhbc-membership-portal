@@ -77,7 +77,7 @@ export default function CompetitionsAdminPage() {
             >
               ← All Competitions
             </button>
-            <h1 className="text-2xl font-bold">Competitions Admin</h1>
+            <h1 className="text-2xl font-bold text-gray-900">Competitions Admin</h1>
           </div>
         </div>
 

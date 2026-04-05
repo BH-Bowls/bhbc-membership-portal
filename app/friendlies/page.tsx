@@ -25,10 +25,10 @@ import { groupPairedGames, isPairedGame, type GameOrPair } from '@/lib/friendlie
  * Filter options for displaying games
  * 'all' - Show all games regardless of status
  * 'O' - Show only Open games (available for entry)
- * 'entered' - Show only games the user has entered
- * 'selected' - Show only games where user is picked (P, R, T status)
+ * 'entered' - Show only games the user has entered that haven't been played or cancelled
+ * 'played'  - Show only games the user entered that have been played, cancelled, or abandoned
  */
-type FilterType = 'all' | 'O' | 'entered' | 'selected';
+type FilterType = 'all' | 'O' | 'entered' | 'played';
 
 // ============================================================================
 // Main Component
@@ -273,14 +273,12 @@ export default function FriendliesPage() {
         return canEnterGame(memberType, game.ladiesMen as GameGender);
 
       case 'entered':
-        // Show only games user has entered
-        return game.userEntered;
+        // Games the user has entered that haven't been played or cancelled yet
+        return !!game.userEntered && !['P', 'C', 'A'].includes(game.status);
 
-      case 'selected':
-        // Show games where user is picked for team
-        // P = Picked, R = Reserve, T = Reserve Team
-        // PW/RW/TW = Picked/Reserve/Reserve Team but Withdrawn
-        return game.userStatus && ['P', 'R', 'T', 'PW', 'RW', 'TW'].includes(game.userStatus);
+      case 'played':
+        // Games the user entered that have been played, cancelled, or abandoned
+        return !!game.userEntered && ['P', 'C', 'A'].includes(game.status);
 
       default:
         // 'all' filter - show everything (don't filter by eligibility here)
@@ -376,7 +374,7 @@ export default function FriendliesPage() {
             Open for Entry
           </button>
 
-          {/* My Entries tab - shows games user has entered */}
+          {/* My Entries tab - shows games user has entered that haven't been played/cancelled */}
           <button
             onClick={() => setFilter('entered')}
             className={`px-4 py-2 font-medium border-b-2 ${
@@ -388,16 +386,16 @@ export default function FriendliesPage() {
             My Entries
           </button>
 
-          {/* I'm Selected tab - shows games where user is picked for team */}
+          {/* My Played tab - shows games user entered that have been played, cancelled, or abandoned */}
           <button
-            onClick={() => setFilter('selected')}
+            onClick={() => setFilter('played')}
             className={`px-4 py-2 font-medium border-b-2 ${
-              filter === 'selected'
+              filter === 'played'
                 ? 'border-blue-500 text-blue-500'
                 : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
           >
-            I'm Selected
+            My Played
           </button>
         </div>
 
@@ -435,7 +433,7 @@ export default function FriendliesPage() {
                     {/* Paired badge */}
                     <div className="flex justify-between items-start mb-3">
                       <div>
-                        <h3 className="font-bold text-lg">
+                        <h3 className="font-bold text-lg text-gray-900">
                           <Link
                             href={`/clubs/${encodeURIComponent(gameA.clubName)}?from=friendlies`}
                             className="text-blue-600 hover:text-blue-800 hover:underline"
@@ -576,7 +574,7 @@ export default function FriendliesPage() {
                   <div className="flex justify-between items-start mb-3">
                     <div>
                       {/* Opponent club name - links to club details */}
-                      <h3 className="font-bold text-lg">
+                      <h3 className="font-bold text-lg text-gray-900">
                         <Link
                           href={`/clubs/${encodeURIComponent(game.clubName)}?from=friendlies`}
                           className="text-blue-600 hover:text-blue-800 hover:underline"

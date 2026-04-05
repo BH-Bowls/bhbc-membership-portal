@@ -39,6 +39,11 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+/* Ensure all buttons show a pointer cursor */
+button {
+  cursor: pointer;
+}
+
 /* Global fix for form input text visibility across all devices */
 input[type="text"],
 input[type="email"],

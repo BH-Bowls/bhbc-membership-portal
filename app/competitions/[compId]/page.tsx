@@ -201,7 +201,7 @@ export default function CompetitionBracketPage({
               <div className="h-7 w-48 bg-gray-200 rounded animate-pulse" />
             ) : (
               <>
-                <h1 className="text-2xl font-bold">{competition?.displayName ?? compId}</h1>
+                <h1 className="text-2xl font-bold text-gray-900">{competition?.displayName ?? compId}</h1>
                 <p className="text-gray-500 text-sm mt-0.5 capitalize">{competition?.compType}</p>
               </>
             )}
@@ -292,7 +292,7 @@ export default function CompetitionBracketPage({
 
         {/* Print-only title */}
         <div className="hidden print:block mb-4">
-          <h1 className="text-2xl font-bold">{competition?.displayName ?? compId}</h1>
+          <h1 className="text-2xl font-bold text-gray-900">{competition?.displayName ?? compId}</h1>
         </div>
 
         {/* Bracket */}

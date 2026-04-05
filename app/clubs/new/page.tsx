@@ -177,7 +177,7 @@ export default function NewClubPage() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
             </svg>
           </Link>
-          <h1 className="text-3xl font-bold">Add New Club</h1>
+          <h1 className="text-3xl font-bold text-gray-900">Add New Club</h1>
         </div>
 
         {/* Form */}

@@ -423,7 +423,7 @@ export default function SweepingRotaPage() {
   };
 
   return (
-    <>
+    <div className="min-h-screen bg-gray-50">
       <Navbar
         userName={session?.user?.name || ''}
         userRole={session?.user?.role || ''}
@@ -621,6 +621,6 @@ export default function SweepingRotaPage() {
           setCancelUserName(null);
         }}
       />
-    </>
+    </div>
   );
 }

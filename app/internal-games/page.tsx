@@ -248,7 +248,7 @@ export default function InternalGamesPage() {
                         {game.gameName}
                       </h3>
                     ) : (
-                      <h3 className="font-bold text-lg">{game.gameName}</h3>
+                      <h3 className="font-bold text-lg text-gray-900">{game.gameName}</h3>
                     )}
                     <p className="text-sm text-gray-700">
                       {parseUKDate(game.date).toLocaleDateString('en-GB', {
@@ -424,7 +424,7 @@ export default function InternalGamesPage() {
               <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl h-[80vh] flex flex-col">
                 <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
                   <div>
-                    <h2 className="text-xl font-semibold">{detailsModalGame.gameName}</h2>
+                    <h2 className="text-xl font-semibold text-gray-900">{detailsModalGame.gameName}</h2>
                     {detailsModalGame.description && (
                       <p className="text-sm text-gray-600 mt-1">{detailsModalGame.description}</p>
                     )}

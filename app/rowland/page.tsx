@@ -58,6 +58,7 @@ export default function RowlandPage() {
                 key={comp.compId}
                 className="bg-white rounded-lg border border-gray-200 px-4 py-3 flex items-center justify-between cursor-pointer hover:bg-gray-50"
                 onClick={() => router.push(`/rowland/${comp.compId}`)}
+                title={`View ${ROWLAND_COMP_NAMES[comp.compId] ?? comp.compName} bracket`}
               >
                 <div className="flex items-center gap-3">
                   <span className="font-medium text-gray-900">

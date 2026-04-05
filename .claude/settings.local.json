@@ -25,7 +25,13 @@
       "Bash(find \"C:\\\\Users\\\\liam\\\\Documents\\\\bhbc-membership-portal\\\\src\\\\lib\" -name \"*clubs*\" -type f 2>/dev/null | head -20)",
       "Bash(git -C \"C:\\\\Users\\\\liam\\\\Documents\\\\bhbc-membership-portal\" diff --stat HEAD)",
       "Bash(git -C \"C:\\\\Users\\\\liam\\\\Documents\\\\bhbc-membership-portal\" diff HEAD -- app/api/admin/emails/ src/lib/email/ app/api/rowland/ app/rowland/ 2>&1 | grep \"^diff --git\")",
-      "Bash(node -e \"console.log\\(require\\(''./node_modules/next/package.json''\\).version\\)\")"
+      "Bash(node -e \"console.log\\(require\\(''./node_modules/next/package.json''\\).version\\)\")",
+      "Bash(sed -i 's/<h1 className=\"\"text-3xl font-bold\"\">Member Lookup<\\\\/h1>/<h1 className=\"\"text-3xl font-bold text-gray-900\"\">Member Lookup<\\\\/h1>/' app/members/page.tsx)",
+      "Bash(sed -i 's/<h1 className=\"\"text-3xl font-bold\"\">Clubs<\\\\/h1>/<h1 className=\"\"text-3xl font-bold text-gray-900\"\">Clubs<\\\\/h1>/' app/clubs/page.tsx)",
+      "Bash(sed -i 's/<h1 className=\"\"text-3xl font-bold print:text-2xl\"\">Tea Rota<\\\\/h1>/<h1 className=\"\"text-3xl font-bold print:text-2xl text-gray-900\"\">Tea Rota<\\\\/h1>/' app/tea-rota/page.tsx)",
+      "Bash(sed -i 's/<h1 className=\"\"text-3xl font-bold print:text-2xl\"\">Cleaning Rota<\\\\/h1>/<h1 className=\"\"text-3xl font-bold print:text-2xl text-gray-900\"\">Cleaning Rota<\\\\/h1>/' app/cleaning-rota/page.tsx)",
+      "Bash(node -e \":*)",
+      "Read(//tmp/**)"
     ]
   }
 }

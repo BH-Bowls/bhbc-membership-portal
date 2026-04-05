@@ -82,7 +82,7 @@ export default function NewInviteGamePage() {
         </button>
 
         <div className="bg-white rounded-lg shadow p-6">
-          <h1 className="text-2xl font-bold mb-6">New Invite Game</h1>
+          <h1 className="text-2xl font-bold mb-6 text-gray-900">New Invite Game</h1>
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>

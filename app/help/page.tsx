@@ -69,6 +69,30 @@ export default function HelpIndexPage() {
       href: '/help/login',
     },
     {
+      title: 'Friendlies',
+      description:
+        'View upcoming and past friendly matches, see who is playing and who is doing teas, and check match results.',
+      href: '/help/friendlies',
+    },
+    {
+      title: 'Competitions',
+      description:
+        'View the draw for club competitions (singles, pairs, triples), track your progress, and check results.',
+      href: '/help/competitions',
+    },
+    {
+      title: 'Lookups',
+      description:
+        'Find member contact details, club information, fixtures, and rota assignments — Members, Clubs, Fixtures, Tea Rota, Cleaning Rota, and Sweeping Rota.',
+      href: '/help/lookups',
+    },
+    {
+      title: 'Internal games',
+      description:
+        'Follow triples leagues and other internal games — see standings, fixtures, and results.',
+      href: '/help/internal-games',
+    },
+    {
       title: 'Your profile',
       description:
         'Keep your contact details, address, and volunteering preferences up to date.',
@@ -81,28 +105,10 @@ export default function HelpIndexPage() {
       href: '/help/buddy',
     },
     {
-      title: 'Lookups',
+      title: 'Renewals',
       description:
-        'Find member contact details, club information, fixtures, and rota assignments — Members, Clubs, Fixtures, Tea Rota, Cleaning Rota, and Sweeping Rota.',
-      href: '/help/lookups',
-    },
-    {
-      title: 'Friendlies',
-      description:
-        'View upcoming and past friendly matches, see who is playing and who is doing teas, and check match results.',
-      href: '/help/friendlies',
-    },
-    {
-      title: 'Competitions',
-      description:
-        'View your draw for club competitions (singles, pairs, triples) and submit your match results and player names.',
-      href: '/help/competitions',
-    },
-    {
-      title: 'Internal games',
-      description:
-        'Follow triples leagues and other internal games — see standings, fixtures, and results.',
-      href: '/help/internal-games',
+        'How annual membership renewals work — when to expect your renewal, how to pay, and what happens once payment is confirmed.',
+      href: '/help/renewals',
     },
   ];
 

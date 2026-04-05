@@ -438,7 +438,7 @@ export default function TeaRotaPage() {
         {/* Page header */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6 print:mb-4">
           <div>
-            <h1 className="text-3xl font-bold print:text-2xl">Tea Rota</h1>
+            <h1 className="text-3xl font-bold print:text-2xl text-gray-900">Tea Rota</h1>
             <p className="text-gray-600 mt-1 print:text-sm">Tea duty assignments for home games</p>
           </div>
           <div className="flex gap-2 print:hidden">
@@ -488,7 +488,7 @@ export default function TeaRotaPage() {
             </p>
 
             {/* Desktop table view */}
-            <div className="hidden md:block bg-white rounded-lg shadow overflow-hidden print:block print:shadow-none">
+            <div className="hidden md:block bg-white rounded-lg shadow overflow-hidden print:block print:shadow-none print:overflow-visible">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50 print:bg-gray-100">
                   <tr>
@@ -541,13 +541,18 @@ export default function TeaRotaPage() {
                           }`}
                         >
                           {isEditing ? (
-                            <SearchableSelect
-                              options={members}
-                              value={getDisplayValue(entry, position)}
-                              onChange={(value) => updateAssignment(entry.rowNumber, position, value)}
-                              placeholder="Search member..."
-                              className="min-w-[140px]"
-                            />
+                            <>
+                              <SearchableSelect
+                                options={members}
+                                value={getDisplayValue(entry, position)}
+                                onChange={(value) => updateAssignment(entry.rowNumber, position, value)}
+                                placeholder="Search member..."
+                                className="min-w-[140px] print:hidden"
+                              />
+                              <span className="hidden print:inline">
+                                {getMemberDisplayName(getDisplayValue(entry, position))}
+                              </span>
+                            </>
                           ) : (
                             <div className="flex items-center gap-1 whitespace-nowrap">
                               <span>{getMemberDisplayName(entry[position]) || '-'}</span>

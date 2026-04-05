@@ -98,7 +98,7 @@ export default function ClubsPage() {
       <div className="container mx-auto px-4 py-8 max-w-6xl">
         {/* Page header */}
         <div className="flex justify-between items-center mb-6">
-          <h1 className="text-3xl font-bold">Clubs</h1>
+          <h1 className="text-3xl font-bold text-gray-900">Clubs</h1>
           {canEdit && (
             <Link
               href="/clubs/new"
@@ -177,6 +177,7 @@ export default function ClubsPage() {
                 <Link
                   key={club.clubName}
                   href={`/clubs/${encodeURIComponent(club.clubName)}`}
+                  title={`View ${club.clubName} details`}
                   className="bg-white rounded-lg shadow border border-gray-200 p-4 hover:shadow-md hover:border-blue-200 transition-all cursor-pointer"
                 >
                   {/* Club card header */}

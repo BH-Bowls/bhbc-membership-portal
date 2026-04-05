@@ -163,7 +163,7 @@ export default function MemberSuggestionsPage() {
       <div className="container mx-auto px-4 py-8 max-w-7xl">
         {/* Page header with title and add button */}
         <div className="flex justify-between items-center mb-6">
-          <h1 className="text-3xl font-bold">Member Suggestions</h1>
+          <h1 className="text-3xl font-bold text-gray-900">Member Suggestions</h1>
 
           {/* Add New Suggestion button */}
           <button
@@ -265,20 +265,21 @@ export default function MemberSuggestionsPage() {
                   <tr
                     key={suggestion.suggestionId}
                     onClick={() => viewSuggestion(suggestion.suggestionId)}
+                    title="View suggestion details"
                     className="hover:bg-gray-50 cursor-pointer"
                   >
                     {/* Date column */}
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {formatDate(suggestion.createdAt)}
                     </td>
 
                     {/* ID column */}
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-600">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-700">
                       {suggestion.suggestionId}
                     </td>
 
                     {/* Title column */}
-                    <td className="px-6 py-4 text-sm font-medium">
+                    <td className="px-6 py-4 text-sm font-medium text-gray-900">
                       <div className="flex items-center gap-2">
                         <div className="max-w-md truncate">{suggestion.title}</div>
                         {hasDraft(suggestion.suggestionId) && (
@@ -293,12 +294,12 @@ export default function MemberSuggestionsPage() {
                     </td>
 
                     {/* Category column */}
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-800">
                       {suggestion.category}
                     </td>
 
                     {/* Created by column */}
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {suggestion.createdByFullName}
                     </td>
 
@@ -309,7 +310,7 @@ export default function MemberSuggestionsPage() {
 
                     {/* Coordinator column (committee only) */}
                     {isCommittee && (
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-800">
                         {suggestion.coordinatorFullName || '-'}
                       </td>
                     )}

@@ -474,7 +474,7 @@ export default function MatchCardPage() {
               <div className="grid grid-cols-2 min-h-[calc(100vh-200px)] print:min-h-0">
                 {/* LEFT COLUMN - Reserve Teams */}
                 <div className="border-r border-gray-300 p-4">
-                  <h2 className="text-lg font-bold text-center mb-4 border-b-2 border-gray-400 pb-2">
+                  <h2 className="text-lg font-bold text-center mb-4 border-b-2 border-gray-400 pb-2 text-gray-900">
                     Reserve Teams
                   </h2>
 

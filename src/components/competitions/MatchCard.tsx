@@ -138,6 +138,7 @@ export function MatchCard({
         minHeight: matchHeight,
       }}
       onClick={clickable ? () => onClick?.(match) : undefined}
+      title={clickable ? 'Open match' : undefined}
       className={`
         relative rounded border ${borderColor} ${bgColor}
         flex flex-col justify-center overflow-visible

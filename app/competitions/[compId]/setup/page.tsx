@@ -917,7 +917,7 @@ export default function CompetitionSetupPage({
           >
             ← Back
           </button>
-          <h1 className="text-2xl font-bold">{comp.displayName} — Manage</h1>
+          <h1 className="text-2xl font-bold text-gray-900">{comp.displayName} — Manage</h1>
           <p className="text-gray-500 text-sm mt-0.5 capitalize">{comp.compType} · {comp.status}</p>
         </div>
 

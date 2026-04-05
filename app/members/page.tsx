@@ -78,7 +78,7 @@ export default function MembersPage() {
       <div className="container mx-auto px-4 py-8 max-w-6xl">
         {/* Page header */}
         <div className="mb-6">
-          <h1 className="text-3xl font-bold">Member Lookup</h1>
+          <h1 className="text-3xl font-bold text-gray-900">Member Lookup</h1>
           <p className="text-gray-600 mt-1">Search for members and view contact information</p>
         </div>
 
@@ -202,7 +202,7 @@ export default function MembersPage() {
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {getMemberTypeDisplay(member.memberType)}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {member.mobile || member.landline ? (
                           <a
                             href={`tel:${member.mobile || member.landline}`}
@@ -214,7 +214,7 @@ export default function MembersPage() {
                           <span className="text-gray-400">-</span>
                         )}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {member.emailAddress ? (
                           <a
                             href={`mailto:${member.emailAddress}`}

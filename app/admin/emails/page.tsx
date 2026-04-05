@@ -272,7 +272,7 @@ export default function SendMemberEmailsPage() {
     <div className="min-h-screen bg-gray-50">
       <Navbar userName={session.user?.name ?? undefined} userRole={session.user?.role ?? undefined} />
       <div className="container mx-auto p-6 max-w-4xl">
-        <h1 className="text-3xl font-bold mb-2">Send Emails</h1>
+        <h1 className="text-3xl font-bold mb-2 text-gray-900">Send Emails</h1>
         <p className="text-gray-600 mb-6">Send emails to members or club contacts</p>
 
         {/* Progress Indicator */}
@@ -303,7 +303,7 @@ export default function SendMemberEmailsPage() {
         {/* Step 1: Recipients */}
         {currentStep === 1 && !isSending && !isComplete && (
           <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-xl font-bold mb-4">Step 1: Select Recipients</h2>
+            <h2 className="text-xl font-bold mb-4 text-gray-900">Step 1: Select Recipients</h2>
             <div className="space-y-3 mb-6">
               <label className={`flex items-start p-4 border-2 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors`}
                 style={{ borderColor: recipientType === 'members' ? '#3b82f6' : '#e5e7eb' }}>
@@ -333,7 +333,7 @@ export default function SendMemberEmailsPage() {
         {/* Step 2: Template */}
         {currentStep === 2 && !isSending && !isComplete && (
           <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-xl font-bold mb-4">Step 2: Select Email Template</h2>
+            <h2 className="text-xl font-bold mb-4 text-gray-900">Step 2: Select Email Template</h2>
             {loadingTemplates ? (
               <p className="text-gray-600">Loading templates...</p>
             ) : emailTemplates.length === 0 ? (
@@ -363,7 +363,7 @@ export default function SendMemberEmailsPage() {
         {/* Step 3: Attachments */}
         {currentStep === 3 && !isSending && !isComplete && (
           <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-xl font-bold mb-4">Step 3: Attachments</h2>
+            <h2 className="text-xl font-bold mb-4 text-gray-900">Step 3: Attachments</h2>
             {recipientType === 'club-contacts' ? (
               <p className="text-gray-600 italic">Attachments are not available for club contact emails.</p>
             ) : attachmentTemplates.length === 0 ? (
@@ -392,7 +392,7 @@ export default function SendMemberEmailsPage() {
         {/* Step 4: Confirm */}
         {currentStep === 4 && !isSending && !isComplete && (
           <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-xl font-bold mb-4">Step 4: Confirm and Send</h2>
+            <h2 className="text-xl font-bold mb-4 text-gray-900">Step 4: Confirm and Send</h2>
             <div className="space-y-4">
               <div className="border-b pb-4">
                 <h3 className="font-semibold text-gray-700 mb-2">Recipients</h3>
@@ -441,7 +441,7 @@ export default function SendMemberEmailsPage() {
         {/* Sending Progress */}
         {isSending && (
           <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-xl font-bold mb-4">Sending Emails...</h2>
+            <h2 className="text-xl font-bold mb-4 text-gray-900">Sending Emails...</h2>
             <div className="mb-4">
               <div className="flex justify-between text-sm text-gray-600 mb-1">
                 <span>{currentProgress} of {totalEmails} emails sent</span>
@@ -462,7 +462,7 @@ export default function SendMemberEmailsPage() {
         {/* Completion Summary */}
         {isComplete && (
           <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-xl font-bold mb-4">{isCancelled ? 'Email Send Cancelled' : 'Email Send Complete'}</h2>
+            <h2 className="text-xl font-bold mb-4 text-gray-900">{isCancelled ? 'Email Send Cancelled' : 'Email Send Complete'}</h2>
             {isCancelled && (
               <p className="text-yellow-600 mb-4">
                 Sending stopped after starting {currentProgress} of {totalEmails} emails.

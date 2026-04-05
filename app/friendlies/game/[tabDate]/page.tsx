@@ -447,7 +447,7 @@ export default function GameDetailsPage() {
           </Link>
 
           {/* Game title (opponent club name) */}
-          <h1 className="text-3xl font-bold">{game.clubName}</h1>
+          <h1 className="text-3xl font-bold text-gray-900">{game.clubName}</h1>
 
           {/* Game date and time */}
           <div className="text-gray-600 mt-2">
@@ -478,7 +478,7 @@ export default function GameDetailsPage() {
             <div className="flex items-center justify-between">
               <div>
                 {/* Section title */}
-                <h3 className="font-semibold text-lg mb-2">Your Status</h3>
+                <h3 className="font-semibold text-lg mb-2 text-gray-900">Your Status</h3>
 
                 {/* User status badge (Playing/Reserve/Reserve Team) */}
                 {getUserStatusBadge()}
@@ -522,21 +522,21 @@ export default function GameDetailsPage() {
         {/* Captain of Day section */}
         {captainOfDay && (
           <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 mb-6">
-            <h3 className="font-semibold">Captain of the Day</h3>
+            <h3 className="font-semibold text-gray-900">Captain of the Day</h3>
             <p className="text-lg">{captainOfDay}</p>
           </div>
         )}
 
         {/* Teams section - show all playing teams */}
         <div className="bg-white rounded-lg shadow border border-gray-200 p-6 mb-6">
-          <h2 className="text-2xl font-bold mb-4">Teams</h2>
+          <h2 className="text-2xl font-bold mb-4 text-gray-900">Teams</h2>
 
           {/* Grid of teams (2 columns on desktop) */}
           <div className="grid gap-6 md:grid-cols-2">
             {teams.map(team => (
               <div key={team.team} className="border rounded-lg p-4">
                 {/* Team number */}
-                <h3 className="font-bold text-xl mb-3">Team {team.team}</h3>
+                <h3 className="font-bold text-xl mb-3 text-gray-900">Team {team.team}</h3>
 
                 {/* List of players in this team */}
                 <div className="space-y-2">
@@ -582,7 +582,7 @@ export default function GameDetailsPage() {
         {/* Reserves section - show if there are any reserves */}
         {reserves.length > 0 && (
           <div className="bg-white rounded-lg shadow border border-gray-200 p-6 mb-6">
-            <h2 className="text-2xl font-bold mb-4">Reserves</h2>
+            <h2 className="text-2xl font-bold mb-4 text-gray-900">Reserves</h2>
 
             {/* List of reserve players */}
             <div className="space-y-2">
@@ -615,14 +615,14 @@ export default function GameDetailsPage() {
         {/* Reserve Teams section - show if there are any reserve teams */}
         {reserveTeams.length > 0 && (
           <div className="bg-white rounded-lg shadow border border-gray-200 p-6 mb-6">
-            <h2 className="text-2xl font-bold mb-4">Reserve Teams</h2>
+            <h2 className="text-2xl font-bold mb-4 text-gray-900">Reserve Teams</h2>
 
             {/* Grid of reserve teams (2 columns on desktop) */}
             <div className="grid gap-6 md:grid-cols-2">
               {reserveTeams.map(team => (
                 <div key={team.team} className="border border-orange-300 rounded-lg p-4 bg-orange-50">
                   {/* Reserve team number */}
-                  <h3 className="font-bold text-xl mb-3">Reserve Team {team.team}</h3>
+                  <h3 className="font-bold text-xl mb-3 text-gray-900">Reserve Team {team.team}</h3>
 
                   {/* List of players in this reserve team */}
                   <div className="space-y-2">

@@ -664,7 +664,7 @@ export default function BankingPage() {
           {/* LEFT COLUMN - RENEWALS (40%) */}
           <div className="bg-white rounded-lg shadow">
             <div className="p-6 pb-0">
-              <h2 className="text-lg font-semibold mb-4">Renewals (Outstanding)</h2>
+              <h2 className="text-lg font-semibold mb-4 text-gray-900">Renewals (Outstanding)</h2>
 
               {/* Column Headers */}
               <div className="grid grid-cols-[auto_1fr_auto_auto] gap-3 pb-2 border-b font-medium text-sm text-gray-600">
@@ -727,7 +727,7 @@ export default function BankingPage() {
           {/* RIGHT COLUMN - PAYMENTS (65%) */}
           <div className="bg-white rounded-lg shadow">
             <div className="p-6 pb-0">
-              <h2 className="text-lg font-semibold mb-4">Payments (Unmatched)</h2>
+              <h2 className="text-lg font-semibold mb-4 text-gray-900">Payments (Unmatched)</h2>
 
               {/* Column Headers - 4 distinct columns */}
               <div className="grid grid-cols-[auto_100px_60px_1fr_100px] gap-3 pb-2 border-b font-medium text-sm text-gray-600">
@@ -804,7 +804,7 @@ export default function BankingPage() {
         {showPaymentDialog && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white rounded-lg p-6 w-96">
-              <h3 className="text-lg font-semibold mb-4">
+              <h3 className="text-lg font-semibold mb-4 text-gray-900">
                 {editingPayment ? 'Amend Payment' : 'Add Payment'}
               </h3>
 
@@ -908,7 +908,7 @@ export default function BankingPage() {
           return (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
               <div className="bg-white rounded-lg p-6 w-96">
-                <h3 className="text-lg font-semibold mb-4">Manual Match Renewal</h3>
+                <h3 className="text-lg font-semibold mb-4 text-gray-900">Manual Match Renewal</h3>
 
                 <div className="mb-4 space-y-1">
                   <div className="text-sm text-gray-600">Member: {editingRenewal.fullName}</div>
@@ -1006,7 +1006,7 @@ export default function BankingPage() {
         {showImportFormatDialog && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white rounded-lg p-6 w-[480px]">
-              <h3 className="text-lg font-semibold mb-4">Import CSV Format</h3>
+              <h3 className="text-lg font-semibold mb-4 text-gray-900">Import CSV Format</h3>
 
               <div className="mb-4 space-y-3">
                 <p className="text-sm text-gray-600">
@@ -1086,7 +1086,7 @@ export default function BankingPage() {
           return (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white rounded-lg p-6 w-96">
-              <h3 className="text-lg font-semibold mb-4">Import Payments</h3>
+              <h3 className="text-lg font-semibold mb-4 text-gray-900">Import Payments</h3>
 
               <div className="mb-4">
                 <p className="text-sm font-medium text-gray-900">
