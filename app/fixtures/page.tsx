@@ -4,7 +4,7 @@
 
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, Suspense } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
@@ -77,7 +77,7 @@ function statusLabel(status: string): { label: string; classes: string } {
 // Main Component
 // ============================================================================
 
-export default function FixturesPage() {
+function FixturesPageInner() {
   const { data: session, status } = useSession();
   const isGuest = status === 'unauthenticated';
   const router = useRouter();
@@ -263,5 +263,13 @@ export default function FixturesPage() {
         )}
       </main>
     </div>
+  );
+}
+
+export default function FixturesPage() {
+  return (
+    <Suspense>
+      <FixturesPageInner />
+    </Suspense>
   );
 }
