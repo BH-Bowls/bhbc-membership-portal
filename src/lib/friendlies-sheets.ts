@@ -394,6 +394,9 @@ export async function getGames(statusFilter?: GameStatus, typeFilter?: GameType[
     // Extract club suffix (appended to club name in UI, e.g. 'A' → 'Henfield A')
     const clubSuffix = get(row, 'club_suffix') || '';
 
+    // Extract optional special instructions message
+    const message = get(row, 'message') || '';
+
     // Build complete Game object
     const game: Game = {
       rowNumber,
@@ -422,6 +425,7 @@ export async function getGames(statusFilter?: GameStatus, typeFilter?: GameType[
       paired,
       gameType,
       clubSuffix,
+      message,
     };
 
     // Add game to array
@@ -580,6 +584,36 @@ export async function updateGameStatus(
       data: updates,
       valueInputOption: 'USER_ENTERED',
     },
+  });
+}
+
+/**
+ * Update the special instructions message for a game in the Games sheet.
+ * The 'message' column must exist in the Games sheet.
+ */
+export async function updateGameMessage(tabName: string, message: string, rowNumber?: number): Promise<void> {
+  const spreadsheetId = getFriendliesSpreadsheetId();
+  const colMap = await getColumnMap(spreadsheetId, 'Games');
+  const sheets = getSheetsClient();
+
+  const games = await getGames();
+  let game = tabName ? games.find(g => g.tabName === tabName) : undefined;
+  if (!game && rowNumber) {
+    game = games.find(g => g.rowNumber === rowNumber);
+  }
+  if (!game) {
+    throw new Error(`Game not found: ${tabName || `row ${rowNumber}`}`);
+  }
+
+  if (colMap['message'] === undefined) {
+    throw new Error('No "Message" column found in Games sheet');
+  }
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `Games!${getColumnLetter(colMap['message'])}${game.rowNumber}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[message]] },
   });
 }
 

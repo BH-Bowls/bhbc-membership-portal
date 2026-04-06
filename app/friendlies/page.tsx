@@ -46,7 +46,11 @@ type FilterType = 'all' | 'O' | 'entered' | 'played';
  */
 export default function FriendliesPage() {
   // Get current user session for authentication and role checking
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
+  const isGuest = status === 'unauthenticated';
+  const isKiosk = (session?.user?.role || '') === 'Kiosk';
+  // Guests and kiosk users see read-only friendlies (no entry, no My Entries/My Played)
+  const isLimitedView = isGuest || isKiosk;
 
   // State: List of all games with user's entry status for each
   const [games, setGames] = useState<GameWithUserStatus[]>([]);
@@ -66,6 +70,9 @@ export default function FriendliesPage() {
 
   // State: User's member type for filtering eligible games
   const [memberType, setMemberType] = useState<string>('');
+
+  // State: Special instructions popup
+  const [instructionsMessage, setInstructionsMessage] = useState<string | null>(null);
 
   // State: Modal for viewing and managing entered players
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -330,7 +337,7 @@ export default function FriendliesPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Navigation bar with user info and role */}
-      <Navbar userName={session?.user.name ?? undefined} userRole={session?.user.role ?? undefined} />
+      <Navbar userName={session?.user.name ?? undefined} userRole={session?.user.role ?? undefined} showLogoOnly={isGuest} />
 
       <div className="container mx-auto px-4 py-8 max-w-6xl">
         {/* Page header with title and optional Manage button for Captains/Admins */}
@@ -374,29 +381,31 @@ export default function FriendliesPage() {
             Open for Entry
           </button>
 
-          {/* My Entries tab - shows games user has entered that haven't been played/cancelled */}
-          <button
-            onClick={() => setFilter('entered')}
-            className={`px-4 py-2 font-medium border-b-2 ${
-              filter === 'entered'
-                ? 'border-blue-500 text-blue-500'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            My Entries
-          </button>
-
-          {/* My Played tab - shows games user entered that have been played, cancelled, or abandoned */}
-          <button
-            onClick={() => setFilter('played')}
-            className={`px-4 py-2 font-medium border-b-2 ${
-              filter === 'played'
-                ? 'border-blue-500 text-blue-500'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            My Played
-          </button>
+          {/* My Entries / My Played — hidden for guests and kiosk */}
+          {!isLimitedView && (
+            <>
+              <button
+                onClick={() => setFilter('entered')}
+                className={`px-4 py-2 font-medium border-b-2 ${
+                  filter === 'entered'
+                    ? 'border-blue-500 text-blue-500'
+                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                My Entries
+              </button>
+              <button
+                onClick={() => setFilter('played')}
+                className={`px-4 py-2 font-medium border-b-2 ${
+                  filter === 'played'
+                    ? 'border-blue-500 text-blue-500'
+                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                My Played
+              </button>
+            </>
+          )}
         </div>
 
         {/* Games list - show loading, empty state, or game cards */}
@@ -493,25 +502,27 @@ export default function FriendliesPage() {
                           <p className="font-medium text-gray-900">
                             {combinedEntered} Player{combinedEntered !== 1 ? 's' : ''} Entered
                           </p>
-                          <button
-                            onClick={() => {
-                              setSelectedGameForModal(gameA);
-                              setPairedGameIdsForModal([gameB.tabName]);
-                              setModalGameName(
-                                gameA.clubName !== gameB.clubName
-                                  ? `${gameA.clubName} + ${gameB.clubName} - ${gameA.date}`
-                                  : `${gameA.clubName} - ${gameA.date}`
-                              );
-                              setIsModalOpen(true);
-                            }}
-                            className="mt-2 inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-white rounded bg-green-500 hover:opacity-90 transition-opacity"
-                          >
-                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                            </svg>
-                            View / Add
-                          </button>
+                          {!isLimitedView && (
+                            <button
+                              onClick={() => {
+                                setSelectedGameForModal(gameA);
+                                setPairedGameIdsForModal([gameB.tabName]);
+                                setModalGameName(
+                                  gameA.clubName !== gameB.clubName
+                                    ? `${gameA.clubName} + ${gameB.clubName} - ${gameA.date}`
+                                    : `${gameA.clubName} - ${gameA.date}`
+                                );
+                                setIsModalOpen(true);
+                              }}
+                              className="mt-2 inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-white rounded bg-green-500 hover:opacity-90 transition-opacity"
+                            >
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                              </svg>
+                              View / Add
+                            </button>
+                          )}
                         </div>
                       )}
 
@@ -526,10 +537,22 @@ export default function FriendliesPage() {
                           </p>
                         </div>
                       )}
+
+                      {/* Special instructions link */}
+                      {gameA.message && (
+                        <div className="mt-3 pt-2 border-t border-gray-100">
+                          <button
+                            onClick={() => setInstructionsMessage(gameA.message)}
+                            className="text-sm text-amber-700 font-medium hover:text-amber-900 hover:underline"
+                          >
+                            See Special Instructions
+                          </button>
+                        </div>
+                      )}
                     </div>
 
-                    {/* Single checkbox enters BOTH games */}
-                    {gameA.status === 'O' && memberType && (
+                    {/* Single checkbox enters BOTH games — hidden for guests and kiosk */}
+                    {!isLimitedView && gameA.status === 'O' && memberType && (
                       canEnterGame(memberType, gameA.ladiesMen as GameGender) ||
                       canEnterGame(memberType, gameB.ladiesMen as GameGender)
                     ) && (() => {
@@ -633,21 +656,23 @@ export default function FriendliesPage() {
                               Capacity: {game.maxPlayers}
                             </p>
                           )}
-                          <button
-                            onClick={() => {
-                              setSelectedGameForModal(game);
-                              setPairedGameIdsForModal([]);
-                              setModalGameName(`${game.clubName} - ${game.date}`);
-                              setIsModalOpen(true);
-                            }}
-                            className={`mt-2 inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-white rounded ${badgeColor} hover:opacity-90 transition-opacity`}
-                          >
-                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                            </svg>
-                            View / Add
-                          </button>
+                          {!isLimitedView && (
+                            <button
+                              onClick={() => {
+                                setSelectedGameForModal(game);
+                                setPairedGameIdsForModal([]);
+                                setModalGameName(`${game.clubName} - ${game.date}`);
+                                setIsModalOpen(true);
+                              }}
+                              className={`mt-2 inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-white rounded ${badgeColor} hover:opacity-90 transition-opacity`}
+                            >
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                              </svg>
+                              View / Add
+                            </button>
+                          )}
                         </div>
                       );
                     })()}
@@ -658,10 +683,22 @@ export default function FriendliesPage() {
                         BH: <span className="text-blue-600">{game.bhbcScore}</span> - {game.clubName}: <span className="text-gray-700">{game.opponentScore}</span>
                       </p>
                     )}
+
+                    {/* Special instructions link */}
+                    {game.message && (
+                      <div className="mt-2 pt-2 border-t border-gray-100">
+                        <button
+                          onClick={() => setInstructionsMessage(game.message)}
+                          className="text-sm text-amber-700 font-medium hover:text-amber-900 hover:underline"
+                        >
+                          See Special Instructions
+                        </button>
+                      </div>
+                    )}
                   </div>
 
-                  {/* For open games, show checkbox to enter/withdraw (only if eligible) */}
-                  {game.status === 'O' && memberType && canEnterGame(memberType, game.ladiesMen as GameGender) && (() => {
+                  {/* For open games, show checkbox to enter/withdraw — hidden for guests and kiosk */}
+                  {!isLimitedView && game.status === 'O' && memberType && canEnterGame(memberType, game.ladiesMen as GameGender) && (() => {
                     // Check if game is full and user hasn't already entered
                     const capacity = calculateCapacity(game);
                     const isFull = capacity.isFull && !game.userEntered;
@@ -759,6 +796,30 @@ export default function FriendliesPage() {
             </div>
           );
         })()}
+
+        {/* Special instructions popup */}
+        {instructionsMessage !== null && (
+          <>
+            <div
+              className="fixed inset-0 bg-black bg-opacity-50 z-40"
+              onClick={() => setInstructionsMessage(null)}
+            />
+            <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+                <h2 className="text-lg font-bold text-gray-900 mb-3">Special Instructions</h2>
+                <p className="text-gray-700 whitespace-pre-wrap">{instructionsMessage}</p>
+                <div className="flex justify-end mt-5">
+                  <button
+                    onClick={() => setInstructionsMessage(null)}
+                    className="px-4 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
 
         {/* Modal for viewing and managing entered players */}
         {selectedGameForModal && (

@@ -13,6 +13,7 @@ interface MonthCalendarProps {
   onDayClick: (day: CalendarDay) => void;
   isAdmin?: boolean;
   adminMode?: boolean;
+  showLegend?: boolean;
 }
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -29,6 +30,7 @@ export function MonthCalendar({
   onDayClick,
   isAdmin = false,
   adminMode = false,
+  showLegend = true,
 }: MonthCalendarProps) {
   // Get first day of month and total days
   const firstDayOfMonth = new Date(year, month, 1).getDay();
@@ -173,7 +175,7 @@ export function MonthCalendar({
       </div>
 
       {/* Legend */}
-      <div className="px-4 py-3 border-t border-gray-200 bg-gray-50">
+      {showLegend && <div className="px-4 py-3 border-t border-gray-200 bg-gray-50">
         <div className="flex flex-wrap gap-3 text-xs">
           <div className="flex items-center gap-1">
             <div className="w-4 h-4 bg-white border border-gray-200 rounded"></div>
@@ -196,7 +198,7 @@ export function MonthCalendar({
             <span>Selected</span>
           </div>
         </div>
-      </div>
+      </div>}
     </div>
   );
 }

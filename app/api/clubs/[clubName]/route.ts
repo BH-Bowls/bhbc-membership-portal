@@ -22,10 +22,6 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     const session = await getServerSession(authOptions);
 
-    if (!session?.user?.userName) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
     const { clubName } = await params;
     const decodedClubName = decodeURIComponent(clubName);
 
@@ -38,9 +34,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Check if user is non-member for edit permissions
-    const role = session.user.role || 'Member';
-    const canEdit = role !== 'Member';
+    // Guests and plain members cannot edit
+    const role = session?.user?.role || 'Member';
+    const canEdit = !!session && role !== 'Member';
 
     return NextResponse.json({
       ...result,

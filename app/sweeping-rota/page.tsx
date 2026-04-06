@@ -31,7 +31,8 @@ const MONTH_NAMES = [
 ];
 
 export default function SweepingRotaPage() {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
+  const isGuest = status === 'unauthenticated';
 
   // Current view state
   const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
@@ -70,6 +71,8 @@ export default function SweepingRotaPage() {
   const currentUser = session?.user?.userName || '';
   const isNonMember = session?.user?.role !== 'Member';
   const isKiosk = session?.user?.role === 'Kiosk';
+  // Guests and kiosk can view but cannot add/remove sweeping assignments
+  const isReadOnly = isGuest || isKiosk;
 
   // Fetch members lookup
   const fetchMembers = useCallback(async () => {
@@ -427,6 +430,7 @@ export default function SweepingRotaPage() {
       <Navbar
         userName={session?.user?.name || ''}
         userRole={session?.user?.role || ''}
+        showLogoOnly={isGuest}
       />
 
       <main className="max-w-4xl mx-auto px-4 py-6">
@@ -508,8 +512,8 @@ export default function SweepingRotaPage() {
               <span className="hidden sm:inline">Print</span>
             </button>
 
-            {/* Pattern button (not in kiosk) */}
-            {!isKiosk && (
+            {/* Pattern button (not in kiosk or guest) */}
+            {!isReadOnly && (
               <button
                 onClick={() => setPatternModalOpen(true)}
                 className="px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 rounded-md flex items-center gap-1"
@@ -536,12 +540,13 @@ export default function SweepingRotaPage() {
               onDayClick={handleDayClick}
               isAdmin={isNonMember}
               adminMode={false}
+              showLegend={!isReadOnly}
             />
           </div>
         )}
 
         {/* Selection actions */}
-        {selectedDates.size > 0 && !isKiosk && (
+        {selectedDates.size > 0 && !isReadOnly && (
           <div className="mt-4 flex items-center justify-between p-4 bg-blue-50 rounded-lg">
             <span className="text-sm text-blue-800">
               {selectedDates.size} date{selectedDates.size !== 1 ? 's' : ''} selected

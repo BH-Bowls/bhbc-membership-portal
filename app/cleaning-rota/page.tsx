@@ -43,7 +43,8 @@ interface EditedAssignments {
 }
 
 export default function CleaningRotaPage() {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
+  const isGuest = status === 'unauthenticated';
 
   const [entries, setEntries] = useState<CleaningRotaEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -372,12 +373,12 @@ export default function CleaningRotaPage() {
 
   // Check if current user is assigned to this position
   function isCurrentUserAssigned(entry: CleaningRotaEntry, position: CleaningPosition): boolean {
-    return entry[position] === currentUsername;
+    return !!currentUsername && entry[position] === currentUsername;
   }
 
   // Check if entry has any of current user's assignments
   function hasUserAssignment(entry: CleaningRotaEntry): boolean {
-    return (
+    return !!currentUsername && (
       entry.lead === currentUsername ||
       entry.second === currentUsername ||
       entry.third === currentUsername ||
@@ -428,7 +429,8 @@ export default function CleaningRotaPage() {
       <Navbar
         userName={session?.user?.name ?? undefined}
         userRole={session?.user?.role ?? undefined}
-        actionButtons={getNavbarActionButtons()}
+        actionButtons={isGuest ? undefined : getNavbarActionButtons()}
+        showLogoOnly={isGuest}
       />
 
       <div className="container mx-auto px-4 py-8 max-w-6xl">

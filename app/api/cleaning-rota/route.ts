@@ -13,16 +13,11 @@ import { getCleaningRotaList } from '@/lib/cleaning-sheets';
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
-
-    if (!session?.user?.userName) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
     const entries = await getCleaningRotaList();
 
     return NextResponse.json({
       entries,
-      currentUser: session.user.userName,
+      currentUser: session?.user?.userName ?? '',
     });
   } catch (error) {
     console.error('[GET /api/cleaning-rota] Error:', error);

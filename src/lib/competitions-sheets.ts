@@ -805,3 +805,67 @@ export async function getMemberInfo(username: string): Promise<CompMemberInfo | 
   const map = await getMemberInfoMap();
   return map.get(username.toLowerCase()) ?? null;
 }
+
+// ============================================================================
+// COMPETITIONS SETTINGS (CompetitionsSettings sheet: Key | Value)
+// ============================================================================
+
+const SETTINGS_SHEET = 'CompetitionsSettings';
+
+export async function getCompetitionMessage(): Promise<string> {
+  const spreadsheetId = getCompetitionsSpreadsheetId();
+  const sheets = await getGoogleSheetsClient();
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SETTINGS_SHEET}!A:B`,
+    valueRenderOption: 'UNFORMATTED_VALUE',
+  });
+
+  const rows = res.data.values ?? [];
+  for (const row of rows) {
+    if (String(row[0]).trim().toLowerCase() === 'message') {
+      return String(row[1] ?? '');
+    }
+  }
+  return '';
+}
+
+export async function setCompetitionMessage(message: string): Promise<void> {
+  const spreadsheetId = getCompetitionsSpreadsheetId();
+  const sheets = await getGoogleSheetsClient();
+
+  // Find the row with key 'message'
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SETTINGS_SHEET}!A:B`,
+    valueRenderOption: 'UNFORMATTED_VALUE',
+  });
+
+  const rows = res.data.values ?? [];
+  let targetRow = -1;
+  for (let i = 0; i < rows.length; i++) {
+    if (String(rows[i][0]).trim().toLowerCase() === 'message') {
+      targetRow = i + 1; // 1-indexed
+      break;
+    }
+  }
+
+  if (targetRow === -1) {
+    // Append a new row
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${SETTINGS_SHEET}!A:B`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [['message', message]] },
+    });
+  } else {
+    // Update existing row
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${SETTINGS_SHEET}!B${targetRow}`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [[message]] },
+    });
+  }
+}

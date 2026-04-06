@@ -122,6 +122,7 @@ export interface Game {
   paired?: string;              // 'Y' if this game is paired with another game on the same date
   gameType: GameType;           // Type of game: Friendly, N/S A, N/S B, MSL, JSL, BL, or Event
   clubSuffix: string;           // Suffix appended to clubName in UI (e.g. 'A' → 'Henfield A')
+  message: string;              // Optional special instructions message shown on the game card
 }
 
 /**

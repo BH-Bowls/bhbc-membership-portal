@@ -4,12 +4,26 @@
 
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Navbar } from '@/components/Navbar';
 import { Game, GameType, ALL_GAME_TYPES } from '@/lib/types/friendlies';
+
+// Map URL-friendly slugs to GameType values and back
+const SLUG_TO_TAB: Record<string, 'All' | GameType> = {
+  all:    'All',
+  nsa:    'N/S A',
+  nsb:    'N/S B',
+  msl:    'MSL',
+  bl:     'BL',
+  jsl:    'JSL',
+  events: 'Event',
+};
+const TAB_TO_SLUG: Record<string, string> = Object.fromEntries(
+  Object.entries(SLUG_TO_TAB).map(([slug, tab]) => [tab, slug])
+);
 
 // Utility: format date as "Sat 25 Apr"
 function formatDisplayDate(dateStr: string): string {
@@ -64,14 +78,25 @@ function statusLabel(status: string): { label: string; classes: string } {
 // ============================================================================
 
 export default function FixturesPage() {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
+  const isGuest = status === 'unauthenticated';
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const initialTab = SLUG_TO_TAB[searchParams.get('tab') ?? ''] ?? 'All';
 
   const [games, setGames] = useState<Game[]>([]);
   const [loading, setLoading] = useState(true);
-  const [typeFilter, setTypeFilter] = useState<'All' | GameType>('All');
+  const [typeFilter, setTypeFilter] = useState<'All' | GameType>(initialTab);
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const setTab = useCallback((tab: 'All' | GameType) => {
+    setTypeFilter(tab);
+    const slug = TAB_TO_SLUG[tab];
+    const params = slug && slug !== 'all' ? `?tab=${slug}` : '';
+    router.replace(`/fixtures${params}`, { scroll: false });
+  }, [router]);
 
   const userRole = (session?.user as any)?.role || '';
   const isAdmin = userRole === 'Admin' || userRole === 'superadmin';
@@ -79,14 +104,9 @@ export default function FixturesPage() {
   const canManage = isAdmin || isCaptain;
 
   useEffect(() => {
-    if (session === null) {
-      router.push('/');
-      return;
-    }
-    if (session) {
-      fetchGames();
-    }
-  }, [session]);
+    if (status === 'loading') return;
+    fetchGames();
+  }, [status]);
 
   async function fetchGames() {
     setLoading(true);
@@ -108,13 +128,14 @@ export default function FixturesPage() {
 
   const typeFilterOptions: ('All' | GameType)[] = ['All', ...ALL_GAME_TYPES];
 
-  if (!session) return null;
+  if (status === 'loading') return null;
 
   return (
     <div className="min-h-screen bg-gray-50">
       <Navbar
         userName={(session?.user as any)?.userName}
         userRole={userRole}
+        showLogoOnly={isGuest}
       />
 
       <main className="max-w-5xl mx-auto px-4 py-6">
@@ -145,7 +166,7 @@ export default function FixturesPage() {
           {typeFilterOptions.map(t => (
             <button
               key={t}
-              onClick={() => setTypeFilter(t)}
+              onClick={() => setTab(t)}
               className={`px-3 py-2 text-sm font-medium rounded-t-lg border-b-2 transition-colors ${
                 typeFilter === t
                   ? 'border-green-600 text-green-700 bg-green-50'

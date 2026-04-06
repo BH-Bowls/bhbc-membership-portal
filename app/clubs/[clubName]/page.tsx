@@ -39,7 +39,8 @@ export default function ClubDetailPage({ params }: PageProps) {
   const { clubName: encodedClubName } = use(params);
   const clubName = decodeURIComponent(encodedClubName);
 
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
+  const isGuest = status === 'unauthenticated';
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -407,7 +408,8 @@ export default function ClubDetailPage({ params }: PageProps) {
       <Navbar
         userName={session?.user?.name ?? undefined}
         userRole={session?.user?.role ?? undefined}
-        actionButtons={getNavbarActionButtons()}
+        actionButtons={isGuest ? undefined : getNavbarActionButtons()}
+        showLogoOnly={isGuest}
       />
 
       <div className="container mx-auto px-4 py-8 max-w-4xl">

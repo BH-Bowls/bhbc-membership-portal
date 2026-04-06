@@ -40,13 +40,15 @@ interface NavbarProps {
   userName?: string;
   userRole?: string;
   hasUnsavedChanges?: boolean;
+  showLogoOnly?: boolean;
+  guestButtons?: React.ReactNode;
   actionButtons?: {
     primary?: ActionButton;
     secondary?: ActionButton;
   };
 }
 
-export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionButtons }: NavbarProps) {
+export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogoOnly = false, guestButtons, actionButtons }: NavbarProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
@@ -587,19 +589,33 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
     <nav className="sticky top-0 z-50 bg-white shadow-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between h-16">
-          {/* Logo/Brand */}
+          {/* Logo/Brand — always links to portal root */}
           <div className="flex items-center">
-            <Link href="/" className="flex-shrink-0 flex items-center">
+            <a href="https://www.burgesshillbowlsclub.com/" className="flex-shrink-0 flex items-center">
               <img
                 src="/bhbc-logo.jpg"
                 alt="BHBC Logo"
                 style={{ height: '40px', width: 'auto' }}
               />
-            </Link>
+            </a>
           </div>
 
-          {/* Desktop Navigation */}
-          <div className="hidden md:flex md:items-center md:space-x-4">
+          {/* Guest login button(s) */}
+          {showLogoOnly && (
+            <div className="flex items-center gap-2">
+              {guestButtons ?? (
+                <a
+                  href="/login"
+                  className="px-4 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors"
+                >
+                  Log in
+                </a>
+              )}
+            </div>
+          )}
+
+          {/* Desktop Navigation — hidden for guest/logo-only mode */}
+          {!showLogoOnly && <div className="hidden md:flex md:items-center md:space-x-4">
             {/* Show action buttons if provided, otherwise show normal navigation */}
             {actionButtons ? (
               <div className="flex items-center space-x-3">
@@ -815,10 +831,10 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
                 </div>
               )}
             </div>
-          </div>
+          </div>}
 
-          {/* Mobile Action Buttons or Menu Button */}
-          <div className="flex items-center md:hidden">
+          {/* Mobile Action Buttons or Menu Button — hidden for guest/logo-only mode */}
+          {!showLogoOnly && <div className="flex items-center md:hidden">
             {/* Show action buttons in center space if provided */}
             {actionButtons && (
               <div className="flex items-center space-x-2 mr-4">
@@ -853,12 +869,12 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, actionBu
                 <span className="absolute top-1 right-1 block h-2 w-2 rounded-full bg-orange-500 ring-2 ring-white"></span>
               )}
             </button>
-          </div>
+          </div>}
         </div>
       </div>
 
       {/* Navigation menu overlay (used on mobile always, and on desktop when editing) */}
-      {mobileMenuOpen && (
+      {!showLogoOnly && mobileMenuOpen && (
         <>
           {/* Backdrop */}
           <div

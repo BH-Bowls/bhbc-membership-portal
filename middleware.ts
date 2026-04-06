@@ -13,6 +13,59 @@ import { hasRole } from './src/lib/role-utils';
  * Handles authentication checks and role-based authorization
  * Integrated with NextAuth for automatic session validation
  */
+/**
+ * Routes accessible without authentication (guest/public access).
+ * Page routes listed here are exact-match only unless otherwise noted.
+ */
+function isPublicRoute(pathname: string): boolean {
+  // Exact public pages
+  const exactPages = [
+    '/fixtures', '/members', '/friendlies', '/competitions',
+    '/tea-rota', '/cleaning-rota', '/sweeping-rota', '/rowland',
+  ];
+  if (exactPages.includes(pathname)) return true;
+
+  // /clubs and all sub-paths (list + detail pages)
+  if (pathname === '/clubs' || pathname.startsWith('/clubs/')) return true;
+
+  // /rowland/[compId] — but NOT setup pages
+  if (pathname.startsWith('/rowland/')) {
+    const segment = pathname.split('/')[2];
+    if (segment && !['setup'].includes(segment)) return true;
+  }
+
+  // /competitions/[compId] and sub-pages — but NOT admin/my/handicaps
+  if (pathname.startsWith('/competitions/')) {
+    const segment = pathname.split('/')[2];
+    if (!['admin', 'my', 'handicaps'].includes(segment)) return true;
+  }
+
+  // Exact public API routes (GET — write endpoints remain protected at handler level)
+  const exactApis = [
+    '/api/fixtures/games', '/api/tea-rota', '/api/cleaning-rota',
+    '/api/sweeping-rota', '/api/members/lookup', '/api/friendlies/games',
+    '/api/competitions', '/api/rowland',
+  ];
+  if (exactApis.includes(pathname)) return true;
+
+  // /api/rowland/[compId] and matches — but NOT setup
+  if (pathname.startsWith('/api/rowland/')) {
+    const segment = pathname.split('/')[3];
+    if (segment && !['setup'].includes(segment)) return true;
+  }
+
+  // /api/clubs and all sub-paths
+  if (pathname === '/api/clubs' || pathname.startsWith('/api/clubs/')) return true;
+
+  // /api/competitions/[compId] and sub-paths — but NOT admin/my/handicaps
+  if (pathname.startsWith('/api/competitions/')) {
+    const segment = pathname.split('/')[3];
+    if (!['admin', 'my', 'handicaps'].includes(segment)) return true;
+  }
+
+  return false;
+}
+
 export default withAuth(
   /**
    * Custom middleware logic for role-based access control
@@ -69,13 +122,11 @@ export default withAuth(
        * @param token User's JWT token (null if not authenticated)
        * @returns true to allow access, false to redirect to login
        */
-      authorized: ({ token }) => {
-        // Check if token exists (user is authenticated)
-        if (token) {
-          return true;
-        } else {
-          return false;
-        }
+      authorized: ({ token, req }) => {
+        // Allow public routes without a token
+        if (isPublicRoute(req.nextUrl.pathname)) return true;
+        // Otherwise require authentication
+        return !!token;
       },
     },
 

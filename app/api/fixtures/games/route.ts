@@ -9,12 +9,6 @@ import { getGames } from '@/lib/friendlies-sheets';
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-
-    if (!session || !session.user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
     // Return all game types (no type filter)
     const games = await getGames();
 

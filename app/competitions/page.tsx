@@ -3,7 +3,7 @@
 
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
@@ -32,7 +32,8 @@ function formatDate(dateStr: string | null | undefined): string {
 }
 
 export default function CompetitionsPage() {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
+  const isGuest = status === 'unauthenticated';
   const router = useRouter();
   const [competitions, setCompetitions] = useState<Competition[]>([]);
   const [loading, setLoading] = useState(true);
@@ -40,6 +41,12 @@ export default function CompetitionsPage() {
 
   const role = session?.user?.role ?? '';
   const isCommittee = role !== 'Member' && role !== '' && role !== 'Kiosk';
+
+  const [message, setMessage] = useState('');
+  const [editingMessage, setEditingMessage] = useState(false);
+  const [editDraft, setEditDraft] = useState('');
+  const [savingMessage, setSavingMessage] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     fetch('/api/competitions')
@@ -50,7 +57,36 @@ export default function CompetitionsPage() {
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
+
+    fetch('/api/competitions/message')
+      .then((r) => r.json())
+      .then((data) => { if (typeof data.message === 'string') setMessage(data.message); })
+      .catch(() => {});
   }, []);
+
+  function startEditMessage() {
+    setEditDraft(message);
+    setEditingMessage(true);
+    setTimeout(() => textareaRef.current?.focus(), 0);
+  }
+
+  async function saveMessage() {
+    setSavingMessage(true);
+    try {
+      const res = await fetch('/api/competitions/message', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: editDraft }),
+      });
+      if (!res.ok) throw new Error('Failed to save');
+      setMessage(editDraft);
+      setEditingMessage(false);
+    } catch {
+      alert('Failed to save message. Please try again.');
+    } finally {
+      setSavingMessage(false);
+    }
+  }
 
   const groups: { heading: string; statuses: CompStatus[] }[] = [
     { heading: 'In Progress', statuses: ['In Progress'] },
@@ -64,6 +100,7 @@ export default function CompetitionsPage() {
       <Navbar
         userName={session?.user?.name ?? undefined}
         userRole={session?.user?.role ?? undefined}
+        showLogoOnly={isGuest}
       />
 
       <div className="container mx-auto px-4 py-8 max-w-4xl">
@@ -96,6 +133,55 @@ export default function CompetitionsPage() {
             )}
           </div>
         </div>
+
+        {/* Message panel */}
+        {(message || isCommittee) && (
+          <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+            {editingMessage ? (
+              <div className="space-y-2">
+                <textarea
+                  ref={textareaRef}
+                  value={editDraft}
+                  onChange={(e) => setEditDraft(e.target.value)}
+                  rows={4}
+                  className="w-full border border-blue-300 rounded-md px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400 resize-y"
+                  placeholder="Enter a message for all members…"
+                />
+                <div className="flex gap-2 justify-end">
+                  <button
+                    onClick={() => setEditingMessage(false)}
+                    className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={saveMessage}
+                    disabled={savingMessage}
+                    className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {savingMessage ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-start justify-between gap-4">
+                {message ? (
+                  <p className="text-sm text-blue-900 whitespace-pre-wrap">{message}</p>
+                ) : (
+                  <p className="text-sm text-blue-400 italic">No message set. Click Edit to add one.</p>
+                )}
+                {isCommittee && (
+                  <button
+                    onClick={startEditMessage}
+                    className="shrink-0 text-xs text-blue-600 hover:text-blue-800 font-medium"
+                  >
+                    Edit
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {loading && (
           <div className="text-center py-12 text-gray-400">Loading competitions…</div>

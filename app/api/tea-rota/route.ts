@@ -14,17 +14,12 @@ import { getTeaRotaList } from '@/lib/friendlies-sheets';
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
-
-    if (!session?.user?.userName) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
     const entries = await getTeaRotaList();
 
     return NextResponse.json({
       entries,
       total: entries.length,
-      currentUser: session.user.userName,
+      currentUser: session?.user?.userName ?? '',
     });
   } catch (error) {
     console.error('[GET /api/tea-rota] Error:', error);

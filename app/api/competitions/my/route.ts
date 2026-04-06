@@ -92,16 +92,17 @@ function playByForRound(comp: Competition, round: string): string | null {
 
 function roundStartDate(comp: Competition, round: string): string | null {
   if (round === 'F') return null;
-  if (!comp.compStartDate) return null;
 
   const idx = ROUND_ORDER.indexOf(round as typeof ROUND_ORDER[number]);
-  if (idx <= 0) return comp.compStartDate;
+  if (idx <= 0) return comp.compStartDate ?? null;
 
+  // Walk back through previous rounds to find the most recent play-by date
+  // (this is the start date for the current round, no compStartDate needed)
   for (let i = idx - 1; i >= 0; i--) {
     const pb = playByForRound(comp, ROUND_ORDER[i]);
     if (pb) return pb;
   }
-  return comp.compStartDate;
+  return comp.compStartDate ?? null;
 }
 
 function addDays(dateStr: string, days: number): string {

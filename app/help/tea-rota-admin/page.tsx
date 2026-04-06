@@ -19,10 +19,10 @@ export default function HelpTeaRotaAdminPage() {
 
           <HelpSection title="How the tea rota works">
             <Body>
-              The tea rota is generated automatically when a friendly game is published. Members
-              assigned to teas are selected during the Friendly Management process (on the Teas tab of
-              each game). When the game is published, an email is sent to those members with their tea
-              duty details.
+              The tea rota lists the members assigned to tea duty for each home friendly. Assignments
+              are managed directly on the Tea Rota page. When a game is published from Friendly
+              Management, the captain has the option to email the assigned tea duty members with their
+              details.
             </Body>
           </HelpSection>
 

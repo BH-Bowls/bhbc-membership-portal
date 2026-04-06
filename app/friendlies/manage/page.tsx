@@ -82,6 +82,15 @@ export default function ManageGamesPage() {
     who: '',
   });
 
+  // State: Message dialog for editing special instructions
+  const [messageDialog, setMessageDialog] = useState<{
+    isOpen: boolean;
+    tabName: string;
+    rowNumber: number;
+    draft: string;
+    saving: boolean;
+  }>({ isOpen: false, tabName: '', rowNumber: 0, draft: '', saving: false });
+
   // State: Publish dialog for publishing team selection
   const [publishDialog, setPublishDialog] = useState<{
     isOpen: boolean;
@@ -409,6 +418,38 @@ export default function ManageGamesPage() {
       result: null,
     });
     fetchGames();
+  }
+
+  /**
+   * Open message dialog for a game
+   */
+  function handleEditMessage(game: Game) {
+    setMessageDialog({ isOpen: true, tabName: game.tabName, rowNumber: game.rowNumber, draft: game.message || '', saving: false });
+  }
+
+  /**
+   * Save the special instructions message for a game
+   */
+  async function saveMessage() {
+    setMessageDialog(prev => ({ ...prev, saving: true }));
+    try {
+      const res = await fetch('/api/friendlies/manage/message', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tab_name: messageDialog.tabName, row_number: messageDialog.rowNumber, message: messageDialog.draft }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        alert(data.error || 'Failed to save message');
+        setMessageDialog(prev => ({ ...prev, saving: false }));
+        return;
+      }
+      setMessageDialog({ isOpen: false, tabName: '', rowNumber: 0, draft: '', saving: false });
+      await fetchGames();
+    } catch {
+      alert('Failed to save message');
+      setMessageDialog(prev => ({ ...prev, saving: false }));
+    }
   }
 
   /**
@@ -756,6 +797,12 @@ export default function ManageGamesPage() {
                               Cancel
                             </button>
                           )}
+                          <button
+                            onClick={() => handleEditMessage(gameA)}
+                            className={`font-medium cursor-pointer ${gameA.message ? 'text-amber-600 hover:text-amber-800' : 'text-gray-400 hover:text-gray-600'}`}
+                          >
+                            Message
+                          </button>
                         </td>
                       </tr>
                     );
@@ -868,6 +915,16 @@ export default function ManageGamesPage() {
                             Cancel
                           </button>
                         )}
+
+                        {/* Message button — available for all non-played/cancelled/abandoned games */}
+                        {!['P', 'C', 'A'].includes(game.status) && (
+                          <button
+                            onClick={() => handleEditMessage(game)}
+                            className={`font-medium cursor-pointer ${game.message ? 'text-amber-600 hover:text-amber-800' : 'text-gray-400 hover:text-gray-600'}`}
+                          >
+                            Message
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
@@ -877,6 +934,49 @@ export default function ManageGamesPage() {
           </div>
         )}
       </div>
+
+      {/* Message / Special Instructions Dialog */}
+      {messageDialog.isOpen && (
+        <>
+          <div
+            className="fixed inset-0 bg-black bg-opacity-50 z-40"
+            onClick={() => !messageDialog.saving && setMessageDialog(prev => ({ ...prev, isOpen: false }))}
+          />
+          <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+              <h2 className="text-xl font-bold mb-2 text-gray-900">Special Instructions</h2>
+              <p className="text-sm text-gray-500 mb-4">
+                This message will appear on the game card as a "See Special Instructions" link.
+                Leave blank to remove it.
+              </p>
+              <textarea
+                value={messageDialog.draft}
+                onChange={e => setMessageDialog(prev => ({ ...prev, draft: e.target.value }))}
+                rows={5}
+                placeholder="e.g. Please wear whites. Meet at the clubhouse 30 minutes before start."
+                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400 resize-y"
+                autoFocus
+              />
+              <div className="flex justify-end gap-3 mt-4">
+                <button
+                  onClick={() => setMessageDialog(prev => ({ ...prev, isOpen: false }))}
+                  disabled={messageDialog.saving}
+                  className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={saveMessage}
+                  disabled={messageDialog.saving}
+                  className="px-4 py-2 text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {messageDialog.saving ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Confirmation Dialog */}
       <ConfirmDialog

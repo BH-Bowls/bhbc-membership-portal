@@ -11,11 +11,6 @@ export async function GET(
   { params }: { params: Promise<{ clubName: string }> }
 ) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
     const { clubName: encodedClubName } = await params;
     const clubName = decodeURIComponent(encodedClubName).toLowerCase();
 

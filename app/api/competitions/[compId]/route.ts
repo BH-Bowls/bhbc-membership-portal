@@ -18,11 +18,6 @@ export async function GET(
   { params }: { params: Promise<{ compId: string }> }
 ) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.userName) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
     const { compId } = await params;
     const [competition, matches] = await Promise.all([
       getCompetitionById(compId),

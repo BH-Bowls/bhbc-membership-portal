@@ -9,11 +9,6 @@ import { getMemberInfoMap } from '@/lib/competitions-sheets';
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.userName) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
     const map = await getMemberInfoMap();
     // Convert Map to plain object for JSON serialisation
     const members = Object.fromEntries(map);

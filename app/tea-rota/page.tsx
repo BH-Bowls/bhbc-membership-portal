@@ -44,7 +44,8 @@ interface EditedAssignments {
 }
 
 export default function TeaRotaPage() {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
+  const isGuest = status === 'unauthenticated';
 
   const [entries, setEntries] = useState<TeaRotaEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -377,12 +378,12 @@ export default function TeaRotaPage() {
 
   // Check if current user is assigned to this position
   function isCurrentUserAssigned(entry: TeaRotaEntry, position: 'teaLead' | 'teaFirst' | 'teaSecond'): boolean {
-    return entry[position] === currentUsername;
+    return !!currentUsername && entry[position] === currentUsername;
   }
 
   // Check if entry has any of current user's assignments
   function hasUserAssignment(entry: TeaRotaEntry): boolean {
-    return (
+    return !!currentUsername && (
       entry.teaLead === currentUsername ||
       entry.teaFirst === currentUsername ||
       entry.teaSecond === currentUsername
@@ -431,7 +432,8 @@ export default function TeaRotaPage() {
       <Navbar
         userName={session?.user?.name ?? undefined}
         userRole={session?.user?.role ?? undefined}
-        actionButtons={getNavbarActionButtons()}
+        actionButtons={isGuest ? undefined : getNavbarActionButtons()}
+        showLogoOnly={isGuest}
       />
 
       <div className="container mx-auto px-4 py-8 max-w-6xl">

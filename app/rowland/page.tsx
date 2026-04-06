@@ -6,6 +6,13 @@
 import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
+
+const ROWLAND_GUEST_BUTTONS = (
+  <>
+    <a href="/clublogin" className="px-3 py-1.5 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-md transition-colors">Club Login</a>
+    <a href="/login"     className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600  hover:bg-blue-700  rounded-md transition-colors">Member Login</a>
+  </>
+);
 import { Navbar } from '@/components/Navbar';
 import type { RowlandComp, RowlandCompStatus } from '@/types/rowland';
 import { ROWLAND_COMP_NAMES } from '@/types/rowland';
@@ -18,7 +25,8 @@ const STATUS_STYLES: Record<RowlandCompStatus, string> = {
 };
 
 export default function RowlandPage() {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
+  const isGuest = status === 'unauthenticated';
   const router = useRouter();
   const [comps, setComps] = useState<RowlandComp[]>([]);
   const [loading, setLoading] = useState(true);
@@ -39,7 +47,7 @@ export default function RowlandPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={session?.user?.name ?? undefined} userRole={role} />
+      <Navbar userName={session?.user?.name ?? undefined} userRole={role} showLogoOnly={isGuest} guestButtons={ROWLAND_GUEST_BUTTONS} />
 
       <div className="container mx-auto px-4 py-8 max-w-3xl">
         <h1 className="text-2xl font-bold text-gray-900 mb-6">Rowland Cup</h1>

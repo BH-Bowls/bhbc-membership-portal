@@ -16,11 +16,6 @@ export async function GET(
   { params }: { params: Promise<{ compId: string }> }
 ) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.userName) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
     const { compId } = await params;
     const comp = await getRowlandComp(compId as RowlandCompId);
     if (!comp) return NextResponse.json({ error: 'Not found' }, { status: 404 });

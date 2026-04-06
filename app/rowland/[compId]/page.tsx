@@ -59,9 +59,17 @@ function inferFirstRoundCount(matches: CompMatch[]): number {
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
+const ROWLAND_GUEST_BUTTONS = (
+  <>
+    <a href="/clublogin" className="px-3 py-1.5 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-md transition-colors">Club Login</a>
+    <a href="/login"     className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600  hover:bg-blue-700  rounded-md transition-colors">Member Login</a>
+  </>
+);
+
 export default function RowlandCompPage({ params }: { params: Promise<{ compId: string }> }) {
   const { compId } = use(params);
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
+  const isGuest = status === 'unauthenticated';
   const router = useRouter();
 
   const [comp, setComp] = useState<RowlandComp | null>(null);
@@ -205,7 +213,7 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="print:hidden">
-        <Navbar userName={session?.user?.name ?? undefined} userRole={role} />
+        <Navbar userName={session?.user?.name ?? undefined} userRole={role} showLogoOnly={isGuest} guestButtons={ROWLAND_GUEST_BUTTONS} />
       </div>
 
       <div className="container mx-auto px-4 py-6 max-w-full">
@@ -296,13 +304,13 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
               compType="singles"
               firstRoundCount={firstRoundCount}
               getInfo={getInfo}
-              canEnterScores={isCommittee}
+              canEnterScores={!isGuest && isCommittee}
               currentUsername={myClubDisplayName}
-              allowCompleteInteraction={isClub}
+              allowCompleteInteraction={!isGuest && isClub}
               onMatchClick={handleMatchClick}
               roundPlayByDates={roundPlayByDates}
               printOrientation={printOrientation}
-              onScoreSheetView={isCommittee ? (_matchId, url) => setScoreSheetPopup(url) : undefined}
+              onScoreSheetView={!isGuest && isCommittee ? (_matchId, url) => setScoreSheetPopup(url) : undefined}
             />
           </div>
         )}

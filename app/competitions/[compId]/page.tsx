@@ -43,7 +43,8 @@ export default function CompetitionBracketPage({
 }: {
   params: Promise<{ compId: string }>;
 }) {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
+  const isGuest = status === 'unauthenticated';
   const router = useRouter();
 
   const [compId, setCompId] = React.useState<string>('');
@@ -184,6 +185,7 @@ export default function CompetitionBracketPage({
         <Navbar
           userName={session?.user?.name ?? undefined}
           userRole={session?.user?.role ?? undefined}
+          showLogoOnly={isGuest}
         />
       </div>
 

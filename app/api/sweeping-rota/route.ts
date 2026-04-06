@@ -22,10 +22,6 @@ export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
 
-    if (!session?.user?.userName) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
     const searchParams = request.nextUrl.searchParams;
     let startDate = searchParams.get('startDate');
     let endDate = searchParams.get('endDate');
@@ -42,11 +38,13 @@ export async function GET(request: NextRequest) {
 
     const entries = await getSweepingRotaForDateRange(startDate, endDate);
 
-    const isAdmin = hasRole(session.user.role, 'Admin') || session.user.role === 'superadmin';
+    const isAdmin = session
+      ? hasRole(session.user.role, 'Admin') || session.user.role === 'superadmin'
+      : false;
 
     return NextResponse.json({
       entries,
-      currentUser: session.user.userName,
+      currentUser: session?.user?.userName ?? '',
       isAdmin,
     });
   } catch (error) {
