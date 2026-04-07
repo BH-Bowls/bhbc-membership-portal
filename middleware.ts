@@ -44,7 +44,7 @@ function isPublicRoute(pathname: string): boolean {
   const exactApis = [
     '/api/fixtures/games', '/api/tea-rota', '/api/cleaning-rota',
     '/api/sweeping-rota', '/api/members/lookup', '/api/friendlies/games',
-    '/api/competitions', '/api/rowland',
+    '/api/competitions', '/api/rowland', '/api/rowland/message',
   ];
   if (exactApis.includes(pathname)) return true;
 

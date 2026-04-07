@@ -13,13 +13,14 @@ import { Game, GameType, ALL_GAME_TYPES } from '@/lib/types/friendlies';
 
 // Map URL-friendly slugs to GameType values and back
 const SLUG_TO_TAB: Record<string, 'All' | GameType> = {
-  all:    'All',
-  nsa:    'N/S A',
-  nsb:    'N/S B',
-  msl:    'MSL',
-  bl:     'BL',
-  jsl:    'JSL',
-  events: 'Event',
+  all:      'All',
+  friendly: 'Friendly',
+  nsa:      'N/S A',
+  nsb:      'N/S B',
+  msl:      'MSL',
+  bl:       'BL',
+  jsl:      'JSL',
+  events:   'Event',
 };
 const TAB_TO_SLUG: Record<string, string> = Object.fromEntries(
   Object.entries(SLUG_TO_TAB).map(([slug, tab]) => [tab, slug])

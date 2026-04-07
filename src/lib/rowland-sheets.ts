@@ -657,3 +657,64 @@ function buildMatchRow(
 
   return row;
 }
+
+// ============================================================================
+// ROWLAND SETTINGS (RowlandSettings sheet: Key | Value)
+// ============================================================================
+
+const SETTINGS_SHEET = 'RowlandSettings';
+
+export async function getRowlandMessage(): Promise<string> {
+  const spreadsheetId = sid();
+  const sheets = getGoogleSheetsClient();
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SETTINGS_SHEET}!A:B`,
+    valueRenderOption: 'UNFORMATTED_VALUE',
+  });
+
+  const rows = res.data.values ?? [];
+  for (const row of rows) {
+    if (String(row[0]).trim().toLowerCase() === 'message') {
+      return String(row[1] ?? '');
+    }
+  }
+  return '';
+}
+
+export async function setRowlandMessage(message: string): Promise<void> {
+  const spreadsheetId = sid();
+  const sheets = getGoogleSheetsClient();
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SETTINGS_SHEET}!A:B`,
+    valueRenderOption: 'UNFORMATTED_VALUE',
+  });
+
+  const rows = res.data.values ?? [];
+  let targetRow = -1;
+  for (let i = 0; i < rows.length; i++) {
+    if (String(rows[i][0]).trim().toLowerCase() === 'message') {
+      targetRow = i + 1;
+      break;
+    }
+  }
+
+  if (targetRow === -1) {
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${SETTINGS_SHEET}!A:B`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [['message', message]] },
+    });
+  } else {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${SETTINGS_SHEET}!B${targetRow}`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [[message]] },
+    });
+  }
+}
