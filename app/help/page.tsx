@@ -51,6 +51,7 @@ export default function HelpIndexPage() {
 
   const isAdmin     = has('Admin');
   const isCaptain   = has('Captain');
+  const isLeagueCaptain = has('LeagueCaptain');
   const isTreasurer = has('Treasurer');
   const isGMC       = has('GMC');
   const isRowlandOrganiser = has('RowlandOrganiser');
@@ -61,6 +62,12 @@ export default function HelpIndexPage() {
       description:
         'The navigation bar at the top gives access to all areas of the portal. On a phone or tablet, tap the menu icon (☰) to open it.',
       href: '/help/getting-around',
+    },
+    {
+      title: 'Add to your home screen',
+      description:
+        'Open the portal like an app on your phone, tablet, or computer — iPhone, iPad, Android, Windows, and Chromebook.',
+      href: '/help/install',
     },
     {
       title: 'Logging in & out',
@@ -79,6 +86,12 @@ export default function HelpIndexPage() {
       description:
         'View the draw for club competitions (singles, pairs, triples), track your progress, and check results.',
       href: '/help/competitions',
+    },
+    {
+      title: 'Leagues',
+      description:
+        'Enter club leagues, view fixtures grouped by date, check the league table, and enter scores.',
+      href: '/help/leagues',
     },
     {
       title: 'Lookups',
@@ -142,6 +155,13 @@ export default function HelpIndexPage() {
       description: 'Set up competition draws, manage play-by dates, and oversee competition progress.',
       href: '/help/competitions-admin',
       show: isCaptain || isAdmin,
+      badge: 'Captain',
+    },
+    {
+      title: 'Leagues Admin',
+      description: 'Create leagues, manage teams and squad assignments, generate fixtures, and record results.',
+      href: '/help/leagues-admin',
+      show: isCaptain || isLeagueCaptain || isAdmin,
       badge: 'Captain',
     },
     {

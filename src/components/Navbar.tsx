@@ -91,6 +91,7 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
   const isClub = userRole === 'Club'; // external club login (always a single value)
   const isRowlandOrganiser = roles.includes('RowlandOrganiser'); // BHBC Rowland competition organiser
   const isRowlandPlayer = roles.includes('RowlandPlayer'); // BHBC member who plays in Rowland Cup
+  const isLeagueCaptain = roles.includes('LeagueCaptain');
   const isGMC = roles.includes('GMC');
   const canAccessBanking = isAdmin || isTreasurer;
   const canAccessCaptainTools = isAdmin || isCaptain;
@@ -119,9 +120,13 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
       }
     }
 
-    // Captains and Admins get League Management and Fixtures Management
+    // Captains, LeagueCaptains and Admins get League Management
+    if (canAccessCaptainTools || isLeagueCaptain) {
+      items.push({ name: 'League Management', href: '/leagues/manage' });
+    }
+
+    // Captains and Admins get Fixtures Management
     if (canAccessCaptainTools) {
-      items.push({ name: 'League Management', href: '/leagues' });
       items.push({ name: 'Fixtures Management', href: '/fixtures/manage' });
     }
 
@@ -249,6 +254,15 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
       icon: (
         <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+        </svg>
+      ),
+    },
+    {
+      name: 'Leagues',
+      href: '/leagues',
+      icon: (
+        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18M10 3v18M14 3v18" />
         </svg>
       ),
     },

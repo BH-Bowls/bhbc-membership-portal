@@ -51,6 +51,7 @@ export default function ClubDetailPage({ params }: PageProps) {
   const [club, setClub] = useState<Club | null>(null);
   const [contacts, setContacts] = useState<ClubContact[]>([]);
   const [canEditFromApi, setCanEditFromApi] = useState(false);
+  const [canDeleteFromApi, setCanDeleteFromApi] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [fixtures, setFixtures] = useState<ClubFixture[]>([]);
@@ -60,8 +61,9 @@ export default function ClubDetailPage({ params }: PageProps) {
   const userRole = session?.user?.role || 'Member';
   const isKiosk = userRole === 'Kiosk';
   const userRoles = userRole.split(',').map(r => r.trim());
-  const canEdit = canEditFromApi && !isKiosk && userRole !== 'Club'
+  const canEdit = canEditFromApi && !isKiosk
     && !userRoles.some(r => r === 'RowlandOrganiser' || r === 'RowlandPlayer');
+  const canDelete = canDeleteFromApi && !isKiosk;
 
   // Edit states
   const [isEditingClub, setIsEditingClub] = useState(false);
@@ -74,6 +76,7 @@ export default function ClubDetailPage({ params }: PageProps) {
   const [savingContact, setSavingContact] = useState(false);
 
   // Add contact states
+  const [contactRoles, setContactRoles] = useState<string[]>([]);
   const [isAddingContact, setIsAddingContact] = useState(false);
   const [newContact, setNewContact] = useState({
     role: '',
@@ -95,6 +98,10 @@ export default function ClubDetailPage({ params }: PageProps) {
 
   useEffect(() => {
     fetchClub();
+    fetch('/api/clubs/contact-roles')
+      .then((r) => r.json())
+      .then((d) => { if (d.roles) setContactRoles(d.roles); })
+      .catch(() => {});
   }, [clubName]);
 
   // Auto-save draft when editing
@@ -135,6 +142,7 @@ export default function ClubDetailPage({ params }: PageProps) {
       setClub(data.club);
       setContacts(data.contacts || []);
       setCanEditFromApi(data.canEdit || false);
+      setCanDeleteFromApi(data.canDelete || false);
     } catch (err) {
       console.error('Failed to fetch club:', err);
       setError('Failed to load club');
@@ -450,12 +458,14 @@ export default function ClubDetailPage({ params }: PageProps) {
               >
                 Edit
               </button>
-              <button
-                onClick={() => setDeleteConfirm({ isOpen: true, type: 'club' })}
-                className={getButtonClasses('danger', 'md')}
-              >
-                Delete
-              </button>
+              {canDelete && (
+                <button
+                  onClick={() => setDeleteConfirm({ isOpen: true, type: 'club' })}
+                  className={getButtonClasses('danger', 'md')}
+                >
+                  Delete
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -757,13 +767,16 @@ export default function ClubDetailPage({ params }: PageProps) {
               <div className="grid md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
-                  <input
-                    type="text"
+                  <select
                     value={newContact.role}
                     onChange={(e) => setNewContact({ ...newContact, role: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="e.g., Captain, Secretary"
-                  />
+                  >
+                    <option value="">— select role —</option>
+                    {contactRoles.map((r) => (
+                      <option key={r} value={r}>{r}</option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">First Name</label>

@@ -12,6 +12,7 @@ export interface SheetExportConfig {
   nameFormat: 'one-line' | 'separate-rows'; // pairs/triples: all names on one line or one row per player
   nameFit: 'wrap' | 'truncate'; // Google Sheets text wrap strategy
   includeHandicap: boolean;
+  exportPrelimByes: boolean;    // whether to draw a box for each prelim bye slot
   color1: string; // hex background for odd-position matches (e.g. club blue tint)
   color2: string; // hex background for even-position matches (e.g. white)
 }
@@ -29,6 +30,7 @@ export function defaultConfig(compType: CompType): SheetExportConfig {
     lineStyle:           'SOLID_MEDIUM',
     nameFit:             'wrap',
     includeHandicap:     false,
+    exportPrelimByes:    true,
     color1:              '#D0E5F2', // light club blue (#588FB1 tint)
     color2:              '#FFFFFF', // white
   };

@@ -198,6 +198,23 @@ export function ExportSheetDialog({ competition, onClose }: ExportSheetDialogPro
               </label>
             </div>
 
+            {/* Prelim byes */}
+            <div>
+              <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={config.exportPrelimByes}
+                  onChange={e => update('exportPrelimByes', e.target.checked)}
+                />
+                Export prelim byes
+              </label>
+              {!config.exportPrelimByes && (
+                <p className="mt-1 ml-6 text-xs text-gray-400">
+                  Bye slots are hidden; R1 matches use full row spacing.
+                </p>
+              )}
+            </div>
+
             {/* Alternating colours */}
             <div className="flex gap-4 items-end">
               <div>

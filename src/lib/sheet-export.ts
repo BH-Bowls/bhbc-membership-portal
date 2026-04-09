@@ -43,6 +43,8 @@ function hexToRgb(hex: string) {
 }
 
 function inferFirstRoundCount(matches: CompMatch[]): number {
+  // Use ALL matches (including bye matches) so the bracket geometry is always
+  // derived from the full draw size, not just visible entries.
   const firstRound = matches.filter(m => m.round === 'R1' || m.round === 'Prelim');
   const pool = firstRound.length > 0 ? firstRound : matches;
   if (pool.length === 0) return 2;
@@ -50,6 +52,84 @@ function inferFirstRoundCount(matches: CompMatch[]): number {
   let p = 1;
   while (p < maxPos) p *= 2;
   return p;
+}
+
+/**
+ * When exportPrelimByes=false the bracket still has a Prelim round (because some
+ * Prelim matches are real), but some R1 slots have BOTH their Prelim children
+ * hidden (byes).  Those R1 slots should collapse to rowsPerSlot instead of the
+ * normal 2×rowsPerSlot.  All higher rounds derive their sizes recursively.
+ *
+ * Returns a Map<matchId, {slotStart, slotTotal}> to override the uniform formula,
+ * or null when the uniform formula is already correct (exportPrelimByes=true, or
+ * Prelim is completely absent from the layout).
+ */
+function buildVariableSlotMap(
+  allMatches: CompMatch[],
+  layoutMatches: CompMatch[],
+  presentRounds: CompRound[],
+  config: SheetExportConfig,
+): Map<string, { slotStart: number; slotTotal: number }> | null {
+  // Only needed when hiding prelim byes AND Prelim is still the first round
+  // (i.e. some real Prelim matches remain in layoutMatches).
+  if (config.exportPrelimByes || presentRounds[0] !== 'Prelim') return null;
+
+  const map = new Map<string, { slotStart: number; slotTotal: number }>();
+
+  // Visible Prelim matches (not filtered out as byes)
+  const visPrelim = new Map<number, CompMatch>();
+  for (const m of layoutMatches) {
+    if (m.round === 'Prelim') visPrelim.set(m.position, m);
+  }
+
+  // Compute per-position slot info so higher rounds can derive their sizes.
+  let prevRoundSlots = new Map<number, { start: number; total: number }>();
+
+  // ── Prelim + R1 ────────────────────────────────────────────────────────────
+  const r1Max = Math.max(
+    ...layoutMatches.filter(m => m.round === 'R1').map(m => m.position),
+    0,
+  );
+  let cursor = 0;
+  for (let r1Pos = 1; r1Pos <= r1Max; r1Pos++) {
+    const p1 = 2 * r1Pos - 1;
+    const p2 = 2 * r1Pos;
+    const m1 = visPrelim.get(p1);
+    const m2 = visPrelim.get(p2);
+    const s1 = m1 ? config.rowsPerSlot : 0;
+    const s2 = m2 ? config.rowsPerSlot : 0;
+    // R1 slot collapses to rowsPerSlot when both Prelim children are hidden byes.
+    const groupTotal = Math.max(s1 + s2, config.rowsPerSlot);
+
+    if (m1) map.set(m1.matchId, { slotStart: cursor,      slotTotal: config.rowsPerSlot });
+    if (m2) map.set(m2.matchId, { slotStart: cursor + s1, slotTotal: config.rowsPerSlot });
+
+    const r1m = layoutMatches.find(m => m.round === 'R1' && m.position === r1Pos);
+    if (r1m) map.set(r1m.matchId, { slotStart: cursor, slotTotal: groupTotal });
+
+    prevRoundSlots.set(r1Pos, { start: cursor, total: groupTotal });
+    cursor += groupTotal;
+  }
+
+  // ── Higher rounds: each match spans two children from the previous round ──
+  for (let ri = 2; ri < presentRounds.length; ri++) {
+    const round = presentRounds[ri];
+    const roundMatches = layoutMatches
+      .filter(m => m.round === round)
+      .sort((a, b) => a.position - b.position);
+    const nextSlots = new Map<number, { start: number; total: number }>();
+    for (const m of roundMatches) {
+      const c1 = prevRoundSlots.get(2 * m.position - 1);
+      const c2 = prevRoundSlots.get(2 * m.position);
+      const start = c1?.start ?? c2?.start ?? 0;
+      const total = (c1?.total ?? 0) + (c2?.total ?? 0);
+      map.set(m.matchId, { slotStart: start, slotTotal: total });
+      nextSlots.set(m.position, { start, total });
+    }
+    prevRoundSlots = nextSlots;
+  }
+
+  return map;
 }
 
 // Convert content row (0-indexed, after title+header+dates+blank) → 0-indexed sheet row index.
@@ -97,17 +177,31 @@ export async function exportBracketToSheet(
   const DIVIDER_BORDER   = { style: 'SOLID',          colorStyle: { rgbColor: GRAY  } };
   const CONNECTOR_BORDER = { style: config.lineStyle, colorStyle: { rgbColor: GRAY  } };
 
+  // When prelim byes are suppressed, exclude them from layout calculations entirely.
+  // This means: if all prelim matches are byes the Prelim column disappears and R1
+  // gets full rowsPerSlot spacing; if some prelim matches are real, the Prelim column
+  // remains but byes are simply not drawn.
+  const layoutMatches = config.exportPrelimByes
+    ? matches
+    : matches.filter(m => !(m.round === 'Prelim' && m.status === 'Bye'));
+
   const presentRounds = ROUND_ORDER.filter(r =>
-    matches.some(m => m.round === r)
+    layoutMatches.some(m => m.round === r)
   ) as CompRound[];
 
   if (presentRounds.length === 0) throw new Error('No matches found for this competition');
 
-  // If any round has a play-by date, skip bye matches entirely — date-based column
-  // shifting can place R1 matches in the Prelim column, making bye boxes overlap.
+  // hasPlayByDates is used only for date-based column shifting (separate concern from byes).
   const hasPlayByDates = presentRounds.some(r => !!getRoundPlayByDate(r as CompRound, competition));
 
+  // firstRoundCount always derived from the FULL match list so bracket geometry
+  // (column alignments, slot ratios) is based on the complete draw size.
   const firstRoundCount = inferFirstRoundCount(matches);
+
+  // Variable-slot map: overrides uniform slotStart/slotTotal for each match when
+  // exportPrelimByes=false and some Prelim byes have been filtered out.
+  const variableSlots = buildVariableSlotMap(matches, layoutMatches, presentRounds, config);
+
   const condensed = config.connectorColWidthPx === 0;
 
   const rowsPerSide = (compType !== 'singles' && config.nameFormat === 'separate-rows')
@@ -119,7 +213,18 @@ export async function exportBracketToSheet(
   const colOffset   = 1; // spare column A before the first match column
   // 3 connector cols between each pair of rounds + 1 spare col at left
   const numCols     = colOffset + (numRounds === 1 ? 1 : 4 * numRounds - 3);
-  const contentRows = firstRoundCount * config.rowsPerSlot;
+
+  // When variableSlots is active, contentRows comes from the maximum extent of any
+  // match in the map; otherwise use the uniform formula.
+  const contentRows = variableSlots !== null
+    ? (() => {
+        let max = 0;
+        for (const { slotStart, slotTotal } of variableSlots.values()) {
+          max = Math.max(max, slotStart + slotTotal);
+        }
+        return max;
+      })()
+    : firstRoundCount * config.rowsPerSlot;
 
   // ── Date-based column positioning ────────────────────────────────────────
   // Matches whose playByDate matches an earlier round's play-by date are shifted
@@ -154,7 +259,7 @@ export async function exportBracketToSheet(
   const matchPositions: MatchPos[] = [];
 
   presentRounds.forEach((round, roundIndex) => {
-    const roundMatches = matches
+    const roundMatches = layoutMatches
       .filter(m => m.round === round)
       .sort((a, b) => a.position - b.position);
 
@@ -164,13 +269,17 @@ export async function exportBracketToSheet(
 
     roundMatches.forEach(match => {
       // Each match may land in an earlier column if its playByDate matches
-      // that round's date.
-      const effectiveRoundIndex = getEffectiveRoundIndex(match, roundIndex);
+      // that round's date. Bye matches are never date-shifted — they always
+      // belong in their natural round column so connector calculations stay correct.
+      const effectiveRoundIndex = match.status === 'Bye'
+        ? roundIndex
+        : getEffectiveRoundIndex(match, roundIndex);
       const matchCol = colOffset + 4 * effectiveRoundIndex;
 
       const p = match.position;
-      const slotStart = (p - 1) * slotsPerMatch * config.rowsPerSlot;
-      const slotTotal = slotsPerMatch * config.rowsPerSlot;
+      const vs = variableSlots?.get(match.matchId);
+      const slotStart = vs ? vs.slotStart : (p - 1) * slotsPerMatch * config.rowsPerSlot;
+      const slotTotal = vs ? vs.slotTotal : slotsPerMatch * config.rowsPerSlot;
 
       let boxStartRow: number, boxEndRow: number, dividerRow: number, side1Row: number, side2Row: number;
 
@@ -216,37 +325,46 @@ export async function exportBracketToSheet(
   const connectorPositions: ConnectorPos[] = [];
 
   for (let ri = 0; ri < numRounds - 1; ri++) {
-    const children = matchPositions
-      .filter(mp => mp.roundIndex === ri)
-      .sort((a, b) => a.match.position - b.match.position);
-    const parents = matchPositions
+    const children = matchPositions.filter(mp => mp.roundIndex === ri);
+    const parents  = matchPositions
       .filter(mp => mp.roundIndex === ri + 1)
       .sort((a, b) => a.match.position - b.match.position);
 
-    for (let i = 0; i < children.length; i += 2) {
-      const top    = children[i];
-      const bot    = children[i + 1];
-      const parent = parents[Math.floor(i / 2)];
-      if (!top || !bot || !parent) continue;
+    for (const parent of parents) {
+      const parentPos = parent.match.position;
+      // Bracket rule: positions 2k-1 and 2k feed parent at position k (ceil(P/2) = k).
+      // Look up each child by position rather than by array index so that filtered-out
+      // bye matches (missing from matchPositions) don't misalign the remaining pairs.
+      const top = children.find(c => c.match.position === 2 * parentPos - 1);
+      const bot = children.find(c => c.match.position === 2 * parentPos);
+      if (!top && !bot) continue;
 
-      const isTopBye = top.match.status === 'Bye';
-      const isBotBye = bot.match.status === 'Bye';
+      // A missing child (prelim bye that was filtered out) counts as a bye.
+      const isTopBye = !top || top.match.status === 'Bye';
+      const isBotBye = !bot || bot.match.status === 'Bye';
 
-      const topConnColA = top.matchCol + 1;
-      const botConnColA = bot.matchCol + 1;
-      // Vertical sits one column right of whichever child is furthest right
-      const connColB = isTopBye
-        ? bot.matchCol + 2
-        : isBotBye
-        ? top.matchCol + 2
-        : Math.max(top.matchCol, bot.matchCol) + 2;
-      // Parent stub ends one column left of the parent match box
+      // Skip entirely only when both children are absent/bye and we're not exporting them.
+      // When exportPrelimByes=true we still draw connectors between the bye boxes and R1.
+      if (isTopBye && isBotBye && !config.exportPrelimByes) continue;
+
+      // Fall back to the other child's column when one is absent.
+      const topMatchCol = (top ?? bot!).matchCol;
+      const botMatchCol = (bot ?? top!).matchCol;
+      const topConnColA = topMatchCol + 1;
+      const botConnColA = botMatchCol + 1;
+      // Vertical sits one column right of whichever child is furthest right.
+      const connColB = Math.max(topMatchCol, botMatchCol) + 2;
+      // Parent stub ends one column left of the parent match box.
       const connColC = parent.matchCol - 1;
+
+      // Row fallback for absent child: use parent divider so the vertical shrinks to
+      // zero length on that side rather than drawing a spurious long line.
+      const topConnRow    = top?.dividerRow ?? parent.dividerRow;
+      const botConnRow    = bot?.dividerRow ?? parent.dividerRow;
 
       connectorPositions.push({
         topConnColA, botConnColA, connColB, connColC,
-        topConnRow:    top.dividerRow,
-        botConnRow:    bot.dividerRow,
+        topConnRow, botConnRow,
         parentConnRow: parent.dividerRow,
         isTopBye,
         isBotBye,
@@ -448,7 +566,7 @@ export async function exportBracketToSheet(
 
   // Match box borders + text format
   for (const mp of matchPositions) {
-    if (mp.match.status === 'Bye' && (hasPlayByDates || mp.match.round !== 'Prelim')) continue;
+    if (mp.match.status === 'Bye' && (!config.exportPrelimByes || mp.match.round !== 'Prelim')) continue;
 
     const sRowStart = sr(mp.boxStartRow);
     const sRowEnd   = sr(mp.boxEndRow) + 1; // exclusive
@@ -513,10 +631,12 @@ export async function exportBracketToSheet(
   //   Parent stub: BOTTOM on sr(parentRow) → enters parent match at divider level
 
   if (!hideConnectors) for (const cp of connectorPositions) {
-    if (cp.isTopBye && cp.isBotBye) continue;
+    // isTopBye && isBotBye cases that should be skipped are already excluded during
+    // connector computation above; any remaining both-bye entry means exportPrelimByes=true,
+    // so we draw the full connector between the two bye boxes and their R1 parent.
 
-    if (!cp.isTopBye && !cp.isBotBye) {
-      // Normal: both children feed parent ─────────────────────────────────
+    if (!cp.isTopBye && !cp.isBotBye || cp.isTopBye && cp.isBotBye) {
+      // Full connector: both children present (either both real, or both exported byes)
 
       // Horizontal stub from each child's right edge to just before the vertical.
       // When a child is date-shifted to an earlier column the stub spans more columns.
@@ -677,7 +797,7 @@ export async function exportBracketToSheet(
   // Match box values
   for (const mp of matchPositions) {
     const match = mp.match;
-    if (match.status === 'Bye' && (hasPlayByDates || match.round !== 'Prelim')) continue;
+    if (match.status === 'Bye' && (!config.exportPrelimByes || match.round !== 'Prelim')) continue;
 
     const col        = getColumnLetter(mp.matchCol);
     // A1 offset: +1 title, +1 header, +1 dates, +1 blank, +1 for 1-indexed = content row + 5

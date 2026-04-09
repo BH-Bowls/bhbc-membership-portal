@@ -13,6 +13,7 @@
     "release:major": "npm version major && npm run update-version && git add src/config/version.ts && git commit --amend --no-edit && node scripts/git-push-release.js"
   },
   "dependencies": {
+    "@ducanh2912/next-pwa": "^10.2.9",
     "bcryptjs": "^3.0.3",
     "cloudinary": "^2.8.0",
     "date-fns": "^4.1.0",

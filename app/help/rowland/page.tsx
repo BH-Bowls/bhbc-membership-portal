@@ -135,6 +135,37 @@ export default function RowlandHelpPage() {
             </Note>
           </Section>
 
+          {/* Club contact details */}
+          <Section title="5. Updating your club's contact details">
+            <p className="text-sm text-gray-700 leading-relaxed mb-3">
+              When logged in as your club, you can update your own entry in the Clubs directory. Other clubs look up your details here to find the right person to contact when arranging matches — so it is worth keeping them accurate.
+            </p>
+            <p className="text-sm text-gray-700 leading-relaxed mb-3">
+              For example, your club may have a Rowland Organiser on record, but if it is the skips who actually arrange and confirm matches, you can add their details so other clubs can reach the right person directly.
+            </p>
+            <Step n={1}>
+              Log in with your club username and password.
+            </Step>
+            <Step n={2}>
+              Go to <strong>Clubs</strong> and find your club — it will open automatically on the clubs page.
+            </Step>
+            <Step n={3}>
+              Tap <strong>Edit</strong> to update the club's general details (address, phone, email).
+            </Step>
+            <Step n={4}>
+              To add a skip or other contact, scroll to the <strong>Contacts</strong> section and tap <strong>Add Contact</strong>.
+            </Step>
+            <Step n={5}>
+              Choose a role from the dropdown (e.g. <em>Skip</em>), fill in the person's name and phone number, and tap <strong>Save</strong>.
+            </Step>
+            <Note>
+              You can add as many contacts as you need — one per skip if you have multiple teams. Other clubs will be able to see these details when they look up your club.
+            </Note>
+            <p className="text-sm text-gray-700 leading-relaxed">
+              To remove a contact that is no longer current, tap the <strong>delete</strong> (bin) icon next to their entry.
+            </p>
+          </Section>
+
           {/* Reviewing submissions */}
           <Section title="6. Reviewing club submissions">
             <p className="text-sm text-gray-700 leading-relaxed">

@@ -21,7 +21,7 @@ function isPublicRoute(pathname: string): boolean {
   // Exact public pages
   const exactPages = [
     '/fixtures', '/members', '/friendlies', '/competitions',
-    '/tea-rota', '/cleaning-rota', '/sweeping-rota', '/rowland',
+    '/tea-rota', '/cleaning-rota', '/sweeping-rota', '/rowland', '/leagues',
   ];
   if (exactPages.includes(pathname)) return true;
 
@@ -40,13 +40,20 @@ function isPublicRoute(pathname: string): boolean {
     if (!['admin', 'my', 'handicaps'].includes(segment)) return true;
   }
 
+  // /leagues/[leagueId] — public
+  if (pathname.startsWith('/leagues/')) return true;
+
   // Exact public API routes (GET — write endpoints remain protected at handler level)
   const exactApis = [
     '/api/fixtures/games', '/api/tea-rota', '/api/cleaning-rota',
     '/api/sweeping-rota', '/api/members/lookup', '/api/friendlies/games',
     '/api/competitions', '/api/rowland', '/api/rowland/message',
+    '/api/leagues', '/api/leagues/message',
   ];
   if (exactApis.includes(pathname)) return true;
+
+  // /api/leagues/[leagueId] and sub-paths — public
+  if (pathname.startsWith('/api/leagues/')) return true;
 
   // /api/rowland/[compId] and matches — but NOT setup
   if (pathname.startsWith('/api/rowland/')) {
@@ -151,6 +158,6 @@ export default withAuth(
  */
 export const config = {
   matcher: [
-    '/((?!api/auth|api/apply|login|clublogin|forgot-password|reset-password|kiosk|apply|help/login|_next/static|_next/image|favicon.ico|bhbc-logo.jpg).*)',
+    '/((?!api/auth|api/apply|login|clublogin|forgot-password|reset-password|kiosk|apply|help/login|_next/static|_next/image|favicon.ico|bhbc-logo.jpg|manifest.json|icons/).*)',
   ],
 };

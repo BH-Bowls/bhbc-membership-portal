@@ -32,6 +32,14 @@ export function getRowlandSpreadsheetId(): string {
   return id;
 }
 
+export function getLeaguesSpreadsheetId(): string {
+  const id = process.env.LEAGUES_SPREADSHEET_ID;
+  if (!id) {
+    throw new Error('LEAGUES_SPREADSHEET_ID environment variable is not set. Check your .env.local file.');
+  }
+  return id;
+}
+
 function getServiceAccountEmail(): string {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   if (!email) {

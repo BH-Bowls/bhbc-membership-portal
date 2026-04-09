@@ -11,6 +11,12 @@ const inter = Inter({ subsets: ['latin'] });
 export const metadata: Metadata = {
   title: 'BHBC Members Portal',
   description: 'Burgess Hill Bowls Club Membership System',
+  manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'BHBC Portal',
+  },
 };
 
 export default function RootLayout({
@@ -20,6 +26,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
+      <head>
+        <link rel="apple-touch-icon" href="/icons/bhbc-apple-180.png" />
+        <meta name="theme-color" content="#1d4ed8" />
+      </head>
       <body className={inter.className}>
         <Providers>{children}</Providers>
       </body>

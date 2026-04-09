@@ -345,10 +345,17 @@ export default function SendMemberEmailsPage() {
                     style={{ borderColor: selectedTemplate === template.id ? '#3b82f6' : '#e5e7eb' }}>
                     <input type="radio" name="emailTemplate" value={template.id} checked={selectedTemplate === template.id}
                       onChange={e => setSelectedTemplate(e.target.value)} className="mt-1 mr-3" />
-                    <div>
+                    <div className="flex-1 min-w-0">
                       <div className="font-semibold text-gray-900">{template.name}</div>
                       <div className="text-sm text-gray-600 mt-1">Subject: {template.subject}</div>
                     </div>
+                    <button
+                      type="button"
+                      onClick={e => { e.preventDefault(); window.open(`/api/admin/emails/templates/preview?id=${encodeURIComponent(template.id)}&type=${recipientType === 'club-contacts' ? 'club' : 'member'}`, '_blank'); }}
+                      className="ml-4 shrink-0 text-xs px-3 py-1 border border-gray-300 rounded hover:bg-gray-100 text-gray-600"
+                    >
+                      Preview
+                    </button>
                   </label>
                 ))}
               </div>
