@@ -2,7 +2,7 @@
 
 import { useSession } from 'next-auth/react';
 import { Navbar } from '@/components/Navbar';
-import { HelpSection, Step, Note, Tip, Body, BackLink } from '../_components';
+import { HelpSection, Step, Note, Body, BackLink } from '../_components';
 
 export default function HelpLeaguesPage() {
   const { data: session } = useSession();
@@ -35,14 +35,8 @@ export default function HelpLeaguesPage() {
               leagues are currently open, check back later or ask the Captain.
             </Note>
             <Step n={1}>Open the league you want to enter.</Step>
-            <Step n={2}>
-              Tap the green <strong>Enter League</strong> button near the top of the page.
-            </Step>
-            <Step n={3}>
-              If the league has positions (e.g. Skip, No.2, Lead), choose your preferred position
-              from the dropdown — or leave it as <em>No preference</em>.
-            </Step>
-            <Step n={4}>Tap <strong>Confirm Entry</strong>. You will see a blue confirmation banner.</Step>
+            <Step n={2}>Tap the green <strong>Enter League</strong> button near the top of the page.</Step>
+            <Step n={3}>Tap <strong>Confirm Entry</strong>. You will see a blue confirmation banner.</Step>
             <Body>
               Once entries close, the Captain will arrange players into teams and generate the fixture
               schedule.
@@ -78,18 +72,11 @@ export default function HelpLeaguesPage() {
             </ul>
           </HelpSection>
 
-          <HelpSection title="Entering a score">
-            <Tip>
-              The <strong>Enter Score</strong> button only appears on matches that involve your team.
-              You cannot enter scores for other teams&apos; matches.
-            </Tip>
-            <Step n={1}>Go to the <strong>Fixtures &amp; Results</strong> tab.</Step>
-            <Step n={2}>Find a match your team is playing and tap <strong>Enter Score</strong>.</Step>
-            <Step n={3}>Enter the score for each team and tap <strong>Save</strong>.</Step>
-            <Note>
-              Once a score has been saved, only a committee member can edit or correct it. Contact
-              the Captain if a result needs to be changed.
-            </Note>
+          <HelpSection title="Scores and results">
+            <Body>
+              Results are entered by the committee once a match has been played. If a score looks
+              incorrect, contact the Captain to have it corrected.
+            </Body>
           </HelpSection>
 
           <HelpSection title="League table">

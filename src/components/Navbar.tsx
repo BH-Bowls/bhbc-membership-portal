@@ -192,6 +192,15 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
       ),
     },
     {
+      name: 'Leagues',
+      href: '/leagues',
+      icon: (
+        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18M10 3v18M14 3v18" />
+        </svg>
+      ),
+    },
+    {
       name: 'Friendlies',
       href: '/friendlies',
       icon: (

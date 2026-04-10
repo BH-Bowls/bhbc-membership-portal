@@ -15,7 +15,6 @@ import type {
   LeagueTableRow,
   LeagueMatchStatus,
 } from '@/types/leagues';
-import { LEAGUE_POSITIONS } from '@/types/leagues';
 
 function formatDate(d: string | null): string {
   if (!d) return '';
@@ -72,7 +71,6 @@ export default function LeagueDetailPage() {
 
   // Entry
   const [enteringLeague, setEnteringLeague] = useState(false);
-  const [enterPosition, setEnterPosition] = useState('');
   const [enterError, setEnterError] = useState<string | null>(null);
 
   function loadLeague() {
@@ -95,11 +93,8 @@ export default function LeagueDetailPage() {
   const myEntry = squad.find((m) => m.username === userName);
   const canEnter = !!session && !myEntry && league?.status === 'Entries Open';
 
-  function canEnterScore(match: LeagueMatch): boolean {
-    if (!session) return false;
-    if (isCommittee) return true;
-    if (!myEntry?.teamId) return false;
-    return match.homeTeamId === myEntry.teamId || match.awayTeamId === myEntry.teamId;
+  function canEnterScore(_match: LeagueMatch): boolean {
+    return isCommittee;
   }
 
   async function submitEntry() {
@@ -108,7 +103,7 @@ export default function LeagueDetailPage() {
       const res = await fetch(`/api/leagues/${leagueId}/enter`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ position: enterPosition }),
+        body: JSON.stringify({}),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to enter');
@@ -204,7 +199,6 @@ export default function LeagueDetailPage() {
     );
   }
 
-  const positions = LEAGUE_POSITIONS[league.type];
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -258,21 +252,6 @@ export default function LeagueDetailPage() {
           <div className="mb-6 bg-green-50 border border-green-200 rounded-lg p-4">
             <h3 className="text-sm font-semibold text-green-800 mb-3">Enter League</h3>
             <div className="flex gap-3 flex-wrap items-end">
-              {positions.length > 0 && (
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">Preferred Position</label>
-                  <select
-                    value={enterPosition}
-                    onChange={(e) => setEnterPosition(e.target.value)}
-                    className="border border-gray-300 rounded-md px-3 py-1.5 text-sm"
-                  >
-                    <option value="">No preference</option>
-                    {positions.map((p) => (
-                      <option key={p} value={p}>{p}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
               <button
                 onClick={submitEntry}
                 className="px-4 py-1.5 text-sm bg-green-600 text-white rounded-md hover:bg-green-700"
