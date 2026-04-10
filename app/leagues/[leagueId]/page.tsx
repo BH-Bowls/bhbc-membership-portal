@@ -175,6 +175,14 @@ export default function LeagueDetailPage() {
     });
   }
 
+  const POSITION_ORDER: Record<string, number> = { Skip: 0, Lead: 1, Two: 2 };
+  const sortByPosition = (members: LeagueSquadMember[]) =>
+    [...members].sort((a, b) => {
+      const aO = a.position ? (POSITION_ORDER[a.position] ?? 99) : 99;
+      const bO = b.position ? (POSITION_ORDER[b.position] ?? 99) : 99;
+      return aO - bO;
+    });
+
   // Group matches by date
   const scheduledDates = Array.from(
     new Set(matches.map((m) => getMatchDate(m, league?.type ?? 'triples')).filter(Boolean) as string[])
@@ -292,7 +300,7 @@ export default function LeagueDetailPage() {
                   : 'border-transparent text-gray-500 hover:text-gray-700'
               }`}
             >
-              {t === 'table' ? 'League Table' : t === 'fixtures' ? 'Fixtures & Results' : 'Players'}
+              {t === 'table' ? 'League Table' : t === 'fixtures' ? 'Fixtures & Results' : 'Teams'}
             </button>
           ))}
         </div>
@@ -487,7 +495,7 @@ export default function LeagueDetailPage() {
                 )}
                 {/* Per team */}
                 {teams.map((team) => {
-                  const members = squad.filter((m) => m.teamId === team.teamId);
+                  const members = sortByPosition(squad.filter((m) => m.teamId === team.teamId));
                   return (
                     <div key={team.teamId}>
                       <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">{team.teamName}</h3>

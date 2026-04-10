@@ -107,7 +107,6 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
       items.push({ name: 'Send Member Emails', href: '/admin/emails' });
       items.push({ name: 'Banking', href: '/banking' });
       items.push({ name: 'Friendly Management', href: '/friendlies/manage' });
-      items.push({ name: 'Internal Games Management', href: '/internal-games/manage' });
       items.push({ name: 'Data Export', href: '/data-export' });
     } else {
       // Non-admins get role-specific items
@@ -116,7 +115,6 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
       }
       if (canAccessCaptainTools) {
         items.push({ name: 'Friendly Management', href: '/friendlies/manage' });
-        items.push({ name: 'Internal Games Management', href: '/internal-games/manage' });
       }
     }
 
@@ -210,15 +208,6 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
       ),
     },
     {
-      name: 'Internal Games',
-      href: '/internal-games',
-      icon: (
-        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-      ),
-    },
-    {
       name: 'Lookups',
       icon: (
         <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -226,7 +215,6 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
         </svg>
       ),
       subItems: [
-        { name: 'Members', href: '/members' },
         { name: 'Clubs', href: '/clubs' },
         { name: 'Fixtures', href: '/fixtures' },
         { name: 'Tea Rota', href: '/tea-rota' },
@@ -281,15 +269,6 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
       icon: (
         <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-        </svg>
-      ),
-    },
-    {
-      name: 'Internal Games',
-      href: '/internal-games',
-      icon: (
-        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
       ),
     },

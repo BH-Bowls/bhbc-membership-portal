@@ -100,12 +100,6 @@ export default function HelpIndexPage() {
       href: '/help/lookups',
     },
     {
-      title: 'Internal games',
-      description:
-        'Follow triples leagues and other internal games — see standings, fixtures, and results.',
-      href: '/help/internal-games',
-    },
-    {
       title: 'Your profile',
       description:
         'Keep your contact details, address, and volunteering preferences up to date.',

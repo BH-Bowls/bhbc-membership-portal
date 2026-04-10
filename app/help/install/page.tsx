@@ -40,7 +40,7 @@ export default function HelpInstallPage() {
               it is at the bottom of the screen; on iPad it is at the top.
             </Step>
             <Step n={3}>
-              Scroll down the list and tap <strong>Add to Home Screen</strong>.
+              Scroll down the list or tap <strong>View More</strong> and tap <strong>Add to Home Screen</strong>.
             </Step>
             <Step n={4}>
               Change the name if you like, then tap <strong>Add</strong> in the top right.

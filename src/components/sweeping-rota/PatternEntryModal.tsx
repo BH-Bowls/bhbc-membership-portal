@@ -21,7 +21,7 @@ interface MemberOption {
 interface PatternEntryModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: (config: PatternConfig, action: PatternAction, userName?: string) => Promise<PatternResult>;
+  onConfirm: (dates: string[], action: PatternAction, userName?: string) => Promise<PatternResult>;
   isNonMember: boolean;
   currentUserName: string;
   members?: MemberOption[];
@@ -70,6 +70,7 @@ export function PatternEntryModal({
   const [fromMonth, setFromMonth] = useState('');
   const [toMonth, setToMonth] = useState('');
   const [previewDates, setPreviewDates] = useState<string[]>([]);
+  const [removedDates, setRemovedDates] = useState<Set<string>>(new Set());
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -86,6 +87,7 @@ export function PatternEntryModal({
       setFromMonth(monthOptions[0]?.value || '');
       setToMonth(monthOptions[2]?.value || ''); // Default to 3 months ahead
       setPreviewDates([]);
+      setRemovedDates(new Set());
       setSuccessMessage(null);
     }
   }, [isOpen, currentUserName]);
@@ -116,8 +118,10 @@ export function PatternEntryModal({
 
       const dates = generatePatternDates(config);
       setPreviewDates(dates);
+      setRemovedDates(new Set()); // reset exclusions when pattern changes
     } else {
       setPreviewDates([]);
+      setRemovedDates(new Set());
     }
   }, [patternType, dayOfWeek, fromMonth, toMonth]);
 
@@ -143,37 +147,17 @@ export function PatternEntryModal({
     return () => document.removeEventListener('keydown', handleEscape);
   }, [isOpen, isSubmitting, onClose]);
 
-  const canSubmit = patternType !== '' && dayOfWeek !== '' && previewDates.length > 0 && !isSubmitting;
+  const finalDates = previewDates.filter(d => !removedDates.has(d));
+  const canSubmit = patternType !== '' && dayOfWeek !== '' && finalDates.length > 0 && !isSubmitting;
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
-
-    // Convert month values to start/end dates
-    const [fromYear, fromMonthNum] = fromMonth.split('-').map(Number);
-    const [toYear, toMonthNum] = toMonth.split('-').map(Number);
-
-    const startDate = new Date(fromYear, fromMonthNum - 1, 1);
-    const endDate = new Date(toYear, toMonthNum, 0);
-
-    const formatDate = (date: Date): string => {
-      const day = date.getDate().toString().padStart(2, '0');
-      const month = (date.getMonth() + 1).toString().padStart(2, '0');
-      const year = date.getFullYear();
-      return `${day}/${month}/${year}`;
-    };
-
-    const config: PatternConfig = {
-      patternType: patternType as PatternType,
-      dayOfWeek: dayOfWeek as DayOfWeek,
-      startDate: formatDate(startDate),
-      endDate: formatDate(endDate),
-    };
 
     setIsSubmitting(true);
 
     try {
       const result = await onConfirm(
-        config,
+        finalDates,
         action,
         action === 'assign' ? selectedUserName : undefined
       );
@@ -367,24 +351,45 @@ export function PatternEntryModal({
           {/* Preview */}
           {previewDates.length > 0 && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Preview ({previewDates.length} date{previewDates.length !== 1 ? 's' : ''})
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Preview ({finalDates.length} date{finalDates.length !== 1 ? 's' : ''}
+                {removedDates.size > 0 && (
+                  <span className="text-gray-400 font-normal"> — {removedDates.size} removed</span>
+                )}
+                )
               </label>
-              <div className="max-h-32 overflow-y-auto border border-gray-200 rounded-md p-2">
-                <div className="flex flex-wrap gap-2">
-                  {previewDates.slice(0, 20).map((date, index) => (
-                    <span
-                      key={index}
-                      className="px-2 py-1 text-xs bg-gray-100 rounded"
-                    >
-                      {date}
-                    </span>
-                  ))}
-                  {previewDates.length > 20 && (
-                    <span className="px-2 py-1 text-xs text-gray-500">
-                      +{previewDates.length - 20} more
-                    </span>
-                  )}
+              <p className="text-xs text-gray-500 mb-2">Tap × to remove a date before confirming.</p>
+              <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-md p-2">
+                <div className="flex flex-wrap gap-1.5">
+                  {previewDates.map((date, index) => {
+                    const removed = removedDates.has(date);
+                    return (
+                      <button
+                        key={index}
+                        type="button"
+                        onClick={() => {
+                          const next = new Set(removedDates);
+                          if (removed) next.delete(date);
+                          else next.add(date);
+                          setRemovedDates(next);
+                        }}
+                        disabled={isSubmitting}
+                        className={`inline-flex items-center gap-1 px-2 py-1 text-xs rounded transition-colors ${
+                          removed
+                            ? 'bg-gray-100 text-gray-400 line-through'
+                            : 'bg-blue-50 text-blue-700 hover:bg-red-50 hover:text-red-600'
+                        }`}
+                        title={removed ? 'Click to restore' : 'Click to remove'}
+                      >
+                        {date}
+                        {!removed && (
+                          <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>

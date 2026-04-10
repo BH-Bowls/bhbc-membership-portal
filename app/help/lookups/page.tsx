@@ -50,8 +50,7 @@ export default function HelpLookupsPage() {
 
           <HelpSection title="Tea Rota">
             <Body>
-              Lookups → Tea Rota shows who is assigned to do teas for upcoming friendly matches. The
-              rota is generated automatically when a friendly game is published by the Captain. It
+              Lookups → Tea Rota shows who is assigned to do teas for upcoming friendly matches. It
               shows the date, opponent, and the members assigned.
             </Body>
             <Body>
@@ -82,12 +81,13 @@ export default function HelpLookupsPage() {
             <Body>
               <strong>Adding individual days</strong> — tap any available day on the calendar to
               select it (it will be highlighted). You can tap multiple days before confirming. Once
-              you have selected all the days you want, tap the <strong>Add Selected</strong> button
-              to sign yourself up for all of them at once.
+              you have selected all the days you want, tap the <strong>Add Selected</strong> button.
+              You will be asked to confirm which member to sign up — your own name is shown by
+              default, or you can pick another member from the list.
             </Body>
             <Body>
-              <strong>Removing yourself</strong> — tap any day you are already assigned to and
-              confirm the cancellation prompt to remove your name from that slot.
+              <strong>Removing an assignment</strong> — tap any day that already has a name on it
+              and confirm the cancellation prompt to remove them from that slot.
             </Body>
             <Body>
               <strong>Adding a pattern</strong> — tap the <strong>Add Pattern</strong> button to
@@ -104,8 +104,15 @@ export default function HelpLookupsPage() {
               <em>Date range</em> — a from month and to month (up to 12 months ahead).
             </Body>
             <Body>
-              Before confirming, a preview of all the matching dates is shown so you can check
-              what you are signing up for. Tap <strong>Confirm</strong> to add them all at once.
+              You will be asked which member to assign the pattern to. Before confirming, a preview
+              of all the matching dates is shown. Tap any date to remove it from the list before
+              adding — tap it again to restore it. Once you are happy, tap{' '}
+              <strong>Add Dates</strong> to add them all at once.
+            </Body>
+            <Body>
+              <strong>Removing dates after adding a pattern</strong> — if you need to remove
+              individual dates after they have been added, tap the day on the calendar and confirm
+              the cancellation prompt, just as you would for any other assignment.
             </Body>
           </HelpSection>
 

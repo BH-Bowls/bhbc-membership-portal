@@ -13,7 +13,7 @@ import { ConfirmAddModal } from '@/components/sweeping-rota/ConfirmAddModal';
 import { PrintRangeModal } from '@/components/sweeping-rota/PrintRangeModal';
 import { PrintableCalendar } from '@/components/sweeping-rota/PrintableCalendar';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
-import { SweepingRotaEntry, CalendarDay, DayStatus, PatternConfig, PatternAction } from '@/lib/types/sweeping';
+import { SweepingRotaEntry, CalendarDay, DayStatus, PatternAction } from '@/lib/types/sweeping';
 import { formatDate, parseDate } from '@/lib/sweeping-patterns';
 
 interface MemberLookup {
@@ -71,8 +71,8 @@ export default function SweepingRotaPage() {
   const currentUser = session?.user?.userName || '';
   const isNonMember = session?.user?.role !== 'Member';
   const isKiosk = session?.user?.role === 'Kiosk';
-  // Guests and kiosk can view but cannot add/remove sweeping assignments
-  const isReadOnly = isGuest || isKiosk;
+  // Guests can view but cannot add/remove sweeping assignments; kiosk has full control
+  const isReadOnly = isGuest;
 
   // Fetch members lookup
   const fetchMembers = useCallback(async () => {
@@ -285,12 +285,12 @@ export default function SweepingRotaPage() {
 
   // Confirm add with pattern
   const handlePatternConfirm = async (
-    config: PatternConfig,
+    dates: string[],
     action: PatternAction,
     userName?: string
   ): Promise<{ addedCount: number; skippedCount: number }> => {
     let endpoint = '/api/sweeping-rota';
-    const body: { pattern: PatternConfig; userName?: string } = { pattern: config };
+    const body: { dates: string[]; userName?: string } = { dates };
 
     if (action === 'block') {
       endpoint = '/api/sweeping-rota/blocked';
@@ -519,7 +519,8 @@ export default function SweepingRotaPage() {
                 className="px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 rounded-md flex items-center gap-1"
               >
                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 13v4m-2-2h4" />
                 </svg>
                 <span className="hidden sm:inline">Add Pattern</span>
               </button>

@@ -83,7 +83,7 @@ function PlayerSelect({ value, onChange, squad, excludeUsernames, placeholder = 
   }
 
   const selectedMember = value ? squad.find((m) => m.username === value) : undefined;
-  const displayName = selectedMember?.fullName ?? value;
+  const displayName = selectedMember?.fullName ?? value ?? '';
 
   const borderClass = value ? 'border-green-400 bg-green-50' : 'border-gray-300 bg-white';
 
@@ -129,7 +129,7 @@ function PlayerSelect({ value, onChange, squad, excludeUsernames, placeholder = 
         <div ref={listRef} className="absolute z-30 left-0 w-64 mt-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-64 overflow-y-auto">
           {selectable.length > 0 ? selectable.map((m, itemIdx) => (
             <div
-              key={m.username}
+              key={m.rowNumber}
               data-idx={itemIdx}
               onMouseDown={(e) => { e.preventDefault(); handleSelect(m); }}
               onMouseEnter={() => setHighlightedIndex(itemIdx)}
@@ -171,6 +171,11 @@ export default function LeagueManageDetailPage() {
   // Teams
   const [newTeamName, setNewTeamName] = useState('');
   const [addingTeam, setAddingTeam] = useState(false);
+
+  // Add to squad
+  const [allMembers, setAllMembers] = useState<{ userName: string; fullName: string }[]>([]);
+  const [addSquadMember, setAddSquadMember] = useState('');
+  const [addingToSquad, setAddingToSquad] = useState(false);
 
   // Squad assignment — competitions-style draft UI
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
@@ -261,6 +266,13 @@ export default function LeagueManageDetailPage() {
   }, [status, canAccess, leagueId]);
 
   useEffect(() => {
+    fetch('/api/members/lookup')
+      .then((r) => r.json())
+      .then((data) => { if (data.members) setAllMembers(data.members); })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
     if (selectedTeamId && league) {
       loadSlotsForTeam(selectedTeamId, league.type, squad);
     } else {
@@ -335,6 +347,23 @@ export default function LeagueManageDetailPage() {
         .catch((err) => setError(err.message))
         .finally(() => resolve());
     });
+  }
+
+  async function addToSquad() {
+    if (!addSquadMember) return;
+    setAddingToSquad(true);
+    try {
+      const res = await fetch(`/api/leagues/${leagueId}/enter`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: addSquadMember }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to add');
+      setAddSquadMember('');
+      loadData();
+    } catch (err: any) { alert(err.message); }
+    finally { setAddingToSquad(false); }
   }
 
   async function removeFromSquad(member: LeagueSquadMember) {
@@ -627,6 +656,14 @@ export default function LeagueManageDetailPage() {
           const isDirty = JSON.stringify(localSlots) !== JSON.stringify(savedSlots);
           // Names in current draft
           const draftUsernames = new Set(localSlots.map((s) => s.username).filter(Boolean));
+          const squadUsernames = new Set(squad.map((m) => m.username));
+          // Cast allMembers into the shape PlayerSelect expects, excluding existing squad members
+          const memberPickerSquad: LeagueSquadMember[] = allMembers
+            .filter((m) => !squadUsernames.has(m.userName))
+            .map((m, i) => ({
+              rowNumber: i, leagueId: leagueId as string, teamId: '', username: m.userName,
+              fullName: m.fullName, position: '' as any, enteredDate: '',
+            }));
           // Names assigned to OTHER teams (not the currently selected team)
           const otherTeamUsernames = new Set(
             squad.filter((m) => m.teamId && m.teamId !== selectedTeamId).map((m) => m.username)
@@ -634,6 +671,29 @@ export default function LeagueManageDetailPage() {
 
           return (
             <div>
+              {/* Add member to squad */}
+              <div className="bg-white border border-gray-200 rounded-lg p-4 mb-5">
+                <h2 className="text-sm font-semibold text-gray-700 mb-3">Add Member to Squad</h2>
+                <div className="flex gap-2 items-start">
+                  <div className="flex-1 max-w-xs">
+                    <PlayerSelect
+                      value={addSquadMember}
+                      onChange={setAddSquadMember}
+                      squad={memberPickerSquad}
+                      excludeUsernames={new Set()}
+                      placeholder="Search member…"
+                    />
+                  </div>
+                  <button
+                    onClick={addToSquad}
+                    disabled={!addSquadMember || addingToSquad}
+                    className="px-3 py-2 text-sm bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 whitespace-nowrap"
+                  >
+                    {addingToSquad ? 'Adding…' : 'Add to Squad'}
+                  </button>
+                </div>
+              </div>
+
               {squad.length === 0 ? (
                 <div className="text-center py-10 text-gray-400">No players entered yet.</div>
               ) : (
@@ -650,8 +710,9 @@ export default function LeagueManageDetailPage() {
                       {squad.map((member) => {
                         const inDraft = draftUsernames.has(member.username);
                         const inOtherTeam = otherTeamUsernames.has(member.username);
+                        const canRemove = !member.teamId;
                         return (
-                          <span
+                          <div
                             key={member.rowNumber}
                             title={
                               inOtherTeam
@@ -659,7 +720,7 @@ export default function LeagueManageDetailPage() {
                                 : inDraft ? `${member.fullName} — in current draft`
                                 : member.fullName
                             }
-                            className={`px-3 py-1 rounded-full text-sm border select-none ${
+                            className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm border select-none ${
                               inOtherTeam
                                 ? 'line-through text-gray-400 bg-gray-50 border-gray-200'
                                 : inDraft
@@ -668,7 +729,17 @@ export default function LeagueManageDetailPage() {
                             }`}
                           >
                             {member.fullName}
-                          </span>
+                            {canRemove && (
+                              <button
+                                type="button"
+                                onClick={() => removeFromSquad(member)}
+                                className="text-gray-400 hover:text-red-500 leading-none ml-0.5"
+                                title="Remove from squad"
+                              >
+                                ×
+                              </button>
+                            )}
+                          </div>
                         );
                       })}
                     </div>
