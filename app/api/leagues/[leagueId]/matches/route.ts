@@ -48,6 +48,7 @@ export async function POST(
       scheduledDate: null,
       scheduledTime: null,
       playByDate: null,
+      homeAdj: null, awayAdj: null, homePoints: null, awayPoints: null,
     }));
 
     await clearLeagueMatches(leagueId);
@@ -96,6 +97,7 @@ export async function PUT(
       scheduledDate: null,
       scheduledTime: null,
       playByDate: null,
+      homeAdj: null, awayAdj: null, homePoints: null, awayPoints: null,
     }]);
     return NextResponse.json({ matchId });
   } catch (err) {

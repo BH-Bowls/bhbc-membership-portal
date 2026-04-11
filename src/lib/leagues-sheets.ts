@@ -121,6 +121,10 @@ function parseMatchRow(row: any[], colMap: Record<string, number>): LeagueMatch 
     playByDate: normalizeDate(get('play_by_date')),
     homeScore: getInt('home_score'),
     awayScore: getInt('away_score'),
+    homeAdj: getInt('home_adj'),
+    awayAdj: getInt('away_adj'),
+    homePoints: getInt('home_points'),
+    awayPoints: getInt('away_points'),
     status: (get('status') || 'Scheduled') as LeagueMatchStatus,
   };
 }
@@ -681,7 +685,7 @@ export async function updateLeagueMatch(
   updates: Partial<Pick<LeagueMatch,
     'matchday' | 'homeTeamId' | 'awayTeamId' |
     'scheduledDate' | 'scheduledTime' | 'playByDate' |
-    'homeScore' | 'awayScore' | 'status'
+    'homeScore' | 'awayScore' | 'homeAdj' | 'awayAdj' | 'homePoints' | 'awayPoints' | 'status'
   >>
 ): Promise<void> {
   const colMap = await getColumnMap('LeagueMatches', sid());
@@ -706,6 +710,10 @@ export async function updateLeagueMatch(
   if (updates.playByDate !== undefined) fieldMap['play_by_date'] = updates.playByDate ?? '';
   if (updates.homeScore !== undefined) fieldMap['home_score'] = updates.homeScore !== null ? String(updates.homeScore) : '';
   if (updates.awayScore !== undefined) fieldMap['away_score'] = updates.awayScore !== null ? String(updates.awayScore) : '';
+  if (updates.homeAdj !== undefined) fieldMap['home_adj'] = updates.homeAdj !== null ? String(updates.homeAdj) : '';
+  if (updates.awayAdj !== undefined) fieldMap['away_adj'] = updates.awayAdj !== null ? String(updates.awayAdj) : '';
+  if (updates.homePoints !== undefined) fieldMap['home_points'] = updates.homePoints !== null ? String(updates.homePoints) : '';
+  if (updates.awayPoints !== undefined) fieldMap['away_points'] = updates.awayPoints !== null ? String(updates.awayPoints) : '';
   if (updates.status !== undefined) fieldMap['status'] = updates.status;
 
   const data = Object.entries(fieldMap)

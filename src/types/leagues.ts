@@ -3,7 +3,7 @@
 
 export type LeagueType = 'triples' | 'pairs';
 export type LeagueStatus = 'Not Started' | 'Entries Open' | 'In Progress' | 'Complete';
-export type LeagueMatchStatus = 'Scheduled' | 'Played' | 'Walkover' | 'Cancelled';
+export type LeagueMatchStatus = 'Scheduled' | 'Played' | 'Walkover' | 'Conceded' | 'Cancelled';
 export type TriplePosition = 'Skip' | 'Lead' | 'Two';
 export type PairsPosition = 'Skip' | 'Lead';
 export type SquadPosition = TriplePosition | PairsPosition | '';
@@ -50,6 +50,10 @@ export interface LeagueMatch {
   playByDate: string | null;     // YYYY-MM-DD — used for pairs
   homeScore: number | null;
   awayScore: number | null;
+  homeAdj: number | null;      // score adjustment added to home shots in table
+  awayAdj: number | null;      // score adjustment added to away shots in table
+  homePoints: number | null;   // points awarded to home (overrides calculation)
+  awayPoints: number | null;   // points awarded to away (overrides calculation)
   status: LeagueMatchStatus;
 }
 
@@ -78,23 +82,31 @@ export function calculateTable(teams: LeagueTeam[], matches: LeagueMatch[]): Lea
   }
 
   for (const m of matches) {
-    if (m.status !== 'Played' && m.status !== 'Walkover') continue;
-    if (m.homeScore === null || m.awayScore === null) continue;
+    if (m.status !== 'Played' && m.status !== 'Walkover' && m.status !== 'Conceded') continue;
+    // Need at least points stored, or scores to work from
+    if (m.homePoints === null && m.awayPoints === null && m.homeScore === null && m.awayScore === null) continue;
     const home = map.get(m.homeTeamId);
     const away = map.get(m.awayTeamId);
     if (!home || !away) continue;
 
-    home.played++; away.played++;
-    home.shotsFor  += m.homeScore; home.shotsAgainst += m.awayScore;
-    away.shotsFor  += m.awayScore; away.shotsAgainst += m.homeScore;
+    // Shots: actual score + adjustment
+    const homeShots = (m.homeScore ?? 0) + (m.homeAdj ?? 0);
+    const awayShots = (m.awayScore ?? 0) + (m.awayAdj ?? 0);
 
-    if (m.homeScore > m.awayScore) {
-      home.won++; home.points += 2; away.lost++;
-    } else if (m.awayScore > m.homeScore) {
-      away.won++; away.points += 2; home.lost++;
-    } else {
-      home.drew++; home.points += 1; away.drew++; away.points += 1;
-    }
+    home.played++; away.played++;
+    home.shotsFor  += homeShots; home.shotsAgainst += awayShots;
+    away.shotsFor  += awayShots; away.shotsAgainst += homeShots;
+
+    // Points: use stored values if available, otherwise calculate from adjusted shots
+    const homePts = m.homePoints ?? (homeShots > awayShots ? 2 : homeShots === awayShots ? 1 : 0);
+    const awayPts = m.awayPoints ?? (awayShots > homeShots ? 2 : awayShots === homeShots ? 1 : 0);
+
+    home.points += homePts;
+    away.points += awayPts;
+
+    if (homePts > awayPts)      { home.won++;  away.lost++; }
+    else if (awayPts > homePts) { away.won++;  home.lost++; }
+    else                         { home.drew++; away.drew++; }
   }
 
   for (const row of map.values()) {

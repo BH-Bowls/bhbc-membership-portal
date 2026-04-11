@@ -44,6 +44,7 @@ const MATCH_STATUS_STYLES: Record<LeagueMatchStatus, string> = {
   Scheduled: 'bg-gray-100 text-gray-600',
   Played:    'bg-green-100 text-green-700',
   Walkover:  'bg-yellow-100 text-yellow-700',
+  Conceded:  'bg-orange-100 text-orange-700',
   Cancelled: 'bg-red-100 text-red-600',
 };
 
@@ -66,10 +67,22 @@ export default function LeagueDetailPage() {
   const [tab, setTab] = useState<'table' | 'fixtures' | 'squad' | 'rules'>('table');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
 
+  // Team breakdown popup
+  const [teamDetailId, setTeamDetailId] = useState<string | null>(null);
+
   // Score entry
   const [scoreDialog, setScoreDialog] = useState<{
-    isOpen: boolean; matchId: string; homeTeamName: string; awayTeamName: string;
-    homeScore: string; awayScore: string; status: LeagueMatchStatus; saving: boolean;
+    matchId: string;
+    homeTeamName: string; awayTeamName: string;
+    status: LeagueMatchStatus | 'Reset';
+    // Played / Conceded
+    homeScore: string; awayScore: string;
+    // All statuses with a result
+    homeAdj: string; awayAdj: string;
+    homePoints: string; awayPoints: string;
+    // Walkover
+    walkoverWinner: 'home' | 'away' | '';
+    saving: boolean;
   } | null>(null);
 
   // Entry
@@ -140,17 +153,48 @@ export default function LeagueDetailPage() {
     }
   }
 
+  function autoPoints(homeScore: string, awayScore: string, homeAdj: string, awayAdj: string): { home: string; away: string } {
+    const hs = parseInt(homeScore) || 0;
+    const as_ = parseInt(awayScore) || 0;
+    const ha = parseInt(homeAdj) || 0;
+    const aa = parseInt(awayAdj) || 0;
+    const h = hs + ha, a = as_ + aa;
+    if (h > a) return { home: '2', away: '0' };
+    if (a > h) return { home: '0', away: '2' };
+    return { home: '1', away: '1' };
+  }
+
   async function saveScore() {
     if (!scoreDialog) return;
     const { status } = scoreDialog;
+
     let payload: Record<string, unknown> = { status };
 
-    if (status === 'Played') {
+    if (status === 'Reset') {
+      payload = { status: 'Scheduled', homeScore: null, awayScore: null, homeAdj: null, awayAdj: null, homePoints: null, awayPoints: null };
+    } else if (status === 'Played' || status === 'Conceded') {
       const home = parseInt(scoreDialog.homeScore);
       const away = parseInt(scoreDialog.awayScore);
-      if (isNaN(home) || isNaN(away)) { alert('Enter valid scores'); return; }
-      payload = { homeScore: home, awayScore: away, status: 'Played' };
+      if (isNaN(home) || isNaN(away)) { alert('Enter valid scores for both sides'); return; }
+      const homeAdj = scoreDialog.homeAdj !== '' ? parseInt(scoreDialog.homeAdj) : null;
+      const awayAdj = scoreDialog.awayAdj !== '' ? parseInt(scoreDialog.awayAdj) : null;
+      const homePts = parseInt(scoreDialog.homePoints);
+      const awayPts = parseInt(scoreDialog.awayPoints);
+      if (isNaN(homePts) || isNaN(awayPts)) { alert('Enter valid points for both sides'); return; }
+      payload = { status, homeScore: home, awayScore: away, homeAdj: homeAdj ?? 0, awayAdj: awayAdj ?? 0, homePoints: homePts, awayPoints: awayPts };
+
+    } else if (status === 'Walkover') {
+      if (!scoreDialog.walkoverWinner) { alert('Select which team is awarded the points'); return; }
+      const homeAdj = parseInt(scoreDialog.homeAdj);
+      const awayAdj = parseInt(scoreDialog.awayAdj);
+      const homePts = parseInt(scoreDialog.homePoints);
+      const awayPts = parseInt(scoreDialog.awayPoints);
+      if (isNaN(homeAdj) || isNaN(awayAdj) || isNaN(homePts) || isNaN(awayPts)) {
+        alert('Enter valid adjustment and points values'); return;
+      }
+      payload = { status, homeScore: null, awayScore: null, homeAdj, awayAdj, homePoints: homePts, awayPoints: awayPts };
     }
+    // Cancelled: just status
 
     setScoreDialog((d) => d ? { ...d, saving: true } : d);
     try {
@@ -174,14 +218,27 @@ export default function LeagueDetailPage() {
   function openScoreDialog(match: LeagueMatch) {
     const homeTeam = teams.find((t) => t.teamId === match.homeTeamId);
     const awayTeam = teams.find((t) => t.teamId === match.awayTeamId);
+    const initialStatus: LeagueMatchStatus = match.status === 'Scheduled' ? 'Played' : match.status;
+    const walkoverWinner: 'home' | 'away' | '' =
+      match.status === 'Walkover' && match.homeAdj !== null && match.awayAdj !== null
+        ? (match.homeAdj > match.awayAdj ? 'home' : 'away')
+        : '';
+    const existingHomeAdj = match.homeAdj !== null ? String(match.homeAdj) : '0';
+    const existingAwayAdj = match.awayAdj !== null ? String(match.awayAdj) : '0';
+    const existingHomePts = match.homePoints !== null ? String(match.homePoints) : '';
+    const existingAwayPts = match.awayPoints !== null ? String(match.awayPoints) : '';
     setScoreDialog({
-      isOpen: true,
       matchId: match.matchId,
       homeTeamName: homeTeam?.teamName ?? 'Home',
       awayTeamName: awayTeam?.teamName ?? 'Away',
       homeScore: match.homeScore !== null ? String(match.homeScore) : '',
       awayScore: match.awayScore !== null ? String(match.awayScore) : '',
-      status: match.status,
+      homeAdj: existingHomeAdj,
+      awayAdj: existingAwayAdj,
+      homePoints: existingHomePts,
+      awayPoints: existingAwayPts,
+      status: initialStatus,
+      walkoverWinner,
       saving: false,
     });
   }
@@ -340,7 +397,14 @@ export default function LeagueDetailPage() {
                   <tbody>
                     {table.map((row, i) => (
                       <tr key={row.teamId} className={`border-b border-gray-100 ${i === 0 ? 'font-semibold' : ''}`}>
-                        <td className="py-2 pr-3 text-gray-900">{row.teamName}</td>
+                        <td className="py-2 pr-3 text-gray-900">
+                          <button
+                            onClick={() => setTeamDetailId(row.teamId)}
+                            className="text-left hover:text-green-700 hover:underline"
+                          >
+                            {row.teamName}
+                          </button>
+                        </td>
                         <td className="py-2 px-2 text-center text-gray-600">{row.played}</td>
                         <td className="py-2 px-2 text-center text-gray-600">{row.won}</td>
                         <td className="py-2 px-2 text-center text-gray-600">{row.drew}</td>
@@ -374,7 +438,7 @@ export default function LeagueDetailPage() {
                       {matches.filter((m) => getMatchDate(m, league.type) === date).map((match) => {
                         const homeTeam = teams.find((t) => t.teamId === match.homeTeamId);
                         const awayTeam = teams.find((t) => t.teamId === match.awayTeamId);
-                        const isPlayed = match.status === 'Played' || match.status === 'Walkover';
+                        const isPlayed = match.status === 'Played' || match.status === 'Walkover' || match.status === 'Conceded';
 
                         return (
                           <div
@@ -396,6 +460,17 @@ export default function LeagueDetailPage() {
                                 {isPlayed && match.homeScore !== null && match.awayScore !== null && (
                                   <span className="text-gray-700 font-semibold">
                                     {match.homeScore} – {match.awayScore}
+                                  </span>
+                                )}
+                                {(match.status === 'Walkover' || match.status === 'Conceded') && match.homeScore === null && (
+                                  <span className="text-xs text-gray-500 italic">
+                                    {match.homePoints !== null && match.awayPoints !== null
+                                      ? match.homePoints > match.awayPoints
+                                        ? `${homeTeam?.teamName ?? 'Home'} awarded points`
+                                        : match.awayPoints > match.homePoints
+                                          ? `${awayTeam?.teamName ?? 'Away'} awarded points`
+                                          : 'points shared'
+                                      : 'result pending'}
                                   </span>
                                 )}
                               </div>
@@ -434,7 +509,7 @@ export default function LeagueDetailPage() {
                       {unscheduledMatches.map((match) => {
                         const homeTeam = teams.find((t) => t.teamId === match.homeTeamId);
                         const awayTeam = teams.find((t) => t.teamId === match.awayTeamId);
-                        const isPlayed = match.status === 'Played' || match.status === 'Walkover';
+                        const isPlayed = match.status === 'Played' || match.status === 'Walkover' || match.status === 'Conceded';
                         return (
                           <div
                             key={match.matchId}
@@ -547,52 +622,193 @@ export default function LeagueDetailPage() {
       {/* Score entry dialog */}
       {scoreDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
             <div className="p-5 border-b border-gray-200">
-              <h2 className="text-base font-semibold text-gray-900">
-                {scoreDialog.status === 'Played' || scoreDialog.status === 'Scheduled' ? 'Enter Score' : 'Edit Result'}
-              </h2>
+              <h2 className="text-base font-semibold text-gray-900">Enter Result</h2>
               <p className="text-sm text-gray-500 mt-0.5">
                 {scoreDialog.homeTeamName} vs {scoreDialog.awayTeamName}
               </p>
             </div>
             <div className="p-5 space-y-4">
-              {isCommittee && (
+              {/* Status */}
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Result type</label>
+                <select
+                  value={scoreDialog.status}
+                  onChange={(e) => {
+                    const s = e.target.value as LeagueMatchStatus;
+                    const isWalkover = s === 'Walkover';
+                    setScoreDialog((d) => d ? {
+                      ...d, status: s, walkoverWinner: '',
+                      homeScore: isWalkover ? '' : d.homeScore,
+                      awayScore: isWalkover ? '' : d.awayScore,
+                      homeAdj: isWalkover ? '10' : '0',
+                      awayAdj: isWalkover ? '0' : '0',
+                      homePoints: isWalkover ? '2' : '',
+                      awayPoints: isWalkover ? '0' : '',
+                    } : d);
+                  }}
+                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                >
+                  <option value="Played">Played</option>
+                  <option value="Conceded">Conceded</option>
+                  <option value="Walkover">Walkover</option>
+                  <option value="Cancelled">Cancelled</option>
+                  <option value="Reset">— Reset to Scheduled —</option>
+                </select>
+              </div>
+
+              {/* Walkover: which side claims */}
+              {scoreDialog.status === 'Walkover' && (
                 <div>
-                  <label className="block text-xs text-gray-600 mb-1">Result type</label>
+                  <label className="block text-xs text-gray-600 mb-1">Which team is awarded the points?</label>
                   <select
-                    value={scoreDialog.status}
-                    onChange={(e) => setScoreDialog((d) => d ? { ...d, status: e.target.value as LeagueMatchStatus } : d)}
+                    value={scoreDialog.walkoverWinner}
+                    onChange={(e) => {
+                      const winner = e.target.value as 'home' | 'away' | '';
+                      setScoreDialog((d) => d ? {
+                        ...d, walkoverWinner: winner,
+                        homeAdj: winner === 'home' ? '10' : winner === 'away' ? '0' : d.homeAdj,
+                        awayAdj: winner === 'away' ? '10' : winner === 'home' ? '0' : d.awayAdj,
+                        homePoints: winner === 'home' ? '2' : winner === 'away' ? '0' : d.homePoints,
+                        awayPoints: winner === 'away' ? '2' : winner === 'home' ? '0' : d.awayPoints,
+                      } : d);
+                    }}
                     className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                    autoFocus
                   >
-                    <option value="Played">Score</option>
-                    <option value="Walkover">Walkover</option>
-                    <option value="Cancelled">Cancelled</option>
+                    <option value="">— select —</option>
+                    <option value="home">{scoreDialog.homeTeamName}</option>
+                    <option value="away">{scoreDialog.awayTeamName}</option>
                   </select>
                 </div>
               )}
-              {scoreDialog.status === 'Played' && (
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs text-gray-600 mb-1">{scoreDialog.homeTeamName}</label>
-                    <input
-                      type="number" min="0"
-                      value={scoreDialog.homeScore}
-                      onChange={(e) => setScoreDialog((d) => d ? { ...d, homeScore: e.target.value } : d)}
-                      className="w-full border border-gray-300 rounded-md px-3 py-2 text-lg font-semibold text-center"
-                      autoFocus
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-gray-600 mb-1">{scoreDialog.awayTeamName}</label>
-                    <input
-                      type="number" min="0"
-                      value={scoreDialog.awayScore}
-                      onChange={(e) => setScoreDialog((d) => d ? { ...d, awayScore: e.target.value } : d)}
-                      className="w-full border border-gray-300 rounded-md px-3 py-2 text-lg font-semibold text-center"
-                    />
+
+              {/* Played / Conceded: final score */}
+              {(scoreDialog.status === 'Played' || scoreDialog.status === 'Conceded') && (
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Final score</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <p className="text-xs text-gray-500 mb-1 truncate">{scoreDialog.homeTeamName}</p>
+                      <input
+                        type="number" min="0"
+                        value={scoreDialog.homeScore}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setScoreDialog((d) => {
+                            if (!d) return d;
+                            const pts = autoPoints(v, d.awayScore, d.homeAdj, d.awayAdj);
+                            return { ...d, homeScore: v, homePoints: pts.home, awayPoints: pts.away };
+                          });
+                        }}
+                        className="w-full border border-gray-300 rounded-md px-3 py-2 text-lg font-semibold text-center"
+                        autoFocus
+                      />
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-500 mb-1 truncate">{scoreDialog.awayTeamName}</p>
+                      <input
+                        type="number" min="0"
+                        value={scoreDialog.awayScore}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setScoreDialog((d) => {
+                            if (!d) return d;
+                            const pts = autoPoints(d.homeScore, v, d.homeAdj, d.awayAdj);
+                            return { ...d, awayScore: v, homePoints: pts.home, awayPoints: pts.away };
+                          });
+                        }}
+                        className="w-full border border-gray-300 rounded-md px-3 py-2 text-lg font-semibold text-center"
+                      />
+                    </div>
                   </div>
                 </div>
+              )}
+
+              {/* Score adjustment (all result types except Cancelled) */}
+              {scoreDialog.status !== 'Cancelled' && scoreDialog.status !== 'Reset' && (
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Score adjustment</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <p className="text-xs text-gray-500 mb-1 truncate">{scoreDialog.homeTeamName}</p>
+                      <input
+                        type="number"
+                        value={scoreDialog.homeAdj}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setScoreDialog((d) => {
+                            if (!d) return d;
+                            if (d.status === 'Played' || d.status === 'Conceded') {
+                              const pts = autoPoints(d.homeScore, d.awayScore, v, d.awayAdj);
+                              return { ...d, homeAdj: v, homePoints: pts.home, awayPoints: pts.away };
+                            }
+                            return { ...d, homeAdj: v };
+                          });
+                        }}
+                        className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-center"
+                        placeholder="0"
+                      />
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-500 mb-1 truncate">{scoreDialog.awayTeamName}</p>
+                      <input
+                        type="number"
+                        value={scoreDialog.awayAdj}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setScoreDialog((d) => {
+                            if (!d) return d;
+                            if (d.status === 'Played' || d.status === 'Conceded') {
+                              const pts = autoPoints(d.homeScore, d.awayScore, d.homeAdj, v);
+                              return { ...d, awayAdj: v, homePoints: pts.home, awayPoints: pts.away };
+                            }
+                            return { ...d, awayAdj: v };
+                          });
+                        }}
+                        className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-center"
+                        placeholder="0"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Points (all result types except Cancelled) */}
+              {scoreDialog.status !== 'Cancelled' && scoreDialog.status !== 'Reset' && (
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Points awarded</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <p className="text-xs text-gray-500 mb-1 truncate">{scoreDialog.homeTeamName}</p>
+                      <input
+                        type="number" min="0"
+                        value={scoreDialog.homePoints}
+                        onChange={(e) => setScoreDialog((d) => d ? { ...d, homePoints: e.target.value } : d)}
+                        className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-center"
+                        placeholder="0"
+                      />
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-500 mb-1 truncate">{scoreDialog.awayTeamName}</p>
+                      <input
+                        type="number" min="0"
+                        value={scoreDialog.awayPoints}
+                        onChange={(e) => setScoreDialog((d) => d ? { ...d, awayPoints: e.target.value } : d)}
+                        className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-center"
+                        placeholder="0"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {scoreDialog.status === 'Cancelled' && (
+                <p className="text-sm text-gray-500">This match will be marked as cancelled with no result.</p>
+              )}
+              {scoreDialog.status === 'Reset' && (
+                <p className="text-sm text-amber-700">This will clear all scores and reset the match to Scheduled.</p>
               )}
             </div>
             <div className="p-5 border-t border-gray-200 flex gap-3 justify-end">
@@ -613,6 +829,81 @@ export default function LeagueDetailPage() {
           </div>
         </div>
       )}
+
+      {/* Team breakdown popup */}
+      {teamDetailId && (() => {
+        const teamName = teams.find((t) => t.teamId === teamDetailId)?.teamName ?? teamDetailId;
+        const teamMatches = matches
+          .filter((m) => m.homeTeamId === teamDetailId || m.awayTeamId === teamDetailId)
+          .filter((m) => m.status !== 'Scheduled')
+          .map((m) => {
+            const isHome = m.homeTeamId === teamDetailId;
+            const oppId = isHome ? m.awayTeamId : m.homeTeamId;
+            const oppName = teams.find((t) => t.teamId === oppId)?.teamName ?? '—';
+            const myScore  = isHome ? m.homeScore  : m.awayScore;
+            const oppScore = isHome ? m.awayScore  : m.homeScore;
+            const myAdj    = isHome ? m.homeAdj    : m.awayAdj;
+            const myPts    = isHome ? m.homePoints : m.awayPoints;
+            return { m, oppName, isHome, myScore, oppScore, myAdj, myPts };
+          });
+
+        const totalPts = teamMatches.reduce((s, r) => s + (r.myPts ?? 0), 0);
+
+        return (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setTeamDetailId(null)}>
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-sm max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+              <div className="p-5 border-b border-gray-200 flex justify-between items-start">
+                <div>
+                  <h2 className="text-base font-semibold text-gray-900">{teamName}</h2>
+                  <p className="text-xs text-gray-500 mt-0.5">Points breakdown</p>
+                </div>
+                <button onClick={() => setTeamDetailId(null)} className="text-gray-400 hover:text-gray-600 text-lg leading-none">✕</button>
+              </div>
+              <div className="overflow-y-auto flex-1 p-5">
+                {teamMatches.length === 0 ? (
+                  <p className="text-sm text-gray-400 text-center py-4">No results yet.</p>
+                ) : (
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-xs text-gray-500 border-b border-gray-200">
+                        <th className="pb-2 font-medium">Opponent</th>
+                        <th className="pb-2 px-2 font-medium text-center">Score</th>
+                        <th className="pb-2 px-2 font-medium text-center">Adj</th>
+                        <th className="pb-2 pl-2 font-medium text-center">Pts</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {teamMatches.map(({ m, oppName, myScore, oppScore, myAdj, myPts }) => (
+                        <tr key={m.matchId} className="border-b border-gray-100">
+                          <td className="py-2 pr-2 text-gray-900">
+                            {oppName}
+                            {(m.status === 'Walkover' || m.status === 'Conceded' || m.status === 'Cancelled') && (
+                              <span className="ml-1 text-xs text-gray-400">({m.status})</span>
+                            )}
+                          </td>
+                          <td className="py-2 px-2 text-center text-gray-600 whitespace-nowrap">
+                            {myScore !== null && oppScore !== null ? `${myScore}–${oppScore}` : '—'}
+                          </td>
+                          <td className="py-2 px-2 text-center text-gray-600 whitespace-nowrap">
+                            {myAdj !== null ? (myAdj > 0 ? `+${myAdj}` : String(myAdj)) : '—'}
+                          </td>
+                          <td className="py-2 pl-2 text-center font-semibold text-gray-900">{myPts ?? '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t-2 border-gray-300">
+                        <td colSpan={3} className="pt-2 text-sm font-semibold text-gray-700">Total</td>
+                        <td className="pt-2 pl-2 text-center font-bold text-gray-900">{totalPts}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
