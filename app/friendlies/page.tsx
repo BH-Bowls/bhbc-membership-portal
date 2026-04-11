@@ -80,6 +80,9 @@ export default function FriendliesPage() {
   const [pairedGameIdsForModal, setPairedGameIdsForModal] = useState<string[]>([]);
   const [modalGameName, setModalGameName] = useState('');
 
+  // State: Dates (YYYY-MM-DD) where the current user has tea duty
+  const [teaDutyDates, setTeaDutyDates] = useState<Set<string>>(new Set());
+
   // ============================================================================
   // Effects
   // ============================================================================
@@ -103,6 +106,31 @@ export default function FriendliesPage() {
     }
 
     fetchMemberType();
+  }, []);
+
+  /**
+   * Effect: Fetch tea rota to determine if user has tea duty on any game days
+   */
+  useEffect(() => {
+    if (isLimitedView) return;
+    async function fetchTeaDuty() {
+      try {
+        const response = await fetch('/api/tea-rota');
+        if (response.ok) {
+          const data = await response.json();
+          const userName: string = data.currentUser;
+          const dates = new Set<string>(
+            (data.entries as any[])
+              .filter(e => e.teaLead === userName || e.teaFirst === userName || e.teaSecond === userName)
+              .map(e => e.date as string) // DD/MM/YYYY — same format as game.date
+          );
+          setTeaDutyDates(dates);
+        }
+      } catch (error) {
+        console.error('Failed to fetch tea rota:', error);
+      }
+    }
+    fetchTeaDuty();
   }, []);
 
   /**
@@ -268,16 +296,9 @@ export default function FriendliesPage() {
     // Check which filter is active
     switch (filter) {
       case 'O':
-        // Show only Open games that user is eligible to enter
-        // Check game status is Open
-        if (game.status !== 'O') return false;
-
-        // Check if user can enter based on member type and game gender
-        // If member type not loaded yet, show all games temporarily
-        if (!memberType) return true;
-
-        // Use canEnterGame helper to check eligibility
-        return canEnterGame(memberType, game.ladiesMen as GameGender);
+        // Show all Open games regardless of gender eligibility
+        // Ineligible members see the card but cannot enter (no checkbox shown)
+        return game.status === 'O';
 
       case 'entered':
         // Games the user has entered that haven't been played or cancelled yet
@@ -431,10 +452,11 @@ export default function FriendliesPage() {
                 const userEnteredBoth = gameA.userEntered && gameB.userEntered;
                 const userEnteredEither = gameA.userEntered || gameB.userEntered;
                 const combinedEntered = Math.max(gameA.entered, gameB.entered);
+                const pairedIsOnTeaDuty = teaDutyDates.has(gameA.date);
 
                 return (
                   <div
-                    key={`paired-${gameA.tabName}-${gameB.tabName}`}
+                    key={`paired-${index}-${gameA.tabName}-${gameB.tabName}`}
                     className={`bg-white rounded-lg shadow border ${
                       userEnteredEither ? 'border-blue-200' : 'border-gray-200'
                     } p-4`}
@@ -551,8 +573,18 @@ export default function FriendliesPage() {
                       )}
                     </div>
 
+                    {/* Tea duty note for paired games */}
+                    {!isLimitedView && gameA.status === 'O' && memberType && pairedIsOnTeaDuty && (
+                      canEnterGame(memberType, gameA.ladiesMen as GameGender) ||
+                      canEnterGame(memberType, gameB.ladiesMen as GameGender)
+                    ) && (
+                      <p className="text-sm text-gray-400 italic">
+                        You are on tea duty for this game — not eligible to play
+                      </p>
+                    )}
+
                     {/* Single checkbox enters BOTH games — hidden for guests and kiosk */}
-                    {!isLimitedView && gameA.status === 'O' && memberType && (
+                    {!isLimitedView && gameA.status === 'O' && memberType && !pairedIsOnTeaDuty && (
                       canEnterGame(memberType, gameA.ladiesMen as GameGender) ||
                       canEnterGame(memberType, gameB.ladiesMen as GameGender)
                     ) && (() => {
@@ -584,8 +616,9 @@ export default function FriendliesPage() {
                 );
               }
 
-              // Standard single game card (unchanged)
+              // Standard single game card
               const game = item as GameWithUserStatus;
+              const isOnTeaDuty = teaDutyDates.has(game.date);
               return (
                 <div
                   key={game.tabName && game.tabName.trim() ? game.tabName : `${game.date}-${game.clubName}-${game.time}-${index}`}
@@ -697,8 +730,24 @@ export default function FriendliesPage() {
                     )}
                   </div>
 
+                  {/* Gender ineligibility note */}
+                  {!isLimitedView && game.status === 'O' && memberType && !canEnterGame(memberType, game.ladiesMen as GameGender) && (
+                    game.ladiesMen === 'Ladies' || game.ladiesMen === 'Men'
+                  ) && (
+                    <p className="text-sm text-gray-400 italic">
+                      {game.ladiesMen === 'Ladies' ? 'Ladies only' : 'Men only'} — you are not eligible to enter
+                    </p>
+                  )}
+
+                  {/* Tea duty note */}
+                  {!isLimitedView && game.status === 'O' && memberType && canEnterGame(memberType, game.ladiesMen as GameGender) && isOnTeaDuty && (
+                    <p className="text-sm text-gray-400 italic">
+                      You are on tea duty for this game — not eligible to play
+                    </p>
+                  )}
+
                   {/* For open games, show checkbox to enter/withdraw — hidden for guests and kiosk */}
-                  {!isLimitedView && game.status === 'O' && memberType && canEnterGame(memberType, game.ladiesMen as GameGender) && (() => {
+                  {!isLimitedView && game.status === 'O' && memberType && canEnterGame(memberType, game.ladiesMen as GameGender) && !isOnTeaDuty && (() => {
                     // Check if game is full and user hasn't already entered
                     const capacity = calculateCapacity(game);
                     const isFull = capacity.isFull && !game.userEntered;

@@ -40,6 +40,10 @@ export interface InviteGameAttachment extends Attachment {
   inviteGameId: string;
 }
 
+export interface LeagueAttachment extends Attachment {
+  leagueId: string;
+}
+
 export interface AttachmentUploadRequest {
   suggestionId: string;
   type: AttachmentType;

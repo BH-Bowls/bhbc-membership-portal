@@ -118,18 +118,11 @@ export function EnteredPlayersModal({
         if (existingNames.has(player.fullName.toLowerCase())) return false;
 
         // Check gender eligibility (Friendlies/Internal Games only)
-        // Member types: PL=Playing Lady, SL=Social Lady, PM=Playing Man, SM=Social Man
         if (ladiesMen && player.memberType) {
-          const memberType = player.memberType.toUpperCase();
-          if (ladiesMen === 'Men') {
-            // Men's games: only PM (Playing Man) or types ending in M
-            if (!memberType.endsWith('M') && memberType !== 'FULL') return false;
-          }
-          if (ladiesMen === 'Ladies') {
-            // Ladies' games: only PL (Playing Lady) or types ending in L
-            if (!memberType.endsWith('L') && memberType !== 'SOCIAL') return false;
-          }
-          // Mixed games: allow all playing members (both PL and PM)
+          const mt = player.memberType.toLowerCase();
+          if (ladiesMen === 'Ladies' && mt !== 'playing lady') return false;
+          if (ladiesMen === 'Men' && mt !== 'playing man') return false;
+          // Mixed: allow all (already filtered to playing members only)
         }
 
         return true;

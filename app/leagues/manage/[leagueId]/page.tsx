@@ -7,6 +7,9 @@ import { useEffect, useRef, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useParams, useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
+import { AttachmentUpload } from '@/components/AttachmentUpload';
+import { AttachmentsList } from '@/components/AttachmentsList';
+import type { Attachment } from '@/types/attachments';
 import type {
   League,
   LeagueTeam,
@@ -166,7 +169,11 @@ export default function LeagueManageDetailPage() {
   const [matches, setMatches] = useState<LeagueMatch[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<'squad' | 'fixtures' | 'settings'>('squad');
+  const [tab, setTab] = useState<'squad' | 'fixtures' | 'settings' | 'rules'>('squad');
+
+  // Rules / attachments
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [showUpload, setShowUpload] = useState(false);
 
   // Teams
   const [newTeamName, setNewTeamName] = useState('');
@@ -243,6 +250,13 @@ export default function LeagueManageDetailPage() {
   const [newFixtureAway, setNewFixtureAway] = useState('');
   const [addingFixture, setAddingFixture] = useState(false);
 
+  function loadAttachments() {
+    fetch(`/api/leagues/${leagueId}/attachments`)
+      .then((r) => r.json())
+      .then((data) => { if (data.attachments) setAttachments(data.attachments); })
+      .catch(() => {});
+  }
+
   function loadData() {
     fetch(`/api/leagues/${leagueId}`)
       .then((r) => r.json())
@@ -262,7 +276,7 @@ export default function LeagueManageDetailPage() {
       router.replace('/leagues');
       return;
     }
-    if (status === 'authenticated') loadData();
+    if (status === 'authenticated') { loadData(); loadAttachments(); }
   }, [status, canAccess, leagueId]);
 
   useEffect(() => {
@@ -636,7 +650,7 @@ export default function LeagueManageDetailPage() {
 
         {/* Tabs */}
         <div className="flex gap-1 border-b border-gray-200 mb-6">
-          {(['squad', 'fixtures', 'settings'] as const).map((t) => (
+          {(['squad', 'fixtures', 'rules', 'settings'] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -646,7 +660,7 @@ export default function LeagueManageDetailPage() {
                   : 'border-transparent text-gray-500 hover:text-gray-700'
               }`}
             >
-              {t === 'squad' ? `Squad (${squad.length})` : t === 'fixtures' ? `Fixtures (${matches.length})` : 'Settings'}
+              {t === 'squad' ? `Squad (${squad.length})` : t === 'fixtures' ? `Fixtures (${matches.length})` : t === 'rules' ? `Rules (${attachments.length})` : 'Settings'}
             </button>
           ))}
         </div>
@@ -907,6 +921,40 @@ export default function LeagueManageDetailPage() {
                 )}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Rules tab */}
+        {tab === 'rules' && (
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <p className="text-sm text-gray-600">
+                Upload rules documents, handbooks, or any reference files for this league.
+              </p>
+              {!showUpload && (
+                <button
+                  onClick={() => setShowUpload(true)}
+                  className="px-3 py-2 text-sm bg-green-600 text-white rounded-md hover:bg-green-700 whitespace-nowrap"
+                >
+                  Upload Rules
+                </button>
+              )}
+            </div>
+            {showUpload && (
+              <div className="mb-5">
+                <AttachmentUpload
+                  apiBasePath={`/api/leagues/${leagueId}`}
+                  onUploadComplete={() => { setShowUpload(false); loadAttachments(); }}
+                  onCancel={() => setShowUpload(false)}
+                />
+              </div>
+            )}
+            <AttachmentsList
+              apiBasePath={`/api/leagues/${leagueId}`}
+              attachments={attachments}
+              canDelete={true}
+              onDelete={loadAttachments}
+            />
           </div>
         )}
 

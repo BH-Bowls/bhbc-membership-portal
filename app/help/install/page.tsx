@@ -31,18 +31,25 @@ export default function HelpInstallPage() {
 
           <HelpSection title="iPhone &amp; iPad">
             <Note>
-              On Apple devices this only works in <strong>Safari</strong>. If you normally use
-              Chrome or Firefox, switch to Safari just for this step.
+              On Apple devices this only works in <strong>Safari</strong>. If the portal opened
+              in Chrome or another browser, tap the <strong>Share</strong> button, choose{' '}
+              <strong>Open in Safari</strong>, then follow the steps below.
             </Note>
-            <Step n={1}>Open the portal in <strong>Safari</strong>.</Step>
+            <Body>
+              Once you are in <strong>Safari</strong>:
+            </Body>
+            <Step n={1}>
+              Find the <strong>Share</strong> button — the box with an arrow pointing up.
+              On newer iPhones the address bar is at the bottom of the screen; tap the{' '}
+              <strong>three dots (···)</strong> next to it to reveal the toolbar, then tap{' '}
+              <strong>Share</strong>. On older iPhones and on iPad, the Share button is at the
+              top of the screen.
+            </Step>
             <Step n={2}>
-              Tap the <strong>Share</strong> button — the box with an arrow pointing up. On iPhone
-              it is at the bottom of the screen; on iPad it is at the top.
+              Scroll down the list or tap <strong>View More</strong> and tap{' '}
+              <strong>Add to Home Screen</strong>.
             </Step>
             <Step n={3}>
-              Scroll down the list or tap <strong>View More</strong> and tap <strong>Add to Home Screen</strong>.
-            </Step>
-            <Step n={4}>
               Change the name if you like, then tap <strong>Add</strong> in the top right.
             </Step>
             <Body>

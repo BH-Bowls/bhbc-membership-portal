@@ -15,6 +15,8 @@ import type {
   LeagueTableRow,
   LeagueMatchStatus,
 } from '@/types/leagues';
+import { AttachmentsList } from '@/components/AttachmentsList';
+import type { Attachment } from '@/types/attachments';
 
 function formatDate(d: string | null): string {
   if (!d) return '';
@@ -61,7 +63,8 @@ export default function LeagueDetailPage() {
   const [table, setTable] = useState<LeagueTableRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<'table' | 'fixtures' | 'squad'>('table');
+  const [tab, setTab] = useState<'table' | 'fixtures' | 'squad' | 'rules'>('table');
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
 
   // Score entry
   const [scoreDialog, setScoreDialog] = useState<{
@@ -88,7 +91,15 @@ export default function LeagueDetailPage() {
       .finally(() => setLoading(false));
   }
 
-  useEffect(() => { loadLeague(); }, [leagueId]);
+  useEffect(() => {
+    loadLeague();
+    if (session !== undefined) {
+      fetch(`/api/leagues/${leagueId}/attachments`)
+        .then((r) => r.json())
+        .then((data) => { if (data.attachments) setAttachments(data.attachments); })
+        .catch(() => {});
+    }
+  }, [leagueId, session]);
 
   const myEntry = squad.find((m) => m.username === userName);
   const canEnter = !!session && !myEntry && league?.status === 'Entries Open';
@@ -290,7 +301,7 @@ export default function LeagueDetailPage() {
 
         {/* Tabs */}
         <div className="flex gap-1 border-b border-gray-200 mb-6">
-          {(['table', 'fixtures', 'squad'] as const).map((t) => (
+          {(['table', 'fixtures', 'squad', 'rules'] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -300,7 +311,7 @@ export default function LeagueDetailPage() {
                   : 'border-transparent text-gray-500 hover:text-gray-700'
               }`}
             >
-              {t === 'table' ? 'League Table' : t === 'fixtures' ? 'Fixtures & Results' : 'Teams'}
+              {t === 'table' ? 'League Table' : t === 'fixtures' ? 'Fixtures & Results' : t === 'squad' ? 'Teams' : 'Rules'}
             </button>
           ))}
         </div>
@@ -517,6 +528,19 @@ export default function LeagueDetailPage() {
               </div>
             )}
           </>
+        )}
+        {/* Rules */}
+        {tab === 'rules' && (
+          attachments.length === 0 ? (
+            <div className="text-center py-10 text-gray-400">No rules documents uploaded yet.</div>
+          ) : (
+            <AttachmentsList
+              apiBasePath={`/api/leagues/${leagueId}`}
+              attachments={attachments}
+              canDelete={false}
+              onDelete={() => {}}
+            />
+          )
         )}
       </div>
 

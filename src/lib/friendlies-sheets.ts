@@ -1749,7 +1749,7 @@ export async function getPlayerStats(userName: string): Promise<PlayerStats> {
  * Returns list of usernames and full names sorted alphabetically by full name
  * Used by captains when adding offline players to a game
  */
-export async function getAllPlayers(playingMembersOnly: boolean = true): Promise<{ userName: string; fullName: string }[]> {
+export async function getAllPlayers(playingMembersOnly: boolean = true): Promise<{ userName: string; fullName: string; memberType: string }[]> {
   // Get all members from Members sheet (not Players sheet)
   // This allows adding any club member to a game, not just those who have previously entered
   const sheets = getSheetsClient();
@@ -1776,7 +1776,7 @@ export async function getAllPlayers(playingMembersOnly: boolean = true): Promise
   const memberTypeCol = membersColMap['member_type'];
 
   // Build array of members
-  const players: { userName: string; fullName: string }[] = [];
+  const players: { userName: string; fullName: string; memberType: string }[] = [];
 
   for (let i = 1; i < membersRows.length; i++) {
     const memberRow = membersRows[i];
@@ -1797,6 +1797,7 @@ export async function getAllPlayers(playingMembersOnly: boolean = true): Promise
       players.push({
         userName: userName.trim(),
         fullName: (fullName || userName).trim(),
+        memberType: memberType || '',
       });
     }
   }
