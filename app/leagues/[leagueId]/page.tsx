@@ -3,9 +3,9 @@
 
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useSession } from 'next-auth/react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
 import type {
   League,
@@ -40,6 +40,11 @@ function getMatchDate(m: LeagueMatch, leagueType: string): string | null {
   return leagueType === 'triples' ? (m.scheduledDate ?? null) : (m.playByDate ?? null);
 }
 
+function fmtAdj(n: number | null): string {
+  if (!n) return '';
+  return n > 0 ? `+${n}` : String(n);
+}
+
 const MATCH_STATUS_STYLES: Record<LeagueMatchStatus, string> = {
   Scheduled: 'bg-gray-100 text-gray-600',
   Played:    'bg-green-100 text-green-700',
@@ -48,10 +53,11 @@ const MATCH_STATUS_STYLES: Record<LeagueMatchStatus, string> = {
   Cancelled: 'bg-red-100 text-red-600',
 };
 
-export default function LeagueDetailPage() {
+function LeagueDetailPageInner() {
   const { leagueId } = useParams<{ leagueId: string }>();
   const { data: session } = useSession();
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const role = session?.user?.role ?? '';
   const userName = session?.user?.userName ?? '';
@@ -64,7 +70,8 @@ export default function LeagueDetailPage() {
   const [table, setTable] = useState<LeagueTableRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<'table' | 'fixtures' | 'squad' | 'rules'>('table');
+  const initialTab = (searchParams.get('tab') as 'table' | 'fixtures' | 'squad' | 'rules') ?? 'table';
+  const [tab, setTab] = useState<'table' | 'fixtures' | 'squad' | 'rules'>(initialTab);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
 
   // Team breakdown popup
@@ -251,6 +258,28 @@ export default function LeagueDetailPage() {
       return aO - bO;
     });
 
+  // My team context
+  const myTeammates = myEntry?.teamId
+    ? squad.filter((m) => m.teamId === myEntry.teamId && m.username !== userName)
+    : [];
+
+  const nextFixture = myEntry?.teamId
+    ? [...matches]
+        .filter((m) =>
+          (m.homeTeamId === myEntry.teamId || m.awayTeamId === myEntry.teamId) &&
+          m.status === 'Scheduled'
+        )
+        .sort((a, b) => a.matchday - b.matchday)[0] ?? null
+    : null;
+
+  const nextFixtureOpponentTeamId = nextFixture && myEntry?.teamId
+    ? (nextFixture.homeTeamId === myEntry.teamId ? nextFixture.awayTeamId : nextFixture.homeTeamId)
+    : null;
+
+  const nextFixtureOpposingSkip = nextFixtureOpponentTeamId
+    ? (squad.find((m) => m.teamId === nextFixtureOpponentTeamId && m.position === 'Skip') ?? null)
+    : null;
+
   // Group matches by date
   const scheduledDates = Array.from(
     new Set(matches.map((m) => getMatchDate(m, league?.type ?? 'triples')).filter(Boolean) as string[])
@@ -348,11 +377,55 @@ export default function LeagueDetailPage() {
         {/* My entry banner */}
         {myEntry && (
           <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-800">
-            You are entered in this league
-            {myEntry.teamId && teams.find((t) => t.teamId === myEntry.teamId)
-              ? ` — ${teams.find((t) => t.teamId === myEntry.teamId)!.teamName}`
-              : ' — team to be assigned'}
-            {myEntry.position ? ` (${myEntry.position})` : ''}.
+            <p className="font-medium">
+              You are entered in this league
+              {myEntry.teamId && teams.find((t) => t.teamId === myEntry.teamId)
+                ? ` — ${teams.find((t) => t.teamId === myEntry.teamId)!.teamName}`
+                : ' — team to be assigned'}
+              {myEntry.position ? ` (${myEntry.position})` : ''}.
+            </p>
+
+            {/* Table tab: show team member contacts */}
+            {tab === 'table' && myTeammates.length > 0 && (
+              <div className="mt-2 space-y-1">
+                {myTeammates.map((m) => (
+                  <div key={m.username} className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                    <span className="font-medium text-blue-900">{m.fullName}{m.position ? ` (${m.position})` : ''}</span>
+                    {m.mobile && (
+                      <a href={`tel:${m.mobile}`} onClick={(e) => e.stopPropagation()} className="text-blue-600 hover:underline">{m.mobile}</a>
+                    )}
+                    {m.email && (
+                      <a href={`mailto:${m.email}`} onClick={(e) => e.stopPropagation()} className="text-blue-600 hover:underline">{m.email}</a>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Fixtures tab: show next fixture */}
+            {tab === 'fixtures' && nextFixture && myEntry.teamId && (() => {
+              const oppTeam = teams.find((t) => t.teamId === nextFixtureOpponentTeamId);
+              const fixtureDate = getMatchDate(nextFixture, league.type);
+              return (
+                <div className="mt-2">
+                  <p className="text-blue-700">
+                    Next fixture{fixtureDate ? `: ${formatFullDate(fixtureDate)}` : ''}{nextFixture.scheduledTime ? ` at ${formatTime(nextFixture.scheduledTime)}` : ''} vs{' '}
+                    <span className="font-medium">{oppTeam?.teamName ?? '—'}</span>
+                  </p>
+                  {myEntry.position === 'Skip' && nextFixtureOpposingSkip && (
+                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                      <span className="text-blue-700">Opposing Skip: <span className="font-medium text-blue-900">{nextFixtureOpposingSkip.fullName}</span></span>
+                      {nextFixtureOpposingSkip.mobile && (
+                        <a href={`tel:${nextFixtureOpposingSkip.mobile}`} onClick={(e) => e.stopPropagation()} className="text-blue-600 hover:underline">{nextFixtureOpposingSkip.mobile}</a>
+                      )}
+                      {nextFixtureOpposingSkip.email && (
+                        <a href={`mailto:${nextFixtureOpposingSkip.email}`} onClick={(e) => e.stopPropagation()} className="text-blue-600 hover:underline">{nextFixtureOpposingSkip.email}</a>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -458,9 +531,16 @@ export default function LeagueDetailPage() {
                                   {awayTeam?.teamName ?? '—'}
                                 </span>
                                 {isPlayed && match.homeScore !== null && match.awayScore !== null && (
-                                  <span className="text-gray-700 font-semibold">
-                                    {match.homeScore} – {match.awayScore}
-                                  </span>
+                                  <>
+                                    <span className="text-gray-700 font-semibold">
+                                      {match.homeScore} – {match.awayScore}
+                                    </span>
+                                    {(match.homeAdj || match.awayAdj) ? (
+                                      <span className="text-xs text-gray-400">
+                                        (adj {fmtAdj(match.homeAdj)}/{fmtAdj(match.awayAdj)})
+                                      </span>
+                                    ) : null}
+                                  </>
                                 )}
                                 {(match.status === 'Walkover' || match.status === 'Conceded') && match.homeScore === null && (
                                   <span className="text-xs text-gray-500 italic">
@@ -520,7 +600,12 @@ export default function LeagueDetailPage() {
                               <span className="text-gray-400">vs</span>
                               <span className="font-medium text-gray-900">{awayTeam?.teamName ?? '—'}</span>
                               {isPlayed && match.homeScore !== null && match.awayScore !== null && (
-                                <span className="text-gray-700 font-semibold">{match.homeScore} – {match.awayScore}</span>
+                                <>
+                                  <span className="text-gray-700 font-semibold">{match.homeScore} – {match.awayScore}</span>
+                                  {(match.homeAdj || match.awayAdj) ? (
+                                    <span className="text-xs text-gray-400">(adj {fmtAdj(match.homeAdj)}/{fmtAdj(match.awayAdj)})</span>
+                                  ) : null}
+                                </>
                               )}
                             </div>
                             <div className="flex items-center gap-2">
@@ -556,7 +641,10 @@ export default function LeagueDetailPage() {
                   <div className="space-y-2">
                     {squad.map((m) => (
                       <div key={m.rowNumber} className="bg-white rounded-lg border border-gray-200 p-3 flex items-center justify-between text-sm">
-                        <span className="font-medium text-gray-900">{m.fullName}</span>
+                        <a
+                          href={`/members?search=${encodeURIComponent(m.fullName)}&back=${encodeURIComponent('/leagues/' + leagueId + '?tab=squad')}`}
+                          className="font-medium text-green-700 underline hover:text-green-900"
+                        >{m.fullName}</a>
                         {m.position && <span className="text-gray-500">{m.position}</span>}
                       </div>
                     ))}
@@ -572,7 +660,10 @@ export default function LeagueDetailPage() {
                     <div className="space-y-2">
                       {squad.filter((m) => !m.teamId).map((m) => (
                         <div key={m.rowNumber} className="bg-white rounded-lg border border-gray-200 p-3 flex items-center justify-between text-sm">
-                          <span className="font-medium text-gray-900">{m.fullName}</span>
+                          <a
+                            href={`/members?search=${encodeURIComponent(m.fullName)}&back=${encodeURIComponent('/leagues/' + leagueId + '?tab=squad')}`}
+                            className="font-medium text-green-700 underline hover:text-green-900"
+                          >{m.fullName}</a>
                           {m.position && <span className="text-gray-500">{m.position}</span>}
                         </div>
                       ))}
@@ -591,7 +682,10 @@ export default function LeagueDetailPage() {
                         <div className="space-y-2">
                           {members.map((m) => (
                             <div key={m.rowNumber} className="bg-white rounded-lg border border-gray-200 p-3 flex items-center justify-between text-sm">
-                              <span className="font-medium text-gray-900">{m.fullName}</span>
+                              <a
+                                href={`/members?search=${encodeURIComponent(m.fullName)}&back=${encodeURIComponent('/leagues/' + leagueId + '?tab=squad')}`}
+                                className="font-medium text-green-700 underline hover:text-green-900"
+                              >{m.fullName}</a>
                               {m.position && <span className="text-gray-500">{m.position}</span>}
                             </div>
                           ))}
@@ -905,5 +999,13 @@ export default function LeagueDetailPage() {
         );
       })()}
     </div>
+  );
+}
+
+export default function LeagueDetailPage() {
+  return (
+    <Suspense>
+      <LeagueDetailPageInner />
+    </Suspense>
   );
 }

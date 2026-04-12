@@ -52,9 +52,9 @@ export default function RowlandHelpPage() {
           >
             ← Rowland Cup
           </button>
-          <h1 className="text-2xl font-bold text-gray-900">Rowland Cup — Admin Guide</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Rowland Cup — Guide</h1>
           <p className="text-gray-500 text-sm mt-1">
-            Managing competitions, draws, clubs, and results
+            Viewing draws, finding opponent contacts, and managing competitions and results
           </p>
         </div>
 
@@ -66,12 +66,39 @@ export default function RowlandHelpPage() {
               Each visiting club has its own username and password, set up by a BHBC Admin. The login is shared within the club — everyone at the club who manages their Rowland Cup matches uses the same login.
             </p>
             <p className="text-sm text-gray-700 leading-relaxed">
-              Once logged in, clubs can look up other clubs to find contact details to arrange matches, view the draw for their competition, and enter match results and player names.
+              Once logged in, clubs can view the draw for their competition, see their next match and opponent contact details, and enter match results and player names.
             </p>
           </Section>
 
+          {/* Your next match */}
+          <Section title="2. Your next match &amp; opponent contacts">
+            <p className="text-sm text-gray-700 leading-relaxed mb-3">
+              When you open a competition draw, a green card at the top shows your next match — the round, the play-by date, and the opponent's contact details (Organiser and Skip) so you can arrange the game directly.
+            </p>
+            <p className="text-sm text-gray-700 font-medium mb-2">If you are logged in as a club or BHBC player:</p>
+            <p className="text-sm text-gray-700 leading-relaxed mb-3">
+              The card appears automatically and your position in the draw is highlighted. No setup needed.
+            </p>
+            <p className="text-sm text-gray-700 font-medium mb-2">If you are not logged in:</p>
+            <Step n={1}>
+              Go to the <strong>Rowland Cup</strong> home page.
+            </Step>
+            <Step n={2}>
+              Use the <strong>Select your club</strong> dropdown to identify your club. This is saved in your browser so you only need to do it once.
+            </Step>
+            <Step n={3}>
+              Open any competition draw — your team will be highlighted and your next match card will appear at the top with your opponent's contact details.
+            </Step>
+            <Step n={4}>
+              If you need to change the selected club, click <strong>Change</strong> on the home page, or <strong>Not your club?</strong> on the draw page.
+            </Step>
+            <Note>
+              Contact details shown here come from the Contacts sheet. If a club's Organiser or Skip details are missing or out of date, a BHBC Admin can update them. See section 6 below.
+            </Note>
+          </Section>
+
           {/* Setting up a competition */}
-          <Section title="2. Managing a Competition Draw">
+          <Section title="3. Managing a Competition Draw">
             <Step n={1}>
               Go to <strong>Rowland Cup</strong> and select the competition you want to set up.
             </Step>
@@ -93,9 +120,9 @@ export default function RowlandHelpPage() {
           </Section>
 
           {/* Managing results */}
-          <Section title="3. Managing results">
+          <Section title="4. Managing results">
             <Note>
-              As a Rowland administrator you can enter or correct results for any match, regardless of which club submitted them.
+              Rowland administrators can enter or correct results for any match. Clubs, RowlandPlayers, and Captains can enter results for their own matches only.
             </Note>
             <Step n={1}>
               Open the competition draw and tap any <strong>Pending</strong> match to enter or update a result.
@@ -112,7 +139,7 @@ export default function RowlandHelpPage() {
           </Section>
 
           {/* Score sheet upload */}
-          <Section title="4. Score sheet photos">
+          <Section title="5. Score sheet photos">
             <p className="text-sm text-gray-700 leading-relaxed mb-3">
               When entering a result, a score sheet photo can be attached. The image is stored and a link is included in the result notification email.
             </p>
@@ -136,12 +163,12 @@ export default function RowlandHelpPage() {
           </Section>
 
           {/* Club contact details */}
-          <Section title="5. Updating your club's contact details">
+          <Section title="6. Updating club contact details">
             <p className="text-sm text-gray-700 leading-relaxed mb-3">
-              When logged in as your club, you can update your own entry in the Clubs directory. Other clubs look up your details here to find the right person to contact when arranging matches — so it is worth keeping them accurate.
+              Each club's Rowland Organiser and Skip contact details are shown on the <strong>Your next match</strong> card when another club is drawn against them. It is worth keeping these accurate so clubs can reach the right person to arrange games.
             </p>
             <p className="text-sm text-gray-700 leading-relaxed mb-3">
-              For example, your club may have a Rowland Organiser on record, but if it is the skips who actually arrange and confirm matches, you can add their details so other clubs can reach the right person directly.
+              Contact roles that appear on the next match card are: <strong>ERowland A/B Organiser</strong>, <strong>ERowland A/B Skip</strong>, <strong>GRowland A/B Organiser</strong>, and <strong>GRowland A/B Skip</strong> — depending on which competition is being viewed.
             </p>
             <Step n={1}>
               Log in with your club username and password.
@@ -167,14 +194,14 @@ export default function RowlandHelpPage() {
           </Section>
 
           {/* Reviewing submissions */}
-          <Section title="6. Reviewing club submissions">
+          <Section title="7. Reviewing club submissions">
             <p className="text-sm text-gray-700 leading-relaxed">
               Clubs enter their own results and player names. You can review all submissions in the draw. If a result looks incorrect, tap the match to open it and make corrections — your changes will overwrite what the club submitted.
             </p>
           </Section>
 
           {/* Print */}
-          <Section title="7. Printing the draw">
+          <Section title="8. Printing the draw">
             <Step n={1}>
               Open the competition draw.
             </Step>

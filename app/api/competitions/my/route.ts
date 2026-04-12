@@ -37,6 +37,14 @@ export interface JourneyStep {
   oppStartScore: number | null;  // score the opponent starts on (0 if user has lesser hcp)
 }
 
+export interface ContactInfo {
+  username: string;
+  fullName: string;
+  position: CompPosition;
+  mobile?: string | null;
+  email?: string | null;
+}
+
 export interface MyCompEntry {
   compId: string;
   displayName: string;
@@ -53,8 +61,8 @@ export interface MyCompEntry {
   match: {
     matchId: string;
     status: string;
-    partners: { username: string; fullName: string; position: CompPosition }[];
-    opponents: { username: string; fullName: string; position: CompPosition }[] | null;
+    partners: ContactInfo[];
+    opponents: ContactInfo[] | null;
     myScore: number | null;
     oppScore: number | null;
     playByDate: string | null;
@@ -296,20 +304,30 @@ export async function GET() {
       const partners = myUsernames
         .map((u, idx) => ({ u, idx }))
         .filter(({ u }) => u.toLowerCase() !== username)
-        .map(({ u, idx }) => ({
-          username: u,
-          fullName: memberMap.get(u.toLowerCase())?.fullName ?? u,
-          position: posLabel(idx, comp.compType),
-        }));
+        .map(({ u, idx }) => {
+          const info = memberMap.get(u.toLowerCase());
+          return {
+            username: u,
+            fullName: info?.fullName ?? u,
+            position: posLabel(idx, comp.compType),
+            mobile: info?.mobile ?? null,
+            email: info?.email ?? null,
+          };
+        });
 
       const opponents =
         relevantMatch.side2Usernames === null
           ? null
-          : oppUsernames.map((u, idx) => ({
-              username: u,
-              fullName: memberMap.get(u.toLowerCase())?.fullName ?? u,
-              position: posLabel(idx, comp.compType),
-            }));
+          : oppUsernames.map((u, idx) => {
+              const info = memberMap.get(u.toLowerCase());
+              return {
+                username: u,
+                fullName: info?.fullName ?? u,
+                position: posLabel(idx, comp.compType),
+                mobile: info?.mobile ?? null,
+                email: info?.email ?? null,
+              };
+            });
 
       entries.push({
         compId:          comp.compId,

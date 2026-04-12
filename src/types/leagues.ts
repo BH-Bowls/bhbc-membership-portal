@@ -37,6 +37,8 @@ export interface LeagueSquadMember {
   fullName: string;     // looked up from Members sheet
   position: SquadPosition;
   enteredDate: string;
+  mobile?: string | null;
+  email?: string | null;
 }
 
 export interface LeagueMatch {

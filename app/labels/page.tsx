@@ -155,6 +155,7 @@ export default function LabelsPage() {
 
   const [labelType, setLabelType] = useState<LabelType>('address');
   const [memberFilter, setMemberFilter] = useState<MemberFilter>('all');
+  const [sortOrder, setSortOrder] = useState<'original' | 'lastName'>('original');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedNames, setSelectedNames] = useState<Set<string>>(new Set());
   const [copies, setCopies] = useState(1);
@@ -201,10 +202,20 @@ export default function LabelsPage() {
 
   // Members that will appear on labels
   const selectedMembers = useMemo(() => {
-    if (memberFilter === 'all') return members;
-    if (memberFilter === 'include') return members.filter((m) => m.include === 'Y');
-    return members.filter((m) => selectedNames.has(m.fullName));
-  }, [members, memberFilter, selectedNames]);
+    let list: LabelMember[];
+    if (memberFilter === 'all') list = members;
+    else if (memberFilter === 'include') list = members.filter((m) => m.include === 'Y');
+    else list = members.filter((m) => selectedNames.has(m.fullName));
+
+    if (sortOrder === 'lastName') {
+      const lastName = (m: LabelMember) => {
+        const parts = m.fullName.trim().split(/\s+/);
+        return parts[parts.length - 1].toLowerCase();
+      };
+      return [...list].sort((a, b) => lastName(a).localeCompare(lastName(b)));
+    }
+    return list;
+  }, [members, memberFilter, selectedNames, sortOrder]);
 
   // Expand for copies
   const labelList = useMemo(() => {
@@ -324,39 +335,50 @@ export default function LabelsPage() {
           <div className="bg-white shadow rounded-lg p-4 space-y-4">
             <h2 className="text-sm font-medium text-gray-700">Members</h2>
 
-            <div className="flex flex-wrap gap-4 items-center">
-              <div className="flex gap-4">
-                {([['all', 'All members'], ['include', 'Include = Y only'], ['manual', 'Manual selection']] as [MemberFilter, string][]).map(([v, label]) => (
-                  <label key={v} className="flex items-center gap-2 cursor-pointer">
-                    <input type="radio" name="memberFilter" value={v} checked={memberFilter === v} onChange={() => setMemberFilter(v)} className="text-blue-600" />
-                    <span className="text-sm text-gray-700">{label}</span>
-                  </label>
-                ))}
-              </div>
+            {/* Filter */}
+            <div className="flex gap-4">
+              {([['all', 'All members'], ['include', 'Include = Y only'], ['manual', 'Manual selection']] as [MemberFilter, string][]).map(([v, label]) => (
+                <label key={v} className="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" name="memberFilter" value={v} checked={memberFilter === v} onChange={() => setMemberFilter(v)} className="text-blue-600" />
+                  <span className="text-sm text-gray-700">{label}</span>
+                </label>
+              ))}
+            </div>
 
-              <div className="flex items-center gap-4 ml-auto">
-                <div className="flex items-center gap-2">
-                  <label className="text-sm text-gray-700 whitespace-nowrap">Skip labels</label>
-                  <input
-                    type="number"
-                    min={0}
-                    max={labelsPerSheet - 1}
-                    value={skipLabels}
-                    onChange={(e) => setSkipLabels(Math.max(0, parseInt(e.target.value) || 0))}
-                    className="w-16 border border-gray-300 rounded-md px-2 py-1 text-sm text-center"
-                  />
-                </div>
-                <div className="flex items-center gap-2">
-                  <label className="text-sm text-gray-700 whitespace-nowrap">Copies per member</label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={10}
-                    value={copies}
-                    onChange={(e) => setCopies(Math.max(1, parseInt(e.target.value) || 1))}
-                    className="w-16 border border-gray-300 rounded-md px-2 py-1 text-sm text-center"
-                  />
-                </div>
+            {/* Sort order */}
+            <div className="flex items-center gap-4">
+              <span className="text-sm font-medium text-gray-700 whitespace-nowrap">Sort order</span>
+              {([['original', 'Original order'], ['lastName', 'Last name A–Z']] as ['original' | 'lastName', string][]).map(([v, label]) => (
+                <label key={v} className="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" name="sortOrder" value={v} checked={sortOrder === v} onChange={() => setSortOrder(v)} className="text-blue-600" />
+                  <span className="text-sm text-gray-700">{label}</span>
+                </label>
+              ))}
+            </div>
+
+            {/* Copies / skip */}
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <label className="text-sm text-gray-700 whitespace-nowrap">Skip labels</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={labelsPerSheet - 1}
+                  value={skipLabels}
+                  onChange={(e) => setSkipLabels(Math.max(0, parseInt(e.target.value) || 0))}
+                  className="w-16 border border-gray-300 rounded-md px-2 py-1 text-sm text-center"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm text-gray-700 whitespace-nowrap">Copies per member</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={copies}
+                  onChange={(e) => setCopies(Math.max(1, parseInt(e.target.value) || 1))}
+                  className="w-16 border border-gray-300 rounded-md px-2 py-1 text-sm text-center"
+                />
               </div>
             </div>
 

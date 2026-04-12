@@ -4,8 +4,9 @@
 
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useSession } from 'next-auth/react';
+import { useSearchParams } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
 
 interface MemberLookupResult {
@@ -23,13 +24,16 @@ interface MemberLookupResult {
 
 type FilterType = 'none' | 'greenMaintenance' | 'drivingAway' | 'barDuty' | 'gmc';
 
-export default function MembersPage() {
+function MembersPageInner() {
   const { data: session, status } = useSession();
   const isGuest = status === 'unauthenticated';
+  const searchParams = useSearchParams();
+  const backUrl = searchParams.get('back');
+  const initialSearch = searchParams.get('search') ?? '';
 
   const [members, setMembers] = useState<MemberLookupResult[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchTerm, setSearchTerm] = useState(initialSearch);
   const [filter, setFilter] = useState<FilterType>('none');
 
   useEffect(() => {
@@ -79,6 +83,11 @@ export default function MembersPage() {
       <div className="container mx-auto px-4 py-8 max-w-6xl">
         {/* Page header */}
         <div className="mb-6">
+          {backUrl && (
+            <a href={backUrl} className="text-sm text-gray-500 hover:text-gray-700 mb-2 inline-block">
+              ← Back
+            </a>
+          )}
           <h1 className="text-3xl font-bold text-gray-900">Member Lookup</h1>
           <p className="text-gray-600 mt-1">Search for members and view contact information</p>
         </div>
@@ -281,5 +290,13 @@ export default function MembersPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function MembersPage() {
+  return (
+    <Suspense>
+      <MembersPageInner />
+    </Suspense>
   );
 }

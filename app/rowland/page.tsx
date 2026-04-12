@@ -10,6 +10,8 @@ import { Navbar } from '@/components/Navbar';
 import type { RowlandComp, RowlandCompStatus } from '@/types/rowland';
 import { ROWLAND_COMP_NAMES } from '@/types/rowland';
 
+const LS_KEY = 'rowland_selected_club';
+
 const ROWLAND_GUEST_BUTTONS = (
   <>
     <a href="/clublogin" className="px-3 py-1.5 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-md transition-colors">Club Login</a>
@@ -43,6 +45,11 @@ export default function RowlandPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Club selector (for guests / non-club members)
+  const isClubSession = role === 'Club' || role.split(',').map(r => r.trim()).includes('RowlandPlayer');
+  const [clubs, setClubs] = useState<{ clubId: string; clubName: string }[]>([]);
+  const [selectedClub, setSelectedClub] = useState<{ clubId: string; clubName: string } | null>(null);
+
   // Message panel
   const [message, setMessage] = useState('');
   const [editingMessage, setEditingMessage] = useState(false);
@@ -64,7 +71,21 @@ export default function RowlandPage() {
       .then((r) => r.json())
       .then((data) => { if (typeof data.message === 'string') setMessage(data.message); })
       .catch(() => {});
-  }, []);
+
+    // Load club list for selector (only needed if not logged in as a club)
+    if (!isClubSession) {
+      fetch('/api/rowland/participants')
+        .then((r) => r.json())
+        .then((data) => { if (data.clubs) setClubs(data.clubs); })
+        .catch(() => {});
+
+      // Restore previous selection from localStorage
+      try {
+        const stored = localStorage.getItem(LS_KEY);
+        if (stored) setSelectedClub(JSON.parse(stored));
+      } catch {}
+    }
+  }, [isClubSession]);
 
   function startEditMessage() {
     setEditDraft(message);
@@ -147,6 +168,46 @@ export default function RowlandPage() {
                   </button>
                 )}
               </div>
+            )}
+          </div>
+        )}
+
+        {/* Club selector — shown to guests and non-club members */}
+        {!isClubSession && clubs.length > 0 && (
+          <div className="mb-6 bg-white border border-gray-200 rounded-lg p-4">
+            <p className="text-sm font-medium text-gray-700 mb-2">
+              Which club are you from? Select yours to see your next match on each draw.
+            </p>
+            {selectedClub ? (
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-gray-900 font-medium">{selectedClub.clubName}</span>
+                <button
+                  onClick={() => {
+                    setSelectedClub(null);
+                    try { localStorage.removeItem(LS_KEY); } catch {}
+                  }}
+                  className="text-xs text-blue-600 hover:text-blue-800"
+                >
+                  Change
+                </button>
+              </div>
+            ) : (
+              <select
+                defaultValue=""
+                onChange={(e) => {
+                  const club = clubs.find((c) => c.clubId === e.target.value) ?? null;
+                  setSelectedClub(club);
+                  try {
+                    if (club) localStorage.setItem(LS_KEY, JSON.stringify(club));
+                  } catch {}
+                }}
+                className="border border-gray-300 rounded-md px-3 py-2 text-sm w-full max-w-xs"
+              >
+                <option value="" disabled>Select your club…</option>
+                {clubs.map((c) => (
+                  <option key={c.clubId} value={c.clubId}>{c.clubName}</option>
+                ))}
+              </select>
             )}
           </div>
         )}

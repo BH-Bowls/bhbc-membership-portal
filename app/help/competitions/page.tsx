@@ -54,7 +54,18 @@ export default function HelpCompetitionsPage() {
               playing, the score if recorded, and the play-by date for your next match.
             </Body>
             <Body>
-              Tap any entry to open the full draw for that competition.
+              For active matches, the card also shows contact details for the relevant players so
+              you can get in touch to arrange the game:
+            </Body>
+            <ul className="text-sm text-gray-700 list-disc list-inside space-y-1 mb-3 ml-1">
+              <li><strong>Singles</strong> — contact details for your next opponent.</li>
+              <li><strong>Pairs</strong> — your partner&apos;s details, plus the opposing skip&apos;s details if you are skip.</li>
+              <li><strong>Married Pairs</strong> — contact details for both opponents.</li>
+              <li><strong>Triples</strong> — contact details for your two team members, plus the opposing skip&apos;s details if you are skip.</li>
+            </ul>
+            <Body>
+              Tap <strong>Show Draw →</strong> at the bottom of an entry card to open the full draw
+              for that competition.
             </Body>
             <Body>
               Tap <strong>← All Competitions</strong> at the top of the screen to return to the

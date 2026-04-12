@@ -89,6 +89,7 @@ interface FixtureFormData {
   dress: string;
   paired: string;
   maxPlayers: string;
+  message: string;
 }
 
 const defaultFormData: FixtureFormData = {
@@ -103,6 +104,7 @@ const defaultFormData: FixtureFormData = {
   dress: '',
   paired: '',
   maxPlayers: '',
+  message: '',
 };
 
 // ============================================================================
@@ -135,6 +137,7 @@ function FixtureModal({ isOpen, editGame, onClose, onSave, saving, error }: Fixt
         dress: editGame.dress || '',
         paired: editGame.paired || '',
         maxPlayers: editGame.maxPlayers ? String(editGame.maxPlayers) : '',
+        message: editGame.message || '',
       });
     } else {
       setForm(defaultFormData);
@@ -143,7 +146,7 @@ function FixtureModal({ isOpen, editGame, onClose, onSave, saving, error }: Fixt
 
   if (!isOpen) return null;
 
-  const set = (field: keyof FixtureFormData) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+  const set = (field: keyof FixtureFormData) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     setForm(prev => ({ ...prev, [field]: e.target.value }));
   };
 
@@ -296,6 +299,18 @@ function FixtureModal({ isOpen, editGame, onClose, onSave, saving, error }: Fixt
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
               />
             </div>
+          </div>
+
+          {/* Message / Special Instructions */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Message / Special Instructions</label>
+            <textarea
+              value={form.message}
+              onChange={set('message')}
+              rows={3}
+              placeholder="e.g. Meet at the club at 1:30pm"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-y"
+            />
           </div>
 
           {/* View-only result fields (edit mode only) */}

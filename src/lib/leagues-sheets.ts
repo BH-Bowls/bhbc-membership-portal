@@ -87,18 +87,21 @@ function parseSquadRow(
   row: any[],
   colMap: Record<string, number>,
   rowNumber: number,
-  nameMap: Map<string, string>
+  memberMap: Map<string, { fullName: string; mobile: string | null; email: string | null }>
 ): LeagueSquadMember {
   const get = makeGetter(row, colMap);
   const username = get('username') || '';
+  const info = memberMap.get(username);
   return {
     rowNumber,
     leagueId: get('league_id') || '',
     teamId: get('team_id') || '',
     username,
-    fullName: nameMap.get(username) || username,
+    fullName: info?.fullName ?? username,
     position: (get('position') || '') as SquadPosition,
     enteredDate: get('entered_date') || '',
+    mobile: info?.mobile ?? null,
+    email: info?.email ?? null,
   };
 }
 
@@ -339,10 +342,14 @@ export async function getLeagueSquad(leagueId: string): Promise<LeagueSquadMembe
   const rows = res.data.values ?? [];
   if (rows.length < 2) return [];
 
-  // Build name map
+  // Build member info map
   const users = await getAllUsers();
-  const nameMap = new Map<string, string>(
-    users.map((u) => [u.userName, `${u.firstName} ${u.lastName}`.trim()])
+  const memberMap = new Map<string, { fullName: string; mobile: string | null; email: string | null }>(
+    users.map((u) => [u.userName, {
+      fullName: u.fullName || `${u.firstName} ${u.lastName}`.trim(),
+      mobile: u.mobile ?? null,
+      email: u.emailAddress ?? null,
+    }])
   );
 
   return rows.slice(1)
@@ -351,7 +358,7 @@ export async function getLeagueSquad(leagueId: string): Promise<LeagueSquadMembe
       const idCol = colMap['league_id'];
       return idCol !== undefined && String(row[idCol] ?? '') === leagueId;
     })
-    .map(({ row, sheetRow }) => parseSquadRow(row, colMap, sheetRow, nameMap));
+    .map(({ row, sheetRow }) => parseSquadRow(row, colMap, sheetRow, memberMap));
 }
 
 export async function getTeamSquad(teamId: string): Promise<LeagueSquadMember[]> {
@@ -368,8 +375,12 @@ export async function getTeamSquad(teamId: string): Promise<LeagueSquadMember[]>
   if (rows.length < 2) return [];
 
   const users = await getAllUsers();
-  const nameMap = new Map<string, string>(
-    users.map((u) => [u.userName, `${u.firstName} ${u.lastName}`.trim()])
+  const memberMap = new Map<string, { fullName: string; mobile: string | null; email: string | null }>(
+    users.map((u) => [u.userName, {
+      fullName: u.fullName || `${u.firstName} ${u.lastName}`.trim(),
+      mobile: u.mobile ?? null,
+      email: u.emailAddress ?? null,
+    }])
   );
 
   return rows.slice(1)
@@ -378,7 +389,7 @@ export async function getTeamSquad(teamId: string): Promise<LeagueSquadMember[]>
       const idCol = colMap['team_id'];
       return idCol !== undefined && String(row[idCol] ?? '') === teamId;
     })
-    .map(({ row, sheetRow }) => parseSquadRow(row, colMap, sheetRow, nameMap));
+    .map(({ row, sheetRow }) => parseSquadRow(row, colMap, sheetRow, memberMap));
 }
 
 /** Check if a username is already in the squad for a given league. */

@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const {
       date, time, type, clubName, clubSuffix,
-      homeAway, format, ladiesMen, dress, paired, maxPlayers,
+      homeAway, format, ladiesMen, dress, paired, maxPlayers, message,
     } = body;
 
     if (!date || !clubName) {
@@ -89,6 +89,7 @@ export async function POST(request: NextRequest) {
       dress,
       paired,
       maxPlayers: maxPlayers ? parseInt(maxPlayers) : undefined,
+      message,
       tabDate,
       tabName,
       status: '',

@@ -288,7 +288,7 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
         { name: 'Sweeping Rota', href: '/sweeping-rota' },
       ],
     },
-    ...(isRowlandPlayer ? [{
+    ...(isRowlandPlayer || isCaptain ? [{
       name: 'Rowland Cup',
       href: '/rowland',
       icon: (

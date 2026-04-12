@@ -51,6 +51,25 @@ export default function HelpLeaguesPage() {
             </Body>
           </HelpSection>
 
+          <HelpSection title="Your entry banner">
+            <Body>
+              When you are entered in a league, a blue banner appears at the top of the page showing
+              your team and position. The banner also shows additional information depending on which
+              tab you are viewing:
+            </Body>
+            <ul className="text-sm text-gray-700 list-disc list-inside space-y-1 mb-3 ml-1">
+              <li>
+                <strong>League Table</strong> — the phone number and email address of your other
+                team members are shown so you can get in touch easily.
+              </li>
+              <li>
+                <strong>Fixtures &amp; Results</strong> — your next scheduled fixture is shown,
+                including the date and opponent team. If you are the Skip, your opposing skip&apos;s
+                contact details are also shown.
+              </li>
+            </ul>
+          </HelpSection>
+
           <HelpSection title="Fixtures &amp; results">
             <Body>
               Tap the <strong>Fixtures &amp; Results</strong> tab to see all matches for the league.
@@ -87,15 +106,16 @@ export default function HelpLeaguesPage() {
             </Body>
           </HelpSection>
 
-          <HelpSection title="Players tab">
+          <HelpSection title="Teams tab">
             <Body>
-              The <strong>Players</strong> tab shows everyone entered in the league. Once teams have
+              The <strong>Teams</strong> tab shows everyone entered in the league. Once teams have
               been set up by the committee, players are listed under their team name. Players not yet
               assigned to a team appear under <strong>Reserves</strong>.
             </Body>
             <Body>
-              Your own entry is shown in the blue banner at the top of the page — it tells you
-              which team you have been placed in and your position, if one has been assigned.
+              Tap any player&apos;s name to open their entry in Member Lookup, where you can find their
+              contact details. Tap <strong>← Back</strong> at the top of that page to return to the
+              Teams tab.
             </Body>
           </HelpSection>
 

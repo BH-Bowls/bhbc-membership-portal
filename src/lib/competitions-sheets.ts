@@ -793,6 +793,8 @@ export async function getMemberInfoMap(): Promise<Map<string, CompMemberInfo>> {
       fullName: u.fullName || `${u.firstName} ${u.lastName}`.trim(),
       handicap: u.handicap,
       memberType: u.memberType,
+      mobile: u.mobile,
+      email: u.emailAddress,
     });
   }
   return map;

@@ -3857,6 +3857,7 @@ export async function createFixture(data: {
   dress?: string;
   paired?: string;
   maxPlayers?: number;
+  message?: string;
   tabDate?: string;
   tabName?: string;
   status?: string;
@@ -3892,6 +3893,7 @@ export async function createFixture(data: {
   set('dress', data.dress ?? '');
   set('paired', data.paired ?? '');
   if (data.maxPlayers !== undefined) set('max_capacity', data.maxPlayers);
+  set('message', data.message ?? '');
   set('tab_date', data.tabDate ?? '');
   set('tab_name', data.tabName ?? '');
   set('status', data.status ?? '');
@@ -3926,6 +3928,7 @@ export async function updateFixture(
     dress?: string;
     paired?: string;
     maxPlayers?: number;
+    message?: string;
     tabDate?: string;
     tabName?: string;
     status?: string;
@@ -3963,6 +3966,7 @@ export async function updateFixture(
   addUpdate('dress', fields.dress);
   addUpdate('paired', fields.paired);
   addUpdate('max_capacity', fields.maxPlayers);
+  addUpdate('message', fields.message);
   addUpdate('tab_date', fields.tabDate);
   addUpdate('tab_name', fields.tabName);
   addUpdate('status', fields.status);

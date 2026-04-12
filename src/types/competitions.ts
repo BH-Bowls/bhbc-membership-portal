@@ -88,4 +88,6 @@ export interface CompMemberInfo {
   fullName: string;
   handicap?: number | null;
   memberType?: string;
+  mobile?: string | null;
+  email?: string | null;
 }

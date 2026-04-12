@@ -31,7 +31,7 @@ export async function PATCH(
     const body = await request.json();
     const {
       date, time, type, clubName, clubSuffix,
-      homeAway, format, ladiesMen, dress, paired, maxPlayers,
+      homeAway, format, ladiesMen, dress, paired, maxPlayers, message,
     } = body;
 
     await updateFixture(rowNumber, {
@@ -46,6 +46,7 @@ export async function PATCH(
       dress,
       paired,
       maxPlayers: maxPlayers !== undefined ? parseInt(maxPlayers) : undefined,
+      message,
     });
 
     return NextResponse.json({ success: true });

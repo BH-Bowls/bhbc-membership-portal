@@ -10,7 +10,7 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
 import { COMP_ROUND_LABELS } from '@/types/competitions';
-import type { MyCompEntry, CompPosition, JourneyStep } from '../../api/competitions/my/route';
+import type { MyCompEntry, CompPosition, JourneyStep, ContactInfo } from '../../api/competitions/my/route';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -40,6 +40,31 @@ function nameWithPos(p: { fullName: string; position: CompPosition; handicap?: n
 
 function nameList(people: { fullName: string; position: CompPosition; handicap?: number | null }[]) {
   return people.map(nameWithPos).join(' & ');
+}
+
+// ── Contact line ─────────────────────────────────────────────────────────────
+
+function ContactLine({ person, label }: { person: ContactInfo; label?: string }) {
+  const hasContact = person.mobile || person.email;
+  return (
+    <div className="text-xs text-gray-600">
+      <span className="font-medium text-gray-700">
+        {label ?? person.fullName}
+      </span>
+      {hasContact ? (
+        <>
+          {person.mobile && (
+            <> · <a href={`tel:${person.mobile}`} className="text-blue-600 hover:underline" onClick={(e) => e.stopPropagation()}>{person.mobile}</a></>
+          )}
+          {person.email && (
+            <> · <a href={`mailto:${person.email}`} className="text-blue-600 hover:underline" onClick={(e) => e.stopPropagation()}>{person.email}</a></>
+          )}
+        </>
+      ) : (
+        <span className="text-gray-400 italic"> — no contact details on record</span>
+      )}
+    </div>
+  );
 }
 
 // ── Overall status badge ──────────────────────────────────────────────────────
@@ -176,11 +201,9 @@ function EntryCard({ entry, userName, onClick }: { entry: MyCompEntry; userName:
     : null;
 
   return (
-    <button
-      onClick={onClick}
-      title="Show Draw"
-      className={`w-full text-left bg-white rounded-lg border p-4 transition-all hover:shadow-md cursor-pointer ${
-        isActive ? 'border-blue-200 hover:border-blue-300' : 'border-gray-200 hover:border-gray-300'
+    <div
+      className={`w-full text-left bg-white rounded-lg border p-4 ${
+        isActive ? 'border-blue-200' : 'border-gray-200'
       } ${isKnockedOut ? 'opacity-70' : ''}`}
     >
       {/* Header */}
@@ -196,12 +219,74 @@ function EntryCard({ entry, userName, onClick }: { entry: MyCompEntry; userName:
         </span>
       </div>
 
-      {/* Team composition (pairs / triples) + challenger notice */}
+      {/* Team composition (pairs / triples) + contacts + challenger notice */}
       {(teamLine || isActive) && (
-        <div className="mb-3 space-y-1">
+        <div className="mb-3 space-y-1.5">
           {teamLine && (
             <p className="text-xs text-gray-600">{teamLine}</p>
           )}
+
+          {/* Contact details — only shown on active entries */}
+          {isActive && entry.match && (() => {
+            const { partners, opponents } = entry.match;
+            const isSkip = entry.myPosition === 'Skip' || entry.compType === 'singles';
+            const oppSkip = opponents?.[0] ?? null; // first opponent = skip (singles, pairs) or skip (triples)
+
+            if (entry.compType === 'singles') {
+              // Singles: show opponent contact
+              return oppSkip ? (
+                <div className="bg-gray-50 rounded p-2 space-y-1">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Next Opponent</p>
+                  <ContactLine person={oppSkip} />
+                </div>
+              ) : null;
+            }
+
+            if (entry.compType === 'pairs') {
+              const isMarriedPairs = entry.compId === 'married-pairs';
+
+              if (isMarriedPairs) {
+                // Married Pairs: no partner details, always show both opponents
+                return opponents && opponents.length > 0 ? (
+                  <div className="bg-gray-50 rounded p-2 space-y-1">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Next Opponents</p>
+                    {opponents.map((o) => <ContactLine key={o.username} person={o} label={`${o.position ?? ''}: ${o.fullName}`} />)}
+                  </div>
+                ) : null;
+              }
+
+              // Regular pairs: partner + (if skip) opposing skip
+              return (partners.length > 0 || (isSkip && oppSkip)) ? (
+                <div className="bg-gray-50 rounded p-2 space-y-1">
+                  {partners.length > 0 && (
+                    <>
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Your Partner</p>
+                      {partners.map((p) => <ContactLine key={p.username} person={p} />)}
+                    </>
+                  )}
+                  {isSkip && oppSkip && (
+                    <>
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mt-1.5">Next Opposing Skip</p>
+                      <ContactLine person={oppSkip} />
+                    </>
+                  )}
+                </div>
+              ) : null;
+            }
+
+            if (entry.compType === 'triples') {
+              // Triples: other two team members
+              return partners.length > 0 ? (
+                <div className="bg-gray-50 rounded p-2 space-y-1">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Your Team</p>
+                  {partners.map((p) => <ContactLine key={p.username} person={p} label={`${p.position ?? ''}: ${p.fullName}`} />)}
+                </div>
+              ) : null;
+            }
+
+            return null;
+          })()}
+
           {isActive && (
             <div className="text-xs text-blue-700 bg-blue-50 rounded px-2 py-1.5">
               {entry.isChallenger ? 'You are the Challenger' : 'You are the Opponent'}
@@ -222,8 +307,15 @@ function EntryCard({ entry, userName, onClick }: { entry: MyCompEntry; userName:
         </div>
       )}
 
-      <div className="mt-3 text-xs text-blue-600 text-right">Show Draw →</div>
-    </button>
+      <div className="mt-3 text-right">
+        <button
+          onClick={onClick}
+          className="text-xs text-blue-600 hover:text-blue-800 font-medium cursor-pointer"
+        >
+          Show Draw →
+        </button>
+      </div>
+    </div>
   );
 }
 
