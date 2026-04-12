@@ -3,7 +3,7 @@
 
 import { sendEmail } from './mailer';
 
-const NOTIFY_ADDRESS = 'burgesshillbv@gmail.com';
+const NOTIFY_ADDRESS = 'burgesshillbc@gmail.com';
 
 export type ClubChangeEvent =
   | { type: 'club_updated'; clubName: string; changes: Record<string, { from: string | null; to: string | null }> }
