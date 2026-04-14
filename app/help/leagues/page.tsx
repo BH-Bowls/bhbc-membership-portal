@@ -63,9 +63,11 @@ export default function HelpLeaguesPage() {
                 team members are shown so you can get in touch easily.
               </li>
               <li>
-                <strong>Fixtures &amp; Results</strong> — your next scheduled fixture is shown,
-                including the date and opponent team. If you are the Skip, your opposing skip&apos;s
-                contact details are also shown.
+                <strong>Fixtures &amp; Results</strong> — contact details for an opponent are shown.
+                By default this is your next scheduled fixture. Because matches can be played out of
+                order, you can tap any of your fixtures in the list to switch the contact panel to
+                that match instead. Your selected fixture is highlighted in blue. If you are the Skip,
+                the opposing skip&apos;s name and contact details are shown.
               </li>
             </ul>
           </HelpSection>
@@ -89,6 +91,11 @@ export default function HelpLeaguesPage() {
               <li><strong>Walkover</strong> — a team received a walkover win</li>
               <li><strong>Cancelled</strong> — match will not be played</li>
             </ul>
+            <Body>
+              If you are entered in the league, you can filter the list using the{' '}
+              <strong>Show all / My matches</strong> toggle at the top of the tab to see only the
+              fixtures involving your team.
+            </Body>
           </HelpSection>
 
           <HelpSection title="Scores and results">

@@ -17,12 +17,10 @@ import type {
   LeagueMatch,
   LeagueTableRow,
   LeagueStatus,
-  LeagueMatchStatus,
 } from '@/types/leagues';
 
 const STATUSES: LeagueStatus[] = ['Not Started', 'Entries Open', 'In Progress', 'Complete'];
 
-const MATCH_STATUS_OPTIONS: LeagueMatchStatus[] = ['Scheduled', 'Played', 'Walkover', 'Cancelled'];
 
 function formatDate(d: string | null): string {
   if (!d) return '';
@@ -236,7 +234,6 @@ export default function LeagueManageDetailPage() {
   // Match edit dialog
   const [matchDialog, setMatchDialog] = useState<{
     matchId: string; homeTeamName: string; awayTeamName: string;
-    homeScore: string; awayScore: string; status: LeagueMatchStatus;
     scheduledDate: string; scheduledTime: string; playByDate: string;
     saving: boolean;
   } | null>(null);
@@ -435,9 +432,7 @@ export default function LeagueManageDetailPage() {
 
   async function saveMatchEdit() {
     if (!matchDialog) return;
-    const updates: Record<string, any> = { status: matchDialog.status };
-    if (matchDialog.homeScore !== '') updates.homeScore = parseInt(matchDialog.homeScore);
-    if (matchDialog.awayScore !== '') updates.awayScore = parseInt(matchDialog.awayScore);
+    const updates: Record<string, any> = {};
     if (matchDialog.scheduledDate) updates.scheduledDate = matchDialog.scheduledDate;
     if (matchDialog.scheduledTime) updates.scheduledTime = matchDialog.scheduledTime;
     if (matchDialog.playByDate) updates.playByDate = matchDialog.playByDate;
@@ -482,9 +477,6 @@ export default function LeagueManageDetailPage() {
       matchId: match.matchId,
       homeTeamName: homeTeam?.teamName ?? 'Home',
       awayTeamName: awayTeam?.teamName ?? 'Away',
-      homeScore: match.homeScore !== null ? String(match.homeScore) : '',
-      awayScore: match.awayScore !== null ? String(match.awayScore) : '',
-      status: match.status,
       scheduledDate: match.scheduledDate ?? '',
       scheduledTime: match.scheduledTime ?? '',
       playByDate: match.playByDate ?? '',
@@ -1045,40 +1037,6 @@ export default function LeagueManageDetailPage() {
               </p>
             </div>
             <div className="p-5 space-y-4">
-              <div>
-                <label className="block text-xs text-gray-600 mb-1">Status</label>
-                <select
-                  value={matchDialog.status}
-                  onChange={(e) => setMatchDialog((d) => d ? { ...d, status: e.target.value as LeagueMatchStatus } : d)}
-                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
-                >
-                  {MATCH_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-
-              {(matchDialog.status === 'Played' || matchDialog.status === 'Walkover') && (
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs text-gray-600 mb-1">{matchDialog.homeTeamName}</label>
-                    <input
-                      type="number" min="0"
-                      value={matchDialog.homeScore}
-                      onChange={(e) => setMatchDialog((d) => d ? { ...d, homeScore: e.target.value } : d)}
-                      className="w-full border border-gray-300 rounded-md px-3 py-2 text-lg font-semibold text-center"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-gray-600 mb-1">{matchDialog.awayTeamName}</label>
-                    <input
-                      type="number" min="0"
-                      value={matchDialog.awayScore}
-                      onChange={(e) => setMatchDialog((d) => d ? { ...d, awayScore: e.target.value } : d)}
-                      className="w-full border border-gray-300 rounded-md px-3 py-2 text-lg font-semibold text-center"
-                    />
-                  </div>
-                </div>
-              )}
-
               {league.type === 'triples' ? (
                 <div className="grid grid-cols-2 gap-3">
                   <div>

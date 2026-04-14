@@ -73,6 +73,8 @@ function LeagueDetailPageInner() {
   const initialTab = (searchParams.get('tab') as 'table' | 'fixtures' | 'squad' | 'rules') ?? 'table';
   const [tab, setTab] = useState<'table' | 'fixtures' | 'squad' | 'rules'>(initialTab);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [matchFilter, setMatchFilter] = useState<'all' | 'mine'>('all');
+  const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
 
   // Team breakdown popup
   const [teamDetailId, setTeamDetailId] = useState<string | null>(null);
@@ -272,12 +274,16 @@ function LeagueDetailPageInner() {
         .sort((a, b) => a.matchday - b.matchday)[0] ?? null
     : null;
 
-  const nextFixtureOpponentTeamId = nextFixture && myEntry?.teamId
-    ? (nextFixture.homeTeamId === myEntry.teamId ? nextFixture.awayTeamId : nextFixture.homeTeamId)
+  const contactFixture = myEntry?.teamId
+    ? (selectedMatchId ? (matches.find((m) => m.matchId === selectedMatchId) ?? nextFixture) : nextFixture)
     : null;
 
-  const nextFixtureOpposingSkip = nextFixtureOpponentTeamId
-    ? (squad.find((m) => m.teamId === nextFixtureOpponentTeamId && m.position === 'Skip') ?? null)
+  const contactOpponentTeamId = contactFixture && myEntry?.teamId
+    ? (contactFixture.homeTeamId === myEntry.teamId ? contactFixture.awayTeamId : contactFixture.homeTeamId)
+    : null;
+
+  const contactOpposingSkip = contactOpponentTeamId
+    ? (squad.find((m) => m.teamId === contactOpponentTeamId && m.position === 'Skip') ?? null)
     : null;
 
   // Group matches by date
@@ -402,27 +408,34 @@ function LeagueDetailPageInner() {
               </div>
             )}
 
-            {/* Fixtures tab: show next fixture */}
-            {tab === 'fixtures' && nextFixture && myEntry.teamId && (() => {
-              const oppTeam = teams.find((t) => t.teamId === nextFixtureOpponentTeamId);
-              const fixtureDate = getMatchDate(nextFixture, league.type);
+            {/* Fixtures tab: contact details for selected/next fixture */}
+            {tab === 'fixtures' && myEntry.teamId && (() => {
+              const oppTeam = teams.find((t) => t.teamId === contactOpponentTeamId);
+              const fixtureDate = contactFixture ? getMatchDate(contactFixture, league.type) : null;
               return (
                 <div className="mt-2">
-                  <p className="text-blue-700">
-                    Next fixture{fixtureDate ? `: ${formatFullDate(fixtureDate)}` : ''}{nextFixture.scheduledTime ? ` at ${formatTime(nextFixture.scheduledTime)}` : ''} vs{' '}
-                    <span className="font-medium">{oppTeam?.teamName ?? '—'}</span>
-                  </p>
-                  {myEntry.position === 'Skip' && nextFixtureOpposingSkip && (
-                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5">
-                      <span className="text-blue-700">Opposing Skip: <span className="font-medium text-blue-900">{nextFixtureOpposingSkip.fullName}</span></span>
-                      {nextFixtureOpposingSkip.mobile && (
-                        <a href={`tel:${nextFixtureOpposingSkip.mobile}`} onClick={(e) => e.stopPropagation()} className="text-blue-600 hover:underline">{nextFixtureOpposingSkip.mobile}</a>
+                  {contactFixture ? (
+                    <>
+                      <p className="text-blue-700">
+                        {fixtureDate ? formatFullDate(fixtureDate) : 'Unscheduled'}{contactFixture.scheduledTime ? ` at ${formatTime(contactFixture.scheduledTime)}` : ''} vs{' '}
+                        <span className="font-medium">{oppTeam?.teamName ?? '—'}</span>
+                      </p>
+                      {myEntry.position === 'Skip' && contactOpposingSkip && (
+                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                          <span className="text-blue-700">Opposing Skip: <span className="font-medium text-blue-900">{contactOpposingSkip.fullName}</span></span>
+                          {contactOpposingSkip.mobile && (
+                            <a href={`tel:${contactOpposingSkip.mobile}`} onClick={(e) => e.stopPropagation()} className="text-blue-600 hover:underline">{contactOpposingSkip.mobile}</a>
+                          )}
+                          {contactOpposingSkip.email && (
+                            <a href={`mailto:${contactOpposingSkip.email}`} onClick={(e) => e.stopPropagation()} className="text-blue-600 hover:underline">{contactOpposingSkip.email}</a>
+                          )}
+                        </div>
                       )}
-                      {nextFixtureOpposingSkip.email && (
-                        <a href={`mailto:${nextFixtureOpposingSkip.email}`} onClick={(e) => e.stopPropagation()} className="text-blue-600 hover:underline">{nextFixtureOpposingSkip.email}</a>
-                      )}
-                    </div>
+                    </>
+                  ) : (
+                    <p className="text-blue-600 italic">No upcoming fixtures.</p>
                   )}
+                  <p className="mt-2 text-xs text-blue-500">Tap any of your fixtures below to update contact details.</p>
                 </div>
               );
             })()}
@@ -498,25 +511,49 @@ function LeagueDetailPageInner() {
         {/* Fixtures & Results */}
         {tab === 'fixtures' && (
           <>
+            {myEntry?.teamId && (
+              <div className="flex gap-4 mb-4">
+                {(['all', 'mine'] as const).map((v) => (
+                  <label key={v} className="flex items-center gap-1.5 text-sm cursor-pointer select-none">
+                    <input
+                      type="radio"
+                      name="matchFilter"
+                      value={v}
+                      checked={matchFilter === v}
+                      onChange={() => setMatchFilter(v)}
+                      className="accent-green-600"
+                    />
+                    <span className="text-gray-700">{v === 'all' ? 'Show all' : 'My matches'}</span>
+                  </label>
+                ))}
+              </div>
+            )}
             {matches.length === 0 ? (
               <div className="text-center py-10 text-gray-400">No fixtures scheduled yet.</div>
             ) : (
               <div className="space-y-6">
-                {scheduledDates.map((date) => (
+                {scheduledDates.filter((date) =>
+                  matchFilter === 'all' || !myEntry?.teamId
+                    ? true
+                    : matches.some((m) => getMatchDate(m, league.type) === date && (m.homeTeamId === myEntry.teamId || m.awayTeamId === myEntry.teamId))
+                ).map((date) => (
                   <div key={date}>
                     <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
                       {formatFullDate(date)}
                     </h3>
                     <div className="space-y-2">
-                      {matches.filter((m) => getMatchDate(m, league.type) === date).map((match) => {
+                      {matches.filter((m) => getMatchDate(m, league.type) === date && (matchFilter === 'all' || !myEntry?.teamId || m.homeTeamId === myEntry.teamId || m.awayTeamId === myEntry.teamId)).map((match) => {
                         const homeTeam = teams.find((t) => t.teamId === match.homeTeamId);
                         const awayTeam = teams.find((t) => t.teamId === match.awayTeamId);
                         const isPlayed = match.status === 'Played' || match.status === 'Walkover' || match.status === 'Conceded';
+                        const isMyMatch = !!myEntry?.teamId && (match.homeTeamId === myEntry.teamId || match.awayTeamId === myEntry.teamId);
+                        const isSelected = match.matchId === selectedMatchId || (!selectedMatchId && match.matchId === contactFixture?.matchId);
 
                         return (
                           <div
                             key={match.matchId}
-                            className="bg-white rounded-lg border border-gray-200 p-3 flex flex-wrap items-center gap-3"
+                            onClick={isMyMatch ? () => setSelectedMatchId(match.matchId) : undefined}
+                            className={`rounded-lg border p-3 flex flex-wrap items-center gap-3 ${isMyMatch ? 'cursor-pointer' : ''} ${isSelected ? 'bg-blue-50 border-blue-400' : 'bg-white border-gray-200'}`}
                           >
                             <div className="flex-1 min-w-0">
                               <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -572,7 +609,7 @@ function LeagueDetailPageInner() {
                                   onClick={() => openScoreDialog(match)}
                                   className="text-xs px-2 py-1 bg-gray-50 text-gray-600 rounded hover:bg-gray-100"
                                 >
-                                  Edit
+                                  Edit Score
                                 </button>
                               )}
                             </div>
@@ -582,18 +619,21 @@ function LeagueDetailPageInner() {
                     </div>
                   </div>
                 ))}
-                {unscheduledMatches.length > 0 && (
+                {unscheduledMatches.filter((m) => matchFilter === 'all' || !myEntry?.teamId || m.homeTeamId === myEntry.teamId || m.awayTeamId === myEntry.teamId).length > 0 && (
                   <div>
                     <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Unscheduled</h3>
                     <div className="space-y-2">
-                      {unscheduledMatches.map((match) => {
+                      {unscheduledMatches.filter((m) => matchFilter === 'all' || !myEntry?.teamId || m.homeTeamId === myEntry.teamId || m.awayTeamId === myEntry.teamId).map((match) => {
                         const homeTeam = teams.find((t) => t.teamId === match.homeTeamId);
                         const awayTeam = teams.find((t) => t.teamId === match.awayTeamId);
                         const isPlayed = match.status === 'Played' || match.status === 'Walkover' || match.status === 'Conceded';
+                        const isMyMatch = !!myEntry?.teamId && (match.homeTeamId === myEntry.teamId || match.awayTeamId === myEntry.teamId);
+                        const isSelected = match.matchId === selectedMatchId || (!selectedMatchId && match.matchId === contactFixture?.matchId);
                         return (
                           <div
                             key={match.matchId}
-                            className="bg-white rounded-lg border border-gray-200 p-3 flex flex-wrap items-center gap-3"
+                            onClick={isMyMatch ? () => setSelectedMatchId(match.matchId) : undefined}
+                            className={`rounded-lg border p-3 flex flex-wrap items-center gap-3 ${isMyMatch ? 'cursor-pointer' : ''} ${isSelected ? 'bg-blue-50 border-blue-400' : 'bg-white border-gray-200'}`}
                           >
                             <div className="flex-1 min-w-0 flex flex-wrap items-center gap-2 text-sm">
                               <span className="font-medium text-gray-900">{homeTeam?.teamName ?? '—'}</span>
