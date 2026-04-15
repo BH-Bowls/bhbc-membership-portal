@@ -37,7 +37,7 @@ export async function POST(
     if (!league) return NextResponse.json({ error: 'League not found' }, { status: 404 });
     if (teams.length < 2) return NextResponse.json({ error: 'Need at least 2 teams' }, { status: 400 });
 
-    const fixtures = generateRoundRobin(teams.map((t) => t.teamId));
+    const fixtures = generateRoundRobin(teams.map((t) => t.teamId), league.legs);
 
     const matches = fixtures.map((f, i) => ({
       matchId: `${leagueId}-md${f.matchday}-${i + 1}`,

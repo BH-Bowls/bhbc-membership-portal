@@ -75,6 +75,16 @@ function LeagueDetailPageInner() {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [matchFilter, setMatchFilter] = useState<'all' | 'mine'>('all');
   const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
+  function scrollToBanner() {
+    setTimeout(() => {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }, 0);
+  }
+
+  function selectMatch(matchId: string) {
+    setSelectedMatchId(matchId);
+    scrollToBanner();
+  }
 
   // Team breakdown popup
   const [teamDetailId, setTeamDetailId] = useState<string | null>(null);
@@ -108,6 +118,7 @@ function LeagueDetailPageInner() {
         setSquad(data.squad);
         setMatches(data.matches);
         setTable(data.table);
+        setSelectedMatchId(null);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -271,7 +282,14 @@ function LeagueDetailPageInner() {
           (m.homeTeamId === myEntry.teamId || m.awayTeamId === myEntry.teamId) &&
           m.status === 'Scheduled'
         )
-        .sort((a, b) => a.matchday - b.matchday)[0] ?? null
+        .sort((a, b) => {
+          const aDate = getMatchDate(a, league?.type ?? 'triples');
+          const bDate = getMatchDate(b, league?.type ?? 'triples');
+          if (aDate && bDate) return aDate.localeCompare(bDate);
+          if (aDate) return -1;
+          if (bDate) return 1;
+          return a.matchday - b.matchday;
+        })[0] ?? null
     : null;
 
   const contactFixture = myEntry?.teamId
@@ -435,7 +453,7 @@ function LeagueDetailPageInner() {
                   ) : (
                     <p className="text-blue-600 italic">No upcoming fixtures.</p>
                   )}
-                  <p className="mt-2 text-xs text-blue-500">Tap any of your fixtures below to update contact details.</p>
+                  <p className="mt-2 text-xs text-blue-500">{selectedMatchId ? 'Tap another fixture to change.' : 'Showing next scheduled fixture — tap any of your games to change.'}</p>
                 </div>
               );
             })()}
@@ -447,7 +465,7 @@ function LeagueDetailPageInner() {
           {(['table', 'fixtures', 'squad', 'rules'] as const).map((t) => (
             <button
               key={t}
-              onClick={() => setTab(t)}
+              onClick={() => { setTab(t); if (t === 'fixtures') scrollToBanner(); }}
               className={`px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 capitalize transition-colors ${
                 tab === t
                   ? 'border-green-600 text-green-700'
@@ -547,12 +565,13 @@ function LeagueDetailPageInner() {
                         const awayTeam = teams.find((t) => t.teamId === match.awayTeamId);
                         const isPlayed = match.status === 'Played' || match.status === 'Walkover' || match.status === 'Conceded';
                         const isMyMatch = !!myEntry?.teamId && (match.homeTeamId === myEntry.teamId || match.awayTeamId === myEntry.teamId);
-                        const isSelected = match.matchId === selectedMatchId || (!selectedMatchId && match.matchId === contactFixture?.matchId);
+                        const isSelected = match.matchId === (selectedMatchId ?? nextFixture?.matchId);
 
                         return (
                           <div
                             key={match.matchId}
-                            onClick={isMyMatch ? () => setSelectedMatchId(match.matchId) : undefined}
+                            id={`match-${match.matchId}`}
+                            onClick={isMyMatch ? () => selectMatch(match.matchId) : undefined}
                             className={`rounded-lg border p-3 flex flex-wrap items-center gap-3 ${isMyMatch ? 'cursor-pointer' : ''} ${isSelected ? 'bg-blue-50 border-blue-400' : 'bg-white border-gray-200'}`}
                           >
                             <div className="flex-1 min-w-0">
@@ -598,7 +617,7 @@ function LeagueDetailPageInner() {
                               </span>
                               {canEnterScore(match) && !isPlayed && match.status !== 'Cancelled' && (
                                 <button
-                                  onClick={() => openScoreDialog(match)}
+                                  onClick={(e) => { e.stopPropagation(); openScoreDialog(match); }}
                                   className="text-xs px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100"
                                 >
                                   Enter Score
@@ -606,7 +625,7 @@ function LeagueDetailPageInner() {
                               )}
                               {isCommittee && (isPlayed || match.status === 'Cancelled') && (
                                 <button
-                                  onClick={() => openScoreDialog(match)}
+                                  onClick={(e) => { e.stopPropagation(); openScoreDialog(match); }}
                                   className="text-xs px-2 py-1 bg-gray-50 text-gray-600 rounded hover:bg-gray-100"
                                 >
                                   Edit Score
@@ -628,11 +647,12 @@ function LeagueDetailPageInner() {
                         const awayTeam = teams.find((t) => t.teamId === match.awayTeamId);
                         const isPlayed = match.status === 'Played' || match.status === 'Walkover' || match.status === 'Conceded';
                         const isMyMatch = !!myEntry?.teamId && (match.homeTeamId === myEntry.teamId || match.awayTeamId === myEntry.teamId);
-                        const isSelected = match.matchId === selectedMatchId || (!selectedMatchId && match.matchId === contactFixture?.matchId);
+                        const isSelected = match.matchId === (selectedMatchId ?? nextFixture?.matchId);
                         return (
                           <div
                             key={match.matchId}
-                            onClick={isMyMatch ? () => setSelectedMatchId(match.matchId) : undefined}
+                            id={`match-${match.matchId}`}
+                            onClick={isMyMatch ? () => selectMatch(match.matchId) : undefined}
                             className={`rounded-lg border p-3 flex flex-wrap items-center gap-3 ${isMyMatch ? 'cursor-pointer' : ''} ${isSelected ? 'bg-blue-50 border-blue-400' : 'bg-white border-gray-200'}`}
                           >
                             <div className="flex-1 min-w-0 flex flex-wrap items-center gap-2 text-sm">
@@ -653,10 +673,10 @@ function LeagueDetailPageInner() {
                                 {match.status}
                               </span>
                               {canEnterScore(match) && !isPlayed && match.status !== 'Cancelled' && (
-                                <button onClick={() => openScoreDialog(match)} className="text-xs px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100">Enter Score</button>
+                                <button onClick={(e) => { e.stopPropagation(); openScoreDialog(match); }} className="text-xs px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100">Enter Score</button>
                               )}
                               {isCommittee && (isPlayed || match.status === 'Cancelled') && (
-                                <button onClick={() => openScoreDialog(match)} className="text-xs px-2 py-1 bg-gray-50 text-gray-600 rounded hover:bg-gray-100">Edit</button>
+                                <button onClick={(e) => { e.stopPropagation(); openScoreDialog(match); }} className="text-xs px-2 py-1 bg-gray-50 text-gray-600 rounded hover:bg-gray-100">Edit</button>
                               )}
                             </div>
                           </div>

@@ -43,6 +43,8 @@ export async function POST(req: Request) {
       status: 'Not Started',
       squadSize,
       playersPerMatch,
+      dateLabel: leagueType === 'triples' ? 'Play on/at' : 'Play by',
+      legs: leagueType === 'triples' ? 2 : 1,
     });
     return NextResponse.json({ leagueId });
   } catch (err) {

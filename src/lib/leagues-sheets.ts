@@ -63,14 +63,19 @@ function makeGetter(row: any[], colMap: Record<string, number>) {
 
 function parseLeagueRow(row: any[], colMap: Record<string, number>): League {
   const get = makeGetter(row, colMap);
+  const type = (get('type') || 'triples') as LeagueType;
+  const defaultDateLabel = type === 'triples' ? 'Play on/at' : 'Play by';
+  const legsRaw = parseInt(get('legs') || '', 10);
   return {
     leagueId: get('league_id') || '',
     name: get('name') || '',
-    type: (get('type') || 'triples') as LeagueType,
+    type,
     season: get('season') || '',
     status: (get('status') || 'Not Started') as LeagueStatus,
     squadSize: parseInt(get('squad_size') || '6', 10) || 6,
     playersPerMatch: parseInt(get('players_per_match') || '3', 10) || 3,
+    dateLabel: (get('date_label') || defaultDateLabel) as import('@/types/leagues').DateLabel,
+    legs: (legsRaw === 1 ? 1 : 2) as 1 | 2,
   };
 }
 
@@ -181,6 +186,8 @@ export async function createLeague(data: Omit<League, 'leagueId'> & { leagueId?:
   set('status', data.status);
   set('squad_size', String(data.squadSize));
   set('players_per_match', String(data.playersPerMatch));
+  set('date_label', data.dateLabel);
+  set('legs', String(data.legs));
 
   await sheets.spreadsheets.values.append({
     spreadsheetId: sid(),
@@ -194,7 +201,7 @@ export async function createLeague(data: Omit<League, 'leagueId'> & { leagueId?:
 
 export async function updateLeague(
   leagueId: string,
-  updates: Partial<Pick<League, 'name' | 'type' | 'season' | 'status' | 'squadSize' | 'playersPerMatch'>>
+  updates: Partial<Pick<League, 'name' | 'type' | 'season' | 'status' | 'squadSize' | 'playersPerMatch' | 'dateLabel' | 'legs'>>
 ): Promise<void> {
   const colMap = await getColumnMap('LeagueControl', sid());
   const sheets = getGoogleSheetsClient();
@@ -216,6 +223,8 @@ export async function updateLeague(
   if (updates.status !== undefined) fieldMap['status'] = updates.status;
   if (updates.squadSize !== undefined) fieldMap['squad_size'] = String(updates.squadSize);
   if (updates.playersPerMatch !== undefined) fieldMap['players_per_match'] = String(updates.playersPerMatch);
+  if (updates.dateLabel !== undefined) fieldMap['date_label'] = updates.dateLabel;
+  if (updates.legs !== undefined) fieldMap['legs'] = String(updates.legs);
 
   const data = Object.entries(fieldMap)
     .filter(([col]) => colMap[col] !== undefined)
@@ -286,6 +295,30 @@ export async function createTeam(leagueId: string, teamName: string): Promise<st
   });
 
   return teamId;
+}
+
+export async function renameTeam(teamId: string, newName: string): Promise<void> {
+  const colMap = await getColumnMap('LeagueTeams', sid());
+  const sheets = getGoogleSheetsClient();
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: sid(),
+    range: 'LeagueTeams!A:Z',
+  });
+  const rows = res.data.values ?? [];
+  const idCol = colMap['team_id'];
+  const nameCol = colMap['team_name'];
+  if (nameCol === undefined) throw new Error('team_name column not found in LeagueTeams');
+  const rowIdx = rows.findIndex((r, i) => i > 0 && String(r[idCol] ?? '') === teamId);
+  if (rowIdx < 0) throw new Error(`Team ${teamId} not found`);
+  const sheetRow = rowIdx + 1;
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: sid(),
+    range: `LeagueTeams!${getColumnLetter(nameCol)}${sheetRow}`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: { values: [[newName]] },
+  });
 }
 
 export async function deleteTeam(teamId: string): Promise<void> {

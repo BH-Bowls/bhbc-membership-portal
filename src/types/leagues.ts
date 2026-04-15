@@ -13,14 +13,18 @@ export const LEAGUE_POSITIONS: Record<LeagueType, SquadPosition[]> = {
   pairs:   ['Skip', 'Lead'],
 };
 
+export type DateLabel = 'Play on/at' | 'Play by' | 'Play start date';
+
 export interface League {
   leagueId: string;
   name: string;
   type: LeagueType;
   season: string;
   status: LeagueStatus;
-  squadSize: number;    // 6 for triples, 4 for pairs
+  squadSize: number;      // 6 for triples, 4 for pairs
   playersPerMatch: number; // 3 for triples, 2 for pairs
+  dateLabel: DateLabel;   // label shown next to fixture dates
+  legs: 1 | 2;            // how many times each pair of teams meets
 }
 
 export interface LeagueTeam {
@@ -125,7 +129,7 @@ export function calculateTable(teams: LeagueTeam[], matches: LeagueMatch[]): Lea
  * array of team IDs.  The first half uses standard rotation; the second half
  * swaps home and away.
  */
-export function generateRoundRobin(teamIds: string[]): { matchday: number; homeTeamId: string; awayTeamId: string }[] {
+export function generateRoundRobin(teamIds: string[], legs: 1 | 2 = 2): { matchday: number; homeTeamId: string; awayTeamId: string }[] {
   const ids = [...teamIds];
   if (ids.length % 2 !== 0) ids.push('__bye__'); // dummy for odd number
   const n = ids.length;
@@ -152,5 +156,5 @@ export function generateRoundRobin(teamIds: string[]): { matchday: number; homeT
     awayTeamId: f.homeTeamId,
   }));
 
-  return [...firstLeg, ...secondLeg];
+  return legs === 1 ? firstLeg : [...firstLeg, ...secondLeg];
 }

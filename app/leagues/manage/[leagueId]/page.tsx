@@ -231,12 +231,72 @@ export default function LeagueManageDetailPage() {
     setSavedSlots(filled);
   }
 
+  // Inline team rename
+  const [renamingTeamId, setRenamingTeamId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+
+  async function saveRename(teamId: string) {
+    const name = renameValue.trim();
+    if (!name) { setRenamingTeamId(null); return; }
+    try {
+      await fetch(`/api/leagues/${leagueId}/teams/${teamId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      setRenamingTeamId(null);
+      loadData();
+    } catch (err: any) {
+      alert(err.message);
+    }
+  }
+
   // Match edit dialog
   const [matchDialog, setMatchDialog] = useState<{
     matchId: string; homeTeamName: string; awayTeamName: string;
     scheduledDate: string; scheduledTime: string; playByDate: string;
     saving: boolean;
   } | null>(null);
+
+  // Bulk fixture selection + edit
+  const [selectedMatchIds, setSelectedMatchIds] = useState<Set<string>>(new Set());
+  const [bulkDialog, setBulkDialog] = useState<{
+    scheduledDate: string; scheduledTime: string; playByDate: string;
+    touched: { scheduledDate: boolean; scheduledTime: boolean; playByDate: boolean };
+    saving: boolean;
+  } | null>(null);
+
+  function toggleMatchSelection(matchId: string) {
+    setSelectedMatchIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(matchId)) next.delete(matchId); else next.add(matchId);
+      return next;
+    });
+  }
+
+  async function saveBulkEdit() {
+    if (!bulkDialog) return;
+    const updates: Record<string, string | null> = {};
+    if (bulkDialog.touched.scheduledDate) updates.scheduledDate = bulkDialog.scheduledDate || null;
+    if (bulkDialog.touched.scheduledTime) updates.scheduledTime = bulkDialog.scheduledTime || null;
+    if (bulkDialog.touched.playByDate) updates.playByDate = bulkDialog.playByDate || null;
+    setBulkDialog((d) => d ? { ...d, saving: true } : d);
+    try {
+      await Promise.all([...selectedMatchIds].map((matchId) =>
+        fetch(`/api/leagues/${leagueId}/matches/${matchId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updates),
+        })
+      ));
+      setBulkDialog(null);
+      setSelectedMatchIds(new Set());
+      loadData();
+    } catch (err: any) {
+      alert(err.message);
+      setBulkDialog((d) => d ? { ...d, saving: false } : d);
+    }
+  }
 
   // Status change
   const [savingStatus, setSavingStatus] = useState(false);
@@ -499,12 +559,18 @@ export default function LeagueManageDetailPage() {
     return t.replace(':', '');
   }
 
-  function MatchRow({ match }: { match: LeagueMatch }) {
+  function MatchRow({ match, isSelected, onToggle }: { match: LeagueMatch; isSelected: boolean; onToggle: () => void }) {
     const homeTeam = teams.find((t) => t.teamId === match.homeTeamId);
     const awayTeam = teams.find((t) => t.teamId === match.awayTeamId);
     const isPlayed = match.status === 'Played' || match.status === 'Walkover';
     return (
-      <div className="bg-white rounded-lg border border-gray-200 p-3 flex flex-wrap items-center gap-2">
+      <div className={`rounded-lg border p-3 flex flex-wrap items-center gap-2 ${isSelected ? 'bg-blue-50 border-blue-300' : 'bg-white border-gray-200'}`}>
+        <input
+          type="checkbox"
+          checked={isSelected}
+          onChange={onToggle}
+          className="accent-blue-600 w-4 h-4 flex-shrink-0 cursor-pointer"
+        />
         <div className="flex-1 min-w-0 text-sm">
           {match.scheduledTime && (
             <span className="text-gray-400 text-xs font-mono mr-2">{formatTime(match.scheduledTime)}</span>
@@ -518,7 +584,7 @@ export default function LeagueManageDetailPage() {
             </span>
           )}
           {league!.type === 'pairs' && match.playByDate && (
-            <span className="ml-2 text-gray-400 text-xs">play by {formatDate(match.playByDate)}</span>
+            <span className="ml-2 text-gray-400 text-xs">{league!.dateLabel.toLowerCase()} {formatDate(match.playByDate)}</span>
           )}
         </div>
         <span className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 ${
@@ -609,7 +675,28 @@ export default function LeagueManageDetailPage() {
             <div className="flex flex-wrap gap-2 mb-3">
               {teams.map((team) => (
                 <div key={team.teamId} className="flex items-center gap-1 bg-gray-100 rounded-full px-3 py-1 text-sm">
-                  <span>{team.teamName}</span>
+                  {renamingTeamId === team.teamId ? (
+                    <input
+                      autoFocus
+                      type="text"
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      onBlur={() => saveRename(team.teamId)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') saveRename(team.teamId);
+                        if (e.key === 'Escape') setRenamingTeamId(null);
+                      }}
+                      className="bg-transparent border-b border-gray-400 outline-none text-sm w-28"
+                    />
+                  ) : (
+                    <span
+                      className="cursor-pointer hover:text-blue-600"
+                      title="Click to rename"
+                      onClick={() => { setRenamingTeamId(team.teamId); setRenameValue(team.teamName); }}
+                    >
+                      {team.teamName}
+                    </span>
+                  )}
                   <button
                     onClick={() => deleteTeam(team.teamId, team.teamName)}
                     className="text-gray-400 hover:text-red-500 ml-1 text-xs leading-none"
@@ -879,6 +966,40 @@ export default function LeagueManageDetailPage() {
               </div>
             </div>
 
+            {selectedMatchIds.size > 0 && (
+              <div className="flex items-center gap-3 mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm">
+                <span className="text-blue-800 font-medium">{selectedMatchIds.size} selected</span>
+                <button
+                  onClick={() => {
+                    const sel = matches.filter((m) => selectedMatchIds.has(m.matchId));
+                    const common = <T,>(vals: (T | null | undefined)[]) => vals.every((v) => v === vals[0]) ? (vals[0] ?? '') : '';
+                    setBulkDialog({
+                      scheduledDate: common(sel.map((m) => m.scheduledDate)),
+                      scheduledTime: common(sel.map((m) => m.scheduledTime)),
+                      playByDate: common(sel.map((m) => m.playByDate)),
+                      touched: { scheduledDate: false, scheduledTime: false, playByDate: false },
+                      saving: false,
+                    });
+                  }}
+                  className="px-3 py-1 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-xs font-medium"
+                >
+                  Edit Date / Time
+                </button>
+                <button
+                  onClick={() => setSelectedMatchIds(new Set(matches.map((m) => m.matchId)))}
+                  className="px-3 py-1 border border-blue-300 text-blue-700 rounded-md hover:bg-blue-100 text-xs"
+                >
+                  Select all
+                </button>
+                <button
+                  onClick={() => setSelectedMatchIds(new Set())}
+                  className="px-3 py-1 text-blue-600 hover:text-blue-800 text-xs"
+                >
+                  Clear
+                </button>
+              </div>
+            )}
+
             {matches.length === 0 ? (
               <div className="text-center py-10 text-gray-400">
                 No fixtures yet. Add teams and generate fixtures above.
@@ -896,7 +1017,7 @@ export default function LeagueManageDetailPage() {
                         {formatFullDate(date)}
                       </h3>
                       <div className="space-y-2">
-                        {dayMatches.map((match) => <MatchRow key={match.matchId} match={match} />)}
+                        {dayMatches.map((match) => <MatchRow key={match.matchId} match={match} isSelected={selectedMatchIds.has(match.matchId)} onToggle={() => toggleMatchSelection(match.matchId)} />)}
                       </div>
                     </div>
                   );
@@ -907,7 +1028,7 @@ export default function LeagueManageDetailPage() {
                   <div>
                     <h3 className="text-sm font-semibold text-gray-400 mb-2">Unscheduled</h3>
                     <div className="space-y-2">
-                      {unscheduledMatches.map((match) => <MatchRow key={match.matchId} match={match} />)}
+                      {unscheduledMatches.map((match) => <MatchRow key={match.matchId} match={match} isSelected={selectedMatchIds.has(match.matchId)} onToggle={() => toggleMatchSelection(match.matchId)} />)}
                     </div>
                   </div>
                 )}
@@ -952,14 +1073,48 @@ export default function LeagueManageDetailPage() {
 
         {/* Settings tab */}
         {tab === 'settings' && (
-          <div className="bg-white border border-gray-200 rounded-lg p-5 space-y-4 max-w-md">
-            <div>
-              <p className="text-sm text-gray-600"><strong>Type:</strong> {league.type}</p>
-              <p className="text-sm text-gray-600"><strong>Season:</strong> {league.season}</p>
-              <p className="text-sm text-gray-600"><strong>Squad size:</strong> {league.squadSize}</p>
-              <p className="text-sm text-gray-600"><strong>Players per match:</strong> {league.playersPerMatch}</p>
+          <div className="bg-white border border-gray-200 rounded-lg p-5 space-y-5 max-w-md">
+            <div className="space-y-1 text-sm text-gray-600">
+              <p><strong>Type:</strong> {league.type}</p>
+              <p><strong>Season:</strong> {league.season}</p>
+              <p><strong>Squad size:</strong> {league.squadSize}</p>
+              <p><strong>Players per match:</strong> {league.playersPerMatch}</p>
             </div>
-            <p className="text-xs text-gray-400">More settings coming soon.</p>
+            <div className="border-t border-gray-100 pt-4 space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Date label</label>
+                <select
+                  value={league.dateLabel}
+                  onChange={async (e) => {
+                    const val = e.target.value as import('@/types/leagues').DateLabel;
+                    await fetch(`/api/leagues/${leagueId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dateLabel: val }) });
+                    setLeague((l) => l ? { ...l, dateLabel: val } : l);
+                  }}
+                  className="border border-gray-300 rounded-md px-3 py-2 text-sm w-full"
+                >
+                  <option value="Play on/at">Play on/at</option>
+                  <option value="Play by">Play by</option>
+                  <option value="Play start date">Play start date</option>
+                </select>
+                <p className="text-xs text-gray-400 mt-1">How fixture dates are labelled for members.</p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Legs (round-robin)</label>
+                <select
+                  value={league.legs}
+                  onChange={async (e) => {
+                    const val = parseInt(e.target.value) as 1 | 2;
+                    await fetch(`/api/leagues/${leagueId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ legs: val }) });
+                    setLeague((l) => l ? { ...l, legs: val } : l);
+                  }}
+                  className="border border-gray-300 rounded-md px-3 py-2 text-sm w-full"
+                >
+                  <option value={1}>1 — each pair plays once</option>
+                  <option value={2}>2 — each pair plays twice</option>
+                </select>
+                <p className="text-xs text-gray-400 mt-1">Affects Generate Round-Robin — re-generate fixtures after changing.</p>
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -1040,7 +1195,7 @@ export default function LeagueManageDetailPage() {
               {league.type === 'triples' ? (
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs text-gray-600 mb-1">Date</label>
+                    <label className="block text-xs text-gray-600 mb-1">{league.dateLabel}</label>
                     <input
                       type="date"
                       value={matchDialog.scheduledDate}
@@ -1060,7 +1215,7 @@ export default function LeagueManageDetailPage() {
                 </div>
               ) : (
                 <div>
-                  <label className="block text-xs text-gray-600 mb-1">Play By Date</label>
+                  <label className="block text-xs text-gray-600 mb-1">{league.dateLabel}</label>
                   <input
                     type="date"
                     value={matchDialog.playByDate}
@@ -1083,6 +1238,69 @@ export default function LeagueManageDetailPage() {
                 className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
               >
                 {matchDialog.saving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk date/time edit dialog */}
+      {bulkDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm">
+            <div className="p-5 border-b border-gray-200">
+              <h2 className="text-base font-semibold text-gray-900">Edit Date / Time</h2>
+              <p className="text-sm text-gray-500 mt-0.5">Applying to {selectedMatchIds.size} fixture{selectedMatchIds.size !== 1 ? 's' : ''}. Only fields you change will be updated — clearing a field removes that date/time.</p>
+            </div>
+            <div className="p-5 space-y-4">
+              {league.type === 'triples' ? (
+                <>
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">{league.dateLabel}</label>
+                    <input
+                      type="date"
+                      value={bulkDialog.scheduledDate}
+                      onChange={(e) => setBulkDialog((d) => d ? { ...d, scheduledDate: e.target.value, touched: { ...d.touched, scheduledDate: true } } : d)}
+                      className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                      autoFocus
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">Time</label>
+                    <input
+                      type="time"
+                      value={bulkDialog.scheduledTime}
+                      onChange={(e) => setBulkDialog((d) => d ? { ...d, scheduledTime: e.target.value, touched: { ...d.touched, scheduledTime: true } } : d)}
+                      className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                    />
+                  </div>
+                </>
+              ) : (
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">{league.dateLabel}</label>
+                  <input
+                    type="date"
+                    value={bulkDialog.playByDate}
+                    onChange={(e) => setBulkDialog((d) => d ? { ...d, playByDate: e.target.value, touched: { ...d.touched, playByDate: true } } : d)}
+                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                    autoFocus
+                  />
+                </div>
+              )}
+            </div>
+            <div className="p-5 border-t border-gray-200 flex gap-3 justify-end">
+              <button
+                onClick={() => setBulkDialog(null)}
+                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveBulkEdit}
+                disabled={bulkDialog.saving}
+                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+              >
+                {bulkDialog.saving ? 'Saving…' : `Save ${selectedMatchIds.size} fixture${selectedMatchIds.size !== 1 ? 's' : ''}`}
               </button>
             </div>
           </div>
