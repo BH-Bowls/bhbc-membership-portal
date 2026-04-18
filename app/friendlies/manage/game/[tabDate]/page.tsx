@@ -11,7 +11,7 @@ import { Navbar } from '@/components/Navbar';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { EnteredPlayersModal } from '@/components/game-management/EnteredPlayersModal';
 import Link from 'next/link';
-import { GameSheetPlayer } from '@/lib/types/friendlies';
+import { GameSheetPlayer, Position } from '@/lib/types/friendlies';
 import { saveDraft, restoreDraft, clearDraft } from '@/lib/form-draft-utils';
 import { parseUKDate } from '@/lib/date-utils';
 
@@ -43,6 +43,69 @@ interface GameData {
 
   // List of players with stats and selection info
   players: GameSheetPlayer[];
+}
+
+// ============================================================================
+// Validation
+// ============================================================================
+
+/**
+ * Validate the current selection before saving.
+ * Returns an array of warning messages (empty array = all good).
+ */
+function validateSelection(
+  players: GameSheetPlayer[],
+  game: { format: string; homeAway: 'H' | 'A' }
+): string[] {
+  const warnings: string[] = [];
+  const isAway = game.homeAway === 'A';
+  const playingPlayers = players.filter(p => p.selected === 'Y');
+  const selectedPlayers = players.filter(p => ['Y', 'R', 'T'].includes(p.selected));
+
+  // 1. No captain selected
+  if (!players.some(p => p.captain === 'Y')) {
+    warnings.push('No captain has been selected.');
+  }
+
+  // 2. Home game: no bar person among playing players
+  if (!isAway && !playingPlayers.some(p => p.driverBar && p.driverBar.includes('B'))) {
+    warnings.push('No bar volunteer found among selected players (home game).');
+  }
+
+  // 3. Away game: incomplete driving / car details
+  if (isAway) {
+    const noDetails = selectedPlayers.filter(p => !p.carNumber && p.driving !== 'Y');
+    if (noDetails.length > 0) {
+      warnings.push(`Driving details incomplete for: ${noDetails.map(p => p.fullName).join(', ')}.`);
+    }
+  }
+
+  // 4. Team composition
+  const formatLower = game.format.toLowerCase();
+  const teamCountMatch = game.format.match(/^(\d+)/);
+  const expectedTeamCount = teamCountMatch ? parseInt(teamCountMatch[1]) : 0;
+
+  let expectedPositions: Position[];
+  if (formatLower.includes('pair')) expectedPositions = ['S', '1'];
+  else if (formatLower.includes('triple')) expectedPositions = ['S', '1', '2'];
+  else expectedPositions = ['S', '1', '2', '3']; // Rinks / Fours
+
+  if (expectedTeamCount > 0) {
+    for (let t = 1; t <= expectedTeamCount; t++) {
+      const teamPositions = playingPlayers.filter(p => p.team === t).map(p => p.position);
+      const missing = expectedPositions.filter(pos => !teamPositions.includes(pos));
+      if (missing.length > 0) {
+        const missingLabels = missing.map(pos => pos === '1' ? 'L' : pos);
+        warnings.push(`Team ${t} is missing: ${missingLabels.join(', ')}.`);
+      }
+    }
+    const teamsAssigned = new Set(playingPlayers.filter(p => p.team !== null).map(p => p.team)).size;
+    if (teamsAssigned < expectedTeamCount) {
+      warnings.push(`Only ${teamsAssigned} of ${expectedTeamCount} expected teams have players assigned.`);
+    }
+  }
+
+  return warnings;
 }
 
 // ============================================================================
@@ -84,6 +147,7 @@ export default function TeamSelectionPage() {
 
   // State: Edit mode - whether user is editing selections
   const [isEditing, setIsEditing] = useState(false);
+  const isEditingRef = useRef(false); // ref mirror so async callbacks can read current value
 
   // State: Loading indicator while fetching game data
   const [loading, setLoading] = useState(true);
@@ -96,6 +160,12 @@ export default function TeamSelectionPage() {
 
   // State: Add Players modal visibility
   const [showAddPlayersModal, setShowAddPlayersModal] = useState(false);
+
+  // State: Swap modal
+  const [swapModal, setSwapModal] = useState<{ sourceRowNumber: number; targetRowNumber: number | null } | null>(null);
+
+  // State: Save-warnings modal (list of issues found before saving)
+  const [saveWarnings, setSaveWarnings] = useState<string[]>([]);
 
   // State: Confirmation dialog
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -121,10 +191,31 @@ export default function TeamSelectionPage() {
   // Effects
   // ============================================================================
 
+  // sessionStorage keys for this game
+  const cacheKey = `manage_game_cache_${tabDate}`;
+  const backNavKey = `manage_game_back_nav_${tabDate}`;
+
+  /** Save current game data to sessionStorage before navigating to a print page */
+  function saveToCache(data: GameData) {
+    try {
+      sessionStorage.setItem(cacheKey, JSON.stringify(data));
+      // Record when stats were last refreshed so the picker can skip get-stats
+      sessionStorage.setItem(`stats_refreshed_${tabDate}`, String(Date.now()));
+    } catch { /* quota / private mode — ignore */ }
+  }
+
+  /** Set the back-nav flag so we restore from cache when we return */
+  function markPrintNavigation(data: GameData) {
+    try {
+      sessionStorage.setItem(backNavKey, 'true');
+      saveToCache(data);
+    } catch { /* ignore */ }
+  }
+
   /**
    * Effect: Initialize page - fetch data, restore draft, then refresh stats
-   * All done in one effect to avoid race conditions
-   * Waits for session to be ready before running
+   * On back-navigation from a print page, restore from sessionStorage cache
+   * instead of hitting the Sheets API again.
    */
   useEffect(() => {
     // Wait for session to be ready (needed for draft check)
@@ -136,8 +227,41 @@ export default function TeamSelectionPage() {
     async function initializePage() {
       setLoading(true);
 
+      // Check whether the user just came back from a print page
+      const isBackNav = sessionStorage.getItem(backNavKey) === 'true';
+      sessionStorage.removeItem(backNavKey);
+
+      if (isBackNav) {
+        try {
+          const cached = sessionStorage.getItem(cacheKey);
+          if (cached) {
+            const data: GameData = JSON.parse(cached);
+            setGameData(data);
+            setOriginalPlayers(data.players);
+
+            // Still honour any in-progress draft
+            const currentUserName = session?.user?.userName || session?.user?.name || '';
+            if (currentUserName) {
+              const draft = restoreDraft<GameSheetPlayer[]>(draftFormName, currentUserName);
+              if (draft && draft.length > 0) {
+                setPlayers(draft);
+                setIsEditing(true); isEditingRef.current = true;
+              } else {
+                setPlayers(data.players);
+              }
+            } else {
+              setPlayers(data.players);
+            }
+
+            setupDoneRef.current = tabDate;
+            setLoading(false);
+            return; // Skip all API calls
+          }
+        } catch { /* cache parse failed — fall through to normal load */ }
+      }
+
       try {
-        // 1. Fetch game data
+        // 1. Fetch game data and show it immediately
         const response = await fetch(`/api/friendlies/manage/game/${tabDate}`);
         const data = await response.json();
 
@@ -147,37 +271,16 @@ export default function TeamSelectionPage() {
           return;
         }
 
-        // 2. Refresh stats from Players sheet so nameDown/picked/% and last-6-games
-        //    history are current even if no save has been done in this session yet
-        try {
-          await fetch('/api/friendlies/manage/get-stats', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tab_name: data.game.tabName }),
-          });
-
-          // Re-fetch with updated stats
-          const refreshed = await fetch(`/api/friendlies/manage/game/${tabDate}`);
-          if (refreshed.ok) {
-            const refreshedData = await refreshed.json();
-            data.players = refreshedData.players;
-          }
-        } catch (statsError) {
-          // Non-fatal — proceed with original data
-          console.error('Error refreshing stats on load:', statsError);
-        }
-
         setGameData(data);
         setOriginalPlayers(data.players);
 
-        // 3. Check for draft
+        // 2. Check for draft before showing players
         const currentUserName = session?.user?.userName || session?.user?.name || '';
-
         if (currentUserName) {
           const draft = restoreDraft<GameSheetPlayer[]>(draftFormName, currentUserName);
           if (draft && draft.length > 0) {
             setPlayers(draft);
-            setIsEditing(true);
+            setIsEditing(true); isEditingRef.current = true;
           } else {
             setPlayers(data.players);
           }
@@ -186,11 +289,35 @@ export default function TeamSelectionPage() {
         }
 
         setupDoneRef.current = tabDate;
+        setLoading(false);
+
+        // 3. Refresh stats in the background — updates nameDown/picked/% and
+        //    last-6-games without blocking the initial render
+        try {
+          await fetch('/api/friendlies/manage/get-stats', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tab_name: data.game.tabName }),
+          });
+
+          const refreshed = await fetch(`/api/friendlies/manage/game/${tabDate}`);
+          if (refreshed.ok) {
+            const refreshedData = await refreshed.json();
+            setOriginalPlayers(refreshedData.players);
+            // Don't overwrite the player list if the captain is already editing
+            if (!isEditingRef.current) {
+              setPlayers(refreshedData.players);
+            }
+            // Keep cache up to date with fresh stats
+            saveToCache(refreshedData);
+          }
+        } catch (statsError) {
+          console.error('Error refreshing stats:', statsError);
+        }
       } catch (error) {
         console.error('Error fetching game:', error);
         alert('Failed to load game');
         router.push('/friendlies/manage');
-      } finally {
         setLoading(false);
       }
     }
@@ -334,14 +461,13 @@ export default function TeamSelectionPage() {
    */
   const startEditing = useCallback(() => {
     setOriginalPlayers(players);
-    setIsEditing(true);
+    setIsEditing(true); isEditingRef.current = true;
   }, [players]);
 
   /**
-   * Save changes and exit edit mode
-   * Wraps handleUpdateSelection with edit mode handling
+   * Perform the actual save — called directly or after the user confirms warnings.
    */
-  const handleSave = useCallback(async () => {
+  const doSave = useCallback(async () => {
     if (!gameData) return;
 
     setSaving(true);
@@ -407,7 +533,7 @@ export default function TeamSelectionPage() {
       setPlayers(updatedPlayers);
       setOriginalPlayers(updatedPlayers);
       clearDraft(draftFormName, userName);
-      setIsEditing(false);
+      setIsEditing(false); isEditingRef.current = false;
       // Success - no alert needed, UI reflects saved state
     } catch (error) {
       console.error('Error saving selection:', error);
@@ -419,12 +545,25 @@ export default function TeamSelectionPage() {
   }, [gameData, players, draftFormName, userName]);
 
   /**
+   * Validate selection then save — shows a warnings modal if issues are found.
+   */
+  const handleSave = useCallback(async () => {
+    if (!gameData) return;
+    const warnings = validateSelection(players, gameData.game);
+    if (warnings.length > 0) {
+      setSaveWarnings(warnings);
+      return;
+    }
+    await doSave();
+  }, [gameData, players, doSave]);
+
+  /**
    * Cancel changes and exit edit mode
    */
   const handleCancel = useCallback(() => {
     setPlayers(originalPlayers);
     clearDraft(draftFormName, userName);
-    setIsEditing(false);
+    setIsEditing(false); isEditingRef.current = false;
   }, [originalPlayers, draftFormName, userName]);
 
   // ============================================================================
@@ -438,14 +577,43 @@ export default function TeamSelectionPage() {
    */
   function updatePlayer(rowNumber: number, field: string, value: any) {
     setPlayers(prev =>
-      prev.map(p =>
-        p.rowNumber === rowNumber
-          ? { ...p, [field]: value }
-          : field === 'captain' && value === 'Y'
-          ? { ...p, captain: '' }
-          : p
-      )
+      prev.map(p => {
+        if (p.rowNumber === rowNumber) {
+          const updated = { ...p, [field]: value };
+          // Auto-promote Reserve → Playing when a team number is assigned
+          if (field === 'team' && value && updated.selected === 'R') {
+            updated.selected = 'Y';
+          }
+          return updated;
+        }
+        // Ensure only one captain at a time
+        if (field === 'captain' && value === 'Y') return { ...p, captain: '' };
+        return p;
+      })
     );
+  }
+
+  /** Swap team/position/driving/carNumber/status between two players */
+  function executeSwap(sourceRowNumber: number, targetRowNumber: number) {
+    setPlayers(prev => {
+      const src = prev.find(p => p.rowNumber === sourceRowNumber);
+      const tgt = prev.find(p => p.rowNumber === targetRowNumber);
+      if (!src || !tgt) return prev;
+      const swapFields = (a: GameSheetPlayer, b: GameSheetPlayer): GameSheetPlayer => ({
+        ...a,
+        selected: b.selected,
+        team: b.team,
+        position: b.position,
+        driving: b.driving,
+        carNumber: b.carNumber,
+      });
+      return prev.map(p => {
+        if (p.rowNumber === sourceRowNumber) return swapFields(p, tgt);
+        if (p.rowNumber === targetRowNumber) return swapFields(p, src);
+        return p;
+      });
+    });
+    setSwapModal(null);
   }
 
   // ============================================================================
@@ -548,6 +716,9 @@ export default function TeamSelectionPage() {
   const { game } = gameData;
   const isAway = game.homeAway === 'A';
 
+  // Position display: stored as '1' (Lead) but shown as 'L'
+  const positionLabel = (pos: string) => pos === '1' ? 'L' : (pos || '-');
+
   // Build navbar action buttons - only show Save/Cancel when editing
   const navbarActionButtons = isEditing
     ? {
@@ -647,6 +818,7 @@ export default function TeamSelectionPage() {
           {/* Print Match Card link - always visible */}
           <Link
             href={`/friendlies/match-card/${tabDate}`}
+            onClick={() => markPrintNavigation(gameData!)}
             className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition-colors"
           >
             Print Match Card
@@ -655,6 +827,7 @@ export default function TeamSelectionPage() {
           {/* Print Picker Sheet link - always visible */}
           <Link
             href={`/friendlies/manage/picker/${tabDate}`}
+            onClick={() => markPrintNavigation(gameData!)}
             className="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 transition-colors"
           >
             Print Picker Sheet
@@ -702,7 +875,7 @@ export default function TeamSelectionPage() {
 
                       <td className="px-2 py-2 text-sm text-gray-600">
                         <div className="text-xs">
-                          {player.nameDown}/{player.picked} ({player.percentPlayed}%)
+                          {player.nameDown}/{player.picked}({Math.round(player.percentPlayed > 1 ? player.percentPlayed : player.percentPlayed * 100)}%)+{player.futureEntered}
                         </div>
                       </td>
 
@@ -713,13 +886,21 @@ export default function TeamSelectionPage() {
                       <td className="px-2 py-2">
                         <select
                           value={player.selected}
-                          onChange={e => updatePlayer(player.rowNumber, 'selected', e.target.value)}
+                          onChange={e => {
+                            if (e.target.value === '__swap__') {
+                              setSwapModal({ sourceRowNumber: player.rowNumber, targetRowNumber: null });
+                            } else {
+                              updatePlayer(player.rowNumber, 'selected', e.target.value);
+                            }
+                          }}
                           disabled={!isEditing}
                           className={`text-sm border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 ${!isEditing ? 'bg-gray-100 cursor-not-allowed' : ''}`}
                         >
                           <option value="Y">Y</option>
                           <option value="R">R</option>
                           <option value="T">T</option>
+                          <option value="" disabled>──</option>
+                          <option value="__swap__">Swap…</option>
                         </select>
                       </td>
 
@@ -746,7 +927,7 @@ export default function TeamSelectionPage() {
                         >
                           <option value="">-</option>
                           <option value="S">S</option>
-                          <option value="1">1</option>
+                          <option value="1">L</option>
                           <option value="2">2</option>
                           <option value="3">3</option>
                         </select>
@@ -841,7 +1022,7 @@ export default function TeamSelectionPage() {
                       <div className="px-3 py-1">
                         {team.players.map(p => (
                           <div key={p.rowNumber} className="flex text-sm py-0.5">
-                            <span className="text-gray-500 w-6">{p.position || '-'}</span>
+                            <span className="text-gray-500 w-6">{positionLabel(p.position)}</span>
                             <span className="flex-1 ml-2">
                               {p.fullName}
                               {p.captain === 'Y' && <span className="text-purple-600 ml-1">&#9733;</span>}
@@ -906,7 +1087,7 @@ export default function TeamSelectionPage() {
                     <div className="px-3 py-1">
                       {team.players.map(p => (
                         <div key={p.rowNumber} className="flex text-sm py-0.5">
-                          <span className="text-gray-500 w-6">{p.position || '-'}</span>
+                          <span className="text-gray-500 w-6">{positionLabel(p.position)}</span>
                           <span className="flex-1 ml-2">{p.fullName}</span>
                         </div>
                       ))}
@@ -942,6 +1123,138 @@ export default function TeamSelectionPage() {
         existingPlayerNames={players.map(p => p.name)}
         onAddPlayers={handleAddPlayers}
       />
+
+      {/* ================================================================== */}
+      {/* Swap Modal */}
+      {/* ================================================================== */}
+      {swapModal && (() => {
+        const swapSource = players.find(p => p.rowNumber === swapModal.sourceRowNumber);
+        const swapCandidates = players.filter(p => p.rowNumber !== swapModal.sourceRowNumber);
+        return (
+          <div className="fixed inset-0 z-[100] overflow-y-auto">
+            {/* Backdrop */}
+            <div
+              className="fixed inset-0 bg-black bg-opacity-50"
+              onClick={() => setSwapModal(null)}
+            />
+            {/* Panel */}
+            <div className="flex min-h-full items-center justify-center p-4">
+              <div
+                className="relative bg-white rounded-lg shadow-xl max-w-sm w-full p-6"
+                onClick={e => e.stopPropagation()}
+              >
+                <h3 className="text-lg font-semibold text-gray-900 mb-1">Swap Player Details</h3>
+                <p className="text-sm text-gray-500 mb-4">
+                  Swapping <span className="font-medium text-gray-800">{swapSource?.fullName ?? '?'}</span> with:
+                </p>
+
+                <select
+                  value={swapModal.targetRowNumber ?? ''}
+                  onChange={e => {
+                    const val = e.target.value;
+                    setSwapModal(prev => prev ? { ...prev, targetRowNumber: val ? parseInt(val) : null } : null);
+                  }}
+                  className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 mb-6"
+                >
+                  <option value="">— select a player —</option>
+                  {swapCandidates.map(p => (
+                    <option key={p.rowNumber} value={p.rowNumber}>
+                      {p.fullName}
+                      {p.selected === 'Y' ? ` (Tm ${p.team ?? '?'}, ${p.position === '1' ? 'L' : (p.position || '-')})` :
+                       p.selected === 'R' ? ' (Reserve)' :
+                       p.selected === 'T' ? ' (Reserve Team)' : ''}
+                    </option>
+                  ))}
+                </select>
+
+                <div className="flex gap-3 justify-end">
+                  <button
+                    onClick={() => setSwapModal(null)}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (swapModal.targetRowNumber !== null) {
+                        executeSwap(swapModal.sourceRowNumber, swapModal.targetRowNumber);
+                      }
+                    }}
+                    disabled={swapModal.targetRowNumber === null}
+                    className={`px-4 py-2 text-sm font-medium text-white rounded ${
+                      swapModal.targetRowNumber === null
+                        ? 'bg-gray-400 cursor-not-allowed'
+                        : 'bg-blue-600 hover:bg-blue-700'
+                    }`}
+                  >
+                    Swap
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ================================================================== */}
+      {/* Save Warnings Modal */}
+      {/* ================================================================== */}
+      {saveWarnings.length > 0 && (
+        <div className="fixed inset-0 z-[100] overflow-y-auto">
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-black bg-opacity-50"
+            onClick={() => setSaveWarnings([])}
+          />
+          {/* Panel */}
+          <div className="flex min-h-full items-center justify-center p-4">
+            <div
+              className="relative bg-white rounded-lg shadow-xl max-w-md w-full p-6"
+              onClick={e => e.stopPropagation()}
+            >
+              {/* Icon */}
+              <div className="flex items-center justify-center w-12 h-12 mx-auto mb-4 rounded-full bg-yellow-100">
+                <svg className="w-6 h-6 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                  />
+                </svg>
+              </div>
+
+              <h3 className="text-lg font-semibold text-gray-900 text-center mb-2">
+                Save with Warnings?
+              </h3>
+              <p className="text-sm text-gray-600 text-center mb-3">
+                The following issues were found:
+              </p>
+
+              <ul className="text-sm text-gray-700 space-y-1 mb-6 list-disc list-inside bg-yellow-50 border border-yellow-200 rounded p-3">
+                {saveWarnings.map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
+
+              <div className="flex gap-3 justify-end">
+                <button
+                  onClick={() => setSaveWarnings([])}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50"
+                >
+                  Go Back
+                </button>
+                <button
+                  onClick={async () => {
+                    setSaveWarnings([]);
+                    await doSave();
+                  }}
+                  className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700"
+                >
+                  Save Anyway
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

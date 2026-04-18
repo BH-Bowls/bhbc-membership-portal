@@ -17,6 +17,7 @@ import {
   PlayerEntryStatus,
 } from './types/friendlies';
 import { parseNormalizedDate, normalizeToUKDate } from './date-utils';
+import { withRetry } from './sheets';
 
 // ============================================================================
 // ENVIRONMENT VARIABLE GETTERS
@@ -138,8 +139,18 @@ export function getSheetsClient() {
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],  // Request full spreadsheet access
   });
 
-  // Return authenticated Sheets API v4 client
-  return google.sheets({ version: 'v4', auth });
+  const sheets = google.sheets({ version: 'v4', auth });
+
+  // Wrap all values.* methods with exponential-backoff retry so transient
+  // quota errors (HTTP 429) are automatically retried across every call site.
+  const values = sheets.spreadsheets.values as any;
+  for (const method of ['get', 'batchGet', 'update', 'batchUpdate', 'append', 'clear']) {
+    if (typeof values[method] !== 'function') continue;
+    const original = values[method].bind(values);
+    values[method] = (...args: any[]) => withRetry(() => original(...args));
+  }
+
+  return sheets;
 }
 
 // ============================================================================
@@ -1681,9 +1692,10 @@ export async function getPlayerStats(userName: string): Promise<PlayerStats> {
 
   // Extract stats from the fixed stat columns
   const stats: PlayerStats = {
-    nameDown: getInt('name_down'),          // How many times player has put their name down
-    picked: getInt('picked'),               // How many times player has been picked to play
-    percentPlayed: getPercentPlayed(),      // Percentage of games played vs name down (normalized to 0-1)
+    nameDown: getInt('name_down'),          // Closed games where player was selected (P/R/T)
+    picked: getInt('picked'),               // Times player was picked to play (P)
+    percentPlayed: getPercentPlayed(),      // Percentage of closed selected games actually played
+    futureEntered: getInt('future_entered'), // Open games entered but selection not yet done
     withdrawn: getInt('withdrawn'),         // Number of withdrawals
     cancelled: getInt('cancelled'),         // Number of cancelled games
     last6Games: [],                         // Will be populated below
@@ -2152,10 +2164,12 @@ export async function getGameSheet(tabName: string): Promise<GameSheetPlayer[]> 
   });
   const membersRows = membersResponse.data.values || [];
 
-  // Build lookup map: userName -> fullName
+  // Build lookup maps: userName -> fullName and userName -> lastName
   const fullNameLookup: Record<string, string> = {};
+  const lastNameLookup: Record<string, string> = {};
   const memberUserNameCol = membersColMap['user_name'];
   const memberFullNameCol = membersColMap['full_name'] ?? membersColMap['full_known_as'] ?? membersColMap['name'];
+  const memberLastNameCol = membersColMap['last_name'] ?? membersColMap['surname'];
 
   if (memberUserNameCol !== undefined && memberFullNameCol !== undefined) {
     for (let j = 1; j < membersRows.length; j++) {
@@ -2164,6 +2178,9 @@ export async function getGameSheet(tabName: string): Promise<GameSheetPlayer[]> 
       const memberFullName = memberRow[memberFullNameCol];
       if (memberUserName) {
         fullNameLookup[memberUserName.toLowerCase()] = memberFullName || memberUserName;
+        if (memberLastNameCol !== undefined) {
+          lastNameLookup[memberUserName.toLowerCase()] = memberRow[memberLastNameCol] || '';
+        }
       }
     }
   }
@@ -2202,8 +2219,9 @@ export async function getGameSheet(tabName: string): Promise<GameSheetPlayer[]> 
     // Extract player basic information
     // Try 'user_name' first (if column renamed), then 'name' as fallback
     const name = get(row, 'user_name') || get(row, 'name') || '';  // Player userName (for referential integrity)
-    // Look up full name from Members sheet for UI display
+    // Look up full name and surname from Members sheet for UI display / sorting
     const fullName = name ? (fullNameLookup[name.toLowerCase()] || name) : '';
+    const lastName = name ? (lastNameLookup[name.toLowerCase()] || '') : '';
     const nameDown = getInt(row, 'name_down');        // Times player put name down
     const picked = getInt(row, 'picked');             // Times player was picked
     const percentPlayed = getFloat(row, 'percent_played'); // % of games played vs name down
@@ -2234,15 +2252,17 @@ export async function getGameSheet(tabName: string): Promise<GameSheetPlayer[]> 
     const status = (get(row, 'status') || '') as '' | 'Y' | 'W'; // Y = Confirmed, W = Withdrawn
     const captain = get(row, 'captain') || '';        // Y = Captain of the day, '' = Not captain
 
-    // Get last 6 games history for this player from Players sheet
+    // Get last 6 games history and futureEntered for this player from Players sheet
     // GameSheetPlayer uses last8Games property name for compatibility, but holds 6 games
     let last8Games: string[] = [];
+    let futureEntered = 0;
 
     try {
       // Use cached Players sheet data to get stats (avoids re-reading sheet for each player)
       // The tabName parameter excludes the current game from history
       const stats = getPlayerStatsFromCache(name, playersRows, playersColMap, playersHeaders, tabName);
       last8Games = stats.last6Games;  // Use last6Games from PlayerStats type
+      futureEntered = stats.futureEntered;
     } catch (error) {
       // Player not found in Players sheet (might be offline player added manually)
       // Skip game history for this player
@@ -2253,9 +2273,11 @@ export async function getGameSheet(tabName: string): Promise<GameSheetPlayer[]> 
       rowNumber,
       name,        // userName for referential integrity
       fullName,    // Full name for UI display
+      lastName,    // Surname for sorting
       nameDown,
       picked,
       percentPlayed,
+      futureEntered,
       driverBar,
       selected,
       team,
@@ -2740,35 +2762,51 @@ function getPlayerStatsFromCache(
     }
   }
 
-  // Collect last 6 games player participated in
-  // Iterate backward through game columns (right to left = newest to oldest)
+  // Normalized names of fixed stat columns — used to skip non-game columns in both scan loops.
+  // We normalize the raw header the same way getColumnMap does (lowercase, trim, spaces/slashes → _)
+  // and check against this set, so we never accidentally read a stat cell as a game result.
+  const fixedFieldNamesSet = new Set([
+    'user_name', 'name', 'full_name',
+    'name_down', 'picked', 'percent_played', '%_played_vs_name_down',
+    'future_entered', 'withdrawn', 'cancelled',
+  ]);
+  const isFixedHeader = (h: any): boolean => {
+    if (!h) return true; // blank headers are never game columns
+    const normalized = String(h).toLowerCase().trim().replace(/\s+/g, '_').replace(/\//g, '_');
+    return fixedFieldNamesSet.has(normalized);
+  };
+
+  // futureEntered: count ALL open-game entries (E/M) across every game column.
+  // Must be a separate pass — the last6Games loop stops early and would undercount
+  // if there are 6+ future E entries before any historical P/R entries are reached.
+  let futureEntered = 0;
+  for (let i = 0; i < headers.length; i++) {
+    if (isFixedHeader(headers[i])) continue;
+    if (currentGameTabName && headers[i] === currentGameTabName) continue;
+    const v = userRow[i] ? String(userRow[i]).toUpperCase() : '';
+    if (v === 'E' || v === 'M') futureEntered++;
+  }
+
+  // Collect last 6 games the player participated in.
+  // Iterate backward (newest → oldest), skip the current game.
   const last6Games: string[] = [];
 
-  // Valid status codes for last 6 games display
-  // E=Entered, M=Manually added, D=Down (entered but not selected), P=Picked, R=Reserve, T=Reserve Team
-  // A=Available, C=Cancelled, with W suffix for withdrawn versions
+  // Valid status codes for last 6 games display.
+  // E and M (open-game entries) are intentionally excluded — they're future games
+  // with no outcome yet and would push actual history (P/R/D etc.) out of view.
   const validStatuses = [
-    'E', 'M', 'D', 'P', 'R', 'T', 'A', 'C',
-    'EW', 'MW', 'DW', 'PW', 'RW', 'TW', 'AW'
+    'D', 'P', 'R', 'T', 'A', 'C',
+    'DW', 'PW', 'RW', 'TW', 'AW'
   ];
 
-  // Loop from rightmost column backwards, stop when we have 6 games
   for (let i = headers.length - 1; i >= 0 && last6Games.length < 6; i--) {
     const header = headers[i];
-
-    // Skip columns with no header
-    if (!header) continue;
-
-    // Skip the current game (don't include it in history)
+    if (isFixedHeader(header)) continue;
     if (currentGameTabName && header === currentGameTabName) continue;
 
-    // Get this player's entry status for this game
     const cellValue = userRow[i];
-
-    // Only include games where player has a valid status (case-insensitive check)
     const normalizedValue = cellValue ? String(cellValue).toUpperCase() : '';
     if (normalizedValue && validStatuses.includes(normalizedValue)) {
-      // Add to history in format: "West Hoathly 25-Sep    E"
       last6Games.push(`${header}    ${normalizedValue}`);
     }
   }
@@ -2778,6 +2816,7 @@ function getPlayerStatsFromCache(
     nameDown,
     picked,
     percentPlayed,
+    futureEntered,
     withdrawn,
     cancelled,
     last6Games,

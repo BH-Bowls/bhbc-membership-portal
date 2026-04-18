@@ -324,7 +324,7 @@ Format: ${game.format}
 
 Your status: ${label}${teamInfo}
 
-View the full game details online:
+You can view the full team selection and sign off your name either by clicking the link below or visiting the clubhouse:
 ${gameUrl}
 
 ---
@@ -364,7 +364,7 @@ Friendlies Management System
       <div class="status-box">
         <p style="margin:0;"><strong>Your status:</strong> <span style="color:${color};font-weight:bold;">${label}</span>${teamInfo ? `<span style="color:#555;"> ${teamInfo}</span>` : ''}</p>
       </div>
-      <p>Click below to view the full game details and match card.</p>
+      <p>You can view the full team selection and sign off your name either by clicking the button below or visiting the clubhouse.</p>
       <a href="${gameUrl}" style="${BUTTON_STYLE}">View Game Details</a>
     </div>
     <div class="footer">

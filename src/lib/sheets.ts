@@ -57,8 +57,58 @@ function getPrivateKey(): string {
 }
 
 // ============================================================================
+// RETRY HELPER
+// ============================================================================
+
+/**
+ * Retry wrapper for Google Sheets API calls that may hit quota limits.
+ * Retries up to maxAttempts times with exponential backoff on 429 / quota errors.
+ */
+export async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxAttempts = 4,
+  baseDelayMs = 1000,
+): Promise<T> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      const status = err?.response?.status ?? err?.status ?? err?.code;
+      const msg = String(err?.message ?? '');
+      const isQuotaError =
+        status === 429 ||
+        (status === 403 && msg.includes('Quota')) ||
+        msg.includes('Quota exceeded') ||
+        msg.includes('RESOURCE_EXHAUSTED');
+
+      if (!isQuotaError || attempt === maxAttempts) throw err;
+
+      const delay = baseDelayMs * Math.pow(2, attempt - 1); // 1 s, 2 s, 4 s …
+      console.warn(`[sheets] Quota hit, retrying in ${delay}ms (attempt ${attempt}/${maxAttempts})…`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  /* istanbul ignore next */
+  throw new Error('withRetry: unreachable');
+}
+
+// ============================================================================
 // GOOGLE SHEETS CLIENT
 // ============================================================================
+
+/**
+ * Apply exponential-backoff retry to all spreadsheets.values.* methods on the
+ * given sheets client.  Called once per client instance so every existing call
+ * site in the codebase gets quota-error retry for free.
+ */
+function applyRetryToValues(sheets: ReturnType<typeof google.sheets>): void {
+  const values = sheets.spreadsheets.values as any;
+  for (const method of ['get', 'batchGet', 'update', 'batchUpdate', 'append', 'clear']) {
+    if (typeof values[method] !== 'function') continue;
+    const original = values[method].bind(values);
+    values[method] = (...args: any[]) => withRetry(() => original(...args));
+  }
+}
 
 export function getGoogleSheetsClient() {
   const auth = new google.auth.GoogleAuth({
@@ -69,7 +119,9 @@ export function getGoogleSheetsClient() {
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   });
 
-  return google.sheets({ version: 'v4', auth });
+  const sheets = google.sheets({ version: 'v4', auth });
+  applyRetryToValues(sheets);
+  return sheets;
 }
 
 // ============================================================================

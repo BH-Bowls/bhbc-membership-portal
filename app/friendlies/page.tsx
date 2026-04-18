@@ -5,7 +5,12 @@
 
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+
+// useLayoutEffect runs synchronously after DOM update but before paint — used to
+// restore cached state without a flash of the loading spinner on back-navigation.
+// On the server (SSR) it falls back to useEffect to avoid React warnings.
+const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
 import { useSession } from 'next-auth/react';
 import { GameWithUserStatus } from '@/lib/types/friendlies';
 import { Navbar } from '@/components/Navbar';
@@ -56,14 +61,8 @@ export default function FriendliesPage() {
   // State: List of all games with user's entry status for each
   const [games, setGames] = useState<GameWithUserStatus[]>([]);
 
-  // State: Current filter selection — restored from sessionStorage so Back preserves the tab
-  const [filter, setFilter] = useState<FilterType>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = sessionStorage.getItem('friendlies_filter');
-      if (saved === 'all' || saved === 'O' || saved === 'entered' || saved === 'played') return saved;
-    }
-    return 'O';
-  });
+  // State: Current filter selection (restored from sessionStorage in layout effect below)
+  const [filter, setFilter] = useState<FilterType>('O');
 
   // State: Set of game tab names that user has checked/selected
   // Uses Set for efficient add/remove operations
@@ -71,6 +70,9 @@ export default function FriendliesPage() {
 
   // State: Loading indicator while fetching games from API
   const [loading, setLoading] = useState(true);
+
+  // Ref to prevent React 18 strict-mode double-invocation of the init effect
+  const initDoneRef = useRef(false);
 
   // State: Explicit reload in progress (shows spinner on reload button)
   const [reloading, setReloading] = useState(false);
@@ -144,24 +146,45 @@ export default function FriendliesPage() {
   }, []);
 
   /**
-   * Effect: Fetch games when page first loads.
-   * Uses sessionStorage as a cache so navigating back is instant.
-   * Always re-validates in the background so data stays fresh.
+   * Layout effect: restore client-side state from sessionStorage before first paint.
+   * Runs synchronously after hydration so the browser never paints the loading spinner
+   * or wrong filter tab when returning from a game.
+   * Both reads MUST live here (not in useState) to avoid SSR/client hydration mismatches.
    */
-  useEffect(() => {
+  useIsomorphicLayoutEffect(() => {
+    // Refs persist across React 18 strict-mode double-invocation; this ensures
+    // we only run the init logic once so the back-nav flag isn't consumed twice.
+    if (initDoneRef.current) return;
+    initDoneRef.current = true;
+
+    // Restore saved filter tab
+    const savedFilter = sessionStorage.getItem('friendlies_filter') as FilterType | null;
+    if (savedFilter === 'all' || savedFilter === 'O' || savedFilter === 'entered' || savedFilter === 'played') {
+      setFilter(savedFilter);
+    }
+
+    // Restore game list from cache only on back-navigation
     const CACHE_KEY = 'friendlies_games_cache';
-    const cached = sessionStorage.getItem(CACHE_KEY);
-    if (cached) {
-      try {
-        setGames(JSON.parse(cached));
-        setLoading(false);
-        // Silent background refresh — updates UI when done
-        fetchGames({ silent: true });
-        return;
-      } catch {
-        // Bad cache — fall through to normal fetch
+    const BACK_FLAG = 'friendlies_back_nav';
+
+    const isBackNav = sessionStorage.getItem(BACK_FLAG) === 'true';
+    sessionStorage.removeItem(BACK_FLAG); // consume immediately — only fires once
+
+    if (isBackNav) {
+      const cached = sessionStorage.getItem(CACHE_KEY);
+      if (cached) {
+        try {
+          setGames(JSON.parse(cached));
+          setLoading(false);
+          return;
+        } catch {
+          // Bad cache — fall through to fresh fetch
+        }
       }
     }
+
+    // Fresh navigation (or cache miss) — clear stale cache and fetch from server
+    sessionStorage.removeItem(CACHE_KEY);
     fetchGames();
   }, []);
 
@@ -832,6 +855,7 @@ export default function FriendliesPage() {
                     <Link
                       href={`/friendlies/game/${game.tabName}`}
                       className={`block w-full text-center ${getButtonClasses('primary', 'md')}`}
+                      onClick={() => sessionStorage.setItem('friendlies_back_nav', 'true')}
                     >
                       View Details
                     </Link>

@@ -69,6 +69,7 @@ export async function POST(request: NextRequest) {
     const nameDownColIndex = colMap['name_down'];
     const pickedColIndex = colMap['picked'];
     const percentPlayedColIndex = colMap['percent_played'] ?? colMap['%_played_vs_name_down'];
+    const futureEnteredColIndex = colMap['future_entered'];
     const withdrawnColIndex = colMap['withdrawn'];
     const cancelledColIndex = colMap['cancelled'];
 
@@ -155,7 +156,7 @@ export async function POST(request: NextRequest) {
     // Find all game columns (columns after the fixed stat columns)
     // Fixed columns are typically: user_name, name_down, picked, percent_played, withdrawn, cancelled
     // Game columns come after these
-    const fixedColNames = ['user_name', 'name', 'full_name', 'name_down', 'picked', 'percent_played', '%_played_vs_name_down', 'withdrawn', 'cancelled'];
+    const fixedColNames = ['user_name', 'name', 'full_name', 'name_down', 'picked', 'percent_played', '%_played_vs_name_down', 'future_entered', 'withdrawn', 'cancelled'];
     const gameColIndices: number[] = [];
 
     for (let i = 0; i < updatedHeaders.length; i++) {
@@ -181,8 +182,9 @@ export async function POST(request: NextRequest) {
       if (!userName) continue;
 
       // Count stats across all game columns
-      let nameDown = 0;
-      let picked = 0;
+      let nameDown = 0;       // Closed games where player was selected (P/R/T)
+      let picked = 0;         // Games actually played (P)
+      let futureEntered = 0;  // Open games where player has entered (E/M)
       let withdrawn = 0;
       let cancelled = 0;
 
@@ -191,15 +193,21 @@ export async function POST(request: NextRequest) {
 
         if (!status) continue;
 
-        // Count name_down: E, M, D, P, R, T (and their W variants) all count as "put name down"
-        // E=self-entered, M=manually added, D=down (confirmed), P=picked, R=reserve, T=reserve team
-        if (['E', 'EW', 'M', 'MW', 'D', 'DW', 'P', 'PW', 'R', 'RW', 'T', 'TW'].includes(status)) {
+        // Name Down: only closed-game selected statuses — P, R, T (and withdrawn variants)
+        // D (entered but not selected) and E/M (open games) are excluded
+        if (['P', 'PW', 'R', 'RW', 'T', 'TW'].includes(status)) {
           nameDown++;
         }
 
         // Count picked: P (and PW) count as picked to play
         if (['P', 'PW'].includes(status)) {
           picked++;
+        }
+
+        // Future Entered: open games player has entered but selection not yet done
+        // W suffix cannot exist on E/M — withdrawal only happens after selection
+        if (['E', 'M'].includes(status)) {
+          futureEntered++;
         }
 
         // Count withdrawn: any status with W suffix
@@ -239,6 +247,13 @@ export async function POST(request: NextRequest) {
         statsUpdates.push({
           range: `Players!${getColumnLetter(percentPlayedColIndex)}${rowNumber}`,
           values: [[percentPlayed]],
+        });
+      }
+
+      if (futureEnteredColIndex !== undefined) {
+        statsUpdates.push({
+          range: `Players!${getColumnLetter(futureEnteredColIndex)}${rowNumber}`,
+          values: [[futureEntered]],
         });
       }
 

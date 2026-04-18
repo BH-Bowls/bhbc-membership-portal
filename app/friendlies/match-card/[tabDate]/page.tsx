@@ -300,7 +300,7 @@ export default function MatchCardPage() {
                           .map((player, idx) => (
                             <tr key={idx} className={player.isCaptain ? 'bg-purple-100' : ''}>
                               <td className="border border-gray-400 px-1 py-px w-6 text-center text-xs">
-                                {player.position}
+                                {player.position === '1' ? 'L' : (player.position || '-')}
                               </td>
                               <td className="border border-gray-400 px-2 py-px">
                                 {player.name}
@@ -498,7 +498,7 @@ export default function MatchCardPage() {
                               .map((player, idx) => (
                                 <tr key={idx}>
                                   <td className="border border-gray-400 px-2 py-1 w-8 text-center">
-                                    {player.position}
+                                    {player.position === '1' ? 'L' : (player.position || '-')}
                                   </td>
                                   <td className="border border-gray-400 px-2 py-1">
                                     {player.name}

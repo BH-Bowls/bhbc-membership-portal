@@ -155,9 +155,11 @@ export interface GameSheetPlayer {
   rowNumber: number;            // Row number in game sheet (for updates)
   name: string;                 // Player's userName (for referential integrity)
   fullName: string;             // Player's full name (for UI display)
-  nameDown: number;             // How many games player has entered
-  picked: number;               // How many times player was selected to play
-  percentPlayed: number;        // Percentage of games player actually played
+  lastName: string;             // Player's surname (for sorting)
+  nameDown: number;             // Closed games where player was selected (P/R/T)
+  picked: number;               // Times player was actually picked to play (P)
+  percentPlayed: number;        // Percentage of closed selected games actually played
+  futureEntered: number;        // Open games where player has entered (E/M) but selection not yet done
   driverBar: string;            // Driver/Bar code: 'D', 'B', 'DB', or ''
   selected: SelectionStatus;    // Selection status: '', Y, R, or T
   team: number | null;          // Team number (1-4 typically) or null if not assigned
@@ -176,9 +178,10 @@ export interface GameSheetPlayer {
  * Used to help captains make selection decisions
  */
 export interface PlayerStats {
-  nameDown: number;       // How many games player has entered
-  picked: number;         // How many times player was selected to play
-  percentPlayed: number;  // Percentage of games actually played (as decimal 0.0-1.0)
+  nameDown: number;       // Closed games where player was selected (P/R/T)
+  picked: number;         // Times player was actually picked to play (P)
+  percentPlayed: number;  // Percentage of closed selected games actually played (decimal 0.0–1.0)
+  futureEntered: number;  // Open games where player has entered (E/M) but selection not yet done
   withdrawn: number;      // How many times player withdrew
   cancelled: number;      // How many games were cancelled
   last6Games: string[];   // Last 6 games history (e.g., ["West Hoathly 25-Sep    P", "Lindfield 18-Sep    E"])

@@ -94,41 +94,36 @@ export async function POST(request: NextRequest) {
     // Position priority: Skip first, then Lead, Two, Three, then unassigned
     const positionOrder = { 'S': 0, '1': 1, '2': 2, '3': 3, '': 4 };
 
-    // Sort players for display: Selected status → Team number → Position
-    // This groups playing team first, then reserves, organized by team and position
+    // Sort players for display: Selected status → Team number → Position → Surname
     const sortedPlayers = [...allPlayers].sort((a, b) => {
-      // Primary sort: Selection status (playing vs reserve vs unselected)
       let selA = selectionOrder[a.selected];
-      // Default to 3 (unselected) if status not in our order map
       if (selA === undefined) selA = 3;
 
       let selB = selectionOrder[b.selected];
       if (selB === undefined) selB = 3;
 
-      // If selection status differs, sort by that
       if (selA !== selB) return selA - selB;
 
-      // Secondary sort: Team number (groups players by their team)
       let teamA = a.team;
-      // Use 999 for unassigned teams to sort them last
       if (teamA === undefined || teamA === null) teamA = 999;
 
       let teamB = b.team;
       if (teamB === undefined || teamB === null) teamB = 999;
 
-      // If team differs, sort by team number
       if (teamA !== teamB) return teamA - teamB;
 
-      // Tertiary sort: Position within team (Skip, Lead, Two, Three)
       let posA = positionOrder[a.position];
-      // Default to 4 (unassigned) if position not in our order map
       if (posA === undefined) posA = 4;
 
       let posB = positionOrder[b.position];
       if (posB === undefined) posB = 4;
 
-      // Final sort by position
-      return posA - posB;
+      if (posA !== posB) return posA - posB;
+
+      // Final tiebreaker: surname then full name
+      const lastNameCompare = (a.lastName || a.fullName).localeCompare(b.lastName || b.fullName);
+      if (lastNameCompare !== 0) return lastNameCompare;
+      return a.fullName.localeCompare(b.fullName);
     });
 
     // Calculate updated counts for Games sheet summary columns

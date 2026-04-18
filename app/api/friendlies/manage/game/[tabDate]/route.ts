@@ -53,25 +53,30 @@ export async function GET(
     // Get all players from game sheet
     const players = await getGameSheet(game.tabName);
 
-    // Sort players: Selected status (Y, R, T, then blank), then Team number, then Position
+    // Sort players: Selected status (Y, R, T, then blank) → Team number → Position → Surname.
     const selectedOrder: Record<string, number> = { 'Y': 1, 'R': 2, 'T': 3, '': 4 };
     const positionOrder: Record<string, number> = { 'S': 1, '1': 2, '2': 3, '3': 4, '': 5 };
 
     players.sort((a, b) => {
-      // First sort by selected status
+      // Selected status
       const selA = selectedOrder[a.selected] ?? 4;
       const selB = selectedOrder[b.selected] ?? 4;
       if (selA !== selB) return selA - selB;
 
-      // Then by team number (nulls last)
+      // Team number (nulls last)
       const teamA = a.team ?? 999;
       const teamB = b.team ?? 999;
       if (teamA !== teamB) return teamA - teamB;
 
-      // Then by position
+      // Position
       const posA = positionOrder[a.position] ?? 5;
       const posB = positionOrder[b.position] ?? 5;
-      return posA - posB;
+      if (posA !== posB) return posA - posB;
+
+      // Final tiebreaker: surname then full name
+      const lastNameCompare = (a.lastName || a.fullName).localeCompare(b.lastName || b.fullName);
+      if (lastNameCompare !== 0) return lastNameCompare;
+      return a.fullName.localeCompare(b.fullName);
     });
 
     return NextResponse.json({

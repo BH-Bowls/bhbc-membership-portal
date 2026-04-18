@@ -390,8 +390,8 @@ export function EnteredPlayersModal({
                     {selectedPlayers.map(userName => {
                       const player = availablePlayers.find(p => p.userName === userName);
                       return (
-                        <div key={userName} className="flex items-center justify-between bg-gray-50 p-2 rounded">
-                          <span>{player?.fullName || userName}</span>
+                        <div key={userName} className="flex items-center justify-between bg-blue-50 border border-blue-200 p-2 rounded">
+                          <span className="text-gray-900 font-medium">{player?.fullName || userName}</span>
                           <button
                             onClick={() => setSelectedPlayers(selectedPlayers.filter(p => p !== userName))}
                             className="text-red-600 hover:text-red-800"

@@ -48,9 +48,9 @@ interface GameData {
  */
 function getPositionLabels(format: string): string[] {
   const f = format.toLowerCase();
-  if (f.includes('pair')) return ['1', 'S'];
-  if (f.includes('triple')) return ['1', '2', 'S'];
-  return ['1', '2', '3', 'S']; // Rinks/Fours default
+  if (f.includes('pair')) return ['L', 'S'];
+  if (f.includes('triple')) return ['L', '2', 'S'];
+  return ['L', '2', '3', 'S']; // Rinks/Fours default
 }
 
 /**
@@ -99,13 +99,23 @@ export default function PickerSheetPage() {
       try {
         const tabName = decodeURIComponent(tabDate);
 
-        // Refresh stats from Players sheet before rendering so nameDown/picked/% and
-        // last-6-games history are current even if the captain hasn't saved recently
-        await fetch('/api/friendlies/manage/get-stats', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tab_name: tabName }),
-        });
+        // Skip get-stats if the manage game page refreshed stats within the last 2 minutes.
+        // This avoids redundant Members sheet reads when the captain navigates here directly
+        // from the team-selection page (which already does a background stats refresh).
+        const STATS_TTL_MS = 2 * 60 * 1000;
+        const lastRefreshed = Number(sessionStorage.getItem(`stats_refreshed_${tabDate}`) ?? 0);
+        const statsAreFresh = Date.now() - lastRefreshed < STATS_TTL_MS;
+
+        if (!statsAreFresh) {
+          // Refresh stats from Players sheet so nameDown/picked/% and
+          // last-6-games history are current
+          await fetch('/api/friendlies/manage/get-stats', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tab_name: tabName }),
+          });
+          sessionStorage.setItem(`stats_refreshed_${tabDate}`, String(Date.now()));
+        }
 
         const response = await fetch(`/api/friendlies/manage/game/${tabDate}`);
         const data = await response.json();
@@ -320,9 +330,7 @@ export default function PickerSheetPage() {
 
                       {/* Stat columns with vertical headers */}
                       {[
-                        { label: 'ND', title: 'Name Down' },
-                        { label: 'Pk', title: 'Picked' },
-                        { label: '%', title: '% Played' },
+                        { label: 'Stats', title: 'ND/Pk(%)+FutureEntered' },
                         { label: 'D/B', title: 'Driver/Bar' },
                         { label: 'Tm', title: 'Team' },
                         { label: 'Pos', title: 'Position' },
@@ -384,19 +392,9 @@ export default function PickerSheetPage() {
                             {player.fullName}
                           </td>
 
-                          {/* Name Down */}
-                          <td className="border border-gray-400 px-0.5 py-[2px] text-center text-blue-800 font-semibold">
-                            {player.nameDown}
-                          </td>
-
-                          {/* Picked */}
-                          <td className="border border-gray-400 px-0.5 py-[2px] text-center text-blue-800 font-semibold">
-                            {player.picked}
-                          </td>
-
-                          {/* % Played */}
-                          <td className="border border-gray-400 px-0.5 py-[2px] text-center text-blue-800 font-semibold">
-                            {player.percentPlayed}%
+                          {/* Stats: ND/Pk(%)+FutureEntered */}
+                          <td className="border border-gray-400 px-0.5 py-[2px] text-center text-blue-800 font-semibold whitespace-nowrap">
+                            {player.nameDown}/{player.picked}({Math.round(player.percentPlayed > 1 ? player.percentPlayed : player.percentPlayed * 100)}%)+{player.futureEntered}
                           </td>
 
                           {/* Driver/Bar */}
@@ -411,7 +409,7 @@ export default function PickerSheetPage() {
 
                           {/* Position */}
                           <td className="border border-gray-400 px-0.5 py-[2px] text-center">
-                            {player.position}
+                            {player.position === '1' ? 'L' : (player.position || '')}
                           </td>
 
                           {/* Driving + Car (away only) */}
