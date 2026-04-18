@@ -28,6 +28,11 @@ function formatDate(d: string | null): string {
   catch { return d; }
 }
 
+function formatTime(t: string | null): string {
+  if (!t) return '';
+  return t.replace(':', '');
+}
+
 // ── Searchable player picker ──────────────────────────────────────────────────
 interface PlayerSelectProps {
   value: string;                     // selected username
@@ -150,6 +155,113 @@ function PlayerSelect({ value, onChange, squad, excludeUsernames, placeholder = 
     </div>
   );
 }
+// ── Match row (must be top-level so React doesn't remount on every render) ────
+interface MatchRowProps {
+  match: LeagueMatch;
+  isSelected: boolean;
+  onToggle: () => void;
+  teams: import('@/types/leagues').LeagueTeam[];
+  leagueType: string;
+  dateLabel: string;
+  onEdit: (match: LeagueMatch) => void;
+  onDelete: (matchId: string) => void;
+}
+
+function MatchRow({ match, isSelected, onToggle, teams, leagueType, dateLabel, onEdit, onDelete }: MatchRowProps) {
+  const homeTeam = teams.find((t) => t.teamId === match.homeTeamId);
+  const awayTeam = teams.find((t) => t.teamId === match.awayTeamId);
+  const isPlayed = match.status === 'Played' || match.status === 'Walkover';
+  return (
+    <div className={`rounded-lg border p-3 flex flex-wrap items-center gap-2 ${isSelected ? 'bg-blue-50 border-blue-300' : 'bg-white border-gray-200'}`}>
+      <input
+        type="checkbox"
+        checked={isSelected}
+        onChange={onToggle}
+        className="accent-blue-600 w-4 h-4 flex-shrink-0 cursor-pointer"
+      />
+      <div className="flex-1 min-w-0 text-sm">
+        {match.scheduledTime && (
+          <span className="text-gray-400 text-xs font-mono mr-2">{formatTime(match.scheduledTime)}</span>
+        )}
+        <span className="font-medium">{homeTeam?.teamName ?? '—'}</span>
+        <span className="text-gray-400 mx-2">v</span>
+        <span className="font-medium">{awayTeam?.teamName ?? '—'}</span>
+        {isPlayed && match.homeScore !== null && (
+          <span className="ml-2 font-semibold text-gray-700">
+            {match.homeScore} – {match.awayScore}
+          </span>
+        )}
+        {leagueType === 'pairs' && match.playByDate && (
+          <span className="ml-2 text-gray-400 text-xs">{dateLabel.toLowerCase()} {formatDate(match.playByDate)}</span>
+        )}
+      </div>
+      <span className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 ${
+        match.status === 'Played'     ? 'bg-green-100 text-green-700' :
+        match.status === 'Walkover'   ? 'bg-yellow-100 text-yellow-700' :
+        match.status === 'Not Played' ? 'bg-red-100 text-red-600' :
+        'bg-gray-100 text-gray-600'
+      }`}>
+        {match.status}
+      </span>
+      <button
+        onClick={() => onEdit(match)}
+        className="text-xs px-2 py-1 bg-gray-100 text-gray-600 rounded hover:bg-gray-200 flex-shrink-0"
+      >
+        Edit
+      </button>
+      <button
+        onClick={() => onDelete(match.matchId)}
+        className="text-xs text-red-400 hover:text-red-600 flex-shrink-0"
+      >
+        Delete
+      </button>
+    </div>
+  );
+}
+// ── Per-league message editor ─────────────────────────────────────────────────
+function LeagueMessageEditor({ leagueId, initialMessage, onSaved }: { leagueId: string; initialMessage: string; onSaved: (msg: string) => void }) {
+  const [value, setValue] = useState(initialMessage);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  async function save() {
+    setSaving(true);
+    try {
+      await fetch(`/api/leagues/${leagueId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: value }),
+      });
+      onSaved(value);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <textarea
+        value={value}
+        onChange={(e) => { setValue(e.target.value); setSaved(false); }}
+        rows={3}
+        className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+        placeholder="Optional message shown to members on this league's page…"
+      />
+      <div className="flex items-center gap-3">
+        <button
+          onClick={save}
+          disabled={saving}
+          className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+        >
+          {saving ? 'Saving…' : 'Save message'}
+        </button>
+        {saved && <span className="text-xs text-green-600">Saved</span>}
+      </div>
+    </div>
+  );
+}
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function LeagueManageDetailPage() {
@@ -159,7 +271,7 @@ export default function LeagueManageDetailPage() {
 
   const role = session?.user?.role ?? '';
   const roles = role.split(',').map((r) => r.trim());
-  const canAccess = ['LeagueCaptain', 'Captain', 'Admin'].some((r) => roles.includes(r));
+  const canAccess = ['LeagueOrganiser', 'Captain', 'Admin'].some((r) => roles.includes(r));
 
   const [league, setLeague] = useState<League | null>(null);
   const [teams, setTeams] = useState<LeagueTeam[]>([]);
@@ -193,19 +305,19 @@ export default function LeagueManageDetailPage() {
   function buildSlotTemplate(leagueType: string): TeamSlot[] {
     if (leagueType === 'triples') {
       return [
-        { label: 'Skip 1',  position: 'Skip', username: '' },
-        { label: 'Skip 2',  position: 'Skip', username: '' },
-        { label: 'No.2 1',  position: 'Two',  username: '' },
-        { label: 'No.2 2',  position: 'Two',  username: '' },
-        { label: 'Lead 1',  position: 'Lead', username: '' },
-        { label: 'Lead 2',  position: 'Lead', username: '' },
+        { label: 'Skip',    position: 'Skip',    username: '' },
+        { label: 'Captain', position: 'Captain', username: '' },
+        { label: 'No.2 1',  position: 'Two',     username: '' },
+        { label: 'No.2 2',  position: 'Two',     username: '' },
+        { label: 'Lead 1',  position: 'Lead',    username: '' },
+        { label: 'Lead 2',  position: 'Lead',    username: '' },
       ];
     }
     return [
-      { label: 'Skip 1',  position: 'Skip', username: '' },
-      { label: 'Skip 2',  position: 'Skip', username: '' },
-      { label: 'Lead 1',  position: 'Lead', username: '' },
-      { label: 'Lead 2',  position: 'Lead', username: '' },
+      { label: 'Skip',    position: 'Skip',    username: '' },
+      { label: 'Captain', position: 'Captain', username: '' },
+      { label: 'Lead 1',  position: 'Lead',    username: '' },
+      { label: 'Lead 2',  position: 'Lead',    username: '' },
     ];
   }
 
@@ -552,63 +664,6 @@ export default function LeagueManageDetailPage() {
     try {
       return new Date(d).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
     } catch { return d; }
-  }
-
-  function formatTime(t: string | null): string {
-    if (!t) return '';
-    return t.replace(':', '');
-  }
-
-  function MatchRow({ match, isSelected, onToggle }: { match: LeagueMatch; isSelected: boolean; onToggle: () => void }) {
-    const homeTeam = teams.find((t) => t.teamId === match.homeTeamId);
-    const awayTeam = teams.find((t) => t.teamId === match.awayTeamId);
-    const isPlayed = match.status === 'Played' || match.status === 'Walkover';
-    return (
-      <div className={`rounded-lg border p-3 flex flex-wrap items-center gap-2 ${isSelected ? 'bg-blue-50 border-blue-300' : 'bg-white border-gray-200'}`}>
-        <input
-          type="checkbox"
-          checked={isSelected}
-          onChange={onToggle}
-          className="accent-blue-600 w-4 h-4 flex-shrink-0 cursor-pointer"
-        />
-        <div className="flex-1 min-w-0 text-sm">
-          {match.scheduledTime && (
-            <span className="text-gray-400 text-xs font-mono mr-2">{formatTime(match.scheduledTime)}</span>
-          )}
-          <span className="font-medium">{homeTeam?.teamName ?? '—'}</span>
-          <span className="text-gray-400 mx-2">v</span>
-          <span className="font-medium">{awayTeam?.teamName ?? '—'}</span>
-          {isPlayed && match.homeScore !== null && (
-            <span className="ml-2 font-semibold text-gray-700">
-              {match.homeScore} – {match.awayScore}
-            </span>
-          )}
-          {league!.type === 'pairs' && match.playByDate && (
-            <span className="ml-2 text-gray-400 text-xs">{league!.dateLabel.toLowerCase()} {formatDate(match.playByDate)}</span>
-          )}
-        </div>
-        <span className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 ${
-          match.status === 'Played'   ? 'bg-green-100 text-green-700' :
-          match.status === 'Walkover' ? 'bg-yellow-100 text-yellow-700' :
-          match.status === 'Cancelled'? 'bg-red-100 text-red-600' :
-          'bg-gray-100 text-gray-600'
-        }`}>
-          {match.status}
-        </span>
-        <button
-          onClick={() => openMatchDialog(match)}
-          className="text-xs px-2 py-1 bg-gray-100 text-gray-600 rounded hover:bg-gray-200 flex-shrink-0"
-        >
-          Edit
-        </button>
-        <button
-          onClick={() => deleteMatch(match.matchId)}
-          className="text-xs text-red-400 hover:text-red-600 flex-shrink-0"
-        >
-          Delete
-        </button>
-      </div>
-    );
   }
 
   const scheduledDates = Array.from(
@@ -1014,10 +1069,10 @@ export default function LeagueManageDetailPage() {
                   return (
                     <div key={date}>
                       <h3 className="text-sm font-semibold text-gray-700 mb-2">
-                        {formatFullDate(date)}
+                        {league!.dateLabel}: {formatFullDate(date)}
                       </h3>
                       <div className="space-y-2">
-                        {dayMatches.map((match) => <MatchRow key={match.matchId} match={match} isSelected={selectedMatchIds.has(match.matchId)} onToggle={() => toggleMatchSelection(match.matchId)} />)}
+                        {dayMatches.map((match) => <MatchRow key={match.matchId} match={match} isSelected={selectedMatchIds.has(match.matchId)} onToggle={() => toggleMatchSelection(match.matchId)} teams={teams} leagueType={league!.type} dateLabel={league!.dateLabel} onEdit={openMatchDialog} onDelete={deleteMatch} />)}
                       </div>
                     </div>
                   );
@@ -1028,7 +1083,7 @@ export default function LeagueManageDetailPage() {
                   <div>
                     <h3 className="text-sm font-semibold text-gray-400 mb-2">Unscheduled</h3>
                     <div className="space-y-2">
-                      {unscheduledMatches.map((match) => <MatchRow key={match.matchId} match={match} isSelected={selectedMatchIds.has(match.matchId)} onToggle={() => toggleMatchSelection(match.matchId)} />)}
+                      {unscheduledMatches.map((match) => <MatchRow key={match.matchId} match={match} isSelected={selectedMatchIds.has(match.matchId)} onToggle={() => toggleMatchSelection(match.matchId)} teams={teams} leagueType={league!.type} dateLabel={league!.dateLabel} onEdit={openMatchDialog} onDelete={deleteMatch} />)}
                     </div>
                   </div>
                 )}
@@ -1113,6 +1168,13 @@ export default function LeagueManageDetailPage() {
                   <option value={2}>2 — each pair plays twice</option>
                 </select>
                 <p className="text-xs text-gray-400 mt-1">Affects Generate Round-Robin — re-generate fixtures after changing.</p>
+              </div>
+
+              {/* Per-league message */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">League message</label>
+                <LeagueMessageEditor leagueId={leagueId} initialMessage={league.message} onSaved={(msg) => setLeague((l) => l ? { ...l, message: msg } : l)} />
+                <p className="text-xs text-gray-400 mt-1">Displayed below the league title on the league page.</p>
               </div>
             </div>
           </div>

@@ -1,7 +1,7 @@
 // app/api/leagues/[leagueId]/matches/[matchId]/route.ts
-// PATCH — update a match (score/status: squad members of either team + LeagueCaptain/Admin)
-//         date/time fields: LeagueCaptain/Admin only
-// DELETE (LeagueCaptain/Admin) — delete a single match
+// PATCH — update a match (score/status: squad members of either team + LeagueOrganiser/Admin)
+//         date/time fields: LeagueOrganiser/Admin only
+// DELETE (LeagueOrganiser/Admin) — delete a single match
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
@@ -25,7 +25,7 @@ export async function PATCH(
   const username = session.user?.userName ?? '';
   const { leagueId, matchId } = await params;
 
-  const isCommittee = hasRole(role, 'LeagueCaptain', 'Captain', 'Admin');
+  const isCommittee = hasRole(role, 'LeagueOrganiser', 'Captain', 'Admin');
 
   try {
     const matches = await getLeagueMatches(leagueId);
@@ -71,7 +71,7 @@ export async function DELETE(
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const role = session.user?.role ?? '';
-  if (!hasRole(role, 'LeagueCaptain', 'Captain', 'Admin')) {
+  if (!hasRole(role, 'LeagueOrganiser', 'Captain', 'Admin')) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 

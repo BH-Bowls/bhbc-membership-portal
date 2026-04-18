@@ -3,14 +3,14 @@
 
 export type LeagueType = 'triples' | 'pairs';
 export type LeagueStatus = 'Not Started' | 'Entries Open' | 'In Progress' | 'Complete';
-export type LeagueMatchStatus = 'Scheduled' | 'Played' | 'Walkover' | 'Conceded' | 'Cancelled';
-export type TriplePosition = 'Skip' | 'Lead' | 'Two';
-export type PairsPosition = 'Skip' | 'Lead';
+export type LeagueMatchStatus = 'Scheduled' | 'Played' | 'Walkover' | 'Conceded' | 'Not Played';
+export type TriplePosition = 'Skip' | 'Captain' | 'Lead' | 'Two';
+export type PairsPosition = 'Skip' | 'Captain' | 'Lead';
 export type SquadPosition = TriplePosition | PairsPosition | '';
 
 export const LEAGUE_POSITIONS: Record<LeagueType, SquadPosition[]> = {
-  triples: ['Skip', 'Lead', 'Two'],
-  pairs:   ['Skip', 'Lead'],
+  triples: ['Skip', 'Captain', 'Lead', 'Two'],
+  pairs:   ['Skip', 'Captain', 'Lead'],
 };
 
 export type DateLabel = 'Play on/at' | 'Play by' | 'Play start date';
@@ -25,6 +25,7 @@ export interface League {
   playersPerMatch: number; // 3 for triples, 2 for pairs
   dateLabel: DateLabel;   // label shown next to fixture dates
   legs: 1 | 2;            // how many times each pair of teams meets
+  message: string;        // optional message displayed at top of league page
 }
 
 export interface LeagueTeam {

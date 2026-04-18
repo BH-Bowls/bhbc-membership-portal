@@ -351,7 +351,8 @@ export async function unblockSweepingDate(
  */
 export async function batchAddSweepingAssignments(
   dates: string[],
-  userName: string
+  userName: string,
+  overwrite = false
 ): Promise<{ added: string[]; skipped: { date: string; reason: string }[] }> {
   // Validate userName
   if (!userName || userName.trim() === '') {
@@ -406,8 +407,15 @@ export async function batchAddSweepingAssignments(
     if (existing) {
       if (existing.isBlocked) {
         skipped.push({ date, reason: 'Date is blocked (maintenance day)' });
-      } else if (existing.userName) {
+      } else if (existing.userName && !overwrite) {
         skipped.push({ date, reason: 'Date already has an assignment' });
+      } else if (existing.userName && overwrite) {
+        // Overwrite existing assignment
+        toUpdate.push({
+          range: `${SHEET_NAME}!${getColumnLetter(COLUMNS.userName)}${existing.rowNumber}`,
+          values: [[userName]],
+        });
+        added.push(date);
       } else {
         // Entry exists but is available - queue update
         toUpdate.push({

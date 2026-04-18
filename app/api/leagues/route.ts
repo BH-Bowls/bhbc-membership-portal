@@ -45,6 +45,7 @@ export async function POST(req: Request) {
       playersPerMatch,
       dateLabel: leagueType === 'triples' ? 'Play on/at' : 'Play by',
       legs: leagueType === 'triples' ? 2 : 1,
+      message: '',
     });
     return NextResponse.json({ leagueId });
   } catch (err) {

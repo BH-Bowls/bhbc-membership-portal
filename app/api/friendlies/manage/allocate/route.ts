@@ -14,6 +14,7 @@ import {
   createGameSheet,
   updateGameStatus,
 } from '@/lib/friendlies-sheets';
+import { hasRole } from '@/lib/role-utils';
 
 interface AllocateRequest {
   game_a_tab_name: string;
@@ -30,7 +31,7 @@ export async function GET(request: NextRequest) {
     if (!session || !session.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    if (!['Captain', 'Admin'].includes(session.user.role)) {
+    if (!hasRole(session.user.role, 'Captain', 'Admin')) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -84,7 +85,7 @@ export async function POST(request: NextRequest) {
     if (!session || !session.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    if (!['Captain', 'Admin'].includes(session.user.role)) {
+    if (!hasRole(session.user.role, 'Captain', 'Admin')) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 

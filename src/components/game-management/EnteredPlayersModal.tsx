@@ -6,6 +6,7 @@
 
 import { useState, useEffect } from 'react';
 import { SearchableSelect } from '../SearchableSelect';
+import { hasRole } from '@/lib/role-utils';
 
 interface EnteredPlayer {
   userName: string;
@@ -55,7 +56,7 @@ export function EnteredPlayersModal({
   const [error, setError] = useState('');
 
   // Check if user is captain or admin (no capacity restrictions)
-  const isCaptainOrAdmin = currentUserRole && ['Captain', 'Admin'].includes(currentUserRole);
+  const isCaptainOrAdmin = hasRole(currentUserRole, 'Captain', 'Admin');
 
   useEffect(() => {
     if (isOpen) {
@@ -102,35 +103,38 @@ export function EnteredPlayersModal({
     }
   }
 
-  // Filter available players based on eligibility and not already entered
+  // Build player options for the searchable dropdown.
+  // Gender-ineligible players are excluded entirely.
+  // Already-entered and already-pending players are shown with strikethrough so the
+  // user can see them in search results but cannot select them again.
   const getEligiblePlayers = () => {
     const enteredUserNames = new Set(enteredPlayers.map(p => p.userName));
-    // In add-only mode, also filter out players already in the game (passed via prop)
     const existingNames = new Set(existingPlayerNames.map(n => n.toLowerCase()));
+    const pendingUserNames = new Set(selectedPlayers);
 
     return availablePlayers
       .filter(player => {
-        // Already entered (from fetched entered players)
-        if (enteredUserNames.has(player.userName)) return false;
-
-        // Already in game (from existingPlayerNames prop, used in add-only mode)
-        if (existingNames.has(player.userName.toLowerCase())) return false;
-        if (existingNames.has(player.fullName.toLowerCase())) return false;
-
-        // Check gender eligibility (Friendlies/Internal Games only)
+        // Completely hide gender-ineligible players
         if (ladiesMen && player.memberType) {
           const mt = player.memberType.toLowerCase();
           if (ladiesMen === 'Ladies' && mt !== 'playing lady') return false;
           if (ladiesMen === 'Men' && mt !== 'playing man') return false;
-          // Mixed: allow all (already filtered to playing members only)
         }
-
         return true;
       })
-      .map(player => ({
-        value: player.userName,
-        label: player.fullName,
-      }));
+      .map(player => {
+        const alreadyEntered =
+          enteredUserNames.has(player.userName) ||
+          existingNames.has(player.userName.toLowerCase()) ||
+          existingNames.has(player.fullName.toLowerCase());
+        const alreadyPending = pendingUserNames.has(player.userName);
+        const strikethrough = alreadyEntered || alreadyPending;
+        return {
+          value: player.userName,
+          label: player.fullName,
+          strikethrough,
+        };
+      });
   };
 
   async function handleAddPlayers() {

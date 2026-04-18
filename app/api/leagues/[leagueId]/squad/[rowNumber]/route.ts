@@ -1,5 +1,5 @@
 // app/api/leagues/[leagueId]/squad/[rowNumber]/route.ts
-// PATCH (LeagueCaptain/Admin) — assign squad member to a team and/or update position
+// PATCH (LeagueOrganiser/Admin) — assign squad member to a team and/or update position
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
@@ -15,7 +15,7 @@ export async function PATCH(
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const role = session.user?.role ?? '';
-  if (!hasRole(role, 'LeagueCaptain', 'Captain', 'Admin')) {
+  if (!hasRole(role, 'LeagueOrganiser', 'Captain', 'Admin')) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 

@@ -23,7 +23,7 @@ export async function POST(
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const role = session.user?.role ?? '';
-  if (!hasRole(role, 'LeagueCaptain', 'Captain', 'Admin')) {
+  if (!hasRole(role, 'LeagueOrganiser', 'Captain', 'Admin')) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
@@ -69,7 +69,7 @@ export async function PUT(
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const role = session.user?.role ?? '';
-  if (!hasRole(role, 'LeagueCaptain', 'Captain', 'Admin')) {
+  if (!hasRole(role, 'LeagueOrganiser', 'Captain', 'Admin')) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 

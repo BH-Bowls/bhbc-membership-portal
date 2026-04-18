@@ -45,6 +45,9 @@ export default function ManageGamesPage() {
   // State: Loading indicator while fetching games
   const [loading, setLoading] = useState(true);
 
+  // State: Explicit reload in progress (shows spinner on reload button)
+  const [reloading, setReloading] = useState(false);
+
   // State: Action loading indicator (stores tabName of game being updated)
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
@@ -122,11 +125,23 @@ export default function ManageGamesPage() {
   // ============================================================================
 
   /**
-   * Effect: Fetch games when page loads
-   * Runs once on component mount
+   * Effect: Fetch games when page loads.
+   * Uses sessionStorage cache so navigating back is instant.
+   * Always re-validates silently in the background.
    */
   useEffect(() => {
-    // Fetch all games from API
+    const CACHE_KEY = 'friendlies_manage_games_cache';
+    const cached = sessionStorage.getItem(CACHE_KEY);
+    if (cached) {
+      try {
+        setGames(JSON.parse(cached));
+        setLoading(false);
+        fetchGames({ silent: true });
+        return;
+      } catch {
+        // Bad cache — fall through
+      }
+    }
     fetchGames();
   }, []);
 
@@ -135,34 +150,38 @@ export default function ManageGamesPage() {
   // ============================================================================
 
   /**
-   * Fetch all games from captain management API
-   * Gets games with entry and selection counts
+   * Fetch all games from captain management API.
+   * Saves result to sessionStorage so navigating back is instant.
+   * Pass { silent: true } to skip the loading spinner (background refresh).
    */
-  async function fetchGames() {
-    // Show loading spinner
-    setLoading(true);
+  async function fetchGames({ silent = false }: { silent?: boolean } = {}) {
+    const CACHE_KEY = 'friendlies_manage_games_cache';
+    if (!silent) setLoading(true);
 
     try {
-      // Call captain management API to get all games
       const response = await fetch('/api/friendlies/manage/games');
       const data = await response.json();
 
-      // Check if request was successful
       if (response.ok) {
-        // Update games list
         setGames(data.games);
+        sessionStorage.setItem(CACHE_KEY, JSON.stringify(data.games));
       } else {
-        // Show error alert
-        alert(data.error || 'Failed to load games');
+        if (!silent) alert(data.error || 'Failed to load games');
       }
     } catch (error) {
-      // Network or other error
       console.error('Error fetching games:', error);
-      alert('Failed to load games');
+      if (!silent) alert('Failed to load games');
     } finally {
-      // Hide loading spinner
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
+  }
+
+  /** Force a fresh fetch, bypassing the cache. */
+  async function handleReload() {
+    sessionStorage.removeItem('friendlies_manage_games_cache');
+    setReloading(true);
+    await fetchGames();
+    setReloading(false);
   }
 
   /**
@@ -656,7 +675,23 @@ export default function ManageGamesPage() {
       <div className="container mx-auto px-4 py-8 max-w-7xl">
         {/* Page header with title and link to player view */}
         <div className="flex justify-between items-center mb-6">
-          <h1 className="text-3xl font-bold text-gray-900">Manage Friendly Matches</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-3xl font-bold text-gray-900">Manage Friendly Matches</h1>
+            <button
+              onClick={handleReload}
+              disabled={reloading || loading}
+              title="Reload games"
+              className="text-gray-400 hover:text-blue-600 disabled:opacity-40 transition-colors"
+            >
+              <svg
+                className={`w-5 h-5 ${reloading ? 'animate-spin' : ''}`}
+                fill="none" viewBox="0 0 24 24" stroke="currentColor"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
+          </div>
 
           {/* Link to player view of friendlies */}
           <Link

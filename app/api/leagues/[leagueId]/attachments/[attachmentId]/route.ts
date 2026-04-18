@@ -96,7 +96,7 @@ export async function DELETE(
     if (!session?.user?.userName) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    if (!hasRole(session.user.role, 'Captain', 'LeagueCaptain', 'Admin')) {
+    if (!hasRole(session.user.role, 'Captain', 'LeagueOrganiser', 'Admin')) {
       return NextResponse.json({ error: 'Committee access required' }, { status: 403 });
     }
 

@@ -13,6 +13,7 @@ import {
   getColumnLetter,
 } from '@/lib/friendlies-sheets';
 import { LEAGUE_GAME_TYPES, GameStatus } from '@/lib/types/friendlies';
+import { hasRole } from '@/lib/role-utils';
 
 export async function POST(request: NextRequest) {
   try {
@@ -23,7 +24,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Only Captains and Admins can record league results
-    if (!['Captain', 'Admin'].includes(session.user.role)) {
+    if (!hasRole(session.user.role, 'Captain', 'Admin')) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 

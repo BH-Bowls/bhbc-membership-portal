@@ -147,10 +147,30 @@ export default function TeamSelectionPage() {
           return;
         }
 
+        // 2. Refresh stats from Players sheet so nameDown/picked/% and last-6-games
+        //    history are current even if no save has been done in this session yet
+        try {
+          await fetch('/api/friendlies/manage/get-stats', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tab_name: data.game.tabName }),
+          });
+
+          // Re-fetch with updated stats
+          const refreshed = await fetch(`/api/friendlies/manage/game/${tabDate}`);
+          if (refreshed.ok) {
+            const refreshedData = await refreshed.json();
+            data.players = refreshedData.players;
+          }
+        } catch (statsError) {
+          // Non-fatal — proceed with original data
+          console.error('Error refreshing stats on load:', statsError);
+        }
+
         setGameData(data);
         setOriginalPlayers(data.players);
 
-        // 2. Check for draft
+        // 3. Check for draft
         const currentUserName = session?.user?.userName || session?.user?.name || '';
 
         if (currentUserName) {
@@ -164,9 +184,6 @@ export default function TeamSelectionPage() {
         } else {
           setPlayers(data.players);
         }
-
-        // Note: Stats are populated when the game is closed (createGameSheet).
-        // get-stats is only called when adding new players via the Add Players button.
 
         setupDoneRef.current = tabDate;
       } catch (error) {

@@ -11,6 +11,7 @@ import { EnteredPlayersModal } from '@/components/game-management/EnteredPlayers
 import Link from 'next/link';
 import { saveDraft, restoreDraft, clearDraft } from '@/lib/form-draft-utils';
 import { parseUKDate } from '@/lib/date-utils';
+import { hasRole } from '@/lib/role-utils';
 
 interface Player {
   rowNumber: number;
@@ -63,7 +64,7 @@ export default function InternalGameSelectionPage() {
   useEffect(() => {
     if (status === 'loading') return;
 
-    if (!session || !['Captain', 'Admin'].includes(session.user.role)) {
+    if (!session || !hasRole(session.user.role, 'Captain', 'Admin')) {
       router.push('/internal-games');
       return;
     }

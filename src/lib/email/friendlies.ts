@@ -186,11 +186,12 @@ Friendlies Management System
     .button {
       display: inline-block;
       background-color: #0066cc;
-      color: white;
+      color: #ffffff;
       padding: 12px 24px;
       text-decoration: none;
       border-radius: 5px;
       margin-top: 15px;
+      font-weight: bold;
     }
     /* Small footer text */
     .footer {
@@ -223,7 +224,7 @@ Friendlies Management System
       <p>Please select a replacement player from the reserves or add an offline player.</p>
 
       <!-- Call-to-action button linking to team selection page -->
-      <a href="${appUrl}/friendlies/manage/game/${encodeURIComponent(game.tabName)}" class="button">View Game & Select Replacement</a>
+      <a href="${appUrl}/friendlies/manage/game/${encodeURIComponent(game.tabName)}" class="button" style="display:inline-block;background-color:#0066cc;color:#ffffff;padding:12px 24px;text-decoration:none;border-radius:5px;margin-top:15px;font-weight:bold;">View Game &amp; Select Replacement</a>
     </div>
 
     <!-- Email footer -->
@@ -252,20 +253,24 @@ Friendlies Management System
 
 /**
  * Send game published notification email to all entered players
- * Sends a single email with all recipients in BCC
- * Includes a link to view the game details and selection status
+ * Sends individual emails so each player sees their own selection status
  * @param game The game object containing match details
- * @param players Array of entered players with their email addresses
+ * @param players Array of entered players with email addresses and selection status
  * @param appUrl The base URL of the application for building links
  * @returns Object with success status, count of emails sent, and any players without emails
  */
 export async function sendGamePublishedEmail(
   game: Game,
-  players: Array<{ fullName: string; email: string | null }>,
+  players: Array<{
+    fullName: string;
+    email: string | null;
+    selected?: string;   // SelectionStatus: 'Y' | 'R' | 'T' | ''
+    team?: number | null;
+    position?: string;
+  }>,
   appUrl: string
 ): Promise<{ success: boolean; emailsSent: number; playersWithoutEmail: string[]; error?: string }> {
   try {
-    // Filter players who have email addresses
     const playersWithEmail = players.filter(p => p.email && p.email.trim() !== '');
     const playersWithoutEmail = players.filter(p => !p.email || p.email.trim() === '').map(p => p.fullName);
 
@@ -274,110 +279,6 @@ export async function sendGamePublishedEmail(
       return { success: true, emailsSent: 0, playersWithoutEmail };
     }
 
-    // Build the game URL
-    const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}`;
-
-    // Build email subject
-    const subject = `Team Selection Published - ${game.clubName} ${game.date}`;
-
-    // Build plain text version
-    const text = `
-Team Selection Published
-
-The team has been selected for the ${game.clubName} game.
-
-Date: ${game.date}
-Time: ${game.time}
-Venue: ${game.homeAway === 'H' ? 'Home' : 'Away'}
-
-View your selection and game details online:
-${gameUrl}
-
----
-Burgess Hill Bowls Club
-Friendlies Management System
-    `.trim();
-
-    // Build HTML version
-    const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      line-height: 1.6;
-      color: #333;
-    }
-    .container {
-      max-width: 600px;
-      margin: 0 auto;
-      padding: 20px;
-    }
-    .header {
-      background-color: #0066cc;
-      color: white;
-      padding: 20px;
-      text-align: center;
-      border-radius: 5px 5px 0 0;
-    }
-    .content {
-      background-color: #f9f9f9;
-      padding: 20px;
-      border: 1px solid #ddd;
-    }
-    .details {
-      background-color: white;
-      padding: 15px;
-      margin: 15px 0;
-      border-left: 4px solid #0066cc;
-    }
-    .button {
-      display: inline-block;
-      background-color: #0066cc;
-      color: white;
-      padding: 12px 24px;
-      text-decoration: none;
-      border-radius: 5px;
-      margin-top: 15px;
-    }
-    .footer {
-      text-align: center;
-      padding: 15px;
-      color: #666;
-      font-size: 12px;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h2>Team Selection Published</h2>
-    </div>
-
-    <div class="content">
-      <p>The team has been selected for the <strong>${game.clubName}</strong> game.</p>
-
-      <div class="details">
-        <p><strong>Date:</strong> ${game.date}</p>
-        <p><strong>Time:</strong> ${game.time}</p>
-        <p><strong>Venue:</strong> ${game.homeAway === 'H' ? 'Home' : 'Away'}</p>
-      </div>
-
-      <p>Click the button below to view your selection and the full game details.</p>
-
-      <a href="${gameUrl}" class="button">View Game Details</a>
-    </div>
-
-    <div class="footer">
-      <p>Burgess Hill Bowls Club - Friendlies Management System</p>
-    </div>
-  </div>
-</body>
-</html>
-    `.trim();
-
-    // Get email transporter
     const { getEmailTransporter, isEmailConfigured } = await import('./mailer');
 
     if (!isEmailConfigured()) {
@@ -386,25 +287,107 @@ Friendlies Management System
     }
 
     const transporter = getEmailTransporter();
+    const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}`;
+    const subject = `Team Selection Published - ${game.clubName} ${game.date}`;
+    const venue = game.homeAway === 'H' ? 'Home' : 'Away';
 
-    // Build BCC list from all player emails
-    const bccList = playersWithEmail.map(p => p.email).join(', ');
+    const BUTTON_STYLE = 'display:inline-block;background-color:#0066cc;color:#ffffff;padding:12px 24px;text-decoration:none;border-radius:5px;margin-top:15px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;';
 
-    // Send single email with all recipients in BCC
-    // Send TO the club email (or SMTP user) so we have a valid recipient
-    const mailOptions = {
-      from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
-      to: process.env.SMTP_USER, // Send to ourselves
-      bcc: bccList,
-      subject,
-      text,
-      html,
+    // Resolve selection status to a human-readable label and colour
+    const resolveStatus = (selected?: string): { label: string; color: string } => {
+      switch (selected) {
+        case 'Y': return { label: 'Selected — Playing', color: '#1a7a1a' };
+        case 'R': return { label: 'Reserve', color: '#b45309' };
+        case 'T': return { label: 'Reserve Team', color: '#6b21a8' };
+        default:  return { label: 'Entered (not yet assigned)', color: '#555555' };
+      }
     };
 
-    await transporter.sendMail(mailOptions);
+    let emailsSent = 0;
 
-    console.log(`✓ Game published notification sent to ${playersWithEmail.length} player(s) for ${game.tabName}`);
-    return { success: true, emailsSent: playersWithEmail.length, playersWithoutEmail };
+    for (const player of playersWithEmail) {
+      const { label, color } = resolveStatus(player.selected);
+
+      const teamInfo = player.team != null ? ` — Team ${player.team}` : '';
+
+      const text = `
+Team Selection Published
+
+Hi ${player.fullName},
+
+The team has been selected for the ${game.clubName} game.
+
+Date: ${game.date}
+Time: ${game.time}
+Venue: ${venue}
+Format: ${game.format}
+
+Your status: ${label}${teamInfo}
+
+View the full game details online:
+${gameUrl}
+
+---
+Burgess Hill Bowls Club
+Friendlies Management System
+      `.trim();
+
+      const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background-color: #0066cc; color: #ffffff; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+    .header h2 { margin: 0; color: #ffffff; }
+    .content { background-color: #f9f9f9; padding: 20px; border: 1px solid #ddd; }
+    .details { background-color: #ffffff; padding: 15px; margin: 15px 0; border-left: 4px solid #0066cc; }
+    .status-box { background-color: #ffffff; padding: 15px; margin: 15px 0; border-left: 4px solid ${color}; }
+    .footer { text-align: center; padding: 15px; color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h2>Team Selection Published</h2>
+    </div>
+    <div class="content">
+      <p>Hi <strong>${player.fullName}</strong>,</p>
+      <p>The team has been selected for the <strong>${game.clubName}</strong> game.</p>
+      <div class="details">
+        <p><strong>Date:</strong> ${game.date}</p>
+        <p><strong>Time:</strong> ${game.time}</p>
+        <p><strong>Venue:</strong> ${venue}</p>
+        <p><strong>Format:</strong> ${game.format}</p>
+      </div>
+      <div class="status-box">
+        <p style="margin:0;"><strong>Your status:</strong> <span style="color:${color};font-weight:bold;">${label}</span>${teamInfo ? `<span style="color:#555;"> ${teamInfo}</span>` : ''}</p>
+      </div>
+      <p>Click below to view the full game details and match card.</p>
+      <a href="${gameUrl}" style="${BUTTON_STYLE}">View Game Details</a>
+    </div>
+    <div class="footer">
+      <p>Burgess Hill Bowls Club - Friendlies Management System</p>
+    </div>
+  </div>
+</body>
+</html>
+      `.trim();
+
+      await transporter.sendMail({
+        from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
+        to: player.email!,
+        subject,
+        text,
+        html,
+      });
+
+      emailsSent++;
+    }
+
+    console.log(`✓ Game published notification sent to ${emailsSent} player(s) for ${game.tabName}`);
+    return { success: true, emailsSent, playersWithoutEmail };
   } catch (error) {
     console.error('Error sending game published email:', error);
     return {
@@ -500,7 +483,7 @@ Friendlies Management System
     .content { background-color: #f9f9f9; padding: 20px; border: 1px solid #ddd; }
     .details { background-color: white; padding: 15px; margin: 15px 0; border-left: 4px solid #0066cc; }
     .rota { background-color: white; padding: 15px; margin: 15px 0; border-left: 4px solid #e6a817; }
-    .button { display: inline-block; background-color: #0066cc; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; margin-top: 15px; }
+    .button { display: inline-block; background-color: #0066cc; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 5px; margin-top: 15px; font-weight: bold; }
     .footer { text-align: center; padding: 15px; color: #666; font-size: 12px; }
   </style>
 </head>
@@ -522,7 +505,7 @@ Friendlies Management System
           ${rotaHtmlRows}
         </table>
       </div>
-      <a href="${gameUrl}" class="button">View Game Details</a>
+      <a href="${gameUrl}" class="button" style="display:inline-block;background-color:#0066cc;color:#ffffff;padding:12px 24px;text-decoration:none;border-radius:5px;margin-top:15px;font-weight:bold;">View Game Details</a>
     </div>
     <div class="footer">
       <p>Burgess Hill Bowls Club - Friendlies Management System</p>

@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getInternalGames, getInternalGamePlayers } from '@/lib/internal-games-sheets';
+import { hasRole } from '@/lib/role-utils';
 
 export async function GET(
   request: NextRequest,
@@ -17,7 +18,7 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    if (!['Captain', 'Admin'].includes(session.user.role)) {
+    if (!hasRole(session.user.role, 'Captain', 'Admin')) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 

@@ -46,11 +46,11 @@ function fmtAdj(n: number | null): string {
 }
 
 const MATCH_STATUS_STYLES: Record<LeagueMatchStatus, string> = {
-  Scheduled: 'bg-gray-100 text-gray-600',
-  Played:    'bg-green-100 text-green-700',
-  Walkover:  'bg-yellow-100 text-yellow-700',
-  Conceded:  'bg-orange-100 text-orange-700',
-  Cancelled: 'bg-red-100 text-red-600',
+  Scheduled:   'bg-gray-100 text-gray-600',
+  Played:      'bg-green-100 text-green-700',
+  Walkover:    'bg-yellow-100 text-yellow-700',
+  Conceded:    'bg-orange-100 text-orange-700',
+  'Not Played': 'bg-red-100 text-red-600',
 };
 
 function LeagueDetailPageInner() {
@@ -263,7 +263,7 @@ function LeagueDetailPageInner() {
     });
   }
 
-  const POSITION_ORDER: Record<string, number> = { Skip: 0, Lead: 1, Two: 2 };
+  const POSITION_ORDER: Record<string, number> = { Captain: 0, Skip: 1, Lead: 2, Two: 3 };
   const sortByPosition = (members: LeagueSquadMember[]) =>
     [...members].sort((a, b) => {
       const aO = a.position ? (POSITION_ORDER[a.position] ?? 99) : 99;
@@ -301,7 +301,7 @@ function LeagueDetailPageInner() {
     : null;
 
   const contactOpposingSkip = contactOpponentTeamId
-    ? (squad.find((m) => m.teamId === contactOpponentTeamId && m.position === 'Skip') ?? null)
+    ? (squad.find((m) => m.teamId === contactOpponentTeamId && m.position === 'Captain') ?? null)
     : null;
 
   // Group matches by date
@@ -346,6 +346,9 @@ function LeagueDetailPageInner() {
             <div>
               <h1 className="text-2xl font-bold text-gray-900">{league.name}</h1>
               <p className="text-sm text-gray-500 mt-0.5 capitalize">{league.type} · {league.season}</p>
+              {league.message && (
+                <p className="mt-2 text-sm text-gray-700 whitespace-pre-line">{league.message}</p>
+              )}
             </div>
             <div className="flex gap-2 flex-wrap">
               {canEnter && !enteringLeague && (
@@ -438,9 +441,9 @@ function LeagueDetailPageInner() {
                         {fixtureDate ? formatFullDate(fixtureDate) : 'Unscheduled'}{contactFixture.scheduledTime ? ` at ${formatTime(contactFixture.scheduledTime)}` : ''} vs{' '}
                         <span className="font-medium">{oppTeam?.teamName ?? '—'}</span>
                       </p>
-                      {myEntry.position === 'Skip' && contactOpposingSkip && (
+                      {contactOpposingSkip && (
                         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5">
-                          <span className="text-blue-700">Opposing Skip: <span className="font-medium text-blue-900">{contactOpposingSkip.fullName}</span></span>
+                          <span className="text-blue-700">Opposing Captain: <span className="font-medium text-blue-900">{contactOpposingSkip.fullName}</span></span>
                           {contactOpposingSkip.mobile && (
                             <a href={`tel:${contactOpposingSkip.mobile}`} onClick={(e) => e.stopPropagation()} className="text-blue-600 hover:underline">{contactOpposingSkip.mobile}</a>
                           )}
@@ -453,7 +456,7 @@ function LeagueDetailPageInner() {
                   ) : (
                     <p className="text-blue-600 italic">No upcoming fixtures.</p>
                   )}
-                  <p className="mt-2 text-xs text-blue-500">{selectedMatchId ? 'Tap another fixture to change.' : 'Showing next scheduled fixture — tap any of your games to change.'}</p>
+                  <p className="mt-2 text-xs text-blue-500">{selectedMatchId ? 'Tap another fixture for contact details.' : 'Showing next scheduled fixture — tap any of your games for contact details.'}</p>
                 </div>
               );
             })()}
@@ -483,6 +486,49 @@ function LeagueDetailPageInner() {
             {table.length === 0 ? (
               <div className="text-center py-10 text-gray-400">No results yet.</div>
             ) : (
+              <>
+              <div className="flex justify-end mb-3">
+                <button
+                  onClick={() => {
+                    const w = window.open('', '_blank', 'width=800,height=600');
+                    if (!w) return;
+                    const rows = table.map((row, i) => `
+                      <tr style="border-bottom:1px solid #e5e7eb;${i === 0 ? 'font-weight:600;' : ''}">
+                        <td style="padding:6px 12px 6px 0;text-align:left">${i + 1}</td>
+                        <td style="padding:6px 12px;text-align:left">${row.teamName}</td>
+                        <td style="padding:6px 8px;text-align:center">${row.played}</td>
+                        <td style="padding:6px 8px;text-align:center">${row.won}</td>
+                        <td style="padding:6px 8px;text-align:center">${row.drew}</td>
+                        <td style="padding:6px 8px;text-align:center">${row.lost}</td>
+                        <td style="padding:6px 8px;text-align:center">${row.shotsFor}</td>
+                        <td style="padding:6px 8px;text-align:center">${row.shotsAgainst}</td>
+                        <td style="padding:6px 8px;text-align:center">${row.shotDiff > 0 ? '+' + row.shotDiff : row.shotDiff}</td>
+                        <td style="padding:6px 0 6px 8px;text-align:center;font-weight:600">${row.points}</td>
+                      </tr>`).join('');
+                    w.document.write(`<!DOCTYPE html><html><head><title>${league.name} — League Table</title>
+                      <style>body{font-family:Arial,sans-serif;padding:24px;color:#111}
+                      h1{font-size:20px;margin-bottom:4px}p{margin:0 0 16px;color:#555;font-size:13px}
+                      table{border-collapse:collapse;width:100%;font-size:14px}
+                      th{padding:8px 8px 8px 0;text-align:center;border-bottom:2px solid #111;color:#555;font-weight:600;font-size:12px}
+                      th:nth-child(2){text-align:left}th:first-child{text-align:left}
+                      @media print{button{display:none}}</style></head><body>
+                      <h1>${league.name}</h1>
+                      <p>${league.type.charAt(0).toUpperCase() + league.type.slice(1)} · ${league.season} · Printed ${new Date().toLocaleDateString('en-GB', { day:'numeric', month:'long', year:'numeric' })}</p>
+                      <table><thead><tr>
+                        <th>Pos</th><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>F</th><th>A</th><th>+/-</th><th>Pts</th>
+                      </tr></thead><tbody>${rows}</tbody></table>
+                      <script>window.onload=function(){window.print();window.onafterprint=function(){window.close();}}<\/script>
+                      </body></html>`);
+                    w.document.close();
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                  </svg>
+                  Print table
+                </button>
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
@@ -522,6 +568,7 @@ function LeagueDetailPageInner() {
                   </tbody>
                 </table>
               </div>
+              </>
             )}
           </>
         )}
@@ -557,7 +604,7 @@ function LeagueDetailPageInner() {
                 ).map((date) => (
                   <div key={date}>
                     <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
-                      {formatFullDate(date)}
+                      {league.dateLabel}: {formatFullDate(date)}
                     </h3>
                     <div className="space-y-2">
                       {matches.filter((m) => getMatchDate(m, league.type) === date && (matchFilter === 'all' || !myEntry?.teamId || m.homeTeamId === myEntry.teamId || m.awayTeamId === myEntry.teamId)).map((match) => {
@@ -615,7 +662,7 @@ function LeagueDetailPageInner() {
                               <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${MATCH_STATUS_STYLES[match.status]}`}>
                                 {match.status}
                               </span>
-                              {canEnterScore(match) && !isPlayed && match.status !== 'Cancelled' && (
+                              {canEnterScore(match) && !isPlayed && match.status !== 'Not Played' && (
                                 <button
                                   onClick={(e) => { e.stopPropagation(); openScoreDialog(match); }}
                                   className="text-xs px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100"
@@ -623,7 +670,7 @@ function LeagueDetailPageInner() {
                                   Enter Score
                                 </button>
                               )}
-                              {isCommittee && (isPlayed || match.status === 'Cancelled') && (
+                              {isCommittee && (isPlayed || match.status === 'Not Played') && (
                                 <button
                                   onClick={(e) => { e.stopPropagation(); openScoreDialog(match); }}
                                   className="text-xs px-2 py-1 bg-gray-50 text-gray-600 rounded hover:bg-gray-100"
@@ -672,10 +719,10 @@ function LeagueDetailPageInner() {
                               <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${MATCH_STATUS_STYLES[match.status]}`}>
                                 {match.status}
                               </span>
-                              {canEnterScore(match) && !isPlayed && match.status !== 'Cancelled' && (
+                              {canEnterScore(match) && !isPlayed && match.status !== 'Not Played' && (
                                 <button onClick={(e) => { e.stopPropagation(); openScoreDialog(match); }} className="text-xs px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100">Enter Score</button>
                               )}
-                              {isCommittee && (isPlayed || match.status === 'Cancelled') && (
+                              {isCommittee && (isPlayed || match.status === 'Not Played') && (
                                 <button onClick={(e) => { e.stopPropagation(); openScoreDialog(match); }} className="text-xs px-2 py-1 bg-gray-50 text-gray-600 rounded hover:bg-gray-100">Edit</button>
                               )}
                             </div>
@@ -807,7 +854,7 @@ function LeagueDetailPageInner() {
                   <option value="Played">Played</option>
                   <option value="Conceded">Conceded</option>
                   <option value="Walkover">Walkover</option>
-                  <option value="Cancelled">Cancelled</option>
+                  <option value="Not Played">Not Played</option>
                   <option value="Reset">— Reset to Scheduled —</option>
                 </select>
               </div>
@@ -881,7 +928,7 @@ function LeagueDetailPageInner() {
               )}
 
               {/* Score adjustment (all result types except Cancelled) */}
-              {scoreDialog.status !== 'Cancelled' && scoreDialog.status !== 'Reset' && (
+              {scoreDialog.status !== 'Not Played' && scoreDialog.status !== 'Reset' && (
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">Score adjustment</label>
                   <div className="grid grid-cols-2 gap-3">
@@ -930,7 +977,7 @@ function LeagueDetailPageInner() {
               )}
 
               {/* Points (all result types except Cancelled) */}
-              {scoreDialog.status !== 'Cancelled' && scoreDialog.status !== 'Reset' && (
+              {scoreDialog.status !== 'Not Played' && scoreDialog.status !== 'Reset' && (
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">Points awarded</label>
                   <div className="grid grid-cols-2 gap-3">
@@ -958,8 +1005,8 @@ function LeagueDetailPageInner() {
                 </div>
               )}
 
-              {scoreDialog.status === 'Cancelled' && (
-                <p className="text-sm text-gray-500">This match will be marked as cancelled with no result.</p>
+              {scoreDialog.status === 'Not Played' && (
+                <p className="text-sm text-gray-500">This match will be marked as not played with no result.</p>
               )}
               {scoreDialog.status === 'Reset' && (
                 <p className="text-sm text-amber-700">This will clear all scores and reset the match to Scheduled.</p>
@@ -1031,7 +1078,7 @@ function LeagueDetailPageInner() {
                         <tr key={m.matchId} className="border-b border-gray-100">
                           <td className="py-2 pr-2 text-gray-900">
                             {oppName}
-                            {(m.status === 'Walkover' || m.status === 'Conceded' || m.status === 'Cancelled') && (
+                            {(m.status === 'Walkover' || m.status === 'Conceded' || m.status === 'Not Played') && (
                               <span className="ml-1 text-xs text-gray-400">({m.status})</span>
                             )}
                           </td>

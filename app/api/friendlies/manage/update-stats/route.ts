@@ -8,6 +8,7 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getGames, getGameSheet, getFriendliesSpreadsheetId, getColumnMap, getColumnLetter, getSheetsClient } from '@/lib/friendlies-sheets';
 import { UpdateStatsRequest, UpdateStatsResponse } from '@/lib/types/friendlies';
+import { hasRole } from '@/lib/role-utils';
 
 // POST handler - Syncs selection status from game sheet to Players sheet and recalculates stats
 export async function POST(request: NextRequest) {
@@ -20,7 +21,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Only Captains and Admins can update player stats/status
-    if (!['Captain', 'Admin'].includes(session.user.role)) {
+    if (!hasRole(session.user.role, 'Captain', 'Admin')) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 

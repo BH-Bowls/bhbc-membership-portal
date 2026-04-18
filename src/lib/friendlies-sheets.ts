@@ -2511,13 +2511,6 @@ export async function updateGameSheetStats(tabName: string): Promise<number> {
   for (let i = 0; i < players.length; i++) {
     const player = players[i];
 
-    // Only update stats for newly added players (just added by this function)
-    // Stats are populated once when players are first added - either via createGameSheet
-    // (when game is closed) or via this function (when Add Players is used)
-    if (!newlyAddedPlayers.has(player.name.toLowerCase())) {
-      continue;
-    }
-
     try {
       // Get stats for this player from cached Players sheet
       const stats = getPlayerStatsFromCache(player.name, playersRows, playersColMap, playersHeaders, tabName);

@@ -1,5 +1,5 @@
 // app/api/leagues/[leagueId]/enter/route.ts
-// POST — enter the league (authenticated member or LeagueCaptain adding someone)
+// POST — enter the league (authenticated member or LeagueOrganiser adding someone)
 // DELETE — withdraw from the league
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -25,7 +25,7 @@ export async function POST(
   const { leagueId } = await params;
 
   const body = await req.json();
-  const isCommittee = hasRole(role, 'LeagueCaptain', 'Captain', 'Admin');
+  const isCommittee = hasRole(role, 'LeagueOrganiser', 'Captain', 'Admin');
   const username: string = isCommittee && body.username ? body.username : sessionUsername;
   const position = body.position ?? '';
 
@@ -63,7 +63,7 @@ export async function DELETE(
   const { leagueId } = await params;
 
   const body = await req.json().catch(() => ({}));
-  const isCommittee = hasRole(role, 'LeagueCaptain', 'Captain', 'Admin');
+  const isCommittee = hasRole(role, 'LeagueOrganiser', 'Captain', 'Admin');
   const username: string = isCommittee && body.username ? body.username : sessionUsername;
 
   try {

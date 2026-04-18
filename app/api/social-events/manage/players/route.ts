@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getSocialEventMembers } from '@/lib/social-events-sheets';
+import { hasRole } from '@/lib/role-utils';
 
 // GET handler - Returns sorted list of all members for dropdown selection
 export async function GET(request: NextRequest) {
@@ -18,7 +19,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Only Captains and Admins can access member list
-    if (!['Captain', 'Admin'].includes(session.user.role)) {
+    if (!hasRole(session.user.role, 'Captain', 'Admin')) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 

@@ -7,6 +7,7 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getGames, batchUpdatePlayerEntries, addPlayersToGameSheetDirect, updateGameCounts } from '@/lib/friendlies-sheets';
 import { canEnterGame } from '@/lib/game-management/capacity';
+import { hasRole } from '@/lib/role-utils';
 
 // POST handler - Adds players with M (manually added) status
 export async function POST(request: NextRequest) {
@@ -39,7 +40,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Check capacity limits (captains/admins bypass capacity)
-    const isCaptainOrAdmin = session.user.role && ['Captain', 'Admin'].includes(session.user.role);
+    const isCaptainOrAdmin = hasRole(session.user.role, 'Captain', 'Admin');
 
     // Only allow adding to open games, or Selecting/Selected games for captains/admins
     if (game.status !== 'O') {

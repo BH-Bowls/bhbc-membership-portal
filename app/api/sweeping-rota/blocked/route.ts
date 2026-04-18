@@ -7,7 +7,7 @@ import { authOptions } from '@/lib/auth';
 import { batchBlockSweepingDates } from '@/lib/sweeping-sheets';
 import { generatePatternDates, parseDate } from '@/lib/sweeping-patterns';
 import { BlockDaysRequest, BlockDaysResponse } from '@/lib/types/sweeping';
-import { isMember } from '@/lib/role-utils';
+import { hasRole } from '@/lib/role-utils';
 
 /**
  * POST /api/sweeping-rota/blocked
@@ -22,9 +22,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Non-members only (Admin, superadmin, Kiosk, etc.)
-    if (isMember(session.user.role)) {
-      return NextResponse.json({ error: 'Forbidden - Non-members only' }, { status: 403 });
+    // Admin and SweepingAdmin only
+    if (!hasRole(session.user.role, 'Admin', 'SweepingAdmin') && session.user.role !== 'superadmin') {
+      return NextResponse.json({ error: 'Forbidden - Admin or SweepingAdmin only' }, { status: 403 });
     }
 
     const body: BlockDaysRequest = await request.json();

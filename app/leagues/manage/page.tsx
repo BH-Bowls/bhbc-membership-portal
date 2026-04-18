@@ -1,5 +1,5 @@
 // app/leagues/manage/page.tsx
-// League Management home — LeagueCaptain/Captain/Admin only
+// League Management home — LeagueOrganiser/Captain/Admin only
 
 'use client';
 
@@ -22,7 +22,7 @@ export default function LeagueManagePage() {
 
   const role = session?.user?.role ?? '';
   const roles = role.split(',').map((r) => r.trim());
-  const canAccess = ['LeagueCaptain', 'Captain', 'Admin'].some((r) => roles.includes(r));
+  const canAccess = ['LeagueOrganiser', 'Captain', 'Admin'].some((r) => roles.includes(r));
 
   const [leagues, setLeagues] = useState<League[]>([]);
   const [loading, setLoading] = useState(true);

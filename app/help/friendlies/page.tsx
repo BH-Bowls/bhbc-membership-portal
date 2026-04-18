@@ -37,6 +37,10 @@ export default function HelpFriendliesPage() {
               <strong>My Played</strong> — games you entered that have been played, cancelled, or
               abandoned.
             </Body>
+            <Note>
+              The tab you are on is remembered. If you open a game&apos;s details and then go back,
+              you will return to the same tab rather than the default Open for Entry view.
+            </Note>
           </HelpSection>
 
           <HelpSection title="When games open">
@@ -102,12 +106,22 @@ export default function HelpFriendliesPage() {
 
           <HelpSection title="Team sheet">
             <Body>
-              Once the Captain has selected the team and published the game, you will be able to see
-              who has been selected to play. Your name will be highlighted if you are in the team.
-              Use the <strong>My Entries</strong> tab to quickly find your upcoming games.
+              Once the Captain has selected the team and published the game, a{' '}
+              <strong>View Details</strong> button appears on the game card. Any member can view the
+              full team sheet — you do not need to have entered the game.
             </Body>
             <Body>
-              Tap <strong>View Details</strong> on a selected game card to open the full team sheet.
+              Below the View Details button the game card shows your personal status for that game:
+            </Body>
+            <div className="mt-1 space-y-1 text-sm text-gray-700 mb-2">
+              <p><strong className="text-green-700">You are Selected to play</strong> — you are in the main team.</p>
+              <p><strong className="text-amber-700">You are a Reserve</strong> — you are on the reserve list.</p>
+              <p><strong className="text-purple-700">Playing — Reserve Rink</strong> — you are in the reserve team.</p>
+              <p><span className="text-gray-500">Not selected for this game</span> — you entered but were not selected.</p>
+              <p><span className="text-gray-500">Not entered</span> — you did not enter this game.</p>
+            </div>
+            <Body>
+              Use the <strong>My Entries</strong> tab to quickly find your upcoming games.
             </Body>
           </HelpSection>
 

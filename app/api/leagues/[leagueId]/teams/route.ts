@@ -1,5 +1,5 @@
 // app/api/leagues/[leagueId]/teams/route.ts
-// POST (LeagueCaptain/Admin) — create a new team in this league
+// POST (LeagueOrganiser/Admin) — create a new team in this league
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
@@ -15,7 +15,7 @@ export async function POST(
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const role = session.user?.role ?? '';
-  if (!hasRole(role, 'LeagueCaptain', 'Captain', 'Admin')) {
+  if (!hasRole(role, 'LeagueOrganiser', 'Captain', 'Admin')) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 

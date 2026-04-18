@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { updateGameMessage } from '@/lib/friendlies-sheets';
+import { hasRole } from '@/lib/role-utils';
 
 export async function PUT(req: Request) {
   const session = await getServerSession(authOptions);
@@ -12,7 +13,7 @@ export async function PUT(req: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   const role = session.user?.role ?? '';
-  if (!['Captain', 'Admin'].includes(role)) {
+  if (!hasRole(role, 'Captain', 'Admin')) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 

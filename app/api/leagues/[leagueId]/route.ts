@@ -1,6 +1,6 @@
 // app/api/leagues/[leagueId]/route.ts
 // GET (public) — get league, teams, squad, matches and table
-// PATCH (Admin/LeagueCaptain) — update league metadata/status
+// PATCH (Admin/LeagueOrganiser) — update league metadata/status
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
@@ -46,7 +46,7 @@ export async function PATCH(
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const role = session.user?.role ?? '';
-  if (!hasRole(role, 'LeagueCaptain', 'Captain', 'Admin')) {
+  if (!hasRole(role, 'LeagueOrganiser', 'Captain', 'Admin')) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 

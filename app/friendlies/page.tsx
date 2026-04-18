@@ -16,6 +16,7 @@ import { calculateCapacity, formatCapacity, getCapacityBadgeColor } from '@/lib/
 import { EnteredPlayersModal } from '@/components/game-management/EnteredPlayersModal';
 import { parseUKDate } from '@/lib/date-utils';
 import { groupPairedGames, isPairedGame, type GameOrPair } from '@/lib/friendlies-utils';
+import { hasRole } from '@/lib/role-utils';
 
 // ============================================================================
 // Type Definitions
@@ -55,8 +56,14 @@ export default function FriendliesPage() {
   // State: List of all games with user's entry status for each
   const [games, setGames] = useState<GameWithUserStatus[]>([]);
 
-  // State: Current filter selection (defaults to 'O' - Open games)
-  const [filter, setFilter] = useState<FilterType>('O');
+  // State: Current filter selection — restored from sessionStorage so Back preserves the tab
+  const [filter, setFilter] = useState<FilterType>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = sessionStorage.getItem('friendlies_filter');
+      if (saved === 'all' || saved === 'O' || saved === 'entered' || saved === 'played') return saved;
+    }
+    return 'O';
+  });
 
   // State: Set of game tab names that user has checked/selected
   // Uses Set for efficient add/remove operations
@@ -64,6 +71,9 @@ export default function FriendliesPage() {
 
   // State: Loading indicator while fetching games from API
   const [loading, setLoading] = useState(true);
+
+  // State: Explicit reload in progress (shows spinner on reload button)
+  const [reloading, setReloading] = useState(false);
 
   // State: Entering/updating indicator while submitting changes
   const [entering, setEntering] = useState(false);
@@ -134,11 +144,24 @@ export default function FriendliesPage() {
   }, []);
 
   /**
-   * Effect: Fetch games when page first loads
-   * Runs once on component mount (empty dependency array)
+   * Effect: Fetch games when page first loads.
+   * Uses sessionStorage as a cache so navigating back is instant.
+   * Always re-validates in the background so data stays fresh.
    */
   useEffect(() => {
-    // Fetch all games from API
+    const CACHE_KEY = 'friendlies_games_cache';
+    const cached = sessionStorage.getItem(CACHE_KEY);
+    if (cached) {
+      try {
+        setGames(JSON.parse(cached));
+        setLoading(false);
+        // Silent background refresh — updates UI when done
+        fetchGames({ silent: true });
+        return;
+      } catch {
+        // Bad cache — fall through to normal fetch
+      }
+    }
     fetchGames();
   }, []);
 
@@ -166,30 +189,35 @@ export default function FriendliesPage() {
   // ============================================================================
 
   /**
-   * Fetch all games from API with user's entry status
-   * Called on page load and after updating entries
-   * Updates games state with response data
+   * Fetch all games from API with user's entry status.
+   * Saves result to sessionStorage so the next visit is instant.
+   * Pass { silent: true } to skip the loading spinner (background refresh).
    */
-  async function fetchGames() {
-    // Show loading spinner
-    setLoading(true);
+  async function fetchGames({ silent = false }: { silent?: boolean } = {}) {
+    const CACHE_KEY = 'friendlies_games_cache';
+    if (!silent) setLoading(true);
 
     try {
-      // Call API to get all games with user's status for each
       const response = await fetch('/api/friendlies/games');
       const data = await response.json();
 
-      // Update games state if API returned data
       if (data.games) {
         setGames(data.games);
+        sessionStorage.setItem(CACHE_KEY, JSON.stringify(data.games));
       }
     } catch (error) {
-      // Show error alert if API call fails
-      alert('Failed to load games. Please refresh the page.');
+      if (!silent) alert('Failed to load games. Please refresh the page.');
     } finally {
-      // Hide loading spinner whether success or failure
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
+  }
+
+  /** Force a fresh fetch, bypassing the cache. */
+  async function handleReload() {
+    sessionStorage.removeItem('friendlies_games_cache');
+    setReloading(true);
+    await fetchGames();
+    setReloading(false);
   }
 
   /**
@@ -363,10 +391,26 @@ export default function FriendliesPage() {
       <div className="container mx-auto px-4 py-8 max-w-6xl">
         {/* Page header with title and optional Manage button for Captains/Admins */}
         <div className="flex justify-between items-center mb-6">
-          <h1 className="text-3xl font-bold text-gray-900">Friendly Matches</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-3xl font-bold text-gray-900">Friendly Matches</h1>
+            <button
+              onClick={handleReload}
+              disabled={reloading || loading}
+              title="Reload games"
+              className="text-gray-400 hover:text-blue-600 disabled:opacity-40 transition-colors"
+            >
+              <svg
+                className={`w-5 h-5 ${reloading ? 'animate-spin' : ''}`}
+                fill="none" viewBox="0 0 24 24" stroke="currentColor"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
+          </div>
 
           {/* Show Manage Games button only for Captains and Admins */}
-          {session?.user.role && ['Captain', 'Admin'].includes(session.user.role) && (
+          {hasRole(session?.user?.role, 'Captain', 'Admin') && (
             <Link
               href="/friendlies/manage"
               className={getButtonClasses('primary', 'md')}
@@ -380,7 +424,7 @@ export default function FriendliesPage() {
         <div className="flex gap-2 mb-6 border-b border-gray-200">
           {/* All Games tab */}
           <button
-            onClick={() => setFilter('all')}
+            onClick={() => { setFilter('all'); sessionStorage.setItem('friendlies_filter', 'all'); }}
             className={`px-4 py-2 font-medium border-b-2 ${
               filter === 'all'
                 ? 'border-blue-500 text-blue-500'
@@ -392,7 +436,7 @@ export default function FriendliesPage() {
 
           {/* Open for Entry tab - shows games with status='O' */}
           <button
-            onClick={() => setFilter('O')}
+            onClick={() => { setFilter('O'); sessionStorage.setItem('friendlies_filter', 'O'); }}
             className={`px-4 py-2 font-medium border-b-2 ${
               filter === 'O'
                 ? 'border-blue-500 text-blue-500'
@@ -406,7 +450,7 @@ export default function FriendliesPage() {
           {!isLimitedView && (
             <>
               <button
-                onClick={() => setFilter('entered')}
+                onClick={() => { setFilter('entered'); sessionStorage.setItem('friendlies_filter', 'entered'); }}
                 className={`px-4 py-2 font-medium border-b-2 ${
                   filter === 'entered'
                     ? 'border-blue-500 text-blue-500'
@@ -416,7 +460,7 @@ export default function FriendliesPage() {
                 My Entries
               </button>
               <button
-                onClick={() => setFilter('played')}
+                onClick={() => { setFilter('played'); sessionStorage.setItem('friendlies_filter', 'played'); }}
                 className={`px-4 py-2 font-medium border-b-2 ${
                   filter === 'played'
                     ? 'border-blue-500 text-blue-500'
@@ -784,7 +828,7 @@ export default function FriendliesPage() {
                   })()}
 
                   {/* For Selected, Played, Cancelled, or Abandoned games, show View Details button */}
-                  {['S', 'P', 'C', 'A'].includes(game.status) && game.userEntered && (
+                  {['S', 'P', 'C', 'A'].includes(game.status) && (
                     <Link
                       href={`/friendlies/game/${game.tabName}`}
                       className={`block w-full text-center ${getButtonClasses('primary', 'md')}`}
@@ -792,6 +836,18 @@ export default function FriendliesPage() {
                       View Details
                     </Link>
                   )}
+
+                  {/* Selection status badge — shown when team has been published */}
+                  {['S', 'P'].includes(game.status) && (() => {
+                    if (!game.userEntered) return <p className="text-sm text-gray-500">Not entered</p>;
+                    if (!game.userStatus) return null;
+                    const s = game.userStatus.replace('W', ''); // strip withdrawal suffix
+                    if (s === 'P') return <p className="text-sm font-semibold text-green-700">You are Selected to play</p>;
+                    if (s === 'R') return <p className="text-sm font-semibold text-amber-700">You are a Reserve</p>;
+                    if (s === 'T') return <p className="text-sm font-semibold text-purple-700">Playing — Reserve Rink</p>;
+                    if (s === 'D') return <p className="text-sm text-gray-500">Not selected for this game</p>;
+                    return null;
+                  })()}
                 </div>
               );
             })}

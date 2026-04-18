@@ -242,7 +242,7 @@ export default function MatchCardPage() {
         <div className="no-print bg-white border-b border-gray-200 p-4">
           <div className="container mx-auto max-w-4xl flex justify-between items-center">
             <Link
-              href={session?.user?.role === 'Captain' || session?.user?.role === 'Admin'
+              href={['Captain', 'Admin'].some(r => session?.user?.role?.split(',').includes(r))
                 ? `/friendlies/manage/game/${tabDate}`
                 : `/friendlies/game/${tabDate}`}
               className="text-blue-600 hover:text-blue-800"
@@ -270,7 +270,7 @@ export default function MatchCardPage() {
               {/* ======================================================== */}
               <div className="border-r border-gray-300 p-4">
                 {/* Match Header */}
-                <div className="border-2 border-gray-400 mb-4">
+                <div className="border-2 border-gray-400 mb-2">
                   <div className="text-center p-2">
                     <h1 className="text-lg font-bold text-red-600">
                       Burgess Hill vs {game.clubName}
@@ -288,9 +288,9 @@ export default function MatchCardPage() {
                 </div>
 
                 {/* Teams Grid */}
-                <div className="space-y-2">
+                <div className="space-y-1">
                   {teams.map(team => (
-                    <table key={team.team} className="w-full border-collapse border border-gray-400 text-sm">
+                    <table key={team.team} className="w-full border-collapse border-2 border-gray-500 text-sm">
                       <tbody>
                         {team.players
                           .sort((a, b) => {
@@ -299,16 +299,17 @@ export default function MatchCardPage() {
                           })
                           .map((player, idx) => (
                             <tr key={idx} className={player.isCaptain ? 'bg-purple-100' : ''}>
-                              <td className="border border-gray-400 px-2 py-1 w-8 text-center">
+                              <td className="border border-gray-400 px-1 py-px w-6 text-center text-xs">
                                 {player.position}
                               </td>
-                              <td className="border border-gray-400 px-2 py-1">
+                              <td className="border border-gray-400 px-2 py-px">
                                 {player.name}
                                 {player.isCaptain && ' ★'}
                               </td>
-                              <td className="border border-gray-400 px-2 py-1 w-8 text-center">
+                              <td className="border border-gray-400 px-1 py-px w-6 text-center text-xs">
                                 {player.status === 'Y' ? 'Y' : ''}
                               </td>
+                              <td className="border border-gray-400 w-10" title="Initials" />
                             </tr>
                           ))}
                       </tbody>
@@ -323,26 +324,31 @@ export default function MatchCardPage() {
                   </p>
                 )}
 
-                {/* Reserves Section */}
+                {/* Reserves Section - two columns */}
                 {reserves.length > 0 && (
-                  <div className="mt-4">
-                    <p className="text-sm font-bold text-center border-t border-gray-400 pt-2">
+                  <div className="mt-2">
+                    <p className="text-sm font-bold text-center border-t border-gray-400 pt-1 mb-1">
                       Reserves
                     </p>
-                    <table className="w-full border-collapse border border-gray-400 text-sm mt-1">
-                      <tbody>
-                        {reserves.map((reserve, idx) => (
-                          <tr key={idx}>
-                            <td className="border border-gray-400 px-2 py-1">
-                              {reserve.name}
-                            </td>
-                            <td className="border border-gray-400 px-2 py-1 w-8 text-center">
-                              {reserve.status === 'Y' ? 'Y' : ''}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                    <div className="grid grid-cols-2 gap-x-1">
+                      {[
+                        reserves.filter((_, i) => i < Math.ceil(reserves.length / 2)),
+                        reserves.filter((_, i) => i >= Math.ceil(reserves.length / 2)),
+                      ].map((col, colIdx) => (
+                        <table key={colIdx} className="w-full border-collapse border border-gray-400 text-sm">
+                          <tbody>
+                            {col.map((reserve, idx) => (
+                              <tr key={idx}>
+                                <td className="border border-gray-400 px-2 py-px">{reserve.name}</td>
+                                <td className="border border-gray-400 px-1 py-px w-6 text-center text-xs">
+                                  {reserve.status === 'Y' ? 'Y' : ''}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      ))}
+                    </div>
                   </div>
                 )}
 

@@ -11,6 +11,7 @@ import Link from 'next/link';
 import { getButtonClasses } from '@/config/theme-helpers';
 import type { InternalGame } from '@/lib/game-management/types';
 import { parseUKDate } from '@/lib/date-utils';
+import { hasRole } from '@/lib/role-utils';
 
 interface ConfirmDialogState {
   isOpen: boolean;
@@ -35,7 +36,7 @@ export default function ManageInternalGamesPage() {
   useEffect(() => {
     if (status === 'loading') return;
 
-    if (!session || !['Captain', 'Admin'].includes(session.user.role)) {
+    if (!session || !hasRole(session.user.role, 'Captain', 'Admin')) {
       router.push('/internal-games');
       return;
     }

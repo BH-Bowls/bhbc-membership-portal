@@ -17,6 +17,15 @@ export default function HelpFriendlyManagementPage() {
         </div>
         <div className="space-y-4">
 
+          <HelpSection title="Keeping the list up to date">
+            <Body>
+              The game list loads instantly from a local cache when you navigate back from a game.
+              A small circular arrow icon next to the page title lets you force a fresh reload from
+              the server — useful if another captain has just made changes and you want to see the
+              latest counts or statuses.
+            </Body>
+          </HelpSection>
+
           <HelpSection title="Overview — game statuses">
             <Body>
               Every game moves through a series of statuses. The Manage page shows all games in a
@@ -60,7 +69,7 @@ export default function HelpFriendlyManagementPage() {
             </Body>
             <div className="ml-0 space-y-1.5 text-sm text-gray-700 mb-2">
               <p><strong>Print Match Card</strong> — a formatted card showing the full team with positions, driving assignments, tea rota, and venue details. This is the card players take to the match.</p>
-              <p><strong>Print Picker Sheet</strong> — a working sheet listing all entered players with their stats (name down, picked, % played) to help you decide who to select.</p>
+              <p><strong>Print Picker Sheet</strong> — a working sheet listing all entered players with their current stats (name down, picked, % played, last 6 games) pulled live from the Players sheet. Use this when deciding who to select.</p>
             </div>
           </HelpSection>
 
@@ -68,13 +77,14 @@ export default function HelpFriendlyManagementPage() {
             <Step n={1}>When the team is finalised, click <strong>Publish</strong>.</Step>
             <Step n={2}>A dialog appears with two optional email checkboxes:</Step>
             <div className="ml-9 space-y-1 text-sm text-gray-700 mb-3">
-              <p><strong>Email entered players</strong> — sends a notification to everyone who entered the game telling them whether they are playing, reserve, or not selected.</p>
+              <p><strong>Email entered players</strong> — sends a personalised email to each person who entered the game. Each email tells that individual whether they are <em>Selected to play</em>, a <em>Reserve</em>, or <em>Not selected</em>, along with the game details.</p>
               <p><strong>Email tea rota</strong> — for home games, notifies the members assigned to tea duty with their details. This option only appears for home games.</p>
             </div>
             <Step n={3}>Tick whichever emails you want to send, then click <strong>Publish</strong>.</Step>
             <Body>
               Once published, members can see the full team selection on the Friendlies page and on
-              their match card.
+              their match card. A status line below the View Details button tells each member whether
+              they are Selected, Reserve, Reserve Rink, Not selected, or Not entered.
             </Body>
             <Note>
               Tea duty members are assigned on the <strong>Tea Rota</strong> page (Lookups → Tea Rota),

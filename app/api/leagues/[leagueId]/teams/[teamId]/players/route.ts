@@ -1,5 +1,5 @@
 // app/api/leagues/[leagueId]/teams/[teamId]/players/route.ts
-// PUT (LeagueCaptain/Admin) — bulk-save all players for a team
+// PUT (LeagueOrganiser/Admin) — bulk-save all players for a team
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
@@ -15,7 +15,7 @@ export async function PUT(
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const role = session.user?.role ?? '';
-  if (!hasRole(role, 'LeagueCaptain', 'Captain', 'Admin')) {
+  if (!hasRole(role, 'LeagueOrganiser', 'Captain', 'Admin')) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 

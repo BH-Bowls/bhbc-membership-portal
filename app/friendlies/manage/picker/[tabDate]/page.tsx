@@ -97,6 +97,16 @@ export default function PickerSheetPage() {
   useEffect(() => {
     async function fetchGame() {
       try {
+        const tabName = decodeURIComponent(tabDate);
+
+        // Refresh stats from Players sheet before rendering so nameDown/picked/% and
+        // last-6-games history are current even if the captain hasn't saved recently
+        await fetch('/api/friendlies/manage/get-stats', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tab_name: tabName }),
+        });
+
         const response = await fetch(`/api/friendlies/manage/game/${tabDate}`);
         const data = await response.json();
         if (!response.ok) {

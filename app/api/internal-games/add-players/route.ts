@@ -12,6 +12,7 @@ import {
   updateGameCounts,
   addPlayerToInternalGame,
 } from '@/lib/internal-games-sheets';
+import { hasRole } from '@/lib/role-utils';
 
 // POST handler - Manually add players to an internal game
 export async function POST(request: NextRequest) {
@@ -42,7 +43,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Check capacity restrictions (regular players only)
-    const isUnrestricted = ['Captain', 'Admin'].includes(session.user.role);
+    const isUnrestricted = hasRole(session.user.role, 'Captain', 'Admin');
 
     // Check if game is open for entries (Captains/Admins can add to Selecting/Selected games)
     if (game.status !== 'O') {

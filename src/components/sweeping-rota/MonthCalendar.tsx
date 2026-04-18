@@ -87,9 +87,11 @@ export function MonthCalendar({
         return `${baseClasses} bg-gray-300 text-gray-600 ${adminMode ? 'cursor-pointer hover:bg-gray-400' : 'cursor-not-allowed'}`;
 
       case 'assigned':
+        if (isSelected) return `${baseClasses} bg-blue-100 text-blue-900 border-2 border-blue-500`;
         return `${baseClasses} bg-green-100 text-green-800 ${isAdmin ? 'hover:bg-green-200' : 'cursor-default'}`;
 
       case 'own':
+        if (isSelected) return `${baseClasses} bg-blue-100 text-blue-900 border-2 border-blue-500`;
         return `${baseClasses} bg-green-200 text-green-900 border-2 border-green-500 hover:bg-green-300`;
 
       case 'available':
@@ -160,7 +162,7 @@ export function MonthCalendar({
                   )}
 
                   {/* Selection indicator */}
-                  {selectedDates.has(day.dateString) && day.status === 'available' && (
+                  {selectedDates.has(day.dateString) && day.status !== 'past' && day.status !== 'blocked' && (
                     <div className="absolute top-1 right-1">
                       <svg className="h-4 w-4 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
                         <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />

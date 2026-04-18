@@ -10,6 +10,7 @@ import {
   getEnteredPlayers,
   updateEventCounts,
 } from '@/lib/social-events-sheets';
+import { hasRole } from '@/lib/role-utils';
 
 // POST handler - Manually add attendees to a social event
 export async function POST(request: NextRequest) {
@@ -48,7 +49,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Check capacity restrictions (regular users only)
-    const isUnrestricted = ['Captain', 'Admin'].includes(session.user.role);
+    const isUnrestricted = hasRole(session.user.role, 'Captain', 'Admin');
 
     if (!isUnrestricted) {
       const maxCapacity = event.maxPlayers || 0;

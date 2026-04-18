@@ -23,10 +23,10 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Admin only
-    const isAdmin = hasRole(session.user.role, 'Admin') || session.user.role === 'superadmin';
-    if (!isAdmin) {
-      return NextResponse.json({ error: 'Forbidden - Admin only' }, { status: 403 });
+    // Admin and SweepingAdmin only
+    const canUnblock = hasRole(session.user.role, 'Admin', 'SweepingAdmin') || session.user.role === 'superadmin';
+    if (!canUnblock) {
+      return NextResponse.json({ error: 'Forbidden - Admin or SweepingAdmin only' }, { status: 403 });
     }
 
     const { date } = await context.params;

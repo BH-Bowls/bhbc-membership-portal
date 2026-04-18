@@ -91,7 +91,7 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
   const isClub = userRole === 'Club'; // external club login (always a single value)
   const isRowlandOrganiser = roles.includes('RowlandOrganiser'); // BHBC Rowland competition organiser
   const isRowlandPlayer = roles.includes('RowlandPlayer'); // BHBC member who plays in Rowland Cup
-  const isLeagueCaptain = roles.includes('LeagueCaptain');
+  const isLeagueCaptain = roles.includes('LeagueOrganiser');
   const isGMC = roles.includes('GMC');
   const canAccessBanking = isAdmin || isTreasurer;
   const canAccessCaptainTools = isAdmin || isCaptain;
@@ -118,7 +118,7 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
       }
     }
 
-    // Captains, LeagueCaptains and Admins get League Management
+    // Captains, LeagueOrganisers and Admins get League Management
     if (canAccessCaptainTools || isLeagueCaptain) {
       items.push({ name: 'League Management', href: '/leagues/manage' });
     }

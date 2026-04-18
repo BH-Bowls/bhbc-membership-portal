@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, getGameSheet, getPlayerEntries } from '@/lib/friendlies-sheets';
+import { getGames, getGameSheet } from '@/lib/friendlies-sheets';
 
 export async function GET(
   request: NextRequest,
@@ -33,22 +33,6 @@ export async function GET(
 
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
-    }
-
-    // Verify user has entered this game
-    const userEntries = await getPlayerEntries(userName);
-
-    // Find user's entry for this game
-    let userEntry = null;
-    for (const e of userEntries) {
-      if (e.tabName === game.tabName) {
-        userEntry = e;
-        break;
-      }
-    }
-
-    if (!userEntry) {
-      return NextResponse.json({ error: 'You have not entered this game' }, { status: 403 });
     }
 
     // Verify game status is S, P, C, or A
@@ -222,6 +206,7 @@ export async function GET(
       captainOfDay: captainOfDay,
     });
   } catch (error) {
+    console.error('GET /api/friendlies/game error:', error);
     return NextResponse.json(
       { error: 'Failed to fetch game details' },
       { status: 500 }

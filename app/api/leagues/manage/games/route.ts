@@ -7,6 +7,7 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getGames } from '@/lib/friendlies-sheets';
 import { LEAGUE_GAME_TYPES } from '@/lib/types/friendlies';
+import { hasRole } from '@/lib/role-utils';
 
 // GET handler - Returns all league games sorted by date ascending
 export async function GET(request: NextRequest) {
@@ -18,7 +19,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Only Captains and Admins can access league management
-    if (!['Captain', 'Admin'].includes(session.user.role)) {
+    if (!hasRole(session.user.role, 'Captain', 'Admin')) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 

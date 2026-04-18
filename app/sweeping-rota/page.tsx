@@ -69,8 +69,11 @@ export default function SweepingRotaPage() {
 
   // User info
   const currentUser = session?.user?.userName || '';
-  const isNonMember = session?.user?.role !== 'Member';
-  const isKiosk = session?.user?.role === 'Kiosk';
+  const userRole = session?.user?.role || '';
+  const isNonMember = userRole !== 'Member' && userRole !== '';
+  const isKiosk = userRole === 'Kiosk';
+  const isSweepingAdmin = userRole === 'superadmin' ||
+    userRole.split(',').map(r => r.trim()).some(r => r === 'Admin' || r === 'SweepingAdmin');
   // Guests can view but cannot add/remove sweeping assignments; kiosk has full control
   const isReadOnly = isGuest;
 
@@ -225,13 +228,17 @@ export default function SweepingRotaPage() {
 
   // Handle day click
   const handleDayClick = (day: CalendarDay) => {
-    if (day.status === 'own') {
-      // Prompt to cancel own assignment
-      setCancelDate(day.dateString);
-      setCancelUserName(day.userName || null);
-      setConfirmCancelOpen(true);
-    } else if (day.status === 'assigned' && isNonMember) {
-      // Non-members can cancel any assignment
+    if ((day.status === 'own' || day.status === 'assigned') && isNonMember) {
+      // Non-members toggle allocated days into the multi-select for bulk clearing
+      const newSelected = new Set(selectedDates);
+      if (newSelected.has(day.dateString)) {
+        newSelected.delete(day.dateString);
+      } else {
+        newSelected.add(day.dateString);
+      }
+      setSelectedDates(newSelected);
+    } else if (day.status === 'own') {
+      // Members cancel their own assignment via single-day dialog
       setCancelDate(day.dateString);
       setCancelUserName(day.userName || null);
       setConfirmCancelOpen(true);
@@ -278,6 +285,53 @@ export default function SweepingRotaPage() {
       fetchEntries();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add dates');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Clear individually selected dates (remove assignments/blocks)
+  const handleClearSelected = async () => {
+    if (selectedDates.size === 0) return;
+
+    try {
+      setSubmitting(true);
+      const response = await fetch('/api/sweeping-rota/clear', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dates: Array.from(selectedDates) }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Failed to clear dates');
+      setSuccessMessage(`Cleared ${data.clearedCount} date${data.clearedCount !== 1 ? 's' : ''}`);
+      setSelectedDates(new Set());
+      fetchEntries();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to clear dates');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Block individually selected dates
+  const handleBlockSelected = async () => {
+    if (selectedDates.size === 0) return;
+    if (!confirm(`Block ${selectedDates.size} date${selectedDates.size !== 1 ? 's' : ''}? These will be marked as unavailable.`)) return;
+
+    try {
+      setSubmitting(true);
+      const response = await fetch('/api/sweeping-rota/blocked', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dates: Array.from(selectedDates) }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Failed to block dates');
+      setSuccessMessage(`Blocked ${data.blockedCount} date${data.blockedCount !== 1 ? 's' : ''}`);
+      setSelectedDates(new Set());
+      fetchEntries();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to block dates');
     } finally {
       setSubmitting(false);
     }
@@ -552,13 +606,29 @@ export default function SweepingRotaPage() {
             <span className="text-sm text-blue-800">
               {selectedDates.size} date{selectedDates.size !== 1 ? 's' : ''} selected
             </span>
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
               <button
                 onClick={() => setSelectedDates(new Set())}
                 className="px-3 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-md"
               >
+                Deselect All
+              </button>
+              <button
+                onClick={handleClearSelected}
+                disabled={submitting}
+                className="px-4 py-2 text-sm text-white rounded-md bg-amber-600 hover:bg-amber-700 disabled:opacity-50"
+              >
                 Clear
               </button>
+              {isSweepingAdmin && (
+                <button
+                  onClick={handleBlockSelected}
+                  disabled={submitting}
+                  className="px-4 py-2 text-sm text-white rounded-md bg-red-600 hover:bg-red-700 disabled:opacity-50"
+                >
+                  Block Selected
+                </button>
+              )}
               <button
                 onClick={() => setConfirmModalOpen(true)}
                 className="px-4 py-2 text-sm text-white rounded-md bg-blue-600 hover:bg-blue-700"
@@ -594,6 +664,7 @@ export default function SweepingRotaPage() {
         onClose={() => setPatternModalOpen(false)}
         onConfirm={handlePatternConfirm}
         isNonMember={isNonMember}
+        canBlock={isSweepingAdmin}
         currentUserName={currentUser}
         members={membersList}
       />

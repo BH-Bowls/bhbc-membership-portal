@@ -116,8 +116,8 @@ export async function POST(request: NextRequest) {
       targetUserName = body.userName;
     }
 
-    // Add assignments
-    const result = await batchAddSweepingAssignments(datesToAdd, targetUserName);
+    // Non-members can overwrite existing assignments; members cannot
+    const result = await batchAddSweepingAssignments(datesToAdd, targetUserName, isNonMember);
 
     const response: AddEntriesResponse = {
       success: true,

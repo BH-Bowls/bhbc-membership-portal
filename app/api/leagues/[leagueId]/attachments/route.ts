@@ -35,7 +35,7 @@ export async function GET(
 
 /**
  * POST /api/leagues/[leagueId]/attachments
- * Committee only (Captain, LeagueCaptain, Admin).
+ * Committee only (Captain, LeagueOrganiser, Admin).
  */
 export async function POST(
   request: NextRequest,
@@ -47,7 +47,7 @@ export async function POST(
     if (!session?.user?.userName) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    if (!hasRole(session.user.role, 'Captain', 'LeagueCaptain', 'Admin')) {
+    if (!hasRole(session.user.role, 'Captain', 'LeagueOrganiser', 'Admin')) {
       return NextResponse.json({ error: 'Committee access required' }, { status: 403 });
     }
 

@@ -76,6 +76,7 @@ function parseLeagueRow(row: any[], colMap: Record<string, number>): League {
     playersPerMatch: parseInt(get('players_per_match') || '3', 10) || 3,
     dateLabel: (get('date_label') || defaultDateLabel) as import('@/types/leagues').DateLabel,
     legs: (legsRaw === 1 ? 1 : 2) as 1 | 2,
+    message: get('message') || '',
   };
 }
 
@@ -188,6 +189,7 @@ export async function createLeague(data: Omit<League, 'leagueId'> & { leagueId?:
   set('players_per_match', String(data.playersPerMatch));
   set('date_label', data.dateLabel);
   set('legs', String(data.legs));
+  set('message', data.message ?? '');
 
   await sheets.spreadsheets.values.append({
     spreadsheetId: sid(),
@@ -201,7 +203,7 @@ export async function createLeague(data: Omit<League, 'leagueId'> & { leagueId?:
 
 export async function updateLeague(
   leagueId: string,
-  updates: Partial<Pick<League, 'name' | 'type' | 'season' | 'status' | 'squadSize' | 'playersPerMatch' | 'dateLabel' | 'legs'>>
+  updates: Partial<Pick<League, 'name' | 'type' | 'season' | 'status' | 'squadSize' | 'playersPerMatch' | 'dateLabel' | 'legs' | 'message'>>
 ): Promise<void> {
   const colMap = await getColumnMap('LeagueControl', sid());
   const sheets = getGoogleSheetsClient();
@@ -225,6 +227,7 @@ export async function updateLeague(
   if (updates.playersPerMatch !== undefined) fieldMap['players_per_match'] = String(updates.playersPerMatch);
   if (updates.dateLabel !== undefined) fieldMap['date_label'] = updates.dateLabel;
   if (updates.legs !== undefined) fieldMap['legs'] = String(updates.legs);
+  if (updates.message !== undefined) fieldMap['message'] = updates.message;
 
   const data = Object.entries(fieldMap)
     .filter(([col]) => colMap[col] !== undefined)

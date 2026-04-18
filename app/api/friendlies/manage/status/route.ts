@@ -19,6 +19,7 @@ import {
 import { sendGamePublishedEmail, sendTeaRotaEmail } from '@/lib/email/friendlies';
 import { getAllUsers } from '@/lib/sheets';
 import { ChangeStatusRequest, ChangeStatusResponse, GameStatus } from '@/lib/types/friendlies';
+import { hasRole } from '@/lib/role-utils';
 
 // POST handler - Changes game status with validation and sheet creation
 export async function POST(request: NextRequest) {
@@ -32,7 +33,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Only Captains and Admins can change game status
-    if (!['Captain', 'Admin'].includes(session.user.role)) {
+    if (!hasRole(session.user.role, 'Captain', 'Admin')) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -219,14 +220,17 @@ export async function POST(request: NextRequest) {
               }
             }
 
-            // Build player list with email addresses
+            // Build player list with email addresses and selection status
             const playersWithEmails = gamePlayers.map(player => ({
               fullName: player.fullName || player.name,
               email: userEmailMap.get(player.name.toLowerCase()) || null,
+              selected: player.selected,
+              team: player.team,
+              position: player.position,
             }));
 
-            // Get app URL from environment or request
-            const appUrl = process.env.NEXTAUTH_URL || 'https://members.burgesshillbowlsclub.com';
+            // Derive app URL from the incoming request so custom domains work correctly
+            const appUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
 
             // Send the email
             const result = await sendGamePublishedEmail(game, playersWithEmails, appUrl);
@@ -275,7 +279,7 @@ export async function POST(request: NextRequest) {
                   phone: rotaPhoneMap.get(m.userName.toLowerCase()) || null,
                 }));
 
-              const appUrl = process.env.NEXTAUTH_URL || 'https://members.burgesshillbowlsclub.com';
+              const appUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
               const rotaResult = await sendTeaRotaEmail(game, teaMembers, appUrl);
 
               teaRotaEmailResult = {

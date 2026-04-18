@@ -10,6 +10,7 @@ import Link from 'next/link';
 import { getButtonClasses } from '@/config/theme-helpers';
 import { calculateCapacity, formatCapacity, getCapacityBadgeColor } from '@/lib/game-management/capacity';
 import type { SocialEvent } from '@/lib/game-management/types';
+import { hasRole } from '@/lib/role-utils';
 import { EnteredPlayersModal } from '@/components/game-management/EnteredPlayersModal';
 
 type FilterType = 'all' | 'O' | 'upcoming';
@@ -81,7 +82,7 @@ export default function SocialEventsPage() {
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-3xl font-bold text-gray-900">Social Events</h1>
 
-          {session?.user.role && ['Admin'].includes(session.user.role) && (
+          {hasRole(session?.user?.role, 'Admin') && (
             <Link
               href="/social-events/manage"
               className={getButtonClasses('primary', 'md')}

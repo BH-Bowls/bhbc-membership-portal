@@ -12,6 +12,7 @@ import { calculateCapacity, formatCapacity, getCapacityBadgeColor } from '@/lib/
 import type { InternalGame } from '@/lib/game-management/types';
 import { EnteredPlayersModal } from '@/components/game-management/EnteredPlayersModal';
 import { parseUKDate } from '@/lib/date-utils';
+import { hasRole } from '@/lib/role-utils';
 
 // Extended type to include user entry status from API
 interface InternalGameWithUserStatus extends InternalGame {
@@ -165,7 +166,7 @@ export default function InternalGamesPage() {
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-3xl font-bold text-gray-900">Internal Games</h1>
 
-          {session?.user.role && ['Captain', 'Admin'].includes(session.user.role) && (
+          {hasRole(session?.user?.role, 'Captain', 'Admin') && (
             <Link
               href="/internal-games/manage"
               className={getButtonClasses('primary', 'md')}

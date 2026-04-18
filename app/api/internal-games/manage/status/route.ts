@@ -13,6 +13,7 @@ import {
   createGameSheet,
 } from '@/lib/internal-games-sheets';
 import type { GameStatus } from '@/lib/game-management/types';
+import { hasRole } from '@/lib/role-utils';
 
 interface ChangeStatusRequest {
   tab_name?: string;
@@ -39,7 +40,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Only Captains and Admins can change game status
-    if (!['Captain', 'Admin'].includes(session.user.role)) {
+    if (!hasRole(session.user.role, 'Captain', 'Admin')) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 

@@ -6,6 +6,7 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getGames, addPlayerToGameSheet, getGameSheet } from '@/lib/friendlies-sheets';
 import { AddPlayerRequest } from '@/lib/types/friendlies';
+import { hasRole } from '@/lib/role-utils';
 
 // POST handler - Adds an offline player to a game sheet
 export async function POST(request: NextRequest) {
@@ -19,7 +20,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Only Captains and Admins can add players
-    if (!['Captain', 'Admin'].includes(session.user.role)) {
+    if (!hasRole(session.user.role, 'Captain', 'Admin')) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 

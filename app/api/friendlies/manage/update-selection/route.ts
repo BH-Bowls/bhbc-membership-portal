@@ -8,6 +8,7 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getGames, getGameSheet, updateGameSheet, updateGameCounts } from '@/lib/friendlies-sheets';
 import { UpdateSelectionRequest, UpdateSelectionResponse } from '@/lib/types/friendlies';
+import { hasRole } from '@/lib/role-utils';
 
 // POST handler - Updates player selections and team assignments for a game
 export async function POST(request: NextRequest) {
@@ -21,7 +22,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Only Captains and Admins can update team selections
-    if (!['Captain', 'Admin'].includes(session.user.role)) {
+    if (!hasRole(session.user.role, 'Captain', 'Admin')) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 

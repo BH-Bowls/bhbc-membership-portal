@@ -51,7 +51,7 @@ export default function HelpIndexPage() {
 
   const isAdmin     = has('Admin');
   const isCaptain   = has('Captain');
-  const isLeagueCaptain = has('LeagueCaptain');
+  const isLeagueOrganiser = has('LeagueOrganiser');
   const isTreasurer = has('Treasurer');
   const isGMC       = has('GMC');
   const isRowlandOrganiser = has('RowlandOrganiser');
@@ -155,7 +155,7 @@ export default function HelpIndexPage() {
       title: 'Leagues Admin',
       description: 'Create leagues, manage teams and squad assignments, generate fixtures, and record results.',
       href: '/help/leagues-admin',
-      show: isCaptain || isLeagueCaptain || isAdmin,
+      show: isCaptain || isLeagueOrganiser || isAdmin,
       badge: 'Captain',
     },
     {

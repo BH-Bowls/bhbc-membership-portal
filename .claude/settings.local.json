@@ -31,7 +31,17 @@
       "Bash(sed -i 's/<h1 className=\"\"text-3xl font-bold print:text-2xl\"\">Tea Rota<\\\\/h1>/<h1 className=\"\"text-3xl font-bold print:text-2xl text-gray-900\"\">Tea Rota<\\\\/h1>/' app/tea-rota/page.tsx)",
       "Bash(sed -i 's/<h1 className=\"\"text-3xl font-bold print:text-2xl\"\">Cleaning Rota<\\\\/h1>/<h1 className=\"\"text-3xl font-bold print:text-2xl text-gray-900\"\">Cleaning Rota<\\\\/h1>/' app/cleaning-rota/page.tsx)",
       "Bash(node -e \":*)",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(sed -n '365,375p' app/friendlies/page.tsx)",
+      "Bash(sed -n '164,172p' app/internal-games/page.tsx)",
+      "Bash(sed -n '34,42p' app/internal-games/manage/page.tsx)",
+      "Bash(sed -n '62,70p' \"app/internal-games/manage/game/[tabName]/page.tsx\")",
+      "Bash(sed -n '80,88p' app/social-events/page.tsx)",
+      "Bash(sed -i \"s/import { groupPairedGames, isPairedGame, type GameOrPair } from '@\\\\/lib\\\\/friendlies-utils';/import { groupPairedGames, isPairedGame, type GameOrPair } from '@\\\\/lib\\\\/friendlies-utils';\\\\nimport { hasRole } from '@\\\\/lib\\\\/role-utils';/\" app/friendlies/page.tsx)",
+      "Bash(sed -i \"s/session?.user.role && \\\\['Captain', 'Admin'\\\\].includes\\(session.user.role\\) && \\(/hasRole\\(session?.user?.role, 'Captain', 'Admin'\\) \\\\&\\\\& \\(/\" app/friendlies/page.tsx)",
+      "Bash(sed -i \"s/import { parseUKDate } from '@\\\\/lib\\\\/date-utils';/import { parseUKDate } from '@\\\\/lib\\\\/date-utils';\\\\nimport { hasRole } from '@\\\\/lib\\\\/role-utils';/\" app/internal-games/page.tsx)",
+      "Bash(sed -i \"s/session?.user.role && \\\\['Captain', 'Admin'\\\\].includes\\(session.user.role\\) && \\(/hasRole\\(session?.user?.role, 'Captain', 'Admin'\\) \\\\&\\\\& \\(/\" app/internal-games/page.tsx)",
+      "Bash(sed -i \"s/import { parseUKDate } from '@\\\\/lib\\\\/date-utils';/import { parseUKDate } from '@\\\\/lib\\\\/date-utils';\\\\nimport { hasRole } from '@\\\\/lib\\\\/role-utils';/\" app/internal-games/manage/page.tsx)"
     ]
   }
 }
