@@ -265,7 +265,7 @@ export default function MatchCardPage() {
           {/* ============================================================ */}
           {/* MAIN MATCH CARD - Page 1 */}
           {/* ============================================================ */}
-          <div className="print-page bg-white shadow-lg">
+          <div className="print-page bg-white shadow-lg text-gray-900">
             <div className="grid grid-cols-2 min-h-[calc(100vh-200px)] print:min-h-0">
               {/* ======================================================== */}
               {/* LEFT COLUMN - Teams (Front when folded) */}
@@ -478,7 +478,7 @@ export default function MatchCardPage() {
           {/* RESERVE TEAMS - Page 2 (if any) */}
           {/* ============================================================ */}
           {reserveTeams.length > 0 && (
-            <div className="print-page bg-white shadow-lg mt-8 print:mt-0">
+            <div className="print-page bg-white shadow-lg mt-8 print:mt-0 text-gray-900">
               <div className="grid grid-cols-2 min-h-[calc(100vh-200px)] print:min-h-0">
                 {/* LEFT COLUMN - Reserve Teams */}
                 <div className="border-r border-gray-300 p-4">

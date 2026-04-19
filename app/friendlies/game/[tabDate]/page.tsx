@@ -387,7 +387,7 @@ export default function GameDetailsPage() {
         <div className="container mx-auto px-4 py-8 max-w-6xl">
           <div className="text-center py-12">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-            <p className="mt-2 text-gray-600">Loading game details...</p>
+            <p className="mt-2 text-gray-700">Loading game details...</p>
           </div>
         </div>
       </div>
@@ -422,7 +422,7 @@ export default function GameDetailsPage() {
             <span>{flashMessage.text}</span>
             <button
               onClick={() => setFlashMessage(null)}
-              className="text-gray-500 hover:text-gray-700"
+              className="text-gray-700 hover:text-gray-900"
             >
               ✕
             </button>
@@ -449,7 +449,7 @@ export default function GameDetailsPage() {
           <h1 className="text-3xl font-bold text-gray-900">{game.clubName}</h1>
 
           {/* Game date and time */}
-          <div className="text-gray-600 mt-2">
+          <div className="text-gray-900 mt-2">
             {parseUKDate(game.date).toLocaleDateString('en-GB', {
               weekday: 'long',
               day: 'numeric',
@@ -461,7 +461,7 @@ export default function GameDetailsPage() {
           </div>
 
           {/* Game venue and format */}
-          <div className="mt-2 space-y-1">
+          <div className="mt-2 space-y-1 text-gray-900">
             <p>
               <span className="font-medium">Venue:</span> {game.homeAway === 'H' ? 'Home' : 'Away'}
             </p>
@@ -522,7 +522,7 @@ export default function GameDetailsPage() {
         {captainOfDay && (
           <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 mb-6">
             <h3 className="font-semibold text-gray-900">Captain of the Day</h3>
-            <p className="text-lg">{captainOfDay}</p>
+            <p className="text-lg text-gray-900">{captainOfDay}</p>
           </div>
         )}
 
@@ -533,7 +533,7 @@ export default function GameDetailsPage() {
           {/* Grid of teams (2 columns on desktop) */}
           <div className="grid gap-6 md:grid-cols-2">
             {teams.map(team => (
-              <div key={team.team} className="border rounded-lg p-4">
+              <div key={team.team} className="border rounded-lg p-4 bg-white">
                 {/* Team number */}
                 <h3 className="font-bold text-xl mb-3 text-gray-900">Team {team.team}</h3>
 
@@ -629,7 +629,7 @@ export default function GameDetailsPage() {
                       const isCurrentUser = player.userName === game.userName;
                       return (
                       <div key={idx} className={`flex justify-between items-center p-2 rounded ${
-                        isCurrentUser ? 'bg-blue-100 ring-2 ring-blue-400' : 'bg-orange-50'
+                        isCurrentUser ? 'bg-blue-100 ring-2 ring-blue-400' : 'bg-orange-100'
                       }`}>
                         {/* Player name */}
                         <span className="font-medium text-gray-900">
