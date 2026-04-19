@@ -41,35 +41,20 @@ export default function HomePage() {
           <div className="bg-white overflow-hidden shadow rounded-lg">
             <div className="px-4 py-5 sm:p-6">
               <h2 className="text-2xl font-bold text-gray-900 mb-4">
-                Welcome, {session.user.name}!
+                Welcome {session.user.name?.split(' ')[0]}
               </h2>
-
-              <div className="space-y-3">
-                <div>
-                  <span className="text-sm font-medium text-gray-500">Username:</span>
-                  <p className="mt-1 text-sm text-gray-900">{session.user.userName}</p>
-                </div>
-
+              <div className="space-y-1 text-sm text-gray-700">
+                <p><span className="font-medium text-gray-500">Username:</span> {session.user.userName}</p>
                 {session.user.email && (
-                  <div>
-                    <span className="text-sm font-medium text-gray-500">Email:</span>
-                    <p className="mt-1 text-sm text-gray-900">{session.user.email}</p>
-                  </div>
+                  <p><span className="font-medium text-gray-500">Email:</span> {session.user.email}</p>
                 )}
-
-                <div>
-                  <span className="text-sm font-medium text-gray-500">Role:</span>
-                  <p className="mt-1">
-                    <span className={getBadgeClasses('primary', 'sm')}>
-                      {session.user.role}
-                    </span>
-                  </p>
-                </div>
+                <p><span className="font-medium text-gray-500">Role:</span>{' '}
+                  <span className={getBadgeClasses('primary', 'sm')}>{session.user.role}</span>
+                </p>
               </div>
             </div>
           </div>
 
-          {/* Info Section - Quick Start Guide */}
           <div className="mt-6 bg-white overflow-hidden shadow rounded-lg">
             <div className="px-4 py-5 sm:p-6">
               <h3 className="text-lg font-medium text-gray-900 mb-2">

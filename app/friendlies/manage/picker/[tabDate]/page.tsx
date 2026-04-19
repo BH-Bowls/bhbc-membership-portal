@@ -323,14 +323,12 @@ export default function PickerSheetPage() {
                 <div className="mt-3 border border-gray-400 p-1.5">
                   <div className="font-semibold mb-1">Last Games Key</div>
                   <div className="grid grid-cols-2 gap-x-2 gap-y-0 text-[9px]">
-                    <div><span className="font-semibold">E</span> = Entered</div>
                     <div><span className="font-semibold">P</span> = Picked</div>
-                    <div><span className="font-semibold">M</span> = Manual</div>
                     <div><span className="font-semibold">R</span> = Reserve</div>
                     <div><span className="font-semibold">T</span> = Res Team</div>
                     <div><span className="font-semibold">C</span> = Cancelled</div>
                     <div><span className="font-semibold">A</span> = Abandoned</div>
-                    <div className="col-span-2"><span className="font-semibold">W</span> suffix = Withdrawn</div>
+                    <div className="col-span-2"><span className="font-semibold">W</span> suffix = Withdrawn (e.g. PW, RW)</div>
                   </div>
                 </div>
               </div>

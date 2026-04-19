@@ -326,11 +326,11 @@ export default function MatchCardPage() {
 
                 {/* Reserves Section - two columns */}
                 {reserves.length > 0 && (
-                  <div className="mt-2">
-                    <p className="text-sm font-bold text-center border-t border-gray-400 pt-1 mb-1">
+                  <div className="mt-2 border-2 border-gray-400">
+                    <p className="text-sm font-bold text-center border-b border-gray-400 py-1">
                       Reserves
                     </p>
-                    <div className="grid grid-cols-2 gap-x-1">
+                    <div className="grid grid-cols-2 gap-x-1 p-1">
                       {[
                         reserves.filter((_, i) => i < Math.ceil(reserves.length / 2)),
                         reserves.filter((_, i) => i >= Math.ceil(reserves.length / 2)),
