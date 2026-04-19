@@ -178,7 +178,7 @@ export function MonthCalendar({
 
       {/* Legend */}
       {showLegend && <div className="px-4 py-3 border-t border-gray-200 bg-gray-50">
-        <div className="flex flex-wrap gap-3 text-xs">
+        <div className="flex flex-wrap gap-3 text-xs text-gray-700">
           <div className="flex items-center gap-1">
             <div className="w-4 h-4 bg-white border border-gray-200 rounded"></div>
             <span>Available</span>

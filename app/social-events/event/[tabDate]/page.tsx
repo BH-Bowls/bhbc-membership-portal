@@ -8,6 +8,7 @@ import { useSession } from 'next-auth/react';
 import { useParams } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
 import Link from 'next/link';
+import { usePhoneBackNavigation } from '@/hooks/usePhoneBackNavigation';
 import { getButtonClasses } from '@/config/theme-helpers';
 import type { SocialEvent, SocialEventAttendee } from '@/lib/game-management/types';
 
@@ -15,6 +16,7 @@ export default function EventDetailsPage() {
   const { data: session } = useSession();
   const params = useParams();
   const tabDate = params.tabDate as string;
+  usePhoneBackNavigation('/social-events');
 
   const [event, setEvent] = useState<SocialEvent | null>(null);
   const [attendees, setAttendees] = useState<SocialEventAttendee[]>([]);
@@ -107,9 +109,7 @@ export default function EventDetailsPage() {
       <div className="container mx-auto px-4 py-8 max-w-4xl">
         {/* Back button */}
         <div className="mb-6">
-          <Link href="/social-events" className={getButtonClasses('secondary', 'md')}>
-            ← Back to Events
-          </Link>
+          <Link href="/social-events" className={getButtonClasses('secondary', 'md')}>← Back to Events</Link>
         </div>
 
         {/* Event header */}
@@ -226,7 +226,7 @@ export default function EventDetailsPage() {
               </h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                 {notAttending.map((attendee, idx) => (
-                  <div key={idx} className="text-gray-500">
+                  <div key={idx} className="text-gray-900">
                     {attendee.name}
                   </div>
                 ))}

@@ -7,6 +7,8 @@ import React, { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
+import Link from 'next/link';
+import { usePhoneBackNavigation } from '@/hooks/usePhoneBackNavigation';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { AttachmentUpload } from '@/components/AttachmentUpload';
 import { AttachmentsList } from '@/components/AttachmentsList';
@@ -20,6 +22,7 @@ export default function InviteGameDetailPage({
 }) {
   const { data: session } = useSession();
   const router = useRouter();
+  usePhoneBackNavigation('/invite-games');
 
   const [inviteGameId, setInviteGameId] = React.useState<string>('');
 
@@ -276,12 +279,7 @@ export default function InviteGameDetailPage({
       />
 
       <div className="container mx-auto px-4 py-8 max-w-4xl">
-        <button
-          onClick={() => router.push('/invite-games')}
-          className="mb-4 text-blue-600 hover:text-blue-800 flex items-center gap-1"
-        >
-          ← Back to Invite Games
-        </button>
+        <Link href="/invite-games" className="mb-4 text-blue-600 hover:text-blue-800 inline-block">← Back to Invite Games</Link>
 
         {message && (
           <div

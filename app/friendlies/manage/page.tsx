@@ -816,7 +816,7 @@ export default function ManageGamesPage() {
                           <div>
                             {gameA.homeAway === gameB.homeAway
                               ? (gameA.homeAway === 'H' ? 'Home' : 'Away')
-                              : `${gameA.homeAway === 'H' ? 'H' : 'A'} / ${gameB.homeAway === 'H' ? 'H' : 'A'}`
+                              : `${gameA.homeAway === 'H' ? 'Home' : 'Away'} / ${gameB.homeAway === 'H' ? 'Home' : 'Away'}`
                             }
                           </div>
                           <div className="text-gray-700">{gameA.format} / {gameB.format}</div>

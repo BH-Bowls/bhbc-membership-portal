@@ -73,7 +73,7 @@ const STATUS_CONFIG = {
   active:       { label: 'Active',        className: 'bg-blue-100 text-blue-700' },
   awaiting:     { label: 'Awaiting draw', className: 'bg-yellow-100 text-yellow-700' },
   winner:       { label: 'Winner',        className: 'bg-green-100 text-green-700' },
-  'knocked-out':{ label: 'Knocked out',   className: 'bg-gray-100 text-gray-500' },
+  'knocked-out':{ label: 'Knocked out',   className: 'bg-gray-200 text-gray-700' },
 } as const;
 
 // ── Journey step row ──────────────────────────────────────────────────────────
@@ -91,7 +91,7 @@ function JourneyRow({ step }: { step: JourneyStep }) {
   const isPending = matchStatus === 'Pending';
 
   const roundPill = (
-    <span className="inline-block text-xs font-medium bg-gray-100 text-gray-600 rounded px-1.5 py-0.5 w-16 text-center shrink-0">
+    <span className="inline-block text-xs font-medium bg-gray-200 text-gray-800 rounded px-1.5 py-0.5 w-16 text-center shrink-0">
       {roundLabel(round)}
     </span>
   );

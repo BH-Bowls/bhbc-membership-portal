@@ -41,7 +41,9 @@
       "Bash(sed -i \"s/session?.user.role && \\\\['Captain', 'Admin'\\\\].includes\\(session.user.role\\) && \\(/hasRole\\(session?.user?.role, 'Captain', 'Admin'\\) \\\\&\\\\& \\(/\" app/friendlies/page.tsx)",
       "Bash(sed -i \"s/import { parseUKDate } from '@\\\\/lib\\\\/date-utils';/import { parseUKDate } from '@\\\\/lib\\\\/date-utils';\\\\nimport { hasRole } from '@\\\\/lib\\\\/role-utils';/\" app/internal-games/page.tsx)",
       "Bash(sed -i \"s/session?.user.role && \\\\['Captain', 'Admin'\\\\].includes\\(session.user.role\\) && \\(/hasRole\\(session?.user?.role, 'Captain', 'Admin'\\) \\\\&\\\\& \\(/\" app/internal-games/page.tsx)",
-      "Bash(sed -i \"s/import { parseUKDate } from '@\\\\/lib\\\\/date-utils';/import { parseUKDate } from '@\\\\/lib\\\\/date-utils';\\\\nimport { hasRole } from '@\\\\/lib\\\\/role-utils';/\" app/internal-games/manage/page.tsx)"
+      "Bash(sed -i \"s/import { parseUKDate } from '@\\\\/lib\\\\/date-utils';/import { parseUKDate } from '@\\\\/lib\\\\/date-utils';\\\\nimport { hasRole } from '@\\\\/lib\\\\/role-utils';/\" app/internal-games/manage/page.tsx)",
+      "Bash(sed -n '307,312p' /c/Users/liam/Documents/bhbc-membership-portal/app/member-suggestions/\\\\[id\\\\]/page.tsx)",
+      "Bash(sed -n '115,120p' /c/Users/liam/Documents/bhbc-membership-portal/app/member-suggestions/new/page.tsx)"
     ]
   }
 }

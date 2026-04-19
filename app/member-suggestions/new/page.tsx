@@ -8,6 +8,7 @@ import { useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
+import { usePhoneBackNavigation } from '@/hooks/usePhoneBackNavigation';
 
 // ============================================================================
 // Main Component
@@ -16,6 +17,7 @@ import { Navbar } from '@/components/Navbar';
 export default function NewSuggestionPage() {
   const { data: session } = useSession();
   const router = useRouter();
+  usePhoneBackNavigation('/member-suggestions');
 
   // State: Form data
   const [formData, setFormData] = useState({

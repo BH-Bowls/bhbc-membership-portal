@@ -206,10 +206,10 @@ function MembersPageInner() {
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="font-medium text-gray-900">{member.fullName}</div>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {member.userName}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {getMemberTypeDisplay(member.memberType)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">

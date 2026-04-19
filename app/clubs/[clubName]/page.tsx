@@ -949,12 +949,12 @@ export default function ClubDetailPage({ params }: PageProps) {
                     <div className="flex justify-between items-start">
                       <div>
                         <div className="flex items-center gap-2 mb-1">
-                          <span className="font-medium">{contact.name || `${contact.firstName} ${contact.lastName}`.trim() || 'Unnamed Contact'}</span>
+                          <span className="font-medium text-gray-900">{contact.name || `${contact.firstName} ${contact.lastName}`.trim() || 'Unnamed Contact'}</span>
                           {contact.role && (
                             <span className="px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded">{contact.role}</span>
                           )}
                         </div>
-                        <div className="text-sm text-gray-600 space-y-1">
+                        <div className="text-sm text-gray-800 space-y-1">
                           {contact.phoneNumber && (
                             <div>
                               <span className="text-gray-600">Phone:</span>{' '}

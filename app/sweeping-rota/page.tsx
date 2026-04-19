@@ -522,7 +522,7 @@ export default function SweepingRotaPage() {
           <div className="flex items-center gap-2">
             <button
               onClick={goToPreviousMonth}
-              className="p-2 rounded-md hover:bg-gray-100"
+              className="p-2 rounded-md text-gray-700 hover:bg-gray-100"
               title="Previous month"
             >
               <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -536,7 +536,7 @@ export default function SweepingRotaPage() {
 
             <button
               onClick={goToNextMonth}
-              className="p-2 rounded-md hover:bg-gray-100"
+              className="p-2 rounded-md text-gray-700 hover:bg-gray-100"
               title="Next month"
             >
               <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

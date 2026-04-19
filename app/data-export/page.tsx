@@ -1011,7 +1011,7 @@ export default function DataExportPage() {
                           {results.headers.map((header, i) => (
                             <th
                               key={i}
-                              className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap"
+                              className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase tracking-wider whitespace-nowrap"
                             >
                               {header}
                             </th>

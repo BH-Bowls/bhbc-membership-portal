@@ -10,8 +10,9 @@ import { useSession } from 'next-auth/react';
 import { useParams, useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
-import Link from 'next/link';
 import { parseUKDate } from '@/lib/date-utils';
+import Link from 'next/link';
+import { usePhoneBackNavigation } from '@/hooks/usePhoneBackNavigation';
 
 // ============================================================================
 // Type Definitions
@@ -100,6 +101,7 @@ export default function GameDetailsPage() {
 
   // Extract tabDate from URL parameter
   const tabDate = params.tabDate as string;
+  usePhoneBackNavigation('/friendlies');
 
   // State: Game details including teams and user status
   const [gameDetails, setGameDetails] = useState<GameDetails | null>(null);
@@ -441,10 +443,7 @@ export default function GameDetailsPage() {
 
         {/* Header with back button and game info */}
         <div className="mb-6">
-          {/* Back to Games link */}
-          <Link href="/friendlies" className="text-blue-600 hover:text-blue-800 mb-2 inline-block">
-            ← Back to Games
-          </Link>
+          <Link href="/friendlies" className="text-blue-600 hover:text-blue-800 mb-2 inline-block">← Back to Games</Link>
 
           {/* Game title (opponent club name) */}
           <h1 className="text-3xl font-bold text-gray-900">{game.clubName}</h1>
@@ -547,12 +546,12 @@ export default function GameDetailsPage() {
                       key={idx}
                       className={`flex justify-between items-center p-2 rounded ${
                         isCurrentUser ? 'bg-blue-100 ring-2 ring-blue-400' :
-                        player.isCaptain ? 'bg-purple-100' : 'bg-gray-50'
+                        player.isCaptain ? 'bg-purple-100' : 'bg-gray-100'
                       }`}
                     >
                       <div>
                         {/* Player name */}
-                        <span className="font-medium">{player.name}</span>
+                        <span className="font-medium text-gray-900">{player.name}</span>
 
                         {/* You badge if this is the current user */}
                         {isCurrentUser && (
@@ -570,7 +569,7 @@ export default function GameDetailsPage() {
                       </div>
 
                       {/* Player position (Skip, Lead, Second, Third) */}
-                      <span className="text-gray-600">{getPositionLabel(player.position)}</span>
+                      <span className="text-gray-700">{getPositionLabel(player.position)}</span>
                     </div>
                   );})}
                 </div>
@@ -590,10 +589,10 @@ export default function GameDetailsPage() {
                 const isCurrentUser = reserve.userName === game.userName;
                 return (
                 <div key={idx} className={`flex justify-between items-center p-2 rounded ${
-                  isCurrentUser ? 'bg-blue-100 ring-2 ring-blue-400' : 'bg-yellow-50'
+                  isCurrentUser ? 'bg-blue-100 ring-2 ring-blue-400' : 'bg-yellow-100'
                 }`}>
                   {/* Reserve player name */}
-                  <span className="font-medium">
+                  <span className="font-medium text-gray-900">
                     {reserve.name}
                     {isCurrentUser && (
                       <span className="ml-2 text-xs bg-blue-600 text-white px-2 py-1 rounded">
@@ -604,7 +603,7 @@ export default function GameDetailsPage() {
 
                   {/* Reserve position if assigned */}
                   {reserve.position && (
-                    <span className="text-gray-600">{getPositionLabel(reserve.position)}</span>
+                    <span className="text-gray-700">{getPositionLabel(reserve.position)}</span>
                   )}
                 </div>
               );})}
@@ -630,10 +629,10 @@ export default function GameDetailsPage() {
                       const isCurrentUser = player.userName === game.userName;
                       return (
                       <div key={idx} className={`flex justify-between items-center p-2 rounded ${
-                        isCurrentUser ? 'bg-blue-100 ring-2 ring-blue-400' : 'bg-white'
+                        isCurrentUser ? 'bg-blue-100 ring-2 ring-blue-400' : 'bg-orange-50'
                       }`}>
                         {/* Player name */}
-                        <span className="font-medium">
+                        <span className="font-medium text-gray-900">
                           {player.name}
                           {isCurrentUser && (
                             <span className="ml-2 text-xs bg-blue-600 text-white px-2 py-1 rounded">
@@ -643,7 +642,7 @@ export default function GameDetailsPage() {
                         </span>
 
                         {/* Player position */}
-                        <span className="text-gray-600">{getPositionLabel(player.position)}</span>
+                        <span className="text-gray-700">{getPositionLabel(player.position)}</span>
                       </div>
                     );})}
                   </div>

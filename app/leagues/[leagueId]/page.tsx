@@ -532,7 +532,7 @@ function LeagueDetailPageInner() {
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="text-left text-gray-500 border-b border-gray-200">
+                    <tr className="text-left text-gray-700 border-b border-gray-200">
                       <th className="pb-2 pr-3 font-medium">Team</th>
                       <th className="pb-2 px-2 font-medium text-center">P</th>
                       <th className="pb-2 px-2 font-medium text-center">W</th>
@@ -555,13 +555,13 @@ function LeagueDetailPageInner() {
                             {row.teamName}
                           </button>
                         </td>
-                        <td className="py-2 px-2 text-center text-gray-600">{row.played}</td>
-                        <td className="py-2 px-2 text-center text-gray-600">{row.won}</td>
-                        <td className="py-2 px-2 text-center text-gray-600">{row.drew}</td>
-                        <td className="py-2 px-2 text-center text-gray-600">{row.lost}</td>
-                        <td className="py-2 px-2 text-center text-gray-600">{row.shotsFor}</td>
-                        <td className="py-2 px-2 text-center text-gray-600">{row.shotsAgainst}</td>
-                        <td className="py-2 px-2 text-center text-gray-600">{row.shotDiff > 0 ? `+${row.shotDiff}` : row.shotDiff}</td>
+                        <td className="py-2 px-2 text-center text-gray-900">{row.played}</td>
+                        <td className="py-2 px-2 text-center text-gray-900">{row.won}</td>
+                        <td className="py-2 px-2 text-center text-gray-900">{row.drew}</td>
+                        <td className="py-2 px-2 text-center text-gray-900">{row.lost}</td>
+                        <td className="py-2 px-2 text-center text-gray-900">{row.shotsFor}</td>
+                        <td className="py-2 px-2 text-center text-gray-900">{row.shotsAgainst}</td>
+                        <td className="py-2 px-2 text-center text-gray-900">{row.shotDiff > 0 ? `+${row.shotDiff}` : row.shotDiff}</td>
                         <td className="py-2 pl-2 text-center font-semibold text-gray-900">{row.points}</td>
                       </tr>
                     ))}

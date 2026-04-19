@@ -130,7 +130,7 @@ export default function InviteGamesPage() {
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-3 mb-1">
-                      <span className="font-mono text-xs text-gray-500">
+                      <span className="font-mono text-xs text-gray-700">
                         {game.inviteGameId}
                       </span>
                       {game.gameDate && isUpcoming(game.gameDate) && (
@@ -149,7 +149,7 @@ export default function InviteGamesPage() {
                     )}
                   </div>
 
-                  <div className="flex-shrink-0 text-right text-sm text-gray-600 space-y-1">
+                  <div className="flex-shrink-0 text-right text-sm text-gray-900 space-y-1">
                     {game.gameDate && (
                       <div>
                         <span className="font-medium">Game:</span>{' '}

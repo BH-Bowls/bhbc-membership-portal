@@ -12,6 +12,7 @@ import { Navbar } from '@/components/Navbar';
 import { Game } from '@/lib/types/friendlies';
 import { getButtonClasses } from '@/config/theme-helpers';
 import Link from 'next/link';
+import { usePhoneBackNavigation } from '@/hooks/usePhoneBackNavigation';
 
 interface AllocPlayer {
   name: string;
@@ -25,6 +26,7 @@ export default function AllocatePage() {
   const router = useRouter();
   const params = useParams();
   const date = decodeURIComponent(params.date as string);
+  usePhoneBackNavigation('/friendlies/manage');
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -251,9 +253,7 @@ export default function AllocatePage() {
               {gameA?.clubName}{gameA?.clubName !== gameB?.clubName ? ` + ${gameB?.clubName}` : ''} &mdash; {date}
             </p>
           </div>
-          <Link href="/friendlies/manage" className={getButtonClasses('secondary', 'md')}>
-            Back to Manage
-          </Link>
+          <Link href="/friendlies/manage" className={getButtonClasses('secondary', 'md')}>← Back to Manage</Link>
         </div>
 
         {/* Instructions */}

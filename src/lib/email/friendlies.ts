@@ -287,7 +287,9 @@ export async function sendGamePublishedEmail(
       return { success: false, emailsSent: 0, playersWithoutEmail, error: 'Email service not configured' };
     }
 
-    const transporter = getEmailTransporter();
+    // Use a pooled transporter so all sends share one persistent SMTP connection
+    // rather than opening a new connection per email (which can trigger Gmail rate limits)
+    const transporter = getEmailTransporter(true);
     const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}`;
     const subject = isRepublish
       ? `Team Selection Updated - ${game.clubName} ${game.date}`
@@ -311,6 +313,7 @@ export async function sendGamePublishedEmail(
     };
 
     let emailsSent = 0;
+    const failedPlayers: string[] = [];
 
     for (const player of playersWithEmail) {
       const { label, color } = resolveStatus(player.selected);
@@ -382,19 +385,30 @@ Friendlies Management System
 </html>
       `.trim();
 
-      await transporter.sendMail({
-        from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
-        to: player.email!,
-        subject,
-        text,
-        html,
-      });
-
-      emailsSent++;
+      try {
+        await transporter.sendMail({
+          from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
+          to: player.email!,
+          subject,
+          text,
+          html,
+        });
+        emailsSent++;
+      } catch (playerError) {
+        console.error(`Failed to send published email to ${player.fullName} (${player.email}):`, playerError);
+        failedPlayers.push(player.fullName);
+      }
     }
 
+    // Close the pooled connection when done
+    transporter.close();
+
+    const allFailed = [...playersWithoutEmail, ...failedPlayers];
+    if (failedPlayers.length > 0) {
+      console.warn(`⚠ Failed to send published email to ${failedPlayers.length} player(s): ${failedPlayers.join(', ')}`);
+    }
     console.log(`✓ Game published notification sent to ${emailsSent} player(s) for ${game.tabName}`);
-    return { success: true, emailsSent, playersWithoutEmail };
+    return { success: true, emailsSent, playersWithoutEmail: allFailed };
   } catch (error) {
     console.error('Error sending game published email:', error);
     return {

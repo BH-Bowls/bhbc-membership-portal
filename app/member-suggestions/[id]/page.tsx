@@ -16,6 +16,7 @@ import { saveDraft, restoreDraft, clearDraft } from '@/lib/form-draft-utils';
 import type { SuggestionAttachment } from '@/types/attachments';
 import { AttachmentUpload } from '@/components/AttachmentUpload';
 import { AttachmentsList } from '@/components/AttachmentsList';
+import { usePhoneBackNavigation } from '@/hooks/usePhoneBackNavigation';
 
 // ============================================================================
 // Main Component
@@ -40,6 +41,8 @@ export default function SuggestionDetailPage({ params }: { params: Promise<{ id:
 
   // State: Edit mode toggle
   const [isEditing, setIsEditing] = useState(false);
+
+  usePhoneBackNavigation('/member-suggestions');
 
   // State: Saving indicator
   const [isSaving, setIsSaving] = useState(false);

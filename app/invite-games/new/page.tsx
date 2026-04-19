@@ -7,10 +7,13 @@ import { useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
+import Link from 'next/link';
+import { usePhoneBackNavigation } from '@/hooks/usePhoneBackNavigation';
 
 export default function NewInviteGamePage() {
   const { data: session } = useSession();
   const router = useRouter();
+  usePhoneBackNavigation('/invite-games');
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -74,12 +77,7 @@ export default function NewInviteGamePage() {
       />
 
       <div className="container mx-auto px-4 py-8 max-w-2xl">
-        <button
-          onClick={() => router.push('/invite-games')}
-          className="mb-4 text-blue-600 hover:text-blue-800 flex items-center gap-1"
-        >
-          ← Back to Invite Games
-        </button>
+        <Link href="/invite-games" className="mb-4 text-blue-600 hover:text-blue-800 inline-block">← Back to Invite Games</Link>
 
         <div className="bg-white rounded-lg shadow p-6">
           <h1 className="text-2xl font-bold mb-6 text-gray-900">New Invite Game</h1>

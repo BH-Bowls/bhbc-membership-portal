@@ -10,6 +10,7 @@ import { useSession } from 'next-auth/react';
 import { useParams, useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
 import Link from 'next/link';
+import { usePhoneBackNavigation } from '@/hooks/usePhoneBackNavigation';
 import { GameSheetPlayer } from '@/lib/types/friendlies';
 import { parseUKDate } from '@/lib/date-utils';
 
@@ -71,8 +72,9 @@ function parsePlayerHistory(last8Games?: string[]): string[] {
   if (!last8Games || last8Games.length === 0) return [];
 
   const statuses: string[] = [];
-  // Array is chronological (first = oldest, last = newest), reverse for most recent first
-  for (let i = last8Games.length - 1; i >= 0 && statuses.length < 6; i--) {
+  // Array is newest-first (built by backward scan in getPlayerStatsFromCache).
+  // Iterate forward so statuses[0] = most recent game (displayed in "Last" column).
+  for (let i = 0; i < last8Games.length && statuses.length < 6; i++) {
     const entry = last8Games[i];
     const sepIdx = entry.indexOf('    ');
     if (sepIdx === -1) continue;
@@ -90,6 +92,7 @@ export default function PickerSheetPage() {
   const params = useParams();
   const router = useRouter();
   const tabDate = params.tabDate as string;
+  usePhoneBackNavigation(`/friendlies/manage/game/${tabDate}`);
 
   const [gameData, setGameData] = useState<GameData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -234,12 +237,7 @@ export default function PickerSheetPage() {
         {/* Header with back link and print button - hidden when printing */}
         <div className="no-print bg-white border-b border-gray-200 p-4">
           <div className="container mx-auto max-w-5xl flex justify-between items-center">
-            <Link
-              href={`/friendlies/manage/game/${tabDate}`}
-              className="text-blue-600 hover:text-blue-800"
-            >
-              &larr; Back to Game
-            </Link>
+            <Link href={`/friendlies/manage/game/${tabDate}`} className="text-blue-600 hover:text-blue-800 mb-2 inline-block">← Back to Game</Link>
             <button
               onClick={handlePrint}
               className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 transition-colors"
@@ -264,7 +262,7 @@ export default function PickerSheetPage() {
                       Burgess Hill vs {game.clubName}
                     </div>
                     <div>
-                      {formattedDate}, {game.time}, {game.homeAway}
+                      {formattedDate}, {game.time}, {game.homeAway === 'H' ? 'Home' : 'Away'}
                     </div>
                     <div>
                       {game.format} | {game.ladiesMen} | Dress: {game.dress || 'W'}

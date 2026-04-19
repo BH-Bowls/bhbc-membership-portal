@@ -10,8 +10,9 @@ import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useParams } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
-import Link from 'next/link';
 import { MatchCardData, Team } from '@/lib/types/friendlies';
+import Link from 'next/link';
+import { usePhoneBackNavigation } from '@/hooks/usePhoneBackNavigation';
 import { parseUKDate } from '@/lib/date-utils';
 
 // ============================================================================
@@ -32,6 +33,9 @@ export default function MatchCardPage() {
   const { data: session } = useSession();
   const params = useParams();
   const tabDate = params.tabDate as string;
+  const role = session?.user?.role ?? '';
+  const isManageRole = ['Captain', 'Admin'].some(r => role.split(',').map(s => s.trim()).includes(r));
+  usePhoneBackNavigation(isManageRole ? `/friendlies/manage/game/${tabDate}` : `/friendlies/game/${tabDate}`);
 
   const [matchCard, setMatchCard] = useState<MatchCardData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -245,10 +249,8 @@ export default function MatchCardPage() {
               href={['Captain', 'Admin'].some(r => session?.user?.role?.split(',').includes(r))
                 ? `/friendlies/manage/game/${tabDate}`
                 : `/friendlies/game/${tabDate}`}
-              className="text-blue-600 hover:text-blue-800"
-            >
-              ← Back to Game
-            </Link>
+              className="text-blue-600 hover:text-blue-800 mb-2 inline-block"
+            >← Back to Game</Link>
             <button
               onClick={handlePrint}
               className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 transition-colors"
@@ -276,10 +278,10 @@ export default function MatchCardPage() {
                       Burgess Hill vs {game.clubName}
                     </h1>
                     <p className="text-sm">
-                      {formattedDate}, {game.time}, {game.homeAway}
+                      {formattedDate}, {game.time}, {game.homeAway === 'H' ? 'Home' : 'Away'}
                     </p>
                     <p className="text-sm">
-                      {rinkCount} Rinks | {game.ladiesMen} | Dress : {game.dress || 'W'}
+                      {game.format} | {game.ladiesMen} | Dress : {game.dress || 'W'}
                     </p>
                   </div>
                   <div className="border-t border-gray-400 p-2 text-center">

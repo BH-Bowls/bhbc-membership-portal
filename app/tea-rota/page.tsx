@@ -494,25 +494,25 @@ export default function TeaRotaPage() {
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50 print:bg-gray-100">
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
                       Date
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
                       Time
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
                       Opponent
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
                       Format
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
                       Tea Lead
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
                       Tea First
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
                       Tea Second
                     </th>
                   </tr>
@@ -526,13 +526,13 @@ export default function TeaRotaPage() {
                       <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
                         {entry.displayDate}
                       </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                         {entry.time}
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                         {entry.clubName}
                       </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                         {entry.format}
                       </td>
                       {(['teaLead', 'teaFirst', 'teaSecond'] as const).map((position) => (
@@ -589,11 +589,11 @@ export default function TeaRotaPage() {
                   <div className="flex justify-between items-start mb-3">
                     <div>
                       <div className="font-bold text-lg text-gray-900">{entry.displayDate}</div>
-                      <div className="text-sm text-gray-500">{entry.time}</div>
+                      <div className="text-sm text-gray-900">{entry.time}</div>
                     </div>
                     <div className="text-right">
                       <div className="text-sm font-medium text-blue-600">{entry.clubName}</div>
-                      <div className="text-xs text-gray-500">{entry.format}</div>
+                      <div className="text-xs text-gray-900">{entry.format}</div>
                     </div>
                   </div>
 

@@ -667,7 +667,7 @@ export default function BankingPage() {
               <h2 className="text-lg font-semibold mb-4 text-gray-900">Renewals (Outstanding)</h2>
 
               {/* Column Headers */}
-              <div className="grid grid-cols-[auto_1fr_auto_auto] gap-3 pb-2 border-b font-medium text-sm text-gray-600">
+              <div className="grid grid-cols-[auto_1fr_auto_auto] gap-3 pb-2 border-b font-medium text-sm text-gray-900">
                 <div className="w-5"></div>
                 <div>Member</div>
                 <div className="text-right">Outstanding</div>
@@ -730,7 +730,7 @@ export default function BankingPage() {
               <h2 className="text-lg font-semibold mb-4 text-gray-900">Payments (Unmatched)</h2>
 
               {/* Column Headers - 4 distinct columns */}
-              <div className="grid grid-cols-[auto_100px_60px_1fr_100px] gap-3 pb-2 border-b font-medium text-sm text-gray-600">
+              <div className="grid grid-cols-[auto_100px_60px_1fr_100px] gap-3 pb-2 border-b font-medium text-sm text-gray-900">
                 <div className="w-5"></div>
                 <div>Date</div>
                 <div>Type</div>

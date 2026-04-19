@@ -12,6 +12,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { EnteredPlayersModal } from '@/components/game-management/EnteredPlayersModal';
 import { SelectionHelperDialog } from '@/components/game-management/SelectionHelperDialog';
 import Link from 'next/link';
+import { usePhoneBackNavigation } from '@/hooks/usePhoneBackNavigation';
 import { GameSheetPlayer, Position } from '@/lib/types/friendlies';
 import { saveDraft, restoreDraft, clearDraft } from '@/lib/form-draft-utils';
 import { parseUKDate } from '@/lib/date-utils';
@@ -136,6 +137,7 @@ export default function TeamSelectionPage() {
 
   // Extract tabDate from URL parameter
   const tabDate = params.tabDate as string;
+  usePhoneBackNavigation('/friendlies/manage');
 
   // State: Game data including game details and all players
   const [gameData, setGameData] = useState<GameData | null>(null);
@@ -173,9 +175,17 @@ export default function TeamSelectionPage() {
   const [publishDialog, setPublishDialog] = useState<{
     isOpen: boolean;
     sendEmail: boolean;
+    sendTeaRotaEmail: boolean;
     submitting: boolean;
-    result: { emailsSent?: number; playersWithoutEmail?: string[]; emailError?: string } | null;
-  }>({ isOpen: false, sendEmail: false, submitting: false, result: null });
+    result: {
+      emailsSent?: number;
+      playersWithoutEmail?: string[];
+      emailError?: string;
+      teaRotaEmailsSent?: number;
+      teaRotaMembersWithoutEmail?: string[];
+      teaRotaEmailError?: string;
+    } | null;
+  }>({ isOpen: false, sendEmail: false, sendTeaRotaEmail: false, submitting: false, result: null });
 
   // State: test email (preview sent to self before publishing)
   const [testEmail, setTestEmail] = useState<{ sending: boolean; sent: boolean; error: string }>({
@@ -608,6 +618,7 @@ export default function TeamSelectionPage() {
           tab_name: gameData.game.tabName,
           action: isRepublish ? 'republish' : 'publish',
           send_email: publishDialog.sendEmail,
+          send_tea_rota_email: publishDialog.sendTeaRotaEmail,
         }),
       });
       const data = await response.json();
@@ -619,6 +630,9 @@ export default function TeamSelectionPage() {
             emailsSent: data.emails_sent,
             playersWithoutEmail: data.players_without_email,
             emailError: data.email_error,
+            teaRotaEmailsSent: data.tea_rota_emails_sent,
+            teaRotaMembersWithoutEmail: data.tea_rota_members_without_email,
+            teaRotaEmailError: data.tea_rota_email_error,
           },
         }));
         // Reflect new status in local game data (publish only — republish keeps 'S')
@@ -832,9 +846,7 @@ export default function TeamSelectionPage() {
 
         {/* Header with back link and game details */}
         <div className="mb-6">
-          <Link href="/friendlies/manage" className="text-blue-600 hover:text-blue-800 mb-2 inline-block">
-            ← Back to Manage Games
-          </Link>
+          <Link href="/friendlies/manage" className="text-blue-600 hover:text-blue-800 mb-2 inline-block">← Back to Manage Games</Link>
 
           <h1 className="text-3xl font-bold text-gray-900">{game.clubName} - Team Selection</h1>
 
@@ -885,7 +897,7 @@ export default function TeamSelectionPage() {
             <button
               onClick={() => {
                 setTestEmail({ sending: false, sent: false, error: '' });
-                setPublishDialog({ isOpen: true, sendEmail: true, submitting: false, result: null });
+                setPublishDialog({ isOpen: true, sendEmail: true, sendTeaRotaEmail: false, submitting: false, result: null });
               }}
               className={`text-white px-4 py-2 rounded transition-colors flex items-center gap-2 ${
                 game.status === 'S'
@@ -949,22 +961,22 @@ export default function TeamSelectionPage() {
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">Stats</th>
-                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">D/B</th>
-                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">Sel</th>
-                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">Tm</th>
-                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">Pos</th>
+                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-700 uppercase">Name</th>
+                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-700 uppercase">Stats</th>
+                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-700 uppercase">D/B</th>
+                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-700 uppercase">Sel</th>
+                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-700 uppercase">Tm</th>
+                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-700 uppercase">Pos</th>
 
                     {isAway && (
                       <>
-                        <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">Drv</th>
-                        <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">Car</th>
+                        <th className="px-2 py-2 text-left text-xs font-medium text-gray-700 uppercase">Drv</th>
+                        <th className="px-2 py-2 text-left text-xs font-medium text-gray-700 uppercase">Car</th>
                       </>
                     )}
 
-                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">Cpt</th>
-                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-700 uppercase">Cpt</th>
+                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-700 uppercase">Status</th>
                   </tr>
                 </thead>
 
@@ -983,7 +995,7 @@ export default function TeamSelectionPage() {
                         </span>
                       </td>
 
-                      <td className="px-2 py-2 text-sm text-gray-600">
+                      <td className="px-2 py-2 text-sm text-gray-900">
                         <div className="text-xs">
                           {player.nameDown}/{player.picked}({Math.round(player.percentPlayed > 1 ? player.percentPlayed : player.percentPlayed * 100)}%)+{player.futureEntered}
                         </div>
@@ -1004,6 +1016,7 @@ export default function TeamSelectionPage() {
                             }
                           }}
                           disabled={!isEditing}
+                          tabIndex={-1}
                           className={`text-sm border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 ${!isEditing ? 'bg-gray-100 cursor-not-allowed' : ''}`}
                         >
                           <option value="Y">Y</option>
@@ -1051,6 +1064,7 @@ export default function TeamSelectionPage() {
                               checked={player.driving === 'Y'}
                               onChange={e => updatePlayer(player.rowNumber, 'driving', e.target.checked ? 'Y' : '')}
                               disabled={!isEditing}
+                              tabIndex={-1}
                               className={`w-4 h-4 ${!isEditing ? 'cursor-not-allowed' : ''}`}
                             />
                           </td>
@@ -1060,6 +1074,7 @@ export default function TeamSelectionPage() {
                               value={player.carNumber || ''}
                               onChange={e => updatePlayer(player.rowNumber, 'carNumber', e.target.value)}
                               disabled={!isEditing}
+                              tabIndex={-1}
                               className={`w-10 text-sm text-center border border-gray-300 rounded px-1 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 ${!isEditing ? 'bg-gray-100 cursor-not-allowed' : ''}`}
                             />
                           </td>
@@ -1073,6 +1088,7 @@ export default function TeamSelectionPage() {
                           checked={player.captain === 'Y'}
                           onChange={() => updatePlayer(player.rowNumber, 'captain', 'Y')}
                           disabled={!isEditing}
+                          tabIndex={-1}
                           className={`w-4 h-4 ${!isEditing ? 'cursor-not-allowed' : ''}`}
                         />
                       </td>
@@ -1082,6 +1098,7 @@ export default function TeamSelectionPage() {
                           <select
                             value={player.status}
                             onChange={e => updatePlayer(player.rowNumber, 'status', e.target.value)}
+                            tabIndex={-1}
                             className="text-sm border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
                           >
                             <option value="">-</option>
@@ -1278,6 +1295,30 @@ export default function TeamSelectionPage() {
                           <p>{publishDialog.result.emailError}</p>
                         </div>
                       )}
+                      {publishDialog.result.teaRotaEmailsSent !== undefined && publishDialog.result.teaRotaEmailsSent > 0 && (
+                        <div className="flex items-center gap-2 text-green-700 bg-green-50 p-3 rounded">
+                          <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                          <span>Tea rota email sent to {publishDialog.result.teaRotaEmailsSent} member{publishDialog.result.teaRotaEmailsSent !== 1 ? 's' : ''}</span>
+                        </div>
+                      )}
+                      {publishDialog.result.teaRotaMembersWithoutEmail && publishDialog.result.teaRotaMembersWithoutEmail.length > 0 && (
+                        <div className="bg-yellow-50 p-3 rounded">
+                          <p className="text-yellow-800 font-medium mb-1">Tea rota members without email:</p>
+                          <ul className="text-yellow-700 text-sm list-disc list-inside">
+                            {publishDialog.result.teaRotaMembersWithoutEmail.map((name, i) => (
+                              <li key={i}>{name}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {publishDialog.result.teaRotaEmailError && (
+                        <div className="bg-red-50 p-3 rounded text-red-700 text-sm">
+                          <p className="font-medium">Tea rota email error:</p>
+                          <p>{publishDialog.result.teaRotaEmailError}</p>
+                        </div>
+                      )}
                     </div>
                     <div className="flex justify-end mt-6">
                       <button
@@ -1315,6 +1356,21 @@ export default function TeamSelectionPage() {
                         </p>
                       </div>
                     </label>
+                    {gameData.game.homeAway === 'H' && (
+                      <label className="flex items-center gap-3 p-3 bg-gray-50 rounded cursor-pointer hover:bg-gray-100 mt-2">
+                        <input
+                          type="checkbox"
+                          checked={publishDialog.sendTeaRotaEmail}
+                          onChange={e => setPublishDialog(prev => ({ ...prev, sendTeaRotaEmail: e.target.checked }))}
+                          disabled={publishDialog.submitting}
+                          className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"
+                        />
+                        <div>
+                          <span className="font-medium text-gray-900">Email tea rota members</span>
+                          <p className="text-sm text-gray-600">Notify those on tea duty for this home game</p>
+                        </div>
+                      </label>
+                    )}
                     {testEmail.sent && (
                       <p className="mt-3 text-sm text-green-700 bg-green-50 p-2 rounded">
                         Test email sent to your address.

@@ -206,7 +206,7 @@ function FixturesPageInner() {
                         {formatDisplayDate(game.date)}
                       </span>
                       {game.time && (
-                        <span className="text-gray-500 text-sm">{game.time}</span>
+                        <span className="text-gray-700 text-sm">{game.time}</span>
                       )}
                       <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${gameTypeBadgeClasses(game.gameType)}`}>
                         {game.gameType}
@@ -230,7 +230,7 @@ function FixturesPageInner() {
 
                   {/* Expanded details */}
                   {isExpanded && (
-                    <div className="px-4 pb-4 border-t border-gray-100 pt-3 text-sm text-gray-600 space-y-1.5">
+                    <div className="px-4 pb-4 border-t border-gray-100 pt-3 text-sm text-gray-900 space-y-1.5">
                       {game.format && (
                         <div><span className="font-medium text-gray-700">Format:</span> {game.format}</div>
                       )}
