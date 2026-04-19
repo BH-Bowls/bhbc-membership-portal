@@ -295,6 +295,49 @@ export async function POST(request: NextRequest) {
         }
         break;
 
+      // REPUBLISH: Re-send the published email without changing status (game already 'S')
+      case 'republish':
+        if (currentStatus !== 'S') {
+          return NextResponse.json(
+            { error: 'Can only republish games that are already published' },
+            { status: 400 }
+          );
+        }
+
+        // Status stays 'S' — no change needed, just re-send the email
+        newStatus = 'S';
+
+        if (send_email) {
+          try {
+            const gamePlayers = await getGameSheet(effectiveTabName);
+            const allUsers = await getAllUsers();
+            const userEmailMap = new Map<string, string>();
+            for (const user of allUsers) {
+              if (user.userName && user.emailAddress) {
+                userEmailMap.set(user.userName.toLowerCase(), user.emailAddress);
+              }
+            }
+            const playersWithEmails = gamePlayers.map(player => ({
+              fullName: player.fullName || player.name,
+              email: userEmailMap.get(player.name.toLowerCase()) || null,
+              selected: player.selected,
+              team: player.team,
+              position: player.position,
+            }));
+            const appUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
+            const result = await sendGamePublishedEmail(game, playersWithEmails, appUrl, true);
+            emailResult = {
+              emailsSent: result.emailsSent,
+              playersWithoutEmail: result.playersWithoutEmail,
+              emailError: result.error,
+            };
+          } catch (emailError) {
+            console.error('Error sending republish notification emails:', emailError);
+            emailResult.emailError = emailError instanceof Error ? emailError.message : 'Failed to send emails';
+          }
+        }
+        break;
+
       // PLAYED: Transition from 'S' (Selected) to 'P' (Played/Completed)
       case 'played':
         // Validate that game is currently Selected (team was published)
@@ -359,10 +402,8 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
     }
 
-    // Update the game status in the Games sheet along with any additional data
-    // Use effectiveTabName to ensure we have a valid name for all operations
-    // Pass rowNumber to identify unopened games that don't have tabName yet
-    await updateGameStatus(effectiveTabName, newStatus, {
+    // Update the game status in the Games sheet (skip for republish — status unchanged)
+    if (action !== 'republish') await updateGameStatus(effectiveTabName, newStatus, {
       bhbcScore: bhbc_score,        // Our score (for played/abandoned games)
       opponentScore: opponent_score, // Opponent score (for played/abandoned games)
       reason,                        // Reason for cancellation/abandonment

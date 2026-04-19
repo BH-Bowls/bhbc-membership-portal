@@ -58,45 +58,157 @@ export default function HelpFriendlyManagementPage() {
             <Step n={3}>Click <strong>Select Team</strong> to open the selection page.</Step>
             <Step n={4}>Mark each player as Playing, Reserve, or Reserve Team.</Step>
             <Step n={5}>Assign a team number and position (Skip, Lead, 2nd, 3rd) to playing members.</Step>
-            <Step n={6}>Optionally mark the captain of the day and assign driving duties.</Step>
+            <Step n={6}>Optionally mark the captain of the day and assign driving duties for away games.</Step>
             <Step n={7}>Save your changes — you can return and edit at any time before publishing.</Step>
             <Note>
-              Players who did not enter online can still be added manually on the selection page using
-              the Add Player button.
+              Players who did not enter online can still be added manually using the{' '}
+              <strong>Add Players</strong> button, which appears when you are in edit mode.
             </Note>
+          </HelpSection>
+
+          <HelpSection title="Swapping players">
             <Body>
-              The selection page has two print buttons:
+              On the selection page you can swap two players&apos; team and position assignments
+              without having to manually update each field. The most common use is replacing a
+              player who has withdrawn — swap the withdrawn player with a reserve to slot the
+              reserve straight into the vacated position.
             </Body>
-            <div className="ml-0 space-y-1.5 text-sm text-gray-700 mb-2">
-              <p><strong>Print Match Card</strong> — a formatted card showing the full team with positions, driving assignments, tea rota, and venue details. This is the card players take to the match.</p>
-              <p><strong>Print Picker Sheet</strong> — a working sheet listing all entered players with their current stats (name down, picked, % played, last 6 games) pulled live from the Players sheet. Use this when deciding who to select.</p>
+            <Step n={1}>Click the <strong>swap icon</strong> (two arrows) on any player&apos;s row.</Step>
+            <Step n={2}>A dialog opens. Choose the player you want to swap with from the dropdown.</Step>
+            <Step n={3}>Click <strong>Swap</strong> — team numbers, positions, and driving are exchanged.</Step>
+            <Note>
+              Swapping only affects team assignment fields. Each player&apos;s confirmed / withdrawn
+              status is not changed.
+            </Note>
+          </HelpSection>
+
+          <HelpSection title="Player stats on the selection page">
+            <Body>
+              Each player row shows a compact stats summary to help with selection decisions:
+            </Body>
+            <div className="mt-1 mb-2 p-2 bg-gray-100 rounded font-mono text-sm text-gray-800 text-center">
+              ND/Pk(%)&nbsp;+&nbsp;FE
             </div>
+            <div className="mt-1 space-y-1 text-sm text-gray-700 mb-2">
+              <p><strong>ND</strong> (Name Down) — number of closed games where the player was selected (Playing, Reserve, or Reserve Team). Does not count games they simply entered.</p>
+              <p><strong>Pk</strong> (Picked) — number of those games where the player was in the main playing team.</p>
+              <p><strong>%</strong> — Pk as a percentage of ND. A rough fairness measure.</p>
+              <p><strong>FE</strong> (Future Entered) — number of future open games the player has already entered. Useful context when balancing the team.</p>
+            </div>
+            <Body>
+              The last 6 games history (shown in a tooltip on the selection page and on the Picker
+              Sheet) shows only closed-game outcomes — P, R, T, D etc. Future entries are not
+              included so the history stays meaningful.
+            </Body>
+          </HelpSection>
+
+          <HelpSection title="Selection Helper">
+            <Body>
+              The amber <strong>Selection Helper</strong> button (next to Print Picker Sheet) opens
+              a panel that surfaces key considerations before you finalise the team. It analyses the
+              current entered players and highlights:
+            </Body>
+            <div className="mt-1 space-y-2 text-sm text-gray-700 mb-2">
+              <p>
+                <strong>🍺 Bar Volunteers</strong> (home games) — lists all entered players who are
+                willing to do bar duty, and warns if none are currently selected.
+              </p>
+              <p>
+                <strong>🚗 Drivers Needed</strong> (away games) — calculates how many cars are
+                required (total players ÷ 4) and lists available drivers. Warns if the number of
+                selected drivers is below what is needed.
+              </p>
+              <p>
+                <strong>⭐ Recent Reserves</strong> — lists all entered players whose most recent
+                closed game was a reserve, regardless of whether they are already selected for this
+                game. Sorted by consecutive reserve streak: one reserve in a row is shown in
+                yellow, two in orange, three or more in red. Each player&apos;s current selection
+                status is shown alongside their name. Ties are broken by % played (lower first).
+              </p>
+              <p>
+                <strong>🌟 First Timers</strong> — any entered player who has never been picked to
+                play in a friendly.
+              </p>
+              <p>
+                <strong>💑 Couples / Buddies</strong> — buddy pairs (set up in member profiles)
+                where both players have entered this game. Worth trying to put them on the same
+                rink. Shows each person&apos;s current selection status alongside their name.
+              </p>
+              <p>
+                <strong>📊 % Played</strong> — shows the group average percentage played, then
+                lists any players who are more than 10 percentage points above or below that
+                average as a fairness prompt. Players who have never been picked (shown in First
+                Timers) are not repeated here. If everyone is within 10% of the average, a
+                reassuring &ldquo;no fairness concerns&rdquo; message is shown instead.
+              </p>
+            </div>
+            <Tip>
+              The Selection Helper loads fresh data when you open it. You can close and reopen it
+              at any point during selection to see an updated picture as you make changes.
+            </Tip>
+          </HelpSection>
+
+          <HelpSection title="Print buttons">
+            <Body>
+              Two print buttons are always visible on the selection page:
+            </Body>
+            <div className="mt-1 space-y-1.5 text-sm text-gray-700 mb-2">
+              <p>
+                <strong>Print Match Card</strong> — a formatted card showing the full team with
+                positions, driving assignments, tea rota, and venue details. This is the card
+                players take to the match.
+              </p>
+              <p>
+                <strong>Print Picker Sheet</strong> — a working A4 sheet listing all entered players
+                with their stats (ND/Pk/% + Future Entered) and last 6 games history. Use this when
+                deciding who to select.
+              </p>
+            </div>
+            <Note>
+              Navigating to either print page and coming back does not reload the selection data —
+              your edits are preserved and no extra sheet reads are made.
+            </Note>
           </HelpSection>
 
           <HelpSection title="Publishing the selection">
-            <Step n={1}>When the team is finalised, click <strong>Publish</strong>.</Step>
-            <Step n={2}>A dialog appears with two optional email checkboxes:</Step>
-            <div className="ml-9 space-y-1 text-sm text-gray-700 mb-3">
-              <p><strong>Email entered players</strong> — sends a personalised email to each person who entered the game. Each email tells that individual whether they are <em>Selected to play</em>, a <em>Reserve</em>, or <em>Not selected</em>, along with the game details.</p>
-              <p><strong>Email tea rota</strong> — for home games, notifies the members assigned to tea duty with their details. This option only appears for home games.</p>
-            </div>
-            <Step n={3}>Tick whichever emails you want to send, then click <strong>Publish</strong>.</Step>
             <Body>
-              Once published, members can see the full team selection on the Friendlies page and on
-              their match card. A status line below the View Details button tells each member whether
-              they are Selected, Reserve, Reserve Rink, Not selected, or Not entered.
+              You can publish from two places — the <strong>Manage list</strong> (Publish button in
+              the Actions column) or directly from the <strong>selection page</strong> (the teal
+              Publish button in the toolbar, visible when you are not editing).
+            </Body>
+            <Step n={1}>Click <strong>Publish</strong>. A dialog appears with options.</Step>
+            <Step n={2}>
+              Tick <strong>Email entered players</strong> to send a personalised notification to
+              each person who entered the game. Each email shows their individual status (Selected,
+              Reserve, or not selected), team details, and a link to view and sign off their name
+              online or at the clubhouse.
+            </Step>
+            <Step n={3}>
+              For home games, tick <strong>Email tea rota</strong> to notify the members assigned
+              to tea duty.
+            </Step>
+            <Step n={4}>
+              Before sending to everyone, click <strong>Send Test Email</strong> to receive a
+              preview of the email at your own address. You can do this as many times as you like.
+            </Step>
+            <Step n={5}>Click <strong>Publish</strong> to confirm.</Step>
+            <Body>
+              Once published, members can see the full team on the Friendlies page. The selection
+              page toolbar shows an orange <strong>Republish</strong> button — use this if you
+              need to update the selection after publishing and want to notify players again.
+              Republish sends the same email but with the subject <em>Team Selection Updated</em>
+              rather than <em>Team Selection Published</em>.
             </Body>
             <Note>
-              Tea duty members are assigned on the <strong>Tea Rota</strong> page (Lookups → Tea Rota),
-              not within Friendly Management. The email here simply notifies whoever is already
-              assigned for that date.
+              Tea duty members are assigned on the <strong>Tea Rota</strong> page (Lookups → Tea
+              Rota). The email here simply notifies whoever is already assigned for that date.
             </Note>
           </HelpSection>
 
           <HelpSection title="Adding a special instructions message">
             <Body>
-              Any game (at any active status) can have a message attached to it — for example,
-              a change of dress code, an early arrival request, or parking information.
+              Any game (at any active status) can have a message attached — for example, a change
+              of dress code, an early arrival request, or parking information.
             </Body>
             <Step n={1}>Click <strong>Message</strong> in the Actions column next to the game.</Step>
             <Step n={2}>Type the instructions in the dialog and click <strong>Save</strong>.</Step>
@@ -133,14 +245,17 @@ export default function HelpFriendlyManagementPage() {
               between the two games.
             </Body>
             <Body>
-              Paired games appear as a single combined row in the Manage table, highlighted in purple.
-              The workflow is slightly different from a standard game:
+              Paired games appear as a single combined row in the Manage table, highlighted in
+              purple. The workflow is slightly different from a standard game:
             </Body>
             <Step n={1}><strong>Open Both</strong> — opens both games together for entries. Members enter as normal and the system combines the counts.</Step>
             <Step n={2}><strong>Close &amp; Allocate</strong> — closes both games and takes you to the allocation page, where you assign members to each of the two games.</Step>
             <Step n={3}>Once allocated, each game moves independently through the Selecting → Selected → Played flow using the standard Select Team and Publish actions.</Step>
             <Body>
-              <strong>Setting up a paired game:</strong> Paired games are created by ticking the <strong>Paired game</strong> checkbox when adding or editing a game in Fixtures Admin (Admin → Fixtures Management). Both games on that date must have the Paired checkbox ticked — the system then automatically groups them together in the Manage view.
+              <strong>Setting up a paired game:</strong> Paired games are created by ticking the{' '}
+              <strong>Paired game</strong> checkbox when adding or editing a game in Fixtures Admin
+              (Admin → Fixtures Management). Both games on that date must have the Paired checkbox
+              ticked — the system then automatically groups them together in the Manage view.
             </Body>
             <Note>
               The Message button on a paired row sets the message for the first game. If you need

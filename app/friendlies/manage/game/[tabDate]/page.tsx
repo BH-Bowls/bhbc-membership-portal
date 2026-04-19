@@ -10,6 +10,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { EnteredPlayersModal } from '@/components/game-management/EnteredPlayersModal';
+import { SelectionHelperDialog } from '@/components/game-management/SelectionHelperDialog';
 import Link from 'next/link';
 import { GameSheetPlayer, Position } from '@/lib/types/friendlies';
 import { saveDraft, restoreDraft, clearDraft } from '@/lib/form-draft-utils';
@@ -160,12 +161,26 @@ export default function TeamSelectionPage() {
 
   // State: Add Players modal visibility
   const [showAddPlayersModal, setShowAddPlayersModal] = useState(false);
+  const [showSelectionHelper, setShowSelectionHelper] = useState(false);
 
   // State: Swap modal
   const [swapModal, setSwapModal] = useState<{ sourceRowNumber: number; targetRowNumber: number | null } | null>(null);
 
   // State: Save-warnings modal (list of issues found before saving)
   const [saveWarnings, setSaveWarnings] = useState<string[]>([]);
+
+  // State: Publish / Republish dialog
+  const [publishDialog, setPublishDialog] = useState<{
+    isOpen: boolean;
+    sendEmail: boolean;
+    submitting: boolean;
+    result: { emailsSent?: number; playersWithoutEmail?: string[]; emailError?: string } | null;
+  }>({ isOpen: false, sendEmail: false, submitting: false, result: null });
+
+  // State: test email (preview sent to self before publishing)
+  const [testEmail, setTestEmail] = useState<{ sending: boolean; sent: boolean; error: string }>({
+    sending: false, sent: false, error: '',
+  });
 
   // State: Confirmation dialog
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -558,6 +573,69 @@ export default function TeamSelectionPage() {
   }, [gameData, players, doSave]);
 
   /**
+   * Submit the publish / republish action from the inline dialog.
+   * Calls the status API with action 'publish' or 'republish'.
+   */
+  async function handleSendTestEmail() {
+    if (!gameData) return;
+    setTestEmail({ sending: true, sent: false, error: '' });
+    try {
+      const response = await fetch('/api/friendlies/manage/send-test-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tab_name: gameData.game.tabName }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        setTestEmail({ sending: false, sent: true, error: '' });
+      } else {
+        setTestEmail({ sending: false, sent: false, error: data.error || 'Failed to send test email' });
+      }
+    } catch {
+      setTestEmail({ sending: false, sent: false, error: 'Failed to send test email' });
+    }
+  }
+
+  async function submitPublish() {
+    if (!gameData) return;
+    const isRepublish = gameData.game.status === 'S';
+    setPublishDialog(prev => ({ ...prev, submitting: true }));
+    try {
+      const response = await fetch('/api/friendlies/manage/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tab_name: gameData.game.tabName,
+          action: isRepublish ? 'republish' : 'publish',
+          send_email: publishDialog.sendEmail,
+        }),
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setPublishDialog(prev => ({
+          ...prev,
+          submitting: false,
+          result: {
+            emailsSent: data.emails_sent,
+            playersWithoutEmail: data.players_without_email,
+            emailError: data.email_error,
+          },
+        }));
+        // Reflect new status in local game data (publish only — republish keeps 'S')
+        if (!isRepublish) {
+          setGameData(prev => prev ? { ...prev, game: { ...prev.game, status: 'S' } } : prev);
+        }
+      } else {
+        alert(data.error || 'Failed to publish');
+        setPublishDialog(prev => ({ ...prev, submitting: false }));
+      }
+    } catch {
+      alert('Failed to publish');
+      setPublishDialog(prev => ({ ...prev, submitting: false }));
+    }
+  }
+
+  /**
    * Cancel changes and exit edit mode
    */
   const handleCancel = useCallback(() => {
@@ -802,6 +880,26 @@ export default function TeamSelectionPage() {
             </button>
           )}
 
+          {/* Publish / Republish — shown when not editing, for X (selecting) or S (published) games */}
+          {!isEditing && (game.status === 'X' || game.status === 'S') && (
+            <button
+              onClick={() => {
+                setTestEmail({ sending: false, sent: false, error: '' });
+                setPublishDialog({ isOpen: true, sendEmail: true, submitting: false, result: null });
+              }}
+              className={`text-white px-4 py-2 rounded transition-colors flex items-center gap-2 ${
+                game.status === 'S'
+                  ? 'bg-orange-600 hover:bg-orange-700'
+                  : 'bg-teal-600 hover:bg-teal-700'
+              }`}
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+              </svg>
+              {game.status === 'S' ? 'Republish' : 'Publish'}
+            </button>
+          )}
+
           {/* Add Players button - only show when editing */}
           {isEditing && (
             <button
@@ -832,6 +930,18 @@ export default function TeamSelectionPage() {
           >
             Print Picker Sheet
           </Link>
+
+          {/* Selection Helper - captain guidance dialog */}
+          <button
+            onClick={() => setShowSelectionHelper(true)}
+            className="bg-amber-500 text-white px-4 py-2 rounded hover:bg-amber-600 transition-colors flex items-center gap-1.5"
+            title="Selection guidance — bar/drivers, reserve priority, buddy pairs"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.347.347a3.001 3.001 0 01-2.83 2.03H9.76a3 3 0 01-2.83-2.03l-.346-.347z" />
+            </svg>
+            Selection Helper
+          </button>
         </div>
 
             {/* Selection table - main UI for selecting players and assigning teams */}
@@ -1122,6 +1232,156 @@ export default function TeamSelectionPage() {
         addOnlyMode={true}
         existingPlayerNames={players.map(p => p.name)}
         onAddPlayers={handleAddPlayers}
+      />
+
+      {/* ================================================================== */}
+      {/* Publish / Republish Dialog                                        */}
+      {/* ================================================================== */}
+      {publishDialog.isOpen && gameData && (() => {
+        const isRepublish = gameData.game.status === 'S';
+        return (
+          <>
+            <div className="fixed inset-0 bg-black bg-opacity-50 z-40"
+              onClick={() => !publishDialog.submitting && !publishDialog.result && setPublishDialog(prev => ({ ...prev, isOpen: false }))}
+            />
+            <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+                {publishDialog.result ? (
+                  <>
+                    <h2 className="text-xl font-bold mb-4 text-gray-900">
+                      {isRepublish ? 'Selection Republished' : 'Selection Published'}
+                    </h2>
+                    <div className="space-y-3">
+                      {publishDialog.result.emailsSent !== undefined && publishDialog.result.emailsSent > 0 && (
+                        <div className="flex items-center gap-2 text-green-700 bg-green-50 p-3 rounded">
+                          <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                          <span>Email sent to {publishDialog.result.emailsSent} player{publishDialog.result.emailsSent !== 1 ? 's' : ''}</span>
+                        </div>
+                      )}
+                      {publishDialog.result.playersWithoutEmail && publishDialog.result.playersWithoutEmail.length > 0 && (
+                        <div className="bg-yellow-50 p-3 rounded">
+                          <p className="text-yellow-800 font-medium mb-1">
+                            {publishDialog.result.playersWithoutEmail.length} player{publishDialog.result.playersWithoutEmail.length !== 1 ? 's' : ''} without email:
+                          </p>
+                          <ul className="text-yellow-700 text-sm list-disc list-inside">
+                            {publishDialog.result.playersWithoutEmail.map((name, i) => (
+                              <li key={i}>{name}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {publishDialog.result.emailError && (
+                        <div className="bg-red-50 p-3 rounded text-red-700 text-sm">
+                          <p className="font-medium">Email error:</p>
+                          <p>{publishDialog.result.emailError}</p>
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex justify-end mt-6">
+                      <button
+                        onClick={() => setPublishDialog(prev => ({ ...prev, isOpen: false, result: null }))}
+                        className="px-4 py-2 text-white bg-blue-600 rounded hover:bg-blue-700"
+                      >
+                        Done
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <h2 className="text-xl font-bold mb-4 text-gray-900">
+                      {isRepublish ? 'Republish Selection' : 'Publish Selection'}
+                    </h2>
+                    <p className="text-gray-700 mb-4">
+                      {isRepublish
+                        ? 'Re-send the team selection notification. Players will receive an email saying the selection has been updated.'
+                        : 'Publish the team selection. Players will be able to see their selection status.'}
+                    </p>
+                    <label className="flex items-center gap-3 p-3 bg-gray-50 rounded cursor-pointer hover:bg-gray-100">
+                      <input
+                        type="checkbox"
+                        checked={publishDialog.sendEmail}
+                        onChange={e => setPublishDialog(prev => ({ ...prev, sendEmail: e.target.checked }))}
+                        disabled={publishDialog.submitting}
+                        className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"
+                      />
+                      <div>
+                        <span className="font-medium text-gray-900">Email entered players</span>
+                        <p className="text-sm text-gray-600">
+                          {isRepublish
+                            ? 'Notify all players that the team selection has been updated'
+                            : 'Send notification to all players who entered this game'}
+                        </p>
+                      </div>
+                    </label>
+                    {testEmail.sent && (
+                      <p className="mt-3 text-sm text-green-700 bg-green-50 p-2 rounded">
+                        Test email sent to your address.
+                      </p>
+                    )}
+                    {testEmail.error && (
+                      <p className="mt-3 text-sm text-red-700 bg-red-50 p-2 rounded">
+                        {testEmail.error}
+                      </p>
+                    )}
+
+                    <div className="flex justify-between items-center gap-3 mt-6">
+                      <button
+                        onClick={handleSendTestEmail}
+                        disabled={publishDialog.submitting || testEmail.sending}
+                        className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 flex items-center gap-2 text-sm"
+                        title="Send a preview to your own email address only"
+                      >
+                        {testEmail.sending && (
+                          <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                          </svg>
+                        )}
+                        {testEmail.sending ? 'Sending...' : 'Send Test Email'}
+                      </button>
+
+                      <div className="flex gap-3">
+                        <button
+                          onClick={() => setPublishDialog(prev => ({ ...prev, isOpen: false }))}
+                          disabled={publishDialog.submitting}
+                          className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={submitPublish}
+                          disabled={publishDialog.submitting}
+                          className={`px-4 py-2 text-white rounded disabled:opacity-50 flex items-center gap-2 ${
+                            isRepublish ? 'bg-orange-600 hover:bg-orange-700' : 'bg-teal-600 hover:bg-teal-700'
+                          }`}
+                        >
+                          {publishDialog.submitting && (
+                            <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                            </svg>
+                          )}
+                          {publishDialog.submitting
+                            ? (isRepublish ? 'Republishing...' : 'Publishing...')
+                            : (isRepublish ? 'Republish' : 'Publish')}
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </>
+        );
+      })()}
+
+      {/* Selection Helper Dialog */}
+      <SelectionHelperDialog
+        isOpen={showSelectionHelper}
+        onClose={() => setShowSelectionHelper(false)}
+        tabName={game.tabName}
       />
 
       {/* ================================================================== */}

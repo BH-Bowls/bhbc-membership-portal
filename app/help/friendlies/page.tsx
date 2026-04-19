@@ -2,7 +2,7 @@
 
 import { useSession } from 'next-auth/react';
 import { Navbar } from '@/components/Navbar';
-import { HelpSection, Step, Note, Body, BackLink } from '../_components';
+import { HelpSection, Step, Note, Tip, Body, BackLink } from '../_components';
 
 export default function HelpFriendliesPage() {
   const { data: session } = useSession();
@@ -95,8 +95,8 @@ export default function HelpFriendliesPage() {
               Tap the green <strong>Add Players</strong> button to open the search.
             </Step>
             <Step n={3}>
-              Search for a member by name and select them. They are added to a list below the
-              search — you can search and add more members one by one before submitting.
+              Search for a member by name and select them. Each selected name appears as a blue chip
+              below the search box — you can add more members one by one before submitting.
             </Step>
             <Step n={4}>
               Once you have selected everyone, tap the blue <strong>Add X Players</strong> button
@@ -109,6 +109,10 @@ export default function HelpFriendliesPage() {
               Once the Captain has selected the team and published the game, a{' '}
               <strong>View Details</strong> button appears on the game card. Any member can view the
               full team sheet — you do not need to have entered the game.
+            </Body>
+            <Body>
+              You can view the full team selection and sign off your name either by visiting the
+              View Details page or at the clubhouse noticeboard.
             </Body>
             <Body>
               Below the View Details button the game card shows your personal status for that game:

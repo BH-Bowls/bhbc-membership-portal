@@ -405,7 +405,7 @@ export interface WithdrawRequest {
 export interface ChangeStatusRequest {
   tab_name: string;    // Game tabName to update (may be empty for unopened games)
   row_number?: number; // Row number in Games sheet (used to identify unopened games)
-  action: 'open' | 'close' | 'allocate' | 'publish' | 'played' | 'cancel' | 'abandon'; // Status transition action
+  action: 'open' | 'close' | 'allocate' | 'publish' | 'republish' | 'played' | 'cancel' | 'abandon'; // Status transition action
   bhbc_score?: number;      // Burgess Hill score (required for 'played' and 'abandon')
   opponent_score?: number;  // Opponent score (required for 'played' and 'abandon')
   reason?: string;          // Reason for cancellation/abandonment (required for 'cancel' and 'abandon')

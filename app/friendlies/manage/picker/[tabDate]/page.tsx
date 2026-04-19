@@ -166,10 +166,29 @@ export default function PickerSheetPage() {
   const teamBoxCount = getTeamCount(game.format);
   const carShareBoxCount = 5;
 
-  // Sort players alphabetically by fullName for the reference table
-  const sortedPlayers = [...players].sort((a, b) =>
-    a.fullName.localeCompare(b.fullName)
-  );
+  // Sort to match the main selection screen exactly:
+  // Selected (Y) → Reserves (R) → Reserve Team (T) → Unselected
+  // Within selected: team number → position → surname
+  // Within reserves / unselected: surname
+  const selectionOrder: Record<string, number> = { Y: 0, R: 1, T: 2, '': 3 };
+  const positionOrder: Record<string, number> = { S: 0, '1': 1, '2': 2, '3': 3, '': 4 };
+  const sortedPlayers = [...players].sort((a, b) => {
+    const selA = selectionOrder[a.selected ?? ''] ?? 3;
+    const selB = selectionOrder[b.selected ?? ''] ?? 3;
+    if (selA !== selB) return selA - selB;
+
+    const teamA = a.team ?? 999;
+    const teamB = b.team ?? 999;
+    if (teamA !== teamB) return teamA - teamB;
+
+    const posA = positionOrder[a.position ?? ''] ?? 4;
+    const posB = positionOrder[b.position ?? ''] ?? 4;
+    if (posA !== posB) return posA - posB;
+
+    const lastNameCompare = (a.lastName || a.fullName).localeCompare(b.lastName || b.fullName);
+    if (lastNameCompare !== 0) return lastNameCompare;
+    return a.fullName.localeCompare(b.fullName);
+  });
 
   // Format date
   const gameDate = parseUKDate(game.date);

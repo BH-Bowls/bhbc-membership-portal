@@ -268,7 +268,8 @@ export async function sendGamePublishedEmail(
     team?: number | null;
     position?: string;
   }>,
-  appUrl: string
+  appUrl: string,
+  isRepublish = false,
 ): Promise<{ success: boolean; emailsSent: number; playersWithoutEmail: string[]; error?: string }> {
   try {
     const playersWithEmail = players.filter(p => p.email && p.email.trim() !== '');
@@ -288,8 +289,14 @@ export async function sendGamePublishedEmail(
 
     const transporter = getEmailTransporter();
     const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}`;
-    const subject = `Team Selection Published - ${game.clubName} ${game.date}`;
+    const subject = isRepublish
+      ? `Team Selection Updated - ${game.clubName} ${game.date}`
+      : `Team Selection Published - ${game.clubName} ${game.date}`;
     const venue = game.homeAway === 'H' ? 'Home' : 'Away';
+    const emailHeading = isRepublish ? 'Team Selection Updated' : 'Team Selection Published';
+    const emailIntro = isRepublish
+      ? `The team selection for the <strong>${game.clubName}</strong> game has been updated.`
+      : `The team has been selected for the <strong>${game.clubName}</strong> game.`;
 
     const BUTTON_STYLE = 'display:inline-block;background-color:#0066cc;color:#ffffff;padding:12px 24px;text-decoration:none;border-radius:5px;margin-top:15px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;';
 
@@ -311,11 +318,11 @@ export async function sendGamePublishedEmail(
       const teamInfo = player.team != null ? ` — Team ${player.team}` : '';
 
       const text = `
-Team Selection Published
+${emailHeading}
 
 Hi ${player.fullName},
 
-The team has been selected for the ${game.clubName} game.
+${isRepublish ? `The team selection for the ${game.clubName} game has been updated.` : `The team has been selected for the ${game.clubName} game.`}
 
 Date: ${game.date}
 Time: ${game.time}
@@ -350,11 +357,11 @@ Friendlies Management System
 <body>
   <div class="container">
     <div class="header">
-      <h2>Team Selection Published</h2>
+      <h2>${emailHeading}</h2>
     </div>
     <div class="content">
       <p>Hi <strong>${player.fullName}</strong>,</p>
-      <p>The team has been selected for the <strong>${game.clubName}</strong> game.</p>
+      <p>${emailIntro}</p>
       <div class="details">
         <p><strong>Date:</strong> ${game.date}</p>
         <p><strong>Time:</strong> ${game.time}</p>
