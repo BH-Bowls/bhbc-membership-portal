@@ -191,7 +191,7 @@ export default function AllocatePage() {
           {currentPool !== 'unallocated' && (
             <button
               onClick={() => movePlayer(player.name, 'unallocated')}
-              className="px-2 py-0.5 text-xs font-medium rounded bg-gray-100 text-gray-600 hover:bg-gray-200"
+              className="px-2 py-0.5 text-xs font-medium rounded bg-gray-100 text-gray-700 hover:bg-gray-200"
               title="Move back to unallocated"
             >
               X
@@ -218,7 +218,7 @@ export default function AllocatePage() {
         className={`border-2 ${borderColor} ${bgColor} rounded-lg p-4 min-h-[200px]`}
       >
         <h3 className={`font-bold text-lg mb-1 ${color}`}>{title}</h3>
-        <p className="text-sm text-gray-500 mb-3">{poolPlayers.length} player{poolPlayers.length !== 1 ? 's' : ''}</p>
+        <p className="text-sm text-gray-700 mb-3">{poolPlayers.length} player{poolPlayers.length !== 1 ? 's' : ''}</p>
         <div className="space-y-2">
           {poolPlayers.map(p => (
             <PlayerChip key={p.name} player={p} currentPool={pool} />
@@ -234,7 +234,7 @@ export default function AllocatePage() {
         <Navbar userName={session?.user.name ?? undefined} userRole={session?.user.role ?? undefined} />
         <div className="text-center py-12">
           <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-          <p className="mt-2 text-gray-600">Loading allocation data...</p>
+          <p className="mt-2 text-gray-700">Loading allocation data...</p>
         </div>
       </div>
     );
@@ -249,7 +249,7 @@ export default function AllocatePage() {
         <div className="flex justify-between items-center mb-6">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Allocate Players</h1>
-            <p className="text-gray-600 mt-1">
+            <p className="text-gray-900 mt-1">
               {gameA?.clubName}{gameA?.clubName !== gameB?.clubName ? ` + ${gameB?.clubName}` : ''} &mdash; {date}
             </p>
           </div>

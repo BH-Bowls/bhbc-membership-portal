@@ -177,7 +177,7 @@ export default function MatchCardPage() {
         <div className="container mx-auto px-4 py-8">
           <div className="text-center py-12">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-            <p className="mt-2 text-gray-600">Loading match card...</p>
+            <p className="mt-2 text-gray-700">Loading match card...</p>
           </div>
         </div>
       </div>

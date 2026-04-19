@@ -712,7 +712,7 @@ export default function ManageGamesPage() {
               onClick={handleReload}
               disabled={reloading || loading}
               title="Reload games"
-              className="text-gray-400 hover:text-blue-600 disabled:opacity-40 transition-colors"
+              className="text-gray-500 hover:text-blue-600 disabled:opacity-40 transition-colors"
             >
               <svg
                 className={`w-5 h-5 ${reloading ? 'animate-spin' : ''}`}
@@ -743,7 +743,7 @@ export default function ManageGamesPage() {
               className={`px-4 py-2 font-medium border-b-2 whitespace-nowrap ${
                 filter === status
                   ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700'
+                  : 'border-transparent text-gray-600 hover:text-gray-800'
               }`}
             >
               {/* Display friendly label for each status */}
@@ -757,7 +757,7 @@ export default function ManageGamesPage() {
           // Loading state - show spinner while fetching games
           <div className="text-center py-12">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-            <p className="mt-2 text-gray-600">Loading games...</p>
+            <p className="mt-2 text-gray-700">Loading games...</p>
           </div>
         ) : (
           // Games table - show all filtered games
@@ -865,7 +865,7 @@ export default function ManageGamesPage() {
                           )}
                           <button
                             onClick={() => handleEditMessage(gameA)}
-                            className={`font-medium cursor-pointer ${gameA.message ? 'text-amber-600 hover:text-amber-800' : 'text-gray-400 hover:text-gray-600'}`}
+                            className={`font-medium cursor-pointer ${gameA.message ? 'text-amber-600 hover:text-amber-800' : 'text-gray-500 hover:text-gray-700'}`}
                           >
                             Message
                           </button>
@@ -986,7 +986,7 @@ export default function ManageGamesPage() {
                         {!['P', 'C', 'A'].includes(game.status) && (
                           <button
                             onClick={() => handleEditMessage(game)}
-                            className={`font-medium cursor-pointer ${game.message ? 'text-amber-600 hover:text-amber-800' : 'text-gray-400 hover:text-gray-600'}`}
+                            className={`font-medium cursor-pointer ${game.message ? 'text-amber-600 hover:text-amber-800' : 'text-gray-500 hover:text-gray-700'}`}
                           >
                             Message
                           </button>
@@ -1011,7 +1011,7 @@ export default function ManageGamesPage() {
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
               <h2 className="text-xl font-bold mb-2 text-gray-900">Special Instructions</h2>
-              <p className="text-sm text-gray-500 mb-4">
+              <p className="text-sm text-gray-700 mb-4">
                 This message will appear on the game card as a "See Special Instructions" link.
                 Leave blank to remove it.
               </p>
@@ -1307,7 +1307,7 @@ export default function ManageGamesPage() {
                     />
                     <div>
                       <span className="font-medium text-gray-900">Email entered players</span>
-                      <p className="text-sm text-gray-600">
+                      <p className="text-sm text-gray-700">
                         Send notification to all players who entered this game
                       </p>
                     </div>
@@ -1324,7 +1324,7 @@ export default function ManageGamesPage() {
                       />
                       <div>
                         <span className="font-medium text-gray-900">Email tea rota</span>
-                        <p className="text-sm text-gray-600">
+                        <p className="text-sm text-gray-700">
                           Notify members on tea duty with game details and rota assignments
                         </p>
                       </div>

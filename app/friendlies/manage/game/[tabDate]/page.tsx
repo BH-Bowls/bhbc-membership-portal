@@ -796,7 +796,7 @@ export default function TeamSelectionPage() {
         <div className="px-4 py-8">
           <div className="text-center py-12">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-            <p className="mt-2 text-gray-600">Loading game...</p>
+            <p className="mt-2 text-gray-700">Loading game...</p>
           </div>
         </div>
       </div>
@@ -850,7 +850,7 @@ export default function TeamSelectionPage() {
 
           <h1 className="text-3xl font-bold text-gray-900">{game.clubName} - Team Selection</h1>
 
-          <div className="text-gray-600 mt-2">
+          <div className="text-gray-900 mt-2">
             {parseUKDate(game.date).toLocaleDateString('en-GB', {
               weekday: 'long',
               day: 'numeric',
@@ -1149,7 +1149,7 @@ export default function TeamSelectionPage() {
                       <div className="px-3 py-1">
                         {team.players.map(p => (
                           <div key={p.rowNumber} className="flex text-sm py-0.5">
-                            <span className="text-gray-500 w-6">{positionLabel(p.position)}</span>
+                            <span className="text-gray-700 w-6">{positionLabel(p.position)}</span>
                             <span className="flex-1 ml-2">
                               {p.fullName}
                               {p.captain === 'Y' && <span className="text-purple-600 ml-1">&#9733;</span>}
@@ -1160,7 +1160,7 @@ export default function TeamSelectionPage() {
                     </div>
                   ))
                 ) : (
-                  <p className="text-sm text-gray-400 italic">No teams assigned yet</p>
+                  <p className="text-sm text-gray-700 italic">No teams assigned yet</p>
                 )}
 
                 {/* Reserves */}
@@ -1186,7 +1186,7 @@ export default function TeamSelectionPage() {
                     <div className="px-3 py-1 text-sm space-y-1">
                       {previewData.carGroups.map((group, idx) => (
                         <div key={idx} className="py-0.5">
-                          <div className="font-medium text-gray-600">Car {group.carNumber}</div>
+                          <div className="font-medium text-gray-900">Car {group.carNumber}</div>
                           <div>
                             {group.driver && <span>{group.driver} (Driver)</span>}
                             {group.passengers.map((p, pidx) => (
@@ -1197,7 +1197,7 @@ export default function TeamSelectionPage() {
                       ))}
                       {previewData.ownTransport.length > 0 && (
                         <div className="py-0.5 border-t border-gray-200 mt-1 pt-1">
-                          <div className="font-medium text-gray-600">Own Transport</div>
+                          <div className="font-medium text-gray-900">Own Transport</div>
                           <div>{previewData.ownTransport.join(', ')}</div>
                         </div>
                       )}
@@ -1208,13 +1208,13 @@ export default function TeamSelectionPage() {
                 {/* Reserve Teams */}
                 {previewData.reserveTeams.map(team => (
                   <div key={team.team} className="border border-gray-300 rounded bg-white">
-                    <div className="bg-orange-50 px-3 py-1 border-b border-gray-300">
+                    <div className="bg-orange-100 px-3 py-1 border-b border-gray-300">
                       <span className="text-sm font-semibold">Reserve Team {team.team}</span>
                     </div>
                     <div className="px-3 py-1">
                       {team.players.map(p => (
                         <div key={p.rowNumber} className="flex text-sm py-0.5">
-                          <span className="text-gray-500 w-6">{positionLabel(p.position)}</span>
+                          <span className="text-gray-700 w-6">{positionLabel(p.position)}</span>
                           <span className="flex-1 ml-2">{p.fullName}</span>
                         </div>
                       ))}
@@ -1349,7 +1349,7 @@ export default function TeamSelectionPage() {
                       />
                       <div>
                         <span className="font-medium text-gray-900">Email entered players</span>
-                        <p className="text-sm text-gray-600">
+                        <p className="text-sm text-gray-700">
                           {isRepublish
                             ? 'Notify all players that the team selection has been updated'
                             : 'Send notification to all players who entered this game'}
@@ -1367,7 +1367,7 @@ export default function TeamSelectionPage() {
                         />
                         <div>
                           <span className="font-medium text-gray-900">Email tea rota members</span>
-                          <p className="text-sm text-gray-600">Notify those on tea duty for this home game</p>
+                          <p className="text-sm text-gray-700">Notify those on tea duty for this home game</p>
                         </div>
                       </label>
                     )}
@@ -1460,8 +1460,8 @@ export default function TeamSelectionPage() {
                 onClick={e => e.stopPropagation()}
               >
                 <h3 className="text-lg font-semibold text-gray-900 mb-1">Swap Player Details</h3>
-                <p className="text-sm text-gray-500 mb-4">
-                  Swapping <span className="font-medium text-gray-800">{swapSource?.fullName ?? '?'}</span> with:
+                <p className="text-sm text-gray-700 mb-4">
+                  Swapping <span className="font-medium text-gray-900">{swapSource?.fullName ?? '?'}</span> with:
                 </p>
 
                 <select
@@ -1540,7 +1540,7 @@ export default function TeamSelectionPage() {
               <h3 className="text-lg font-semibold text-gray-900 text-center mb-2">
                 Save with Warnings?
               </h3>
-              <p className="text-sm text-gray-600 text-center mb-3">
+              <p className="text-sm text-gray-700 text-center mb-3">
                 The following issues were found:
               </p>
 

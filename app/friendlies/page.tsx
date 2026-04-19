@@ -420,7 +420,7 @@ export default function FriendliesPage() {
               onClick={handleReload}
               disabled={reloading || loading}
               title="Reload games"
-              className="text-gray-400 hover:text-blue-600 disabled:opacity-40 transition-colors"
+              className="text-gray-500 hover:text-blue-600 disabled:opacity-40 transition-colors"
             >
               <svg
                 className={`w-5 h-5 ${reloading ? 'animate-spin' : ''}`}
@@ -477,7 +477,7 @@ export default function FriendliesPage() {
                 className={`px-4 py-2 font-medium border-b-2 ${
                   filter === 'entered'
                     ? 'border-blue-500 text-blue-500'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                    : 'border-transparent text-gray-600 hover:text-gray-800'
                 }`}
               >
                 My Entries
@@ -487,7 +487,7 @@ export default function FriendliesPage() {
                 className={`px-4 py-2 font-medium border-b-2 ${
                   filter === 'played'
                     ? 'border-blue-500 text-blue-500'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                    : 'border-transparent text-gray-600 hover:text-gray-800'
                 }`}
               >
                 My Played
@@ -501,12 +501,12 @@ export default function FriendliesPage() {
           // Loading state - show spinner while fetching games
           <div className="text-center py-12">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-            <p className="mt-2 text-gray-600">Loading games...</p>
+            <p className="mt-2 text-gray-700">Loading games...</p>
           </div>
         ) : filteredGames.length === 0 ? (
           // Empty state - no games match current filter
           <div className="text-center py-12 bg-gray-50 rounded-lg">
-            <p className="text-gray-600">No games found for this filter.</p>
+            <p className="text-gray-700">No games found for this filter.</p>
           </div>
         ) : (
           // Game cards grid - group paired games then render
@@ -552,7 +552,7 @@ export default function FriendliesPage() {
                             </>
                           )}
                         </h3>
-                        <p className="text-xs text-gray-500 mt-0.5">
+                        <p className="text-xs text-gray-700 mt-0.5">
                           {gameA.ladiesMen} + {gameB.ladiesMen}
                         </p>
                         <p className="text-sm text-gray-700">
@@ -645,7 +645,7 @@ export default function FriendliesPage() {
                       canEnterGame(memberType, gameA.ladiesMen as GameGender) ||
                       canEnterGame(memberType, gameB.ladiesMen as GameGender)
                     ) && (
-                      <p className="text-sm text-gray-400 italic">
+                      <p className="text-sm text-gray-700 italic">
                         You are on tea duty for this game — not eligible to play
                       </p>
                     )}
@@ -801,14 +801,14 @@ export default function FriendliesPage() {
                   {!isLimitedView && game.status === 'O' && memberType && !canEnterGame(memberType, game.ladiesMen as GameGender) && (
                     game.ladiesMen === 'Ladies' || game.ladiesMen === 'Men'
                   ) && (
-                    <p className="text-sm text-gray-400 italic">
+                    <p className="text-sm text-gray-700 italic">
                       {game.ladiesMen === 'Ladies' ? 'Ladies only' : 'Men only'} — you are not eligible to enter
                     </p>
                   )}
 
                   {/* Tea duty note */}
                   {!isLimitedView && game.status === 'O' && memberType && canEnterGame(memberType, game.ladiesMen as GameGender) && isOnTeaDuty && (
-                    <p className="text-sm text-gray-400 italic">
+                    <p className="text-sm text-gray-600 italic">
                       You are on tea duty for this game — not eligible to play
                     </p>
                   )}
@@ -843,7 +843,7 @@ export default function FriendliesPage() {
                         />
 
                         {/* Label shows current entry status or full message */}
-                        <span className={`text-sm font-medium ${isFull ? 'text-gray-400' : 'text-blue-500'}`}>
+                        <span className={`text-sm font-medium ${isFull ? 'text-gray-700' : 'text-blue-500'}`}>
                           {isFull ? 'Game is full' : (game.userEntered ? 'Entered' : 'Enter this game')}
                         </span>
                       </label>
@@ -863,13 +863,13 @@ export default function FriendliesPage() {
 
                   {/* Selection status badge — shown when team has been published */}
                   {['S', 'P'].includes(game.status) && (() => {
-                    if (!game.userEntered) return <p className="text-sm text-gray-500">Not entered</p>;
+                    if (!game.userEntered) return <p className="text-sm text-gray-700">Not entered</p>;
                     if (!game.userStatus) return null;
                     const s = game.userStatus.replace('W', ''); // strip withdrawal suffix
                     if (s === 'P') return <p className="text-sm font-semibold text-green-700">You are Selected to play</p>;
                     if (s === 'R') return <p className="text-sm font-semibold text-amber-700">You are a Reserve</p>;
                     if (s === 'T') return <p className="text-sm font-semibold text-purple-700">Playing — Reserve Rink</p>;
-                    if (s === 'D') return <p className="text-sm text-gray-500">Not selected for this game</p>;
+                    if (s === 'D') return <p className="text-sm text-gray-700">Not selected for this game</p>;
                     return null;
                   })()}
                 </div>
