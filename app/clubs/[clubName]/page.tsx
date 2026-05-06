@@ -348,7 +348,7 @@ export default function ClubDetailPage({ params }: PageProps) {
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar userName={session?.user?.name ?? undefined} userRole={session?.user?.role ?? undefined} />
+        <Navbar userName={session?.user?.name ?? undefined} userRole={session?.user?.role ?? undefined} showLogoOnly={!session} />
         <div className="container mx-auto px-4 py-8 max-w-4xl">
           <div className="text-center py-12">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
@@ -362,7 +362,7 @@ export default function ClubDetailPage({ params }: PageProps) {
   if (error || !club) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar userName={session?.user?.name ?? undefined} userRole={session?.user?.role ?? undefined} />
+        <Navbar userName={session?.user?.name ?? undefined} userRole={session?.user?.role ?? undefined} showLogoOnly={!session} />
         <div className="container mx-auto px-4 py-8 max-w-4xl">
           <div className="text-center py-12 bg-white rounded-lg shadow">
             <p className="text-red-600">{error || 'Club not found'}</p>
@@ -418,8 +418,8 @@ export default function ClubDetailPage({ params }: PageProps) {
       <Navbar
         userName={session?.user?.name ?? undefined}
         userRole={session?.user?.role ?? undefined}
-        actionButtons={isGuest ? undefined : getNavbarActionButtons()}
-        showLogoOnly={isGuest}
+        actionButtons={session ? getNavbarActionButtons() : undefined}
+        showLogoOnly={!session}
       />
 
       <div className="container mx-auto px-4 py-8 max-w-4xl">
