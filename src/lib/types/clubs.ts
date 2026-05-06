@@ -19,6 +19,7 @@ export interface Club {
   clubEmailNote: string;      // Notes about email communication
   generalInformation: string; // General notes and information about the club
   drivingBand: string;        // Driving distance band (A, B, C, D)
+  petrolCost: number;         // Petrol reimbursement amount for this band (£)
   address1: string;           // First line of address
   address2: string;           // Second line of address
   address3: string;           // Third line of address (town/city)
@@ -27,6 +28,8 @@ export interface Club {
   website: string;            // Club's website URL
   latitude: number | null;    // GPS latitude coordinate
   longitude: number | null;   // GPS longitude coordinate
+  miles: string;              // Distance in miles
+  travelTime: string;         // Estimated travel time (e.g., "45 mins")
   lastUpdated: string;        // Date of last update
   _rowNumber: number;         // Row number in Clubs sheet (for updates)
 }
@@ -81,6 +84,8 @@ export interface CreateClubRequest {
   website?: string;
   latitude?: number | null;
   longitude?: number | null;
+  miles?: string;
+  travelTime?: string;
 }
 
 /**
@@ -102,6 +107,8 @@ export interface UpdateClubRequest {
   website?: string;
   latitude?: number | null;
   longitude?: number | null;
+  miles?: string;
+  travelTime?: string;
 }
 
 /**

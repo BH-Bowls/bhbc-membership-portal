@@ -151,6 +151,59 @@ export function clearColumnMapCache() {
 }
 
 // ============================================================================
+// PETROL BANDS
+// ============================================================================
+
+/** Hardcoded fallback in case the PetrolBands sheet is missing or empty */
+const PETROL_BANDS_FALLBACK: Record<string, number> = {
+  'A': 2.00,
+  'B': 3.00,
+  'C': 4.00,
+  'D': 5.00,
+};
+
+/**
+ * Read petrol reimbursement amounts from the PetrolBands sheet.
+ * Falls back to hardcoded values if the sheet doesn't exist or is empty.
+ * Sheet columns: Band | Amount
+ * @returns Map of band letter to reimbursement amount (e.g. { A: 2, B: 3, C: 4, D: 5 })
+ */
+export async function getPetrolBands(): Promise<Record<string, number>> {
+  try {
+    const spreadsheetId = getMatchDayContactsSpreadsheetId();
+    const colMap = await getColumnMap(spreadsheetId, 'PetrolBands');
+    const sheets = getSheetsClient();
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: 'PetrolBands!A:B',
+    });
+
+    const rows = response.data.values || [];
+    if (rows.length <= 1) return { ...PETROL_BANDS_FALLBACK };
+
+    const get = (row: any[], field: string): string => {
+      const index = colMap[field];
+      return index !== undefined ? (row[index] || '') : '';
+    };
+
+    const map: Record<string, number> = {};
+    for (let i = 1; i < rows.length; i++) {
+      const band = get(rows[i], 'band').trim().toUpperCase();
+      const amount = parseFloat(get(rows[i], 'amount'));
+      if (band && !isNaN(amount)) {
+        map[band] = amount;
+      }
+    }
+
+    return Object.keys(map).length > 0 ? map : { ...PETROL_BANDS_FALLBACK };
+  } catch {
+    // Sheet doesn't exist yet — use hardcoded fallback
+    return { ...PETROL_BANDS_FALLBACK };
+  }
+}
+
+// ============================================================================
 // CLUBS OPERATIONS
 // ============================================================================
 
@@ -160,7 +213,10 @@ export function clearColumnMapCache() {
  */
 export async function getClubs(): Promise<Club[]> {
   const spreadsheetId = getMatchDayContactsSpreadsheetId();
-  const colMap = await getColumnMap(spreadsheetId, 'clubs');
+  const [colMap, petrolBands] = await Promise.all([
+    getColumnMap(spreadsheetId, 'clubs'),
+    getPetrolBands(),
+  ]);
   const sheets = getSheetsClient();
 
   const response = await sheets.spreadsheets.values.get({
@@ -193,6 +249,7 @@ export async function getClubs(): Promise<Club[]> {
     // Skip empty rows
     if (!clubName) continue;
 
+    const drivingBand = get(row, 'driving_band');
     clubs.push({
       clubName,
       clubNumber: get(row, 'club_number'),
@@ -200,7 +257,8 @@ export async function getClubs(): Promise<Club[]> {
       clubEmailAddress: get(row, 'club_email_address') || get(row, 'club_email'),
       clubEmailNote: get(row, 'club_email_note'),
       generalInformation: get(row, 'general_information') || get(row, 'general_info'),
-      drivingBand: get(row, 'driving_band'),
+      drivingBand,
+      petrolCost: petrolBands[drivingBand] ?? 0,
       address1: get(row, 'address_1'),
       address2: get(row, 'address_2'),
       address3: get(row, 'address_3'),
@@ -209,6 +267,8 @@ export async function getClubs(): Promise<Club[]> {
       website: get(row, 'website'),
       latitude: getNumber(row, 'latitude'),
       longitude: getNumber(row, 'longitude'),
+      miles: get(row, 'miles'),
+      travelTime: get(row, 'travel_time'),
       lastUpdated: get(row, 'last_updated'),
       _rowNumber: i + 1, // Sheet rows are 1-indexed
     });
@@ -356,6 +416,8 @@ export async function createClub(clubData: CreateClubRequest): Promise<Club> {
   setValue('website', clubData.website);
   setValue('latitude', clubData.latitude);
   setValue('longitude', clubData.longitude);
+  setValue('miles', clubData.miles);
+  setValue('travel_time', clubData.travelTime);
   setValue('last_updated', new Date().toISOString().split('T')[0]);
 
   // Append new row
@@ -428,6 +490,8 @@ export async function updateClub(clubName: string, updates: UpdateClubRequest): 
   if (updates.website !== undefined) addUpdate('website', updates.website);
   if (updates.latitude !== undefined) addUpdate('latitude', updates.latitude);
   if (updates.longitude !== undefined) addUpdate('longitude', updates.longitude);
+  if (updates.miles !== undefined) addUpdate('miles', updates.miles);
+  if (updates.travelTime !== undefined) addUpdate('travel_time', updates.travelTime);
 
   // Always update last_updated
   addUpdate('last_updated', new Date().toISOString().split('T')[0]);

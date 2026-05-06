@@ -170,12 +170,19 @@ export default function PickerSheetPage() {
   const carShareBoxCount = 5;
 
   // Sort to match the main selection screen exactly:
-  // Selected (Y) → Reserves (R) → Reserve Team (T) → Unselected
+  // Selected (Y) → Reserves (R) → Reserve Team (T) → Unselected → Withdrawn
+  // Opposition players (O) excluded — not BHBC players being selected
   // Within selected: team number → position → surname
   // Within reserves / unselected: surname
   const selectionOrder: Record<string, number> = { Y: 0, R: 1, T: 2, '': 3 };
   const positionOrder: Record<string, number> = { S: 0, '1': 1, '2': 2, '3': 3, '': 4 };
-  const sortedPlayers = [...players].sort((a, b) => {
+  const activePlayers = players.filter(p => p.selected !== 'O'); // Exclude opposition
+  const sortedPlayers = [...activePlayers].sort((a, b) => {
+    // Withdrawn players go last
+    const aWithdrawn = a.status === 'W';
+    const bWithdrawn = b.status === 'W';
+    if (aWithdrawn !== bWithdrawn) return aWithdrawn ? 1 : -1;
+
     const selA = selectionOrder[a.selected ?? ''] ?? 3;
     const selB = selectionOrder[b.selected ?? ''] ?? 3;
     if (selA !== selB) return selA - selB;
@@ -335,7 +342,7 @@ export default function PickerSheetPage() {
               {/* RIGHT COLUMN - Player reference table */}
               {/* ============================================================ */}
               <div className="p-1">
-                <table className="w-full border-collapse text-[10px]">
+                <table className="w-full border-collapse text-[10px] text-gray-900">
                   <thead>
                     <tr>
                       {/* Name column - horizontal header */}
@@ -400,10 +407,11 @@ export default function PickerSheetPage() {
                   <tbody>
                     {sortedPlayers.map(player => {
                       const history = parsePlayerHistory(player.last8Games);
+                      const isWithdrawn = player.status === 'W';
                       return (
-                        <tr key={player.rowNumber} className="hover:bg-gray-50 print:hover:bg-transparent">
+                        <tr key={player.rowNumber} className={`hover:bg-gray-50 print:hover:bg-transparent ${isWithdrawn ? 'bg-gray-100 opacity-60' : ''}`}>
                           {/* Name */}
-                          <td className="border border-gray-400 px-1 py-[2px] font-medium truncate max-w-[120px]">
+                          <td className={`border border-gray-400 px-1 py-[2px] font-medium truncate max-w-[120px] ${isWithdrawn ? 'line-through text-gray-500' : ''}`}>
                             {player.fullName}
                           </td>
 

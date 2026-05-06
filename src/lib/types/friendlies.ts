@@ -50,7 +50,7 @@ export type PlayerEntryStatus = 'E' | 'M' | 'D' | 'P' | 'R' | 'T' | 'A' | 'EW' |
  * 'R' = Reserve - Player selected as reserve
  * 'T' = Reserve Team - Player in reserve team
  */
-export type SelectionStatus = '' | 'Y' | 'R' | 'T';
+export type SelectionStatus = '' | 'Y' | 'R' | 'T' | 'O'; // O = opposition player
 
 /**
  * Confirmation status codes - stored in game sheet 'Status' column
@@ -82,9 +82,10 @@ export type HomeAway = 'H' | 'A';
  * Game type - distinguishes friendlies from league fixtures and events
  * Used to filter games on different pages and in different management workflows
  */
-export type GameType = 'Friendly' | 'N/S A' | 'N/S B' | 'MSL' | 'JSL' | 'BL' | 'Event';
+export type GameType = 'Friendly' | 'N/S A' | 'N/S B' | 'MSL' | 'JSL' | 'BL' | 'Event' | 'Test';
 export const LEAGUE_GAME_TYPES: GameType[] = ['N/S A', 'N/S B', 'MSL', 'JSL', 'BL'];
 export const ALL_GAME_TYPES: GameType[] = ['Friendly', 'N/S A', 'N/S B', 'MSL', 'JSL', 'BL', 'Event'];
+// Test type is intentionally excluded from ALL_GAME_TYPES — it is only shown to Admin role
 
 // ============================================================================
 // CORE DATA INTERFACES
@@ -122,7 +123,10 @@ export interface Game {
   paired?: string;              // 'Y' if this game is paired with another game on the same date
   gameType: GameType;           // Type of game: Friendly, N/S A, N/S B, MSL, JSL, BL, or Event
   clubSuffix: string;           // Suffix appended to clubName in UI (e.g. 'A' → 'Henfield A')
-  message: string;              // Optional special instructions message shown on the game card
+  specialInstructions: string;  // Optional special instructions message shown on the game card
+  pickupInfo: string;           // Optional pickup point information for away game car sharing
+  petrolCost?: number | null;   // Petrol reimbursement amount for away games (populated at API layer)
+  captain?: string;             // Captain of the day's userName (stored on Games sheet)
 }
 
 /**
@@ -133,6 +137,7 @@ export interface Game {
 export interface GameWithUserStatus extends Game {
   userEntered: boolean;            // True if current user has entered this game
   userStatus: PlayerEntryStatus | null; // User's status (E, P, R, PW, etc.) or null if not entered
+  userConfirmed: boolean | null;   // True if confirmed in game sheet; null if not applicable
 }
 
 /**
@@ -233,6 +238,8 @@ export interface ClubDetails {
   generalInfo: string;     // General information and notes about the club
   drivingBand: string;     // Driving distance band: A, B, C, or D
   petrolCost: number;      // Petrol reimbursement amount (£2.00-£5.00)
+  miles: string;           // Distance in miles
+  travelTime: string;      // Estimated travel time (e.g., "45 mins")
   address1: string;        // First line of address
   address2: string;        // Second line of address
   address3: string;        // Third line of address
@@ -315,10 +322,13 @@ export interface MatchCardData {
     format: string;       // Game format (e.g., "Rinks", "Triples")
     ladiesMen: string;    // "Ladies", "Men", or "Mixed"
     dress?: string;       // Dress code (e.g., "Whites", "Greys")
+    pickupInfo?: string;  // Pickup point / time info for away games
   };
   teams: Team[];                  // Array of regular teams with players
   reserves: ReservePlayer[];      // Array of reserve players
   reserveTeams: Team[];           // Array of reserve teams (full teams held in reserve)
+  opposition: { name: string }[]; // Opposition players (SEL=O) shown in their own box
+  withdrawn: { name: string; wasSelected: string }[]; // Players who withdrew (status=W)
   captain: string;                // Captain of the day's name
   teaRota?: {                     // Tea duty assignments (null if not available)
     lead: string;                 // Lead tea person
@@ -331,6 +341,8 @@ export interface MatchCardData {
     generalInfo: string;          // General information and notes
     petrolCost: number;           // Petrol reimbursement amount
     drivingBand: string;          // Driving distance band (A-D)
+    miles: string;                // Distance in miles
+    travelTime: string;           // Estimated travel time
     directionsUrl: string;        // Google Maps directions URL
     clubNumber: string;           // Club phone number
     clubMobile: string;           // Club mobile number
@@ -358,6 +370,7 @@ export interface MatchCardData {
 export interface EnterGamesRequest {
   user_name?: string;  // Optional - username (can be inferred from session)
   game_ids: string[];  // Array of game tabNames to enter (e.g., ["West Hoathly 25-Sep", "Lindfield 2-Oct"])
+  car_numbers?: Record<string, string>;  // Optional per-game car number ('O' = own transport)
 }
 
 /**
@@ -405,7 +418,7 @@ export interface WithdrawRequest {
 export interface ChangeStatusRequest {
   tab_name: string;    // Game tabName to update (may be empty for unopened games)
   row_number?: number; // Row number in Games sheet (used to identify unopened games)
-  action: 'open' | 'close' | 'allocate' | 'publish' | 'republish' | 'played' | 'cancel' | 'abandon'; // Status transition action
+  action: 'open' | 'close' | 'allocate' | 'publish' | 'republish' | 'played' | 'cancel' | 'abandon' | 'reopen' | 'reopen-entries' | 'unpublish'; // Status transition action
   bhbc_score?: number;      // Burgess Hill score (required for 'played' and 'abandon')
   opponent_score?: number;  // Opponent score (required for 'played' and 'abandon')
   reason?: string;          // Reason for cancellation/abandonment (required for 'cancel' and 'abandon')
@@ -441,7 +454,8 @@ export interface AddPlayerRequest {
  * Can update multiple players in a single request
  */
 export interface UpdateSelectionRequest {
-  tab_name: string;    // Game tabName to update
+  tab_name: string;              // Game tabName to update
+  captain_username?: string;     // userName of the captain of the day (written to Games sheet)
   selections: {
     row_number: number;              // Row number in game sheet (required)
     selected?: SelectionStatus;      // Selection status: '', Y, R, or T
@@ -449,7 +463,6 @@ export interface UpdateSelectionRequest {
     position?: Position;             // Position: S, 1, 2, 3, or ''
     driving?: string;                // Driving assignment: 'D', 'B', or ''
     car_number?: string;             // Car number if driving
-    captain?: string;                // Captain of the day: 'Y' or ''
     status?: ConfirmationStatus;     // Confirmation status: '', Y, or W
   }[];
 }

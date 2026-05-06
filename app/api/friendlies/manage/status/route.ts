@@ -16,6 +16,7 @@ import {
   getGameSheet,
   getTeaRotaEntry,
 } from '@/lib/friendlies-sheets';
+// addPlayerToGameSheet / removePlayerFromGameSheet imported below in enter/withdraw routes
 import { sendGamePublishedEmail, sendTeaRotaEmail } from '@/lib/email/friendlies';
 import { getAllUsers } from '@/lib/sheets';
 import { ChangeStatusRequest, ChangeStatusResponse, GameStatus } from '@/lib/types/friendlies';
@@ -132,14 +133,15 @@ export async function POST(request: NextRequest) {
     // Track new status and whether game sheet was created
     let newStatus: GameStatus = currentStatus;
     let gameSheetCreated = false;
+    let statusAlreadyUpdated = false; // set true when a case calls updateGameStatus early
     let emailResult: { emailsSent?: number; playersWithoutEmail?: string[]; emailError?: string } = {};
     let teaRotaEmailResult: { emailsSent?: number; membersWithoutEmail?: string[]; emailError?: string } = {};
 
     // Handle different status transition actions with validation and sheet operations
     switch (action) {
       // OPEN: Transition from blank to 'O' (Open for player entries)
+      // Also handles re-open after being stepped back to Upcoming (status='')
       case 'open':
-        // Validate that game is currently blank (not already opened or in later stage)
         if (currentStatus !== '') {
           return NextResponse.json(
             { error: 'Can only open games with blank status' },
@@ -150,10 +152,21 @@ export async function POST(request: NextRequest) {
         // Set new status to Open
         newStatus = 'O';
 
-        // Create a new column in Players sheet for this game
-        // Players will use this column to mark their entry status (E, P, R, etc.)
-        // Use effectiveTabName to ensure we have a valid name
+        // Write the tabName and status to the Games sheet FIRST so that
+        // createGameColumn and createGameSheet can find the game by tabName.
+        await updateGameStatus(effectiveTabName, newStatus, {
+          modifiedBy: session.user.userName,
+          rowNumber: game.rowNumber,
+        });
+        statusAlreadyUpdated = true;
+
+        // Create column in Players sheet (skipped if it already exists)
         await createGameColumn(effectiveTabName);
+
+        // Create the individual game sheet now (moved from Close)
+        // createGameSheet skips if sheet already exists, and deduplicates players on re-open
+        await createGameSheet(effectiveTabName);
+        gameSheetCreated = true;
         break;
 
       // ALLOCATE: Transition from 'O' (Open) to 'L' (Allocating) — paired games only
@@ -184,12 +197,7 @@ export async function POST(request: NextRequest) {
 
         // Set new status to Selecting (closed for new entries)
         newStatus = 'X';
-
-        // Create dedicated game sheet (tab) for team selection
-        // This sheet will hold all entered players with teams, positions, etc.
-        // Use effectiveTabName to ensure we have a valid name
-        await createGameSheet(effectiveTabName);
-        gameSheetCreated = true;
+        // Game sheet was already created at Open time — no sheet work needed here
         break;
 
       // PUBLISH: Transition from 'X' (Selecting) to 'S' (Selected/Published team)
@@ -397,13 +405,47 @@ export async function POST(request: NextRequest) {
         newStatus = 'A';
         break;
 
+      // REOPEN: Transition from 'O' (Open) back to '' (Upcoming) — undo an accidental open
+      case 'reopen':
+        if (currentStatus !== 'O') {
+          return NextResponse.json(
+            { error: 'Can only revert Open games back to Upcoming' },
+            { status: 400 }
+          );
+        }
+        newStatus = '';
+        break;
+
+      // REOPEN-ENTRIES: Transition from 'X' (Selecting) back to 'O' (Open) — re-open entries
+      case 'reopen-entries':
+        if (currentStatus !== 'X') {
+          return NextResponse.json(
+            { error: 'Can only revert Selecting games back to Open' },
+            { status: 400 }
+          );
+        }
+        newStatus = 'O';
+        break;
+
+      // UNPUBLISH: Transition from 'S' (Selected) back to 'X' (Selecting) — undo a publish
+      case 'unpublish':
+        if (currentStatus !== 'S') {
+          return NextResponse.json(
+            { error: 'Can only revert Published games back to Selecting' },
+            { status: 400 }
+          );
+        }
+        newStatus = 'X';
+        break;
+
       // Reject invalid action names
       default:
         return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
     }
 
-    // Update the game status in the Games sheet (skip for republish — status unchanged)
-    if (action !== 'republish') await updateGameStatus(effectiveTabName, newStatus, {
+    // Update the game status in the Games sheet (skip for republish — status unchanged,
+    // or if already updated earlier in the switch e.g. 'open' action)
+    if (action !== 'republish' && !statusAlreadyUpdated) await updateGameStatus(effectiveTabName, newStatus, {
       bhbcScore: bhbc_score,        // Our score (for played/abandoned games)
       opponentScore: opponent_score, // Opponent score (for played/abandoned games)
       reason,                        // Reason for cancellation/abandonment

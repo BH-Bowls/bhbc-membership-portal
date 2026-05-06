@@ -90,6 +90,7 @@ interface FixtureFormData {
   paired: string;
   maxPlayers: string;
   message: string;
+  pickupInfo: string;
 }
 
 const defaultFormData: FixtureFormData = {
@@ -105,6 +106,7 @@ const defaultFormData: FixtureFormData = {
   paired: '',
   maxPlayers: '',
   message: '',
+  pickupInfo: '',
 };
 
 // ============================================================================
@@ -118,9 +120,11 @@ interface FixtureModalProps {
   onSave: (data: FixtureFormData) => Promise<void>;
   saving: boolean;
   error: string | null;
+  gameTypes: GameType[]; // Available types for this user's role
+  clubNames: string[];   // Known club names for the dropdown suggestions
 }
 
-function FixtureModal({ isOpen, editGame, onClose, onSave, saving, error }: FixtureModalProps) {
+function FixtureModal({ isOpen, editGame, onClose, onSave, saving, error, gameTypes, clubNames }: FixtureModalProps) {
   const [form, setForm] = useState<FixtureFormData>(defaultFormData);
 
   useEffect(() => {
@@ -137,7 +141,8 @@ function FixtureModal({ isOpen, editGame, onClose, onSave, saving, error }: Fixt
         dress: editGame.dress || '',
         paired: editGame.paired || '',
         maxPlayers: editGame.maxPlayers ? String(editGame.maxPlayers) : '',
-        message: editGame.message || '',
+        message: editGame.specialInstructions || '',
+        pickupInfo: editGame.pickupInfo || '',
       });
     } else {
       setForm(defaultFormData);
@@ -191,23 +196,30 @@ function FixtureModal({ isOpen, editGame, onClose, onSave, saving, error }: Fixt
               onChange={set('type')}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
             >
-              {ALL_GAME_TYPES.map(t => (
+              {gameTypes.map(t => (
                 <option key={t} value={t}>{t}</option>
               ))}
             </select>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            {/* Club Name */}
+            {/* Club Name — datalist for known clubs + freeform for ad-hoc opponents */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Club Name *</label>
               <input
                 type="text"
+                list="club-names-list"
                 value={form.clubName}
                 onChange={set('clubName')}
                 placeholder="e.g. Henfield"
+                autoComplete="off"
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
               />
+              <datalist id="club-names-list">
+                {clubNames.map(name => (
+                  <option key={name} value={name} />
+                ))}
+              </datalist>
             </div>
             {/* Club Suffix */}
             <div>
@@ -242,11 +254,25 @@ function FixtureModal({ isOpen, editGame, onClose, onSave, saving, error }: Fixt
                 type="text"
                 value={form.format}
                 onChange={set('format')}
-                placeholder="e.g. Triples"
+                placeholder="e.g. 3 Triples, 4 Rinks"
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
               />
             </div>
           </div>
+
+          {/* Pickup Info — Away games only */}
+          {form.homeAway === 'A' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Pickup Information</label>
+              <input
+                type="text"
+                value={form.pickupInfo}
+                onChange={set('pickupInfo')}
+                placeholder="e.g. Pickup at Clubhouse at 13:00"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+              />
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-4">
             {/* Ladies/Men */}
@@ -308,7 +334,6 @@ function FixtureModal({ isOpen, editGame, onClose, onSave, saving, error }: Fixt
               value={form.message}
               onChange={set('message')}
               rows={3}
-              placeholder="e.g. Meet at the club at 1:30pm"
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-y"
             />
           </div>
@@ -369,6 +394,7 @@ export default function FixturesManagePage() {
   const [pageError, setPageError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Game | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [clubNames, setClubNames] = useState<string[]>([]);
 
   const userRole = (session?.user as any)?.role || '';
   const isAdmin = userRole === 'Admin' || userRole === 'superadmin';
@@ -378,7 +404,13 @@ export default function FixturesManagePage() {
   useEffect(() => {
     if (session === null) { router.push('/'); return; }
     if (session && !canAccess) { router.push('/'); return; }
-    if (session && canAccess) { fetchGames(); }
+    if (session && canAccess) {
+      fetchGames();
+      fetch('/api/clubs')
+        .then(r => r.ok ? r.json() : { clubs: [] })
+        .then(data => setClubNames((data.clubs || []).map((c: any) => c.clubName).filter(Boolean).sort()))
+        .catch(() => {});
+    }
   }, [session, canAccess]);
 
   async function fetchGames() {
@@ -470,7 +502,7 @@ export default function FixturesManagePage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <Navbar
-        userName={(session?.user as any)?.userName}
+        userName={session?.user?.name ?? undefined}
         userRole={userRole}
       />
 
@@ -578,6 +610,8 @@ export default function FixturesManagePage() {
         onSave={handleSave}
         saving={saving}
         error={modalError}
+        gameTypes={isAdmin ? [...ALL_GAME_TYPES, 'Test'] : ALL_GAME_TYPES}
+        clubNames={clubNames}
       />
 
       {/* Delete Confirmation */}

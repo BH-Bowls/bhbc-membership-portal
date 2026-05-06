@@ -5,8 +5,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, getPlayerEntries } from '@/lib/friendlies-sheets';
-import { GameStatus } from '@/lib/types/friendlies';
+import { getGames, getPlayerEntries, getGameSheet } from '@/lib/friendlies-sheets';
+import { getClubs } from '@/lib/clubs-sheets';
+import { GameStatus, GameType } from '@/lib/types/friendlies';
+import { hasRole } from '@/lib/role-utils';
 
 // GET handler - Returns list of games with user's entry status for each
 export async function GET(request: NextRequest) {
@@ -19,15 +21,29 @@ export async function GET(request: NextRequest) {
     // Get optional status filter (e.g., ?status=O for Open games only)
     const statusFilter = searchParams.get('status') as GameStatus | null;
 
-    // Fetch games from Games sheet (optionally filtered by status), only Friendly type
-    const games = await getGames(statusFilter ?? undefined, ['Friendly']);
+    // Admins also see Test games; all other roles see Friendly only
+    const isAdmin = hasRole(session?.user?.role, 'Admin');
+    const typeFilter: GameType[] = isAdmin ? ['Friendly', 'Test'] : ['Friendly'];
+
+    // Fetch games and club details in parallel
+    const [games, clubs] = await Promise.all([
+      getGames(statusFilter ?? undefined, typeFilter),
+      getClubs().catch(() => []),   // petrol cost is non-critical; don't fail if clubs sheet absent
+    ]);
+
+    // Build club-name → petrolCost lookup for away game display
+    const petrolMap = new Map<string, number>(
+      clubs.filter(c => c.petrolCost > 0).map(c => [c.clubName, c.petrolCost])
+    );
 
     // For guests (no session) return games without user entry status
     if (!session?.user?.userName) {
       const gamesWithUserStatus = games.map(game => ({
         ...game,
+        petrolCost: game.homeAway === 'A' ? (petrolMap.get(game.clubName) ?? null) : null,
         userEntered: false,
         userStatus: null,
+        userConfirmed: null,
       }));
       return NextResponse.json({ games: gamesWithUserStatus });
     }
@@ -36,17 +52,36 @@ export async function GET(request: NextRequest) {
     const userEntries = await getPlayerEntries(session.user.userName);
 
     // Combine game data with user's entry status
-    const gamesWithUserStatus = games.map(game => {
+    const gamesWithEntry = games.map(game => {
       let entry = null;
       for (const e of userEntries) {
         if (e.tabName === game.tabName) { entry = e; break; }
       }
-      return {
-        ...game,
-        userEntered: !!entry,
-        userStatus: entry?.status ?? null,
-      };
+      return { game, entry };
     });
+
+    // For S-status games where user is selected (P/R/T), read the game sheet to check confirmation
+    const confirmationMap = new Map<string, boolean>();
+    const selectedStatusGames = gamesWithEntry.filter(
+      ({ game, entry }) => game.status === 'S' && entry && ['P', 'R', 'T'].includes(entry.status)
+    );
+    await Promise.all(selectedStatusGames.map(async ({ game }) => {
+      try {
+        const gameSheet = await getGameSheet(game.tabName);
+        const userPlayer = gameSheet.find(p => p.name === session.user.userName);
+        confirmationMap.set(game.tabName, userPlayer?.status === 'Y' || false);
+      } catch {
+        // If game sheet read fails, leave confirmation as null
+      }
+    }));
+
+    const gamesWithUserStatus = gamesWithEntry.map(({ game, entry }) => ({
+      ...game,
+      petrolCost: game.homeAway === 'A' ? (petrolMap.get(game.clubName) ?? null) : null,
+      userEntered: !!entry,
+      userStatus: entry?.status ?? null,
+      userConfirmed: confirmationMap.has(game.tabName) ? confirmationMap.get(game.tabName)! : null,
+    }));
 
     // Return success response with games array
     return NextResponse.json({ games: gamesWithUserStatus });

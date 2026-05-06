@@ -52,12 +52,30 @@ export async function GET(
       return NextResponse.json({ match: next, opponentContacts: [] });
     }
 
-    // Fetch contacts for the opponent club, filter to Rowland-specific roles
+    // Fetch contacts for the opponent club, filter to Rowland-specific roles.
+    // Fallback chain:
+    //   1. Exact bracket prefix  e.g. "ERowland A" → "ERowland A Organiser"
+    //   2. Base bracket prefix   e.g. "ERowland"   → "ERowland Organiser"
+    //   3. Any Rowland contact   e.g. any role containing "Rowland"
     const rolePrefix = CONTACT_ROLE_PREFIX[compId] ?? '';
     const allContacts = await getContactsForClub(opponentTeam.clubName);
-    const rowlandContacts = rolePrefix
+
+    let rowlandContacts = rolePrefix
       ? allContacts.filter((c) => c.role.startsWith(rolePrefix))
       : [];
+
+    if (rowlandContacts.length === 0 && rolePrefix) {
+      // Step 2: strip the bracket letter suffix (e.g. "ERowland A" → "ERowland")
+      const basePrefix = rolePrefix.replace(/ [AB]$/, '');
+      if (basePrefix !== rolePrefix) {
+        rowlandContacts = allContacts.filter((c) => c.role.startsWith(basePrefix));
+      }
+    }
+
+    if (rowlandContacts.length === 0) {
+      // Step 3: any contact with "Rowland" in the role
+      rowlandContacts = allContacts.filter((c) => c.role.includes('Rowland'));
+    }
 
     return NextResponse.json({ match: next, opponentContacts: rowlandContacts });
   } catch (error) {

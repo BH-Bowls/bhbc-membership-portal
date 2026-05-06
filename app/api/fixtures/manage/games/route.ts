@@ -7,6 +7,7 @@ import { authOptions } from '@/lib/auth';
 import { getGames, createFixture } from '@/lib/friendlies-sheets';
 import { GameType } from '@/lib/types/friendlies';
 import { hasRole } from '@/lib/role-utils';
+import { parseNormalizedDate } from '@/lib/date-utils';
 
 export async function GET(request: NextRequest) {
   try {
@@ -22,9 +23,10 @@ export async function GET(request: NextRequest) {
 
     const games = await getGames();
 
+    // game.date is DD/MM/YYYY — must use parseNormalizedDate, not new Date()
     const sortedGames = games.sort((a, b) => {
-      const dateA = new Date(a.date).getTime();
-      const dateB = new Date(b.date).getTime();
+      const dateA = parseNormalizedDate(a.date).getTime();
+      const dateB = parseNormalizedDate(b.date).getTime();
       return dateA - dateB;
     });
 
@@ -53,7 +55,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const {
       date, time, type, clubName, clubSuffix,
-      homeAway, format, ladiesMen, dress, paired, maxPlayers, message,
+      homeAway, format, ladiesMen, dress, paired, maxPlayers, message, pickupInfo,
     } = body;
 
     if (!date || !clubName) {
@@ -91,6 +93,7 @@ export async function POST(request: NextRequest) {
       paired,
       maxPlayers: maxPlayers ? parseInt(maxPlayers) : undefined,
       message,
+      pickupInfo,
       tabDate,
       tabName,
       status: '',

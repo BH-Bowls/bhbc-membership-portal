@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, updatePlayerEntry, batchUpdateGameCounts } from '@/lib/friendlies-sheets';
+import { getGames, updatePlayerEntry, batchUpdateGameCounts, addPlayerToGameSheet } from '@/lib/friendlies-sheets';
 import { EnterGamesRequest, EnterGamesResponse } from '@/lib/types/friendlies';
 import { canEnterGame } from '@/lib/game-management/capacity';
 
@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
 
     // Parse request body
     const body: EnterGamesRequest = await request.json();
-    const { game_ids } = body;
+    const { game_ids, car_numbers } = body;
 
     // Validate game_ids is a non-empty array
     if (!Array.isArray(game_ids) || game_ids.length === 0) {
@@ -79,8 +79,12 @@ export async function POST(request: NextRequest) {
         }
 
         // Update this user's entry in Players sheet to 'E' (Entered)
+        // Also add the player to the individual game sheet with Selected='R'
         try {
           await updatePlayerEntry(userName, game.tabName, 'E');
+          // Add to game sheet (silently skipped if sheet doesn't exist yet)
+          const gameCarNumber = car_numbers?.[tabName];
+          await addPlayerToGameSheet(game.tabName, userName, 'R', gameCarNumber);
           results.push({ game_id: tabName, entered: true });
         } catch (updateError: any) {
           // Record error if update fails

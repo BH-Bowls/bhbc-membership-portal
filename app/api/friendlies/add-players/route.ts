@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, batchUpdatePlayerEntries, addPlayersToGameSheetDirect, updateGameCounts } from '@/lib/friendlies-sheets';
+import { getGames, batchUpdatePlayerEntries, addPlayersToGameSheetDirect, updateGameCounts, getEnteredPlayers } from '@/lib/friendlies-sheets';
 import { canEnterGame } from '@/lib/game-management/capacity';
 import { hasRole } from '@/lib/role-utils';
 
@@ -82,9 +82,8 @@ export async function POST(request: NextRequest) {
       }, { status: 500 });
     }
 
-    // For games in Selecting/Selected status, also add players to game sheet directly
-    // This eliminates the need for a separate get-stats call
-    if (['X', 'S'].includes(game.status)) {
+    // For Open/Selecting/Selected games, also add players to the individual game sheet
+    if (['O', 'X', 'S'].includes(game.status)) {
       try {
         const successfulPlayers = results.filter(r => r.added).map(r => r.userName);
         await addPlayersToGameSheetDirect(game.tabName, successfulPlayers);
@@ -94,17 +93,18 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Update the entered count (just increment by successful additions)
+    // Re-count from Players sheet for an accurate total (avoids drift from incremental updates)
     const addedCount = results.filter(r => r.added).length;
     if (addedCount > 0) {
       try {
-        await updateGameCounts(game.tabName, { entered: game.entered + addedCount });
+        const currentPlayers = await getEnteredPlayers(game.tabName);
+        await updateGameCounts(game.tabName, { entered: currentPlayers.length });
       } catch (countError) {
         console.error('[Friendlies API] Error updating entered count:', countError);
       }
     }
 
-    return NextResponse.json({ success: true, results, addedToGameSheet: ['X', 'S'].includes(game.status) });
+    return NextResponse.json({ success: true, results, addedToGameSheet: ['O', 'X', 'S'].includes(game.status) });
   } catch (error) {
     console.error('[Friendlies API] Error adding players:', error);
     return NextResponse.json(

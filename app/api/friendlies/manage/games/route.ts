@@ -6,7 +6,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getGames } from '@/lib/friendlies-sheets';
+import { GameType } from '@/lib/types/friendlies';
 import { hasRole } from '@/lib/role-utils';
+import { parseNormalizedDate } from '@/lib/date-utils';
 
 // GET handler - Returns all games sorted by date for captain management
 export async function GET(request: NextRequest) {
@@ -24,16 +26,18 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    // Fetch only Friendly games from Games sheet
-    const games = await getGames(undefined, ['Friendly']);
+    // Admins also see Test games; Captains see Friendly only
+    const isAdmin = hasRole(session.user.role, 'Admin');
+    const typeFilter: GameType[] = isAdmin ? ['Friendly', 'Test'] : ['Friendly'];
 
-    // Sort games by date (most recent first for easier management)
+    // Fetch games from Games sheet filtered by type
+    const games = await getGames(undefined, typeFilter);
+
+    // Sort games by date descending (most recent first for easier management)
+    // game.date is DD/MM/YYYY — must use parseNormalizedDate, not new Date()
     const sortedGames = games.sort((a, b) => {
-      // Convert date strings to timestamps for comparison
-      const dateA = new Date(a.date).getTime();
-      const dateB = new Date(b.date).getTime();
-
-      // Sort descending (newest first)
+      const dateA = parseNormalizedDate(a.date).getTime();
+      const dateB = parseNormalizedDate(b.date).getTime();
       return dateB - dateA;
     });
 

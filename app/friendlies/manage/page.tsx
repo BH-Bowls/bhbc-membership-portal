@@ -5,13 +5,29 @@
 
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useLayoutEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Navbar } from '@/components/Navbar';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { EnteredPlayersModal } from '@/components/game-management/EnteredPlayersModal';
+import { GameInstructionsDialog, type InstructionsDialogMode } from '@/components/game-management/GameInstructionsDialog';
 import { Game, GameStatus } from '@/lib/types/friendlies';
+
+interface PlayerStatRow {
+  userName: string;
+  fullName: string;
+  selected: number;
+  reserve: number;
+  reserveTeam: number;
+  opposition: number;
+  withdrawn: number;
+  cancelled: number;
+  abandoned: number;
+  entered: number;
+  total: number;
+}
 import { getButtonClasses } from '@/config/theme-helpers';
 import { groupPairedGames, isPairedGame, type GameOrPair } from '@/lib/friendlies-utils';
 
@@ -56,11 +72,13 @@ export default function ManageGamesPage() {
     isOpen: boolean;
     title: string;
     message: string;
+    game?: Game;
     onConfirm: () => void;
   }>({
     isOpen: false,
     title: '',
     message: '',
+    game: undefined,
     onConfirm: () => {},
   });
 
@@ -85,47 +103,32 @@ export default function ManageGamesPage() {
     who: '',
   });
 
-  // State: Message dialog for editing special instructions
-  const [messageDialog, setMessageDialog] = useState<{
+  // State: Instructions dialog (replaces separate message/pickup/publish dialogs)
+  const [instructionsDialog, setInstructionsDialog] = useState<{
     isOpen: boolean;
-    tabName: string;
-    rowNumber: number;
-    draft: string;
-    saving: boolean;
-  }>({ isOpen: false, tabName: '', rowNumber: 0, draft: '', saving: false });
+    mode: InstructionsDialogMode;
+    game: Game | null;
+  }>({ isOpen: false, mode: 'open', game: null });
 
-  // State: Publish dialog for publishing team selection
-  const [publishDialog, setPublishDialog] = useState<{
-    isOpen: boolean;
-    tabName: string;
-    isHomeGame: boolean;
-    sendEmail: boolean;
-    sendTeaRotaEmail: boolean;
-    submitting: boolean;
-    result: {
-      emailsSent?: number;
-      playersWithoutEmail?: string[];
-      emailError?: string;
-      teaRotaEmailsSent?: number;
-      teaRotaMembersWithoutEmail?: string[];
-      teaRotaEmailError?: string;
-    } | null;
-  }>({
+  // State: Add Players modal (opens EnteredPlayersModal for a specific game)
+  const [addPlayersModal, setAddPlayersModal] = useState<{ isOpen: boolean; game: Game | null }>({
     isOpen: false,
-    tabName: '',
-    isHomeGame: false,
-    sendEmail: false,
-    sendTeaRotaEmail: false,
-    submitting: false,
-    result: null,
+    game: null,
   });
 
-  // State: test email sending (send preview to yourself before publishing)
-  const [testEmail, setTestEmail] = useState<{ sending: boolean; sent: boolean; error: string }>({
-    sending: false,
-    sent: false,
-    error: '',
-  });
+  // State: Per-row action dropdown selections (keyed by tabName)
+  const [actionSelections, setActionSelections] = useState<Record<string, string>>({});
+
+  // State: Manage page view toggle — Games list or Player Stats
+  const [manageView, setManageView] = useState<'games' | 'stats'>('games');
+
+  // State: Player stats data
+  const [playerStats, setPlayerStats] = useState<PlayerStatRow[] | null>(null);
+  const [playerStatsLoading, setPlayerStatsLoading] = useState(false);
+
+  // State: Player stats sort
+  const [statsSortCol, setStatsSortCol] = useState<keyof PlayerStatRow>('fullName');
+  const [statsSortDir, setStatsSortDir] = useState<'asc' | 'desc'>('asc');
 
   // ============================================================================
   // Effects
@@ -136,6 +139,26 @@ export default function ManageGamesPage() {
    * Uses sessionStorage cache so navigating back is instant.
    * Always re-validates silently in the background.
    */
+  // Reconcile orphaned session state before the first paint.
+  // This catches cases where last_managed or a FriendliesGame draft was left
+  // behind without its counterpart (e.g. username mismatch on clearDraft).
+  useLayoutEffect(() => {
+    if (typeof window === 'undefined') return;
+    const lastManaged = sessionStorage.getItem('friendlies_last_managed');
+    const friendliesDraftKeys = Object.keys(sessionStorage).filter(k =>
+      k.startsWith('FormDraft-FriendliesGame-')
+    );
+
+    if (lastManaged && friendliesDraftKeys.length === 0) {
+      // Resume indicator set but no draft to back it up — stale Resume
+      sessionStorage.removeItem('friendlies_last_managed');
+    } else if (!lastManaged && friendliesDraftKeys.length > 0) {
+      // Orphaned draft(s) with no corresponding Resume — stale orange dot
+      friendliesDraftKeys.forEach(k => sessionStorage.removeItem(k));
+      window.dispatchEvent(new CustomEvent('drafts-changed'));
+    }
+  }, []);
+
   useEffect(() => {
     const CACHE_KEY = 'friendlies_manage_games_cache';
     const cached = sessionStorage.getItem(CACHE_KEY);
@@ -191,6 +214,24 @@ export default function ManageGamesPage() {
     setReloading(false);
   }
 
+  /** Fetch all-player stats from the manage endpoint */
+  async function fetchPlayerStats() {
+    setPlayerStatsLoading(true);
+    try {
+      const res = await fetch('/api/friendlies/manage/player-stats');
+      const data = await res.json();
+      if (res.ok) {
+        setPlayerStats(data.players as PlayerStatRow[]);
+      } else {
+        console.error('Player stats error:', data.error);
+      }
+    } catch (error) {
+      console.error('Failed to fetch player stats:', error);
+    } finally {
+      setPlayerStatsLoading(false);
+    }
+  }
+
   /**
    * Change game status via API
    * Generic function for all status changes (open, close, publish, etc.)
@@ -219,6 +260,9 @@ export default function ManageGamesPage() {
 
       // Check if status change was successful
       if (response.ok) {
+        // Clear the stale action selection for this game so the dropdown resets
+        const key = tabName || `row-${rowNumber}`;
+        setActionSelections(prev => { const next = { ...prev }; delete next[key]; return next; });
         // Refresh games list to show updated status
         await fetchGames();
       } else {
@@ -247,30 +291,20 @@ export default function ManageGamesPage() {
       isOpen: false,
       title: '',
       message: '',
+      game: undefined,
       onConfirm: () => {},
     });
   };
 
   /**
-   * Handle Open Game button click
-   * Changes status from blank to 'O' (Open)
-   * Allows players to start entering the game
+   * Handle Open Game button click — shows instructions dialog first
    */
-  function handleOpenGame(tabName: string, rowNumber: number) {
-    // Show confirmation dialog
-    setConfirmDialog({
-      isOpen: true,
-      title: 'Open Game',
-      message: 'Open this game for player entry?',
-      onConfirm: () => {
-        closeConfirmDialog();
-        changeStatus(tabName, 'open', undefined, rowNumber);
-      },
-    });
+  function handleOpenGame(game: Game) {
+    openInstructionsDialog(game, 'open');
   }
 
   /**
-   * Handle Open for paired games - opens both games together
+   * Handle Open for paired games - opens both games together (simple confirm, no instructions)
    */
   function handleOpenPairedGames(gameA: Game, gameB: Game) {
     setConfirmDialog({
@@ -291,21 +325,27 @@ export default function ManageGamesPage() {
   }
 
   /**
-   * Handle Close Game button click
-   * Changes status from 'O' (Open) to 'X' (Selecting)
-   * Closes entries and creates game sheet for team selection
+   * Handle backward status step (revert to previous state)
+   * O → '' (Open → Upcoming), X → O (Selecting → Open), S → X (Selected → Selecting)
    */
-  function handleCloseGame(tabName: string, rowNumber: number) {
-    // Show confirmation dialog
+  function handleRevertGame(game: Game, action: string, fromLabel: string, toLabel: string) {
     setConfirmDialog({
       isOpen: true,
-      title: 'Close Game',
-      message: 'Close this game and create team selection sheet?',
+      title: 'Revert Game Status',
+      message: `Revert from ${fromLabel} back to ${toLabel}?`,
+      game,
       onConfirm: () => {
         closeConfirmDialog();
-        changeStatus(tabName, 'close', undefined, rowNumber);
+        changeStatus(game.tabName, action, undefined, game.rowNumber);
       },
     });
+  }
+
+  /**
+   * Handle Close Game button click — shows instructions dialog first
+   */
+  function handleCloseGame(game: Game) {
+    openInstructionsDialog(game, 'close');
   }
 
   /**
@@ -359,147 +399,22 @@ export default function ManageGamesPage() {
   }
 
   /**
-   * Handle Publish Selection button click
-   * Opens the publish dialog with email option
+   * Open the instructions dialog in a given mode for a game
    */
-  function handlePublishSelection(game: Game) {
-    setTestEmail({ sending: false, sent: false, error: '' });
-    setPublishDialog({
-      isOpen: true,
-      tabName: game.tabName,
-      isHomeGame: game.homeAway === 'H',
-      sendEmail: false,
-      sendTeaRotaEmail: false,
-      submitting: false,
-      result: null,
-    });
+  function openInstructionsDialog(game: Game, mode: InstructionsDialogMode) {
+    setInstructionsDialog({ isOpen: true, mode, game });
   }
 
   /**
-   * Submit the publish action from the publish dialog
+   * Called when the instructions dialog completes its action
    */
-  async function submitPublish() {
-    const { tabName, sendEmail, sendTeaRotaEmail } = publishDialog;
-
-    // Show submitting state
-    setPublishDialog(prev => ({ ...prev, submitting: true }));
-
-    try {
-      const response = await fetch('/api/friendlies/manage/status', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tab_name: tabName,
-          action: 'publish',
-          send_email: sendEmail,
-          send_tea_rota_email: sendTeaRotaEmail,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        const hasEmailResult = sendEmail && (data.emails_sent > 0 || data.players_without_email?.length > 0 || data.email_error);
-        const hasTeaRotaResult = sendTeaRotaEmail && (data.tea_rota_emails_sent > 0 || data.tea_rota_members_without_email?.length > 0 || data.tea_rota_email_error);
-
-        if (hasEmailResult || hasTeaRotaResult) {
-          setPublishDialog(prev => ({
-            ...prev,
-            submitting: false,
-            result: {
-              emailsSent: data.emails_sent,
-              playersWithoutEmail: data.players_without_email,
-              emailError: data.email_error,
-              teaRotaEmailsSent: data.tea_rota_emails_sent,
-              teaRotaMembersWithoutEmail: data.tea_rota_members_without_email,
-              teaRotaEmailError: data.tea_rota_email_error,
-            },
-          }));
-        } else {
-          // No email or no result to show - close dialog and refresh
-          setPublishDialog(prev => ({ ...prev, isOpen: false }));
-          await fetchGames();
-        }
-      } else {
-        alert(data.error || 'Failed to publish selection');
-        setPublishDialog(prev => ({ ...prev, submitting: false }));
-      }
-    } catch (error) {
-      console.error('Error publishing selection:', error);
-      alert('Failed to publish selection');
-      setPublishDialog(prev => ({ ...prev, submitting: false }));
+  async function handleInstructionsConfirm() {
+    const key = instructionsDialog.game?.tabName;
+    setInstructionsDialog({ isOpen: false, mode: 'open', game: null });
+    if (key) {
+      setActionSelections(prev => { const next = { ...prev }; delete next[key]; return next; });
     }
-  }
-
-  /**
-   * Send a preview copy of the published email to the logged-in user only.
-   * Lets captains check the layout before sending to all players.
-   */
-  async function handleSendTestEmail() {
-    setTestEmail({ sending: true, sent: false, error: '' });
-    try {
-      const response = await fetch('/api/friendlies/manage/send-test-email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tab_name: publishDialog.tabName }),
-      });
-      const data = await response.json();
-      if (data.success) {
-        setTestEmail({ sending: false, sent: true, error: '' });
-      } else {
-        setTestEmail({ sending: false, sent: false, error: data.error || 'Failed to send test email' });
-      }
-    } catch {
-      setTestEmail({ sending: false, sent: false, error: 'Failed to send test email' });
-    }
-  }
-
-  /**
-   * Close the publish dialog and refresh games
-   */
-  function closePublishDialog() {
-    setPublishDialog({
-      isOpen: false,
-      tabName: '',
-      isHomeGame: false,
-      sendEmail: false,
-      sendTeaRotaEmail: false,
-      submitting: false,
-      result: null,
-    });
-    fetchGames();
-  }
-
-  /**
-   * Open message dialog for a game
-   */
-  function handleEditMessage(game: Game) {
-    setMessageDialog({ isOpen: true, tabName: game.tabName, rowNumber: game.rowNumber, draft: game.message || '', saving: false });
-  }
-
-  /**
-   * Save the special instructions message for a game
-   */
-  async function saveMessage() {
-    setMessageDialog(prev => ({ ...prev, saving: true }));
-    try {
-      const res = await fetch('/api/friendlies/manage/message', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tab_name: messageDialog.tabName, row_number: messageDialog.rowNumber, message: messageDialog.draft }),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        alert(data.error || 'Failed to save message');
-        setMessageDialog(prev => ({ ...prev, saving: false }));
-        return;
-      }
-      setMessageDialog({ isOpen: false, tabName: '', rowNumber: 0, draft: '', saving: false });
-      await fetchGames();
-    } catch {
-      alert('Failed to save message');
-      setMessageDialog(prev => ({ ...prev, saving: false }));
-    }
+    await fetchGames();
   }
 
   /**
@@ -578,11 +493,117 @@ export default function ManageGamesPage() {
   // ============================================================================
 
   /**
+   * Parse the number of players required from a format string.
+   * e.g. "4 Triples" → 12, "5 Pairs" → 10, "4 Fours" → 16, "6 Singles" → 6
+   */
+  function parseNumberRequired(format: string): number | null {
+    if (!format) return null;
+    const sizeMap: Record<string, number> = {
+      singles: 1, single: 1,
+      pairs: 2, pair: 2,
+      triples: 3, triple: 3,
+      fours: 4, four: 4, rinks: 4, rink: 4,
+      fives: 5, five: 5,
+    };
+    // Support compound formats e.g. "3 Triples, 4 Rinks"
+    const parts = format.split(',').map(s => s.trim());
+    let total = 0;
+    for (const part of parts) {
+      const match = part.match(/^(\d+)\s+(\w+)$/i);
+      if (!match) return null;
+      const count = parseInt(match[1], 10);
+      const size = sizeMap[match[2].toLowerCase()];
+      if (!size) return null;
+      total += count * size;
+    }
+    return total > 0 ? total : null;
+  }
+
+  /**
    * Parse DD/MM/YYYY date string to Date object
    * Google Sheets dates come in DD/MM/YYYY format which JavaScript doesn't parse correctly
    * @param dateStr Date string in DD/MM/YYYY format (e.g., "27/09/2025")
    * @returns Date object or null if invalid
    */
+  // ============================================================================
+  // Dropdown Action Helpers
+  // ============================================================================
+
+  /** Returns the list of options for the per-row action dropdown */
+  function getActionOptions(game: Game, isLastManaged: boolean): { value: string; label: string }[] {
+    switch (game.status) {
+      case '':
+        return [
+          { value: 'open',   label: 'Open' },
+          { value: 'cancel', label: 'Cancel Game' },
+        ];
+      case 'O':
+        return [
+          { value: 'close',   label: 'Close Entries' },
+          { value: 'players', label: 'Add Players' },
+          { value: 'reopen',  label: '← Upcoming' },
+          { value: 'cancel',  label: 'Cancel Game' },
+        ];
+      case 'X':
+        return [
+          { value: 'select-team', label: isLastManaged ? 'Resume' : 'Select Team' },
+          { value: 'publish',     label: 'Publish' },
+          { value: 'players',     label: 'Add Players' },
+          { value: 'reopen-entries', label: '← Open' },
+          { value: 'cancel',      label: 'Cancel Game' },
+        ];
+      case 'S':
+        return [
+          { value: 'edit',          label: isLastManaged ? 'Resume' : 'Edit Selection' },
+          { value: 'record-result', label: 'Record Result' },
+          { value: 'players',       label: 'Add Players' },
+          { value: 'unpublish', label: '← Selecting' },
+          { value: 'cancel',    label: 'Cancel Game' },
+        ];
+      default:
+        return [];
+    }
+  }
+
+  /** Execute the selected action for a game row */
+  function handleGoAction(game: Game) {
+    const action = actionSelections[game.tabName];
+    if (!action) return;
+
+    switch (action) {
+      case 'open':
+        handleOpenGame(game);
+        break;
+      case 'close':
+        handleCloseGame(game);
+        break;
+      case 'select-team':
+      case 'edit':
+        sessionStorage.setItem('friendlies_last_managed', game.tabName);
+        router.push(`/friendlies/manage/game/${encodeURIComponent(game.tabName)}`);
+        break;
+      case 'publish':
+        openInstructionsDialog(game, 'publish');
+        break;
+      case 'players':
+        setAddPlayersModal({ isOpen: true, game });
+        break;
+      case 'record-result':
+      case 'cancel':
+        handleGameOutcome(game.tabName, game.status);
+        break;
+      case 'reopen':
+        handleRevertGame(game, 'reopen', 'Open', 'Upcoming');
+        break;
+      case 'reopen-entries':
+        handleRevertGame(game, 'reopen-entries', 'Selecting', 'Open');
+        break;
+      case 'unpublish':
+        handleRevertGame(game, 'unpublish', 'Published', 'Selecting');
+        break;
+    }
+  }
+
   function parseDDMMYYYY(dateStr: string): Date | null {
     if (!dateStr) return null;
 
@@ -733,7 +754,35 @@ export default function ManageGamesPage() {
           </Link>
         </div>
 
-        {/* Filter tabs - allow captain to filter by game status */}
+        {/* View switcher: Games | Player Stats */}
+        <div className="flex gap-2 mb-4">
+          <button
+            onClick={() => setManageView('games')}
+            className={`px-4 py-2 rounded font-medium text-sm transition-colors ${
+              manageView === 'games'
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            Games
+          </button>
+          <button
+            onClick={() => {
+              setManageView('stats');
+              if (!playerStats) fetchPlayerStats();
+            }}
+            className={`px-4 py-2 rounded font-medium text-sm transition-colors ${
+              manageView === 'stats'
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            Player Stats
+          </button>
+        </div>
+
+        {/* Filter tabs - allow captain to filter by game status (games view only) */}
+        {manageView === 'games' && (
         <div className="flex gap-2 mb-6 border-b border-gray-200 overflow-x-auto">
           {/* Loop through all possible status values */}
           {(['all', '', 'O', 'L', 'X', 'S', 'P', 'C', 'A'] as const).map(status => (
@@ -751,9 +800,103 @@ export default function ManageGamesPage() {
             </button>
           ))}
         </div>
+        )}
+
+        {/* ── Player Stats view ──────────────────────────────────────────── */}
+        {manageView === 'stats' && (() => {
+          if (playerStatsLoading) {
+            return (
+              <div className="text-center py-12">
+                <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <p className="mt-2 text-gray-700">Loading player stats...</p>
+              </div>
+            );
+          }
+          if (!playerStats) return null;
+
+          // Sort helper
+          const sortedStats = [...playerStats].sort((a, b) => {
+            const aVal = a[statsSortCol];
+            const bVal = b[statsSortCol];
+            if (typeof aVal === 'string' && typeof bVal === 'string') {
+              return statsSortDir === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+            }
+            const diff = (aVal as number) - (bVal as number);
+            return statsSortDir === 'asc' ? diff : -diff;
+          });
+
+          const handleSort = (col: keyof PlayerStatRow) => {
+            if (statsSortCol === col) {
+              setStatsSortDir(d => d === 'asc' ? 'desc' : 'asc');
+            } else {
+              setStatsSortCol(col);
+              setStatsSortDir(col === 'fullName' ? 'asc' : 'desc');
+            }
+          };
+
+          const SortIndicator = ({ col }: { col: keyof PlayerStatRow }) =>
+            statsSortCol === col
+              ? <span className="ml-1 text-xs">{statsSortDir === 'asc' ? '▲' : '▼'}</span>
+              : <span className="ml-1 text-xs text-gray-300">⇅</span>;
+
+          const cols: { key: keyof PlayerStatRow; label: string }[] = [
+            { key: 'fullName',    label: 'Player' },
+            { key: 'selected',    label: 'Selected' },
+            { key: 'reserve',     label: 'Reserve' },
+            { key: 'reserveTeam', label: 'Res. Team' },
+            { key: 'opposition',  label: 'Opposition' },
+            { key: 'withdrawn',   label: 'Withdrawn' },
+            { key: 'cancelled',   label: 'Cancelled' },
+            { key: 'abandoned',   label: 'Abandoned' },
+            { key: 'entered',     label: 'Entered' },
+            { key: 'total',       label: 'Total' },
+          ];
+
+          return (
+            <div className="bg-white rounded-lg shadow overflow-auto max-h-[70vh]">
+              <table className="min-w-full divide-y divide-gray-200 text-sm">
+                <thead className="bg-gray-50 sticky top-0 z-10">
+                  <tr>
+                    {cols.map(c => (
+                      <th
+                        key={c.key}
+                        onClick={() => handleSort(c.key)}
+                        className="px-3 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none whitespace-nowrap bg-gray-50"
+                      >
+                        {c.label}<SortIndicator col={c.key} />
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-100">
+                  {sortedStats.length === 0 ? (
+                    <tr>
+                      <td colSpan={cols.length} className="px-3 py-8 text-center text-gray-500">
+                        No player data found.
+                      </td>
+                    </tr>
+                  ) : sortedStats.map((p, i) => (
+                    <tr key={i} className="hover:bg-gray-50">
+                      <td className="px-3 py-2 font-medium text-gray-900 whitespace-nowrap">{p.fullName}</td>
+                      <td className="px-3 py-2 text-gray-700">{p.selected || '-'}</td>
+                      <td className="px-3 py-2 text-gray-700">{p.reserve || '-'}</td>
+                      <td className="px-3 py-2 text-gray-700">{p.reserveTeam || '-'}</td>
+                      <td className="px-3 py-2 text-gray-700">{p.opposition || '-'}</td>
+                      <td className="px-3 py-2 text-gray-700">{p.withdrawn || '-'}</td>
+                      <td className="px-3 py-2 text-gray-700">{p.cancelled || '-'}</td>
+                      <td className="px-3 py-2 text-gray-700">{p.abandoned || '-'}</td>
+                      <td className="px-3 py-2 text-gray-700">{p.entered || '-'}</td>
+                      <td className="px-3 py-2 font-semibold text-gray-900">{p.total}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        })()}
 
         {/* Games table - show loading or table */}
-        {loading ? (
+        {manageView === 'games' && (loading ? (
           // Loading state - show spinner while fetching games
           <div className="text-center py-12">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
@@ -800,7 +943,7 @@ export default function ManageGamesPage() {
                     return (
                       <tr
                         key={pairKey}
-                        className={`bg-purple-50 ${isPairLoading ? 'opacity-50' : ''}`}
+                        className={`bg-purple-50 text-gray-900 ${isPairLoading ? 'opacity-50' : ''}`}
                       >
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                           <div>{parseDDMMYYYY(gameA.date)?.toLocaleDateString('en-GB') || gameA.date}</div>
@@ -863,23 +1006,22 @@ export default function ManageGamesPage() {
                               Cancel
                             </button>
                           )}
-                          <button
-                            onClick={() => handleEditMessage(gameA)}
-                            className={`font-medium cursor-pointer ${gameA.message ? 'text-amber-600 hover:text-amber-800' : 'text-gray-500 hover:text-gray-700'}`}
-                          >
-                            Message
-                          </button>
                         </td>
                       </tr>
                     );
                   }
 
-                  // Standard single game row (unchanged)
+                  // Standard single game row
                   const game = item as Game;
+                  // Task F: highlight the last game the captain was managing (stored in sessionStorage)
+                  const lastManaged = typeof window !== 'undefined' ? sessionStorage.getItem('friendlies_last_managed') : null;
+                  const isLastManaged = lastManaged === game.tabName;
+                  // Number of players required from format string (for counts column)
+                  const numberRequired = parseNumberRequired(game.format);
                   return (
                     <tr
                       key={game.tabName && game.tabName.trim() ? game.tabName : `${game.date}-${game.clubName}-${game.time}-${index}`}
-                      className={actionLoading === game.tabName ? 'opacity-50' : ''}
+                      className={`${actionLoading === game.tabName ? 'opacity-50' : ''} ${isLastManaged ? 'bg-blue-50 ring-2 ring-inset ring-blue-300' : ''}`}
                     >
                       {/* Date and time column */}
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
@@ -905,91 +1047,46 @@ export default function ManageGamesPage() {
 
                       {/* Player counts column */}
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        <div>Entered: {game.entered}</div>
-                        <div className="text-gray-700">Selected: {game.selected}</div>
+                        <div>
+                          Entered: {game.entered}
+                          {numberRequired != null && (
+                            <span className="ml-1 text-gray-500">/ {numberRequired} req</span>
+                          )}
+                        </div>
                       </td>
 
-                      {/* Actions column - buttons vary based on game status */}
-                      <td className="px-6 py-4 whitespace-nowrap text-sm space-x-2">
-                        {/* Upcoming games (blank status) - show Open button */}
-                        {game.status === '' && (
-                          <button
-                            onClick={() => handleOpenGame(game.tabName, game.rowNumber)}
-                            disabled={actionLoading === game.tabName || actionLoading === `row-${game.rowNumber}`}
-                            className="text-green-600 hover:text-green-800 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            Open
-                          </button>
-                        )}
-
-                        {/* Open games - show Close button */}
-                        {game.status === 'O' && (
-                          <button
-                            onClick={() => handleCloseGame(game.tabName, game.rowNumber)}
-                            disabled={actionLoading === game.tabName || actionLoading === `row-${game.rowNumber}`}
-                            className="text-yellow-600 hover:text-yellow-800 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            Close
-                          </button>
-                        )}
-
-                        {/* Selecting games - show Select Team link and Publish button */}
-                        {game.status === 'X' && (
-                          <>
-                            <Link
-                              href={`/friendlies/manage/game/${encodeURIComponent(game.tabName)}`}
-                              className="text-blue-600 hover:text-blue-800 font-medium"
-                            >
-                              Select Team
-                            </Link>
-                            <button
-                              onClick={() => handlePublishSelection(game)}
-                              disabled={actionLoading === game.tabName}
-                              className="text-blue-600 hover:text-blue-800 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              Publish
-                            </button>
-                          </>
-                        )}
-
-                        {/* Selected games - show Edit link and Record Result button */}
-                        {game.status === 'S' && (
-                          <>
-                            <Link
-                              href={`/friendlies/manage/game/${encodeURIComponent(game.tabName)}`}
-                              className="text-blue-600 hover:text-blue-800 font-medium"
-                            >
-                              Edit
-                            </Link>
-                            <button
-                              onClick={() => handleGameOutcome(game.tabName, game.status)}
-                              disabled={actionLoading === game.tabName}
-                              className="text-purple-600 hover:text-purple-800 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              Record Result
-                            </button>
-                          </>
-                        )}
-
-                        {/* Cancel button - show for non-selected active games (Open, Closing) */}
-                        {['', 'O', 'X'].includes(game.status) && (
-                          <button
-                            onClick={() => handleGameOutcome(game.tabName, game.status)}
-                            disabled={actionLoading === game.tabName}
-                            className="text-red-600 hover:text-red-800 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            Cancel
-                          </button>
-                        )}
-
-                        {/* Message button — available for all non-played/cancelled/abandoned games */}
-                        {!['P', 'C', 'A'].includes(game.status) && (
-                          <button
-                            onClick={() => handleEditMessage(game)}
-                            className={`font-medium cursor-pointer ${game.message ? 'text-amber-600 hover:text-amber-800' : 'text-gray-500 hover:text-gray-700'}`}
-                          >
-                            Message
-                          </button>
+                      {/* Actions column — single dropdown + Go */}
+                      <td className="px-6 py-4 text-sm">
+                        {(() => {
+                          const opts = getActionOptions(game, isLastManaged);
+                          if (opts.length === 0) return null;
+                          const selected = actionSelections[game.tabName] || '';
+                          return (
+                            <div className="flex items-center gap-1.5">
+                              <select
+                                value={selected}
+                                onChange={e =>
+                                  setActionSelections(prev => ({ ...prev, [game.tabName]: e.target.value }))
+                                }
+                                className="text-sm border border-gray-300 rounded px-2 py-1.5 text-gray-700 bg-white min-w-[148px] focus:outline-none focus:ring-1 focus:ring-blue-400"
+                              >
+                                <option value="" disabled>Action…</option>
+                                {opts.map(o => (
+                                  <option key={o.value} value={o.value}>{o.label}</option>
+                                ))}
+                              </select>
+                              <button
+                                onClick={() => handleGoAction(game)}
+                                disabled={!selected || actionLoading === game.tabName || actionLoading === `row-${game.rowNumber}`}
+                                className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                              >
+                                Go
+                              </button>
+                            </div>
+                          );
+                        })()}
+                        {isLastManaged && (
+                          <span className="mt-1 block text-xs text-blue-600 font-medium">● Resume</span>
                         )}
                       </td>
                     </tr>
@@ -998,50 +1095,28 @@ export default function ManageGamesPage() {
               </tbody>
             </table>
           </div>
-        )}
+        ))}
       </div>
 
-      {/* Message / Special Instructions Dialog */}
-      {messageDialog.isOpen && (
-        <>
-          <div
-            className="fixed inset-0 bg-black bg-opacity-50 z-40"
-            onClick={() => !messageDialog.saving && setMessageDialog(prev => ({ ...prev, isOpen: false }))}
-          />
-          <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-              <h2 className="text-xl font-bold mb-2 text-gray-900">Special Instructions</h2>
-              <p className="text-sm text-gray-700 mb-4">
-                This message will appear on the game card as a "See Special Instructions" link.
-                Leave blank to remove it.
-              </p>
-              <textarea
-                value={messageDialog.draft}
-                onChange={e => setMessageDialog(prev => ({ ...prev, draft: e.target.value }))}
-                rows={5}
-                placeholder="e.g. Please wear whites. Meet at the clubhouse 30 minutes before start."
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400 resize-y"
-                autoFocus
-              />
-              <div className="flex justify-end gap-3 mt-4">
-                <button
-                  onClick={() => setMessageDialog(prev => ({ ...prev, isOpen: false }))}
-                  disabled={messageDialog.saving}
-                  className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={saveMessage}
-                  disabled={messageDialog.saving}
-                  className="px-4 py-2 text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {messageDialog.saving ? 'Saving…' : 'Save'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </>
+      {/* Game Instructions Dialog — open, close, publish, and editor instructions */}
+      {instructionsDialog.isOpen && instructionsDialog.game && (
+        <GameInstructionsDialog
+          isOpen={instructionsDialog.isOpen}
+          mode={instructionsDialog.mode}
+          game={{
+            tabName: instructionsDialog.game.tabName,
+            rowNumber: instructionsDialog.game.rowNumber,
+            clubName: instructionsDialog.game.clubName,
+            date: instructionsDialog.game.date,
+            time: instructionsDialog.game.time,
+            format: instructionsDialog.game.format,
+            homeAway: instructionsDialog.game.homeAway,
+            specialInstructions: instructionsDialog.game.specialInstructions,
+            pickupInfo: instructionsDialog.game.pickupInfo,
+          }}
+          onConfirm={handleInstructionsConfirm}
+          onCancel={() => setInstructionsDialog({ isOpen: false, mode: 'open', game: null })}
+        />
       )}
 
       {/* Confirmation Dialog */}
@@ -1051,7 +1126,24 @@ export default function ManageGamesPage() {
         message={confirmDialog.message}
         onConfirm={confirmDialog.onConfirm}
         onCancel={closeConfirmDialog}
-      />
+      >
+        {confirmDialog.game && (() => {
+          const g = confirmDialog.game!;
+          const d = parseDDMMYYYY(g.date);
+          const displayDate = d ? d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) : g.date;
+          return (
+            <div className="bg-gray-50 rounded-lg px-4 py-3 mb-6 text-sm text-gray-700 space-y-1">
+              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                <span><span className="font-medium text-gray-900">Club:</span> {g.clubName}{g.clubSuffix ? ` ${g.clubSuffix}` : ''}</span>
+                <span><span className="font-medium text-gray-900">Date:</span> {displayDate}</span>
+                <span><span className="font-medium text-gray-900">Time:</span> {g.time}</span>
+                <span><span className="font-medium text-gray-900">Venue:</span> {g.homeAway === 'H' ? 'Home' : 'Away'}</span>
+                {g.format && <span><span className="font-medium text-gray-900">Format:</span> {g.format}</span>}
+              </div>
+            </div>
+          );
+        })()}
+      </ConfirmDialog>
 
       {/* Game Outcome Dialog for Played/Cancelled/Abandoned */}
       {outcomeDialog.isOpen && (
@@ -1202,191 +1294,17 @@ export default function ManageGamesPage() {
         </>
       )}
 
-      {/* Publish Selection Dialog */}
-      {publishDialog.isOpen && (
-        <>
-          {/* Backdrop */}
-          <div
-            className="fixed inset-0 bg-black bg-opacity-50 z-40"
-            onClick={() => !publishDialog.submitting && !publishDialog.result && closePublishDialog()}
-          />
-
-          {/* Dialog */}
-          <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-              {publishDialog.result ? (
-                // Show email result
-                <>
-                  <h2 className="text-xl font-bold mb-4 text-gray-900">Selection Published</h2>
-
-                  <div className="space-y-3">
-                    {publishDialog.result.emailsSent !== undefined && publishDialog.result.emailsSent > 0 && (
-                      <div className="flex items-center gap-2 text-green-700 bg-green-50 p-3 rounded">
-                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                        <span>Email sent to {publishDialog.result.emailsSent} player{publishDialog.result.emailsSent !== 1 ? 's' : ''}</span>
-                      </div>
-                    )}
-
-                    {publishDialog.result.playersWithoutEmail && publishDialog.result.playersWithoutEmail.length > 0 && (
-                      <div className="bg-yellow-50 p-3 rounded">
-                        <p className="text-yellow-800 font-medium mb-1">
-                          {publishDialog.result.playersWithoutEmail.length} player{publishDialog.result.playersWithoutEmail.length !== 1 ? 's' : ''} without email:
-                        </p>
-                        <ul className="text-yellow-700 text-sm list-disc list-inside">
-                          {publishDialog.result.playersWithoutEmail.map((name, i) => (
-                            <li key={i}>{name}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-
-                    {publishDialog.result.emailError && (
-                      <div className="bg-red-50 p-3 rounded text-red-700">
-                        <p className="font-medium">Email error:</p>
-                        <p className="text-sm">{publishDialog.result.emailError}</p>
-                      </div>
-                    )}
-
-                    {publishDialog.result.teaRotaEmailsSent !== undefined && publishDialog.result.teaRotaEmailsSent > 0 && (
-                      <div className="flex items-center gap-2 text-green-700 bg-green-50 p-3 rounded">
-                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                        <span>Tea rota email sent to {publishDialog.result.teaRotaEmailsSent} member{publishDialog.result.teaRotaEmailsSent !== 1 ? 's' : ''}</span>
-                      </div>
-                    )}
-
-                    {publishDialog.result.teaRotaMembersWithoutEmail && publishDialog.result.teaRotaMembersWithoutEmail.length > 0 && (
-                      <div className="bg-yellow-50 p-3 rounded">
-                        <p className="text-yellow-800 font-medium mb-1">
-                          {publishDialog.result.teaRotaMembersWithoutEmail.length} tea rota member{publishDialog.result.teaRotaMembersWithoutEmail.length !== 1 ? 's' : ''} without email:
-                        </p>
-                        <ul className="text-yellow-700 text-sm list-disc list-inside">
-                          {publishDialog.result.teaRotaMembersWithoutEmail.map((name, i) => (
-                            <li key={i}>{name}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-
-                    {publishDialog.result.teaRotaEmailError && (
-                      <div className="bg-red-50 p-3 rounded text-red-700">
-                        <p className="font-medium">Tea rota email error:</p>
-                        <p className="text-sm">{publishDialog.result.teaRotaEmailError}</p>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex justify-end mt-6">
-                    <button
-                      onClick={closePublishDialog}
-                      className="px-4 py-2 text-white bg-blue-600 rounded hover:bg-blue-700"
-                    >
-                      Done
-                    </button>
-                  </div>
-                </>
-              ) : (
-                // Show publish form
-                <>
-                  <h2 className="text-xl font-bold mb-4 text-gray-900">Publish Selection</h2>
-
-                  <p className="text-gray-700 mb-4">
-                    Publish the team selection for this game? Players will be able to see their selection status.
-                  </p>
-
-                  <label className="flex items-center gap-3 p-3 bg-gray-50 rounded cursor-pointer hover:bg-gray-100">
-                    <input
-                      type="checkbox"
-                      checked={publishDialog.sendEmail}
-                      onChange={(e) => setPublishDialog(prev => ({ ...prev, sendEmail: e.target.checked }))}
-                      disabled={publishDialog.submitting}
-                      className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"
-                    />
-                    <div>
-                      <span className="font-medium text-gray-900">Email entered players</span>
-                      <p className="text-sm text-gray-700">
-                        Send notification to all players who entered this game
-                      </p>
-                    </div>
-                  </label>
-
-                  {publishDialog.isHomeGame && (
-                    <label className="flex items-center gap-3 p-3 mt-2 bg-gray-50 rounded cursor-pointer hover:bg-gray-100">
-                      <input
-                        type="checkbox"
-                        checked={publishDialog.sendTeaRotaEmail}
-                        onChange={(e) => setPublishDialog(prev => ({ ...prev, sendTeaRotaEmail: e.target.checked }))}
-                        disabled={publishDialog.submitting}
-                        className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"
-                      />
-                      <div>
-                        <span className="font-medium text-gray-900">Email tea rota</span>
-                        <p className="text-sm text-gray-700">
-                          Notify members on tea duty with game details and rota assignments
-                        </p>
-                      </div>
-                    </label>
-                  )}
-
-                  {/* Test email feedback */}
-                  {testEmail.sent && (
-                    <p className="mt-3 text-sm text-green-700 bg-green-50 p-2 rounded">
-                      Test email sent to your address.
-                    </p>
-                  )}
-                  {testEmail.error && (
-                    <p className="mt-3 text-sm text-red-700 bg-red-50 p-2 rounded">
-                      {testEmail.error}
-                    </p>
-                  )}
-
-                  <div className="flex justify-between items-center gap-3 mt-6">
-                    <button
-                      onClick={handleSendTestEmail}
-                      disabled={publishDialog.submitting || testEmail.sending}
-                      className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 flex items-center gap-2 text-sm"
-                      title="Send a preview to your own email address only"
-                    >
-                      {testEmail.sending && (
-                        <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                        </svg>
-                      )}
-                      {testEmail.sending ? 'Sending...' : 'Send Test Email'}
-                    </button>
-
-                    <div className="flex gap-3">
-                      <button
-                        onClick={closePublishDialog}
-                        disabled={publishDialog.submitting}
-                        className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        onClick={submitPublish}
-                        disabled={publishDialog.submitting}
-                        className="px-4 py-2 text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
-                      >
-                        {publishDialog.submitting && (
-                          <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                          </svg>
-                        )}
-                        {publishDialog.submitting ? 'Publishing...' : 'Publish'}
-                      </button>
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        </>
+      {/* Add Players Modal — shows all entered players, allows adding/removing */}
+      {addPlayersModal.game && (
+        <EnteredPlayersModal
+          isOpen={addPlayersModal.isOpen}
+          onClose={() => setAddPlayersModal({ isOpen: false, game: null })}
+          gameId={addPlayersModal.game.tabName}
+          gameType="friendlies"
+          gameName={`${addPlayersModal.game.clubName} — ${addPlayersModal.game.date}`}
+          currentUserRole={session?.user.role}
+          onPlayersChanged={fetchGames}
+        />
       )}
     </div>
   );

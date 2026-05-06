@@ -34,7 +34,38 @@ import { hasRole } from '@/lib/role-utils';
  * 'entered' - Show only games the user has entered that haven't been played or cancelled
  * 'played'  - Show only games the user entered that have been played, cancelled, or abandoned
  */
-type FilterType = 'all' | 'O' | 'entered' | 'played';
+type FilterType = 'all' | 'O' | 'entered' | 'played' | 'stats';
+
+// ── Stats types ───────────────────────────────────────────────────────────────
+
+interface StatsDetailEntry {
+  tabName: string;
+  date: string;
+  clubName: string;
+  format: string;
+  homeAway: string;
+  gameStatus: string;
+  playerStatus: string;
+  displayStatus: string;
+}
+
+interface StatsSummary {
+  selected: number;
+  reserve: number;
+  reserveTeam: number;
+  opposition: number;
+  withdrawn: number;
+  cancelled: number;
+  abandoned: number;
+  entered: number;
+}
+
+interface StatsData {
+  detail: StatsDetailEntry[];
+  summary: StatsSummary;
+  targetUser: string;
+  playerList: { userName: string; fullName: string }[] | null;
+}
 
 // ============================================================================
 // Main Component
@@ -68,6 +99,9 @@ export default function FriendliesPage() {
   // Uses Set for efficient add/remove operations
   const [selectedGames, setSelectedGames] = useState<Set<string>>(new Set());
 
+  // State: Set of away game tab names where user has ticked "Own Transport"
+  const [ownTransportGames, setOwnTransportGames] = useState<Set<string>>(new Set());
+
   // State: Loading indicator while fetching games from API
   const [loading, setLoading] = useState(true);
 
@@ -94,6 +128,12 @@ export default function FriendliesPage() {
 
   // State: Dates (YYYY-MM-DD) where the current user has tea duty
   const [teaDutyDates, setTeaDutyDates] = useState<Set<string>>(new Set());
+
+  // State: My Stats tab
+  const [statsSubView, setStatsSubView] = useState<'summary' | 'detail'>('summary');
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [statsData, setStatsData] = useState<StatsData | null>(null);
+  const [statsPlayer, setStatsPlayer] = useState<string>(''); // userName of viewed player
 
   // ============================================================================
   // Effects
@@ -273,11 +313,22 @@ export default function FriendliesPage() {
 
       // Enter new games if any
       if (toEnter.length > 0) {
+        // Build car_numbers map for games with own transport ticked
+        const carNumbers: Record<string, string> = {};
+        for (const tabName of toEnter) {
+          if (ownTransportGames.has(tabName)) {
+            carNumbers[tabName] = 'O';
+          }
+        }
+
         // Call batch enter API with array of game IDs
         const enterResponse = await fetch('/api/friendlies/enter', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ game_ids: toEnter }),
+          body: JSON.stringify({
+            game_ids: toEnter,
+            ...(Object.keys(carNumbers).length > 0 ? { car_numbers: carNumbers } : {}),
+          }),
         });
 
         const enterData = await enterResponse.json();
@@ -331,6 +382,30 @@ export default function FriendliesPage() {
     } finally {
       // Hide updating indicator whether success or failure
       setEntering(false);
+    }
+  }
+
+  // ============================================================================
+  // Stats Functions
+  // ============================================================================
+
+  /** Fetch stats for the given userName (or own if omitted) */
+  async function fetchStats(userName?: string) {
+    setStatsLoading(true);
+    try {
+      const qs = userName ? `?userName=${encodeURIComponent(userName)}` : '';
+      const res = await fetch(`/api/friendlies/stats${qs}`);
+      const data = await res.json();
+      if (res.ok) {
+        setStatsData(data as StatsData);
+        setStatsPlayer(data.targetUser);
+      } else {
+        console.error('Stats error:', data.error);
+      }
+    } catch (error) {
+      console.error('Failed to fetch stats:', error);
+    } finally {
+      setStatsLoading(false);
     }
   }
 
@@ -402,6 +477,33 @@ export default function FriendliesPage() {
     );
   }
 
+  /**
+   * Parse the number of players required from a format string
+   * e.g. "4 Triples" → 12, "3 Pairs" → 6, "5 Fours" → 20
+   */
+  function parseNumberRequired(format: string): number | null {
+    if (!format) return null;
+    const sizeMap: Record<string, number> = {
+      singles: 1, single: 1,
+      pairs: 2, pair: 2,
+      triples: 3, triple: 3,
+      fours: 4, four: 4, rinks: 4, rink: 4,
+      fives: 5, five: 5,
+    };
+    // Support compound formats e.g. "3 Triples, 4 Rinks"
+    const parts = format.split(',').map(s => s.trim());
+    let total = 0;
+    for (const part of parts) {
+      const match = part.match(/^(\d+)\s+(\w+)$/i);
+      if (!match) return null; // any unrecognised segment → can't calculate
+      const count = parseInt(match[1], 10);
+      const size = sizeMap[match[2].toLowerCase()];
+      if (!size) return null;
+      total += count * size;
+    }
+    return total > 0 ? total : null;
+  }
+
   // ============================================================================
   // Render UI
   // ============================================================================
@@ -469,7 +571,7 @@ export default function FriendliesPage() {
             Open for Entry
           </button>
 
-          {/* My Entries / My Played — hidden for guests and kiosk */}
+          {/* My Entries / My Played / My Stats — hidden for guests and kiosk */}
           {!isLimitedView && (
             <>
               <button
@@ -492,12 +594,163 @@ export default function FriendliesPage() {
               >
                 My Played
               </button>
+              <button
+                onClick={() => {
+                  setFilter('stats');
+                  if (!statsData) fetchStats();
+                }}
+                className={`px-4 py-2 font-medium border-b-2 ${
+                  filter === 'stats'
+                    ? 'border-blue-500 text-blue-500'
+                    : 'border-transparent text-gray-600 hover:text-gray-800'
+                }`}
+              >
+                My Stats
+              </button>
             </>
           )}
         </div>
 
-        {/* Games list - show loading, empty state, or game cards */}
-        {loading ? (
+        {/* ── My Stats view ─────────────────────────────────────────────────── */}
+        {filter === 'stats' ? (
+          <div>
+            {/* Captain / Admin: player selector */}
+            {hasRole(session?.user?.role, 'Captain', 'Admin') && (
+              <div className="mb-4 flex items-center gap-3">
+                <label className="text-sm font-medium text-gray-700">Player:</label>
+                <select
+                  value={statsPlayer}
+                  onChange={e => {
+                    setStatsPlayer(e.target.value);
+                    fetchStats(e.target.value);
+                  }}
+                  className="border border-gray-300 rounded px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                >
+                  {/* Show own name first, then others */}
+                  {statsData?.playerList
+                    ? statsData.playerList.map(p => (
+                        <option key={p.userName} value={p.userName}>{p.fullName}</option>
+                      ))
+                    : statsPlayer && (
+                        <option value={statsPlayer}>{statsPlayer}</option>
+                      )}
+                </select>
+              </div>
+            )}
+
+            {/* Loading spinner */}
+            {statsLoading ? (
+              <div className="text-center py-12">
+                <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <p className="mt-2 text-gray-700">Loading stats...</p>
+              </div>
+            ) : !statsData ? (
+              <div className="text-center py-12 text-gray-500">No stats available.</div>
+            ) : (
+              <>
+                {/* Summary / Detail sub-tabs */}
+                <div className="flex gap-1 mb-6">
+                  {(['summary', 'detail'] as const).map(v => (
+                    <button
+                      key={v}
+                      onClick={() => setStatsSubView(v)}
+                      className={`px-4 py-1.5 rounded text-sm font-medium transition-colors ${
+                        statsSubView === v
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}
+                    >
+                      {v === 'summary' ? 'Summary' : 'Detail'}
+                    </button>
+                  ))}
+                </div>
+
+                {/* ── Summary ───────────────────────────────────────────────── */}
+                {statsSubView === 'summary' && (() => {
+                  const s = statsData.summary;
+                  const total = s.selected + s.reserve + s.reserveTeam + s.opposition + s.withdrawn + s.cancelled + s.abandoned + s.entered;
+                  const rows: { label: string; count: number; color: string }[] = [
+                    { label: 'Selected',     count: s.selected,     color: 'bg-green-100 text-green-800 border-green-200' },
+                    { label: 'Reserve',      count: s.reserve,      color: 'bg-yellow-100 text-yellow-800 border-yellow-200' },
+                    { label: 'Reserve Team', count: s.reserveTeam,  color: 'bg-orange-100 text-orange-800 border-orange-200' },
+                    { label: 'Opposition',   count: s.opposition,   color: 'bg-blue-100 text-blue-800 border-blue-200' },
+                    { label: 'Withdrawn',    count: s.withdrawn,    color: 'bg-gray-100 text-gray-700 border-gray-200' },
+                    { label: 'Cancelled',    count: s.cancelled,    color: 'bg-red-100 text-red-700 border-red-200' },
+                    { label: 'Abandoned',    count: s.abandoned,    color: 'bg-orange-100 text-orange-700 border-orange-200' },
+                    { label: 'Entered',      count: s.entered,      color: 'bg-gray-50 text-gray-600 border-gray-200' },
+                  ].filter(r => r.count > 0);
+
+                  return (
+                    <div>
+                      <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+                        {rows.map(r => (
+                          <div key={r.label} className={`border rounded-lg p-4 ${r.color}`}>
+                            <div className="text-2xl font-bold">{r.count}</div>
+                            <div className="text-sm font-medium mt-1">{r.label}</div>
+                          </div>
+                        ))}
+                        <div className="border rounded-lg p-4 bg-gray-800 text-white border-gray-800">
+                          <div className="text-2xl font-bold">{total}</div>
+                          <div className="text-sm font-medium mt-1">Total</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* ── Detail ────────────────────────────────────────────────── */}
+                {statsSubView === 'detail' && (() => {
+                  const STATUS_COLOR: Record<string, string> = {
+                    'Selected':     'bg-green-100 text-green-800',
+                    'Reserve':      'bg-yellow-100 text-yellow-800',
+                    'Reserve Team': 'bg-orange-100 text-orange-800',
+                    'Opposition':   'bg-blue-100 text-blue-800',
+                    'Withdrawn':    'bg-gray-200 text-gray-600',
+                    'Cancelled':    'bg-red-100 text-red-700',
+                    'Abandoned':    'bg-orange-100 text-orange-700',
+                    'Entered':      'bg-gray-100 text-gray-600',
+                  };
+
+                  if (statsData.detail.length === 0) {
+                    return <p className="text-center py-8 text-gray-500">No game entries found.</p>;
+                  }
+
+                  return (
+                    <div className="bg-white rounded-lg shadow overflow-x-auto">
+                      <table className="min-w-full divide-y divide-gray-200 text-sm">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase">Date</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase">Opponent</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase">Format</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-100">
+                          {statsData.detail.map((entry, idx) => (
+                            <tr key={idx} className="hover:bg-gray-50">
+                              <td className="px-4 py-3 text-gray-900 whitespace-nowrap">{entry.date}</td>
+                              <td className="px-4 py-3 text-gray-900">
+                                {entry.clubName}
+                                {entry.homeAway === 'A' && <span className="ml-1 text-xs text-gray-500">(Away)</span>}
+                              </td>
+                              <td className="px-4 py-3 text-gray-700">{entry.format}</td>
+                              <td className="px-4 py-3">
+                                <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${STATUS_COLOR[entry.displayStatus] || 'bg-gray-100 text-gray-600'}`}>
+                                  {entry.displayStatus}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })()}
+              </>
+            )}
+          </div>
+        ) : loading ? (
           // Loading state - show spinner while fetching games
           <div className="text-center py-12">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
@@ -589,9 +842,14 @@ export default function FriendliesPage() {
                       {gameA.status === 'O' && (
                         <div className="mt-2 pt-2 border-t border-gray-100">
                           <p className="font-medium text-gray-900">
-                            {combinedEntered} Player{combinedEntered !== 1 ? 's' : ''} Entered
+                            {combinedEntered} Player{combinedEntered !== 1 ? 's' : ''} Entered{(() => {
+                              const reqA = parseNumberRequired(gameA.format);
+                              const reqB = parseNumberRequired(gameB.format);
+                              const combinedReq = reqA != null && reqB != null ? reqA + reqB : null;
+                              return combinedReq != null ? ` / ${combinedReq} Required` : '';
+                            })()}
                           </p>
-                          {!isLimitedView && (
+                          {!isGuest && (
                             <button
                               onClick={() => {
                                 setSelectedGameForModal(gameA);
@@ -619,7 +877,12 @@ export default function FriendliesPage() {
                       {gameA.status === 'L' && (
                         <div className="mt-2 pt-2 border-t border-gray-100">
                           <p className="font-medium text-gray-900">
-                            {combinedEntered} Player{combinedEntered !== 1 ? 's' : ''} Entered
+                            {combinedEntered} Player{combinedEntered !== 1 ? 's' : ''} Entered{(() => {
+                              const reqA = parseNumberRequired(gameA.format);
+                              const reqB = parseNumberRequired(gameB.format);
+                              const combinedReq = reqA != null && reqB != null ? reqA + reqB : null;
+                              return combinedReq != null ? ` / ${combinedReq} Required` : '';
+                            })()}
                           </p>
                           <p className="text-sm text-amber-700 mt-1">
                             Entries closed — players being allocated between games
@@ -628,10 +891,10 @@ export default function FriendliesPage() {
                       )}
 
                       {/* Special instructions link */}
-                      {gameA.message && (
+                      {gameA.specialInstructions && (
                         <div className="mt-3 pt-2 border-t border-gray-100">
                           <button
-                            onClick={() => setInstructionsMessage(gameA.message)}
+                            onClick={() => setInstructionsMessage(gameA.specialInstructions)}
                             className="text-sm text-amber-700 font-medium hover:text-amber-900 hover:underline"
                           >
                             See Special Instructions
@@ -686,6 +949,7 @@ export default function FriendliesPage() {
               // Standard single game card
               const game = item as GameWithUserStatus;
               const isOnTeaDuty = teaDutyDates.has(game.date);
+              const cardPickupInfo = game.homeAway === 'A' ? (game.pickupInfo || '') : '';
               return (
                 <div
                   key={game.tabName && game.tabName.trim() ? game.tabName : `${game.date}-${game.clubName}-${game.time}-${index}`}
@@ -728,7 +992,11 @@ export default function FriendliesPage() {
                     {/* Home or Away venue */}
                     <p>
                       <span className="font-medium">Venue:</span> {game.homeAway === 'H' ? 'Home' : 'Away'}
+                      {game.homeAway === 'A' && game.petrolCost ? ` — Petrol: £${game.petrolCost.toFixed(2)}` : ''}
                     </p>
+                    {game.homeAway === 'A' && cardPickupInfo && (
+                      <p className="text-gray-600 italic text-sm">{cardPickupInfo}</p>
+                    )}
 
                     {/* Game format (e.g., "Triples", "Pairs") */}
                     <p>
@@ -745,18 +1013,19 @@ export default function FriendliesPage() {
                       const hasCapacity = game.maxPlayers != null && game.maxPlayers > 0;
                       const capacity = calculateCapacity(game);
                       const badgeColor = hasCapacity ? getCapacityBadgeColor(capacity) : 'bg-green-500';
+                      const numberRequired = parseNumberRequired(game.format);
 
                       return (
                         <div className="mt-2 pt-2 border-t border-gray-100">
                           <p className="font-medium text-gray-900">
-                            {game.entered} Player{game.entered !== 1 ? 's' : ''} Entered
+                            {game.entered} Player{game.entered !== 1 ? 's' : ''} Entered{numberRequired != null ? `, ${numberRequired} Required` : ''}
                           </p>
                           {hasCapacity && (
                             <p className="text-gray-700">
                               Capacity: {game.maxPlayers}
                             </p>
                           )}
-                          {!isLimitedView && (
+                          {!isGuest && (
                             <button
                               onClick={() => {
                                 setSelectedGameForModal(game);
@@ -785,10 +1054,10 @@ export default function FriendliesPage() {
                     )}
 
                     {/* Special instructions link */}
-                    {game.message && (
+                    {game.specialInstructions && (
                       <div className="mt-2 pt-2 border-t border-gray-100">
                         <button
-                          onClick={() => setInstructionsMessage(game.message)}
+                          onClick={() => setInstructionsMessage(game.specialInstructions)}
                           className="text-sm text-amber-700 font-medium hover:text-amber-900 hover:underline"
                         >
                           See Special Instructions
@@ -818,35 +1087,65 @@ export default function FriendliesPage() {
                     // Check if game is full and user hasn't already entered
                     const capacity = calculateCapacity(game);
                     const isFull = capacity.isFull && !game.userEntered;
+                    const isChecked = selectedGames.has(game.tabName);
+                    const isAway = game.homeAway === 'A';
+                    const isOwnTransport = ownTransportGames.has(game.tabName);
 
                     return (
-                      <label className={`flex items-center space-x-2 ${isFull ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
-                        <input
-                          type="checkbox"
-                          checked={selectedGames.has(game.tabName)}
-                          disabled={isFull}
-                          onChange={e => {
-                            // Create new Set to trigger state update
-                            const newSelected = new Set(selectedGames);
+                      <div className="space-y-1">
+                        <label className={`flex items-center space-x-2 ${isFull ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            disabled={isFull}
+                            onChange={e => {
+                              // Create new Set to trigger state update
+                              const newSelected = new Set(selectedGames);
 
-                            // Add or remove game from selected set
-                            if (e.target.checked) {
-                              newSelected.add(game.tabName);
-                            } else {
-                              newSelected.delete(game.tabName);
-                            }
+                              // Add or remove game from selected set
+                              if (e.target.checked) {
+                                newSelected.add(game.tabName);
+                              } else {
+                                newSelected.delete(game.tabName);
+                                // Clear own transport when unchecking entry
+                                const newOwnTransport = new Set(ownTransportGames);
+                                newOwnTransport.delete(game.tabName);
+                                setOwnTransportGames(newOwnTransport);
+                              }
 
-                            // Update selected games state
-                            setSelectedGames(newSelected);
-                          }}
-                          className="w-4 h-4 text-blue-500 rounded focus:ring-blue-500 disabled:cursor-not-allowed"
-                        />
+                              // Update selected games state
+                              setSelectedGames(newSelected);
+                            }}
+                            className="w-4 h-4 text-blue-500 rounded focus:ring-blue-500 disabled:cursor-not-allowed"
+                          />
 
-                        {/* Label shows current entry status or full message */}
-                        <span className={`text-sm font-medium ${isFull ? 'text-gray-700' : 'text-blue-500'}`}>
-                          {isFull ? 'Game is full' : (game.userEntered ? 'Entered' : 'Enter this game')}
-                        </span>
-                      </label>
+                          {/* Label shows current entry status or full message */}
+                          <span className={`text-sm font-medium ${isFull ? 'text-gray-700' : 'text-blue-500'}`}>
+                            {isFull ? 'Game is full' : (game.userEntered ? 'Entered' : 'Enter this game')}
+                          </span>
+                        </label>
+
+                        {/* Own Transport checkbox — away games only, shown when entering a new game */}
+                        {isAway && isChecked && !game.userEntered && (
+                          <label className="flex items-center space-x-2 cursor-pointer ml-6">
+                            <input
+                              type="checkbox"
+                              checked={isOwnTransport}
+                              onChange={e => {
+                                const newOwnTransport = new Set(ownTransportGames);
+                                if (e.target.checked) {
+                                  newOwnTransport.add(game.tabName);
+                                } else {
+                                  newOwnTransport.delete(game.tabName);
+                                }
+                                setOwnTransportGames(newOwnTransport);
+                              }}
+                              className="w-4 h-4 text-gray-500 rounded focus:ring-gray-500"
+                            />
+                            <span className="text-sm text-gray-600">Own Transport</span>
+                          </label>
+                        )}
+                      </div>
                     );
                   })()}
 
@@ -865,12 +1164,22 @@ export default function FriendliesPage() {
                   {['S', 'P'].includes(game.status) && (() => {
                     if (!game.userEntered) return <p className="text-sm text-gray-700">Not entered</p>;
                     if (!game.userStatus) return null;
-                    const s = game.userStatus.replace('W', ''); // strip withdrawal suffix
-                    if (s === 'P') return <p className="text-sm font-semibold text-green-700">You are Selected to play</p>;
-                    if (s === 'R') return <p className="text-sm font-semibold text-amber-700">You are a Reserve</p>;
-                    if (s === 'T') return <p className="text-sm font-semibold text-purple-700">Playing — Reserve Rink</p>;
-                    if (s === 'D') return <p className="text-sm text-gray-700">Not selected for this game</p>;
-                    return null;
+                    // Check for withdrawal before anything else
+                    if (game.userStatus.endsWith('W')) return <p className="text-sm font-semibold text-red-600">✗ Withdrawn</p>;
+                    const isSelected = ['P', 'R', 'T'].includes(game.userStatus);
+                    const confirmedSuffix = game.status === 'S' && isSelected
+                      ? game.userConfirmed
+                        ? <span className="font-semibold text-green-600"> — ✓ Confirmed</span>
+                        : <span className="font-semibold text-red-600"> — ✗ Not Confirmed</span>
+                      : null;
+                    return (
+                      <div>
+                        {game.userStatus === 'P' && <p className="text-sm font-semibold text-green-700">You are Selected to play{confirmedSuffix}</p>}
+                        {game.userStatus === 'R' && <p className="text-sm font-semibold text-amber-700">You are a Reserve{confirmedSuffix}</p>}
+                        {game.userStatus === 'T' && <p className="text-sm font-semibold text-purple-700">Playing — Reserve Rink{confirmedSuffix}</p>}
+                        {game.userStatus === 'D' && <p className="text-sm text-gray-700">Not selected for this game</p>}
+                      </div>
+                    );
                   })()}
                 </div>
               );

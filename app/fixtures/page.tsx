@@ -134,7 +134,7 @@ function FixturesPageInner() {
   return (
     <div className="min-h-screen bg-gray-50">
       <Navbar
-        userName={(session?.user as any)?.userName}
+        userName={session?.user?.name ?? undefined}
         userRole={userRole}
         showLogoOnly={isGuest}
       />

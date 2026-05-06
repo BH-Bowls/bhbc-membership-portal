@@ -5,9 +5,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getClubWithContacts, updateClub, deleteClub } from '@/lib/clubs-sheets';
-import { UpdateClubRequest } from '@/lib/types/clubs';
+import { UpdateClubRequest, ClubContact } from '@/lib/types/clubs';
 import { isMember, hasRole } from '@/lib/role-utils';
 import { sendClubChangeNotification } from '@/lib/email/club-change-notifier';
+import { getGames } from '@/lib/friendlies-sheets';
+import { getUserByUsername } from '@/lib/sheets';
 
 /** Returns true if a Club-role user is viewing their own club. */
 function isOwnClub(session: any, clubName: string): boolean {
@@ -42,6 +44,43 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       );
     }
 
+    // For Burgess Hill (our own club), append captains of selected games as contacts
+    let extraContacts: ClubContact[] = [];
+    if (decodedClubName.toLowerCase() === 'burgess hill') {
+      try {
+        const games = await getGames();
+        const selectedWithCaptain = games.filter(g => g.status === 'S' && g.captain);
+        const captainContacts = await Promise.all(
+          selectedWithCaptain.map(async (game, i) => {
+            try {
+              const member = await getUserByUsername(game.captain!);
+              if (!member) return null;
+              const nameParts = (member.fullName || '').trim().split(/\s+/);
+              const firstName = nameParts[0] || '';
+              const lastName = nameParts.slice(1).join(' ') || '';
+              return {
+                _rowNumber: -1 - i,
+                clubName: decodedClubName,
+                role: `Captain of the day - ${game.tabName}`,
+                firstName,
+                lastName,
+                name: member.fullName || '',
+                phoneNumber: member.landline || '',
+                mobileNumber: member.mobile || '',
+                notes: '',
+                email: member.emailAddress || '',
+              } satisfies ClubContact;
+            } catch {
+              return null;
+            }
+          })
+        );
+        extraContacts = captainContacts.filter((c): c is ClubContact => c !== null);
+      } catch (err) {
+        console.error('[GET /api/clubs/[clubName]] Failed to load captain contacts:', err);
+      }
+    }
+
     const role = session?.user?.role || 'Member';
     // Committee/special roles can edit any club; Club role can only edit their own
     const canEdit = !!session && (
@@ -53,6 +92,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({
       ...result,
+      contacts: [...(result.contacts ?? []), ...extraContacts],
       canEdit,
       canDelete,
     });

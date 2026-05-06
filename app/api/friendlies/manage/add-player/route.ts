@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, addPlayerToGameSheet, getGameSheet } from '@/lib/friendlies-sheets';
+import { getGames, addPlayerToGameSheet, updatePlayerEntry } from '@/lib/friendlies-sheets';
 import { AddPlayerRequest } from '@/lib/types/friendlies';
 import { hasRole } from '@/lib/role-utils';
 
@@ -53,33 +53,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
 
-    // Only allow adding players to games in Selecting (X) or Selected (S) status
-    if (!['X', 'S'].includes(game.status)) {
+    // Allow adding players to Open (O), Selecting (X), or Selected (S) games
+    if (!['O', 'X', 'S'].includes(game.status)) {
       return NextResponse.json(
-        { error: 'Can only add players to games with Selecting or Selected status' },
+        { error: 'Can only add players to Open, Selecting, or Selected games' },
         { status: 400 }
       );
     }
 
-    // Fetch current players in this game sheet
-    const existingPlayers = await getGameSheet(game.tabName);
+    // Add player to game sheet with Selected='R' (deduplication handled inside)
+    // This silently skips if they're already in the sheet
+    await addPlayerToGameSheet(game.tabName, user_name, 'R');
 
-    // Check if player already exists (prevent duplicates)
-    // Compare both exact and case-insensitive to catch variations
-    const isDuplicate = existingPlayers.some(
-      player => player.name === user_name || player.name.toLowerCase() === user_name.toLowerCase()
-    );
-
-    // Reject if player is already in the game
-    if (isDuplicate) {
-      return NextResponse.json(
-        { error: `Player ${user_name} is already in this game` },
-        { status: 400 }
-      );
-    }
-
-    // Add player to game sheet and update Players sheet
-    await addPlayerToGameSheet(game.tabName, user_name);
+    // Add 'M' (manually added) to Players column for this player
+    // updatePlayerEntry skips if they already have a status in that column
+    await updatePlayerEntry(user_name, game.tabName, 'M');
 
     // Return success response
     return NextResponse.json({

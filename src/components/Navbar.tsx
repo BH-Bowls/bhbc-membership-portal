@@ -11,7 +11,7 @@ import { useImpersonation } from '@/hooks/useImpersonation';
 import { ImpersonationModal } from './ImpersonationModal';
 import { getNavItemClasses, getProfileIconClasses, getButtonClasses } from '@/config/theme-helpers';
 import { VersionDisplay } from './VersionDisplay';
-import { checkForUnsavedChanges, clearAllDrafts } from '@/lib/form-draft-utils';
+import { checkForUnsavedChanges, clearAllDrafts, getUnsavedChangesSummary } from '@/lib/form-draft-utils';
 import { ConfirmDialog } from './ConfirmDialog';
 
 interface SubMenuItem {
@@ -72,6 +72,22 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
     message: '',
     onConfirm: () => {},
   });
+
+  // Track whether any sessionStorage drafts exist (for amber dot indicator)
+  const [hasDrafts, setHasDrafts] = useState(false);
+
+  // Re-check for drafts on every navigation (pathname change) and on mount
+  useEffect(() => {
+    setHasDrafts(checkForUnsavedChanges());
+  }, [pathname]);
+
+  // Also re-check when another component explicitly clears a draft and fires
+  // the 'drafts-changed' event (e.g. after save, cancel, or orphan cleanup).
+  useEffect(() => {
+    const handler = () => setHasDrafts(checkForUnsavedChanges());
+    window.addEventListener('drafts-changed', handler);
+    return () => window.removeEventListener('drafts-changed', handler);
+  }, []);
 
   // Get session for impersonation state
   const { data: session } = useSession();
@@ -213,6 +229,15 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
       icon: (
         <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+        </svg>
+      ),
+    },
+    {
+      name: 'Rowland Cup',
+      href: '/rowland',
+      icon: (
+        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
         </svg>
       ),
     },
@@ -449,10 +474,11 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
   // Handle logout with unsaved changes warning
   const handleLogout = () => {
     if (checkForUnsavedChanges()) {
+      const summary = getUnsavedChangesSummary();
       setConfirmDialog({
         isOpen: true,
         title: 'Unsaved Changes',
-        message: 'You have unsaved changes. Your work will be lost. Continue?',
+        message: `You have unsaved changes in: ${summary}. If you log out these will be lost. Continue?`,
         confirmLabel: 'Logout Anyway',
         confirmVariant: 'danger',
         onConfirm: () => {
@@ -469,10 +495,11 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
   // Handle switch user with unsaved changes warning
   const handleSwitchUser = () => {
     if (checkForUnsavedChanges()) {
+      const summary = getUnsavedChangesSummary();
       setConfirmDialog({
         isOpen: true,
         title: 'Unsaved Changes',
-        message: 'You have unsaved changes. Your work will be lost. Continue?',
+        message: `You have unsaved changes in: ${summary}. If you switch user these will be lost. Continue?`,
         confirmLabel: 'Switch Anyway',
         confirmVariant: 'danger',
         onConfirm: () => {
@@ -517,10 +544,11 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
   // Handle exit switch with unsaved changes warning
   const handleExitSwitch = () => {
     if (checkForUnsavedChanges()) {
+      const summary = getUnsavedChangesSummary();
       setConfirmDialog({
         isOpen: true,
         title: 'Unsaved Changes',
-        message: 'You have unsaved changes. Your work will be lost. Continue?',
+        message: `You have unsaved changes in: ${summary}. If you exit these will be lost. Continue?`,
         confirmLabel: 'Exit Anyway',
         confirmVariant: 'danger',
         onConfirm: () => {
@@ -606,7 +634,7 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
   );
 
   return (
-    <nav className="sticky top-0 z-50 bg-white shadow-sm">
+    <nav className="sticky top-0 z-50 bg-white shadow-sm print:hidden">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between h-16">
           {/* Logo/Brand — always links to portal root */}
@@ -721,10 +749,20 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
                 // Profile icon in view mode
                 <button
                   onClick={() => setProfileMenuOpen(!profileMenuOpen)}
-                  className={getProfileIconClasses(isImpersonating || false)}
-                  title={isImpersonating ? `Impersonating ${userName}` : userName || 'User Profile'}
+                  className={`relative ${getProfileIconClasses(isImpersonating || false)}`}
+                  title={
+                    isImpersonating
+                      ? `Impersonating ${userName}`
+                      : hasDrafts
+                        ? `${userName || 'User Profile'} — unsaved changes`
+                        : userName || 'User Profile'
+                  }
                 >
                   {getUserInitials(userName)}
+                  {/* Amber dot when there are unsaved drafts */}
+                  {hasDrafts && (
+                    <span className="absolute top-0 right-0 block h-2.5 w-2.5 rounded-full bg-amber-400 ring-2 ring-white"></span>
+                  )}
                 </button>
               )}
               {profileMenuOpen && (
@@ -764,6 +802,11 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
                             {isImpersonating && (
                               <div className="text-xs text-orange-600 font-normal mt-1">
                                 Switched User
+                              </div>
+                            )}
+                            {hasDrafts && (
+                              <div className="text-xs text-amber-600 font-normal mt-1">
+                                Unsaved changes
                               </div>
                             )}
                           </div>

@@ -181,15 +181,13 @@ export default function CompetitionBracketPage({
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="print:hidden">
-        <Navbar
-          userName={session?.user?.name ?? undefined}
-          userRole={session?.user?.role ?? undefined}
-          showLogoOnly={isGuest}
-        />
-      </div>
+      <Navbar
+        userName={session?.user?.name ?? undefined}
+        userRole={session?.user?.role ?? undefined}
+        showLogoOnly={isGuest}
+      />
 
-      <div className="container mx-auto px-4 py-6 max-w-full">
+      <div className="container mx-auto px-4 py-6 max-w-full print:p-0">
         {/* Header */}
         <div className="print:hidden flex flex-wrap items-start justify-between gap-4 mb-6">
           <div>

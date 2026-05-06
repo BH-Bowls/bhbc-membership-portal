@@ -53,6 +53,15 @@ export async function GET(
     // Get all players from game sheet
     const players = await getGameSheet(game.tabName);
 
+    // Mark captain from Games sheet (game.captain = userName).
+    // If the Games sheet has no captain yet, fall back to game sheet captain field (legacy data).
+    if (game.captain) {
+      for (const p of players) {
+        p.captain = p.name === game.captain ? 'Y' : '';
+      }
+    }
+    // (If game.captain is empty, getGameSheet() has already populated captain from the game sheet row)
+
     // Sort players: Selected status (Y, R, T, then blank) → Team number → Position → Surname.
     const selectedOrder: Record<string, number> = { 'Y': 1, 'R': 2, 'T': 3, '': 4 };
     const positionOrder: Record<string, number> = { 'S': 1, '1': 2, '2': 3, '3': 4, '': 5 };
@@ -94,6 +103,8 @@ export async function GET(
         entered: game.entered,
         selected: game.selected,
         reserves: game.reserves,
+        pickupInfo: game.pickupInfo || '',
+        specialInstructions: game.specialInstructions || '',
       },
       players,
     });

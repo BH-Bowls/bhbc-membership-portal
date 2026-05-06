@@ -73,9 +73,15 @@ export async function GET(
       throw err;
     }
 
-    // Filter selected players
+    // Collect withdrawn players (status='W') — these were selected but later withdrew
+    const withdrawnPlayers = allPlayers.filter(p => p.status === 'W');
+
+    // Collect opposition players (selected='O')
+    const oppositionPlayers = allPlayers.filter(p => p.selected === 'O');
+
+    // Filter selected (and not withdrawn) players
     const selectedPlayers = allPlayers.filter(p =>
-      ['Y', 'R', 'T'].includes(p.selected)
+      ['Y', 'R', 'T'].includes(p.selected) && p.status !== 'W'
     );
 
     // Separate into categories
@@ -119,7 +125,7 @@ export async function GET(
           status: p.status,
           driving: game.homeAway === 'A' ? p.driving : undefined,
           carNumber: game.homeAway === 'A' ? p.carNumber : undefined,
-          isCaptain: p.captain === 'Y',
+          isCaptain: game.captain ? p.name === game.captain : p.captain === 'Y',
         })),
       });
     }
@@ -170,19 +176,26 @@ export async function GET(
       status: r.status,
     }));
 
-    // Find captain of day
-    let captainPlayer = null;
-    for (const p of allPlayers) {
-      if (p.captain === 'Y') {
-        captainPlayer = p;
-        break;
-      }
+    // Find captain of day — prefer Games sheet captain (userName), fall back to game sheet flag
+    let captainName = '';
+    if (game.captain) {
+      // New: captain stored as userName on Games sheet
+      const captainPlayer = allPlayers.find(p => p.name === game.captain);
+      captainName = captainPlayer ? captainPlayer.fullName : game.captain;
+    } else {
+      // Legacy: captain marked with 'Y' on individual game sheet row
+      const captainPlayer = allPlayers.find(p => p.captain === 'Y');
+      if (captainPlayer) captainName = captainPlayer.fullName;
     }
 
-    let captainName = '';
-    if (captainPlayer) {
-      captainName = captainPlayer.fullName;  // Use fullName for display
-    }
+    // Build opposition list
+    const oppositionList = oppositionPlayers.map(p => ({ name: p.fullName }));
+
+    // Build withdrawn list (show their name and what they were selected as)
+    const withdrawnList = withdrawnPlayers.map(p => ({
+      name: p.fullName,
+      wasSelected: p.selected === 'Y' ? 'Playing' : p.selected === 'R' ? 'Reserve' : p.selected === 'T' ? 'Reserve Team' : '',
+    }));
 
     // Build match card data
     const matchCardData: MatchCardData = {
@@ -195,10 +208,13 @@ export async function GET(
         format: game.format,
         ladiesMen: game.ladiesMen,
         dress: game.dress,
+        pickupInfo: game.pickupInfo || '',
       },
       teams,
       reserves: reservesList,
       reserveTeams,
+      opposition: oppositionList,
+      withdrawn: withdrawnList,
       captain: captainName,
     };
 
@@ -297,6 +313,8 @@ export async function GET(
           generalInfo: clubDetails.generalInfo,
           petrolCost: clubDetails.petrolCost,
           drivingBand: clubDetails.drivingBand,
+          miles: clubDetails.miles,
+          travelTime: clubDetails.travelTime,
           directionsUrl,
           clubNumber: clubDetails.clubNumber,
           clubMobile: clubDetails.clubMobile,

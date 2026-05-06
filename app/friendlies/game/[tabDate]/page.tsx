@@ -37,6 +37,10 @@ interface GameDetails {
     userPosition: string | null;  // Position user is playing (S, 1, 2, 3)
     userConfirmed: boolean;       // Whether user has confirmed participation
     userName: string;             // Current user's userName for highlighting
+    pickupInfo: string;           // Pickup point information for away games
+    petrolCost: number | null;    // Petrol reimbursement amount for away games (null if not set)
+    miles: string;                // Distance in miles
+    travelTime: string;           // Estimated travel time
   };
 
   // Main teams (playing teams)
@@ -48,6 +52,8 @@ interface GameDetails {
       position: string;           // Position (S, 1, 2, 3)
       status: string;             // Player status code
       isCaptain: boolean;         // Whether this player is captain of day
+      driving?: string;           // Driving assignment (D/B)
+      carNumber?: string;         // Car number for grouping
     }>;
   }>;
 
@@ -70,6 +76,12 @@ interface GameDetails {
       status: string;             // Player status code
     }>;
   }>;
+
+  // Opposition players (SEL=O) shown in dedicated box
+  opposition: Array<{ name: string }>;
+
+  // Withdrawn players (status=W)
+  withdrawn: Array<{ name: string; wasSelected: string }>;
 
   // Captain of the Day
   captainOfDay: string;           // Full name of captain
@@ -243,6 +255,9 @@ export default function GameDetailsPage() {
         // Show success message
         setFlashMessage({ type: 'success', text: 'Participation confirmed!' });
 
+        // Invalidate the friendlies games cache so the list re-fetches when returning
+        sessionStorage.removeItem('friendlies_games_cache');
+
         // Refresh game details to show updated status
         await fetchGameDetails();
       } else {
@@ -302,6 +317,9 @@ export default function GameDetailsPage() {
         // Show success message briefly before redirecting
         setFlashMessage({ type: 'success', text: 'You have withdrawn from this game. Captains have been notified.' });
 
+        // Invalidate the friendlies games cache so the list re-fetches on return
+        sessionStorage.removeItem('friendlies_games_cache');
+
         // Redirect back to friendlies list after a short delay
         setTimeout(() => router.push('/friendlies'), 1500);
       } else {
@@ -352,9 +370,12 @@ export default function GameDetailsPage() {
 
     // Define badge labels and colors for each status
     const badges: { [key: string]: { label: string; color: string } } = {
-      'Y': { label: 'Playing', color: 'bg-green-500' },         // Y = Playing (same as P)
-      'R': { label: 'Reserve', color: 'bg-yellow-500' },        // R = Reserve
-      'T': { label: 'Reserve Team', color: 'bg-orange-500' },   // T = Reserve Team
+      'Y':  { label: 'Playing',              color: 'bg-green-500' },
+      'R':  { label: 'Reserve',              color: 'bg-yellow-500' },
+      'T':  { label: 'Reserve Team',         color: 'bg-orange-500' },
+      'PW': { label: 'Withdrawn (Playing)',       color: 'bg-gray-500' },
+      'RW': { label: 'Withdrawn (Reserve)',       color: 'bg-gray-500' },
+      'TW': { label: 'Withdrawn (Reserve Team)',  color: 'bg-gray-500' },
     };
 
     // Get badge config for this status
@@ -373,6 +394,51 @@ export default function GameDetailsPage() {
         {game.userPosition && ` (${getPositionLabel(game.userPosition)})`}
       </span>
     );
+  };
+
+  /**
+   * Build car sharing groups from team players
+   * Returns grouped cars with drivers/passengers, and own-transport players
+   */
+  const buildCarGroups = (allTeams: GameDetails['teams']): {
+    carGroups: { carNumber: string; driver: string; passengers: string[] }[];
+    ownTransport: string[];
+  } => {
+    const carMap = new Map<string, { driver: string; passengers: string[] }>();
+    const ownTransport: string[] = [];
+
+    const allPlayers = allTeams.flatMap(t => t.players);
+
+    allPlayers.forEach(p => {
+      if (p.carNumber && p.carNumber.toUpperCase() === 'O') {
+        ownTransport.push(p.name);
+      } else if (p.driving === 'Y' && p.carNumber) {
+        if (!carMap.has(p.carNumber)) {
+          carMap.set(p.carNumber, { driver: p.name, passengers: [] });
+        } else {
+          carMap.get(p.carNumber)!.driver = p.name;
+        }
+      } else if (p.carNumber) {
+        if (!carMap.has(p.carNumber)) {
+          carMap.set(p.carNumber, { driver: '', passengers: [p.name] });
+        } else {
+          carMap.get(p.carNumber)!.passengers.push(p.name);
+        }
+      } else if (p.driving === 'Y') {
+        ownTransport.push(p.name);
+      }
+    });
+
+    const carGroups: { carNumber: string; driver: string; passengers: string[] }[] = [];
+    carMap.forEach((value, carNumber) => {
+      if (value.driver && value.passengers.length === 0) {
+        ownTransport.push(value.driver);
+      } else {
+        carGroups.push({ carNumber, driver: value.driver, passengers: value.passengers });
+      }
+    });
+    carGroups.sort((a, b) => a.carNumber.localeCompare(b.carNumber));
+    return { carGroups, ownTransport };
   };
 
   // ============================================================================
@@ -400,7 +466,8 @@ export default function GameDetailsPage() {
   }
 
   // Destructure game details for easier access
-  const { game, teams, reserves, reserveTeams, captainOfDay } = gameDetails;
+  const { game, teams, reserves, reserveTeams, opposition, withdrawn, captainOfDay } = gameDetails;
+
 
   // ============================================================================
   // Render UI
@@ -463,7 +530,8 @@ export default function GameDetailsPage() {
           {/* Game venue and format */}
           <div className="mt-2 space-y-1 text-gray-900">
             <p>
-              <span className="font-medium">Venue:</span> {game.homeAway === 'H' ? 'Home' : 'Away'}
+              <span className="font-medium">Venue:</span>{' '}
+              {game.homeAway === 'H' ? 'Home' : 'Away'}
             </p>
             <p>
               <span className="font-medium">Format:</span> {game.format}
@@ -482,10 +550,18 @@ export default function GameDetailsPage() {
                 {/* User status badge (Playing/Reserve/Reserve Team) */}
                 {getUserStatusBadge()}
 
-                {/* Show confirmation status if confirmed */}
-                {game.userConfirmed && (
-                  <div className="mt-2 text-green-600 text-sm">
+                {/* Show confirmation status — confirmed, not yet confirmed, or withdrawn */}
+                {['PW', 'RW', 'TW'].includes(game.userStatus) ? (
+                  <div className="mt-2 text-gray-600 text-sm font-medium">
+                    ✗ Withdrawn
+                  </div>
+                ) : game.userConfirmed ? (
+                  <div className="mt-2 text-green-700 text-sm font-medium">
                     ✓ Participation confirmed
+                  </div>
+                ) : game.status === 'S' && (
+                  <div className="mt-2 text-amber-700 text-sm font-medium">
+                    ✗ Not yet confirmed
                   </div>
                 )}
               </div>
@@ -503,8 +579,8 @@ export default function GameDetailsPage() {
                   </button>
                 )}
 
-                {/* Withdraw button - show if game is Selected */}
-                {game.status === 'S' && (
+                {/* Withdraw button - show if game is Selected and player hasn't already withdrawn */}
+                {game.status === 'S' && !['PW', 'RW', 'TW'].includes(game.userStatus) && (
                   <button
                     onClick={handleWithdraw}
                     disabled={actionLoading}
@@ -646,6 +722,79 @@ export default function GameDetailsPage() {
                       </div>
                     );})}
                   </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Car Sharing section — away games only */}
+        {game.homeAway === 'A' && (() => {
+          const { carGroups, ownTransport } = buildCarGroups(teams);
+          const hasCarData = carGroups.length > 0 || ownTransport.length > 0;
+          if (!hasCarData && !game.pickupInfo) return null;
+          return (
+            <div className="bg-white rounded-lg shadow border border-gray-200 p-6 mb-6">
+              <h2 className="text-2xl font-bold mb-4 text-gray-900">
+                Car Sharing{game.petrolCost ? ` — Petrol: £${game.petrolCost.toFixed(2)}` : ''}
+              </h2>
+              {(game.miles || game.travelTime) && (
+                <p className="text-sm text-gray-700 mb-3">
+                  {game.miles && <span><span className="font-medium">Distance:</span> {game.miles} miles</span>}
+                  {game.miles && game.travelTime && <span className="mx-2">·</span>}
+                  {game.travelTime && <span><span className="font-medium">Travel time:</span> {game.travelTime} minutes</span>}
+                </p>
+              )}
+              {game.pickupInfo && (
+                <p className="text-sm text-gray-700 mb-3 italic">
+                  <span className="font-medium not-italic">Pickup:</span> {game.pickupInfo}
+                </p>
+              )}
+              {carGroups.map((group, idx) => (
+                <div key={idx} className="mb-3 p-3 bg-gray-50 rounded border border-gray-200">
+                  <p className="font-medium text-gray-900">
+                    Car {group.carNumber}{group.driver ? ` — Driver: ${group.driver}` : ''}
+                  </p>
+                  {group.passengers.length > 0 && (
+                    <p className="text-sm text-gray-700">Passengers: {group.passengers.join(', ')}</p>
+                  )}
+                </div>
+              ))}
+              {ownTransport.length > 0 && (
+                <div className="p-3 bg-gray-50 rounded border border-gray-200">
+                  <p className="font-medium text-gray-900">Own Transport</p>
+                  <p className="text-sm text-gray-700">{ownTransport.join(', ')}</p>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* Opposition Section - show if any opposition players recorded */}
+        {opposition && opposition.length > 0 && (
+          <div className="bg-white rounded-lg shadow border border-blue-200 p-6 mb-6">
+            <h2 className="text-2xl font-bold mb-4 text-blue-700">{game.clubName}</h2>
+            <div className="space-y-2">
+              {opposition.map((player, idx) => (
+                <div key={idx} className="flex items-center p-2 rounded bg-blue-50">
+                  <span className="font-medium text-gray-900">{player.name}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Withdrawn Section - show if any players have withdrawn */}
+        {withdrawn && withdrawn.length > 0 && (
+          <div className="bg-white rounded-lg shadow border border-red-200 p-6 mb-6">
+            <h2 className="text-2xl font-bold mb-4 text-red-600">Withdrawn</h2>
+            <div className="space-y-2">
+              {withdrawn.map((player, idx) => (
+                <div key={idx} className="flex justify-between items-center p-2 rounded bg-red-50">
+                  <span className="font-medium text-gray-500 line-through">{player.name}</span>
+                  {player.wasSelected && (
+                    <span className="text-xs text-gray-500">{player.wasSelected}</span>
+                  )}
                 </div>
               ))}
             </div>

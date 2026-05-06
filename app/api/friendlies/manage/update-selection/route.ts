@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, getGameSheet, updateGameSheet, updateGameCounts } from '@/lib/friendlies-sheets';
+import { getGames, getGameSheet, updateGameSheet, updateGameCounts, updateCaptain } from '@/lib/friendlies-sheets';
 import { UpdateSelectionRequest, UpdateSelectionResponse } from '@/lib/types/friendlies';
 import { hasRole } from '@/lib/role-utils';
 
@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
 
     // Parse request body to get game identifier and selection updates
     const body: UpdateSelectionRequest = await request.json();
-    const { tab_name, selections } = body;
+    const { tab_name, captain_username, selections } = body;
 
     // Fetch all games from Games sheet
     const games = await getGames();
@@ -56,18 +56,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate captain of the day assignment (business rule: only one captain per game)
-    // Filter selections to find players marked as captain
-    const captains = selections.filter(s => s.captain === 'Y');
-
-    // Reject if multiple players are marked as captain
-    if (captains.length > 1) {
-      return NextResponse.json(
-        { error: 'Only one player can be designated as captain of the day' },
-        { status: 400 }
-      );
-    }
-
     // Transform request data from snake_case to camelCase for updateGameSheet function
     // This maps the API contract (snake_case) to internal function parameters (camelCase)
     const mappedSelections = selections.map(s => ({
@@ -77,19 +65,30 @@ export async function POST(request: NextRequest) {
       position: s.position,           // Position code: S=Skip, 1=Lead, 2=Two, 3=Three
       driving: s.driving,             // Driving status: D=Driver, B=Bar, blank=neither
       carNumber: s.car_number,        // Car number for drivers
-      captain: s.captain,             // Captain of day: Y or blank
       status: s.status,               // Confirmation status: Y=Confirmed, W=Withdrawn
     }));
 
     // Update the game sheet with all selection changes in a single batch operation
     await updateGameSheet(game.tabName, mappedSelections);
 
+    // Write captain of the day to the Games sheet (captain_username = '' clears the field)
+    if (captain_username !== undefined) {
+      await updateCaptain(game.tabName, captain_username);
+    }
+
     // Fetch the updated player list from the game sheet to return to client
     const allPlayers = await getGameSheet(game.tabName);
 
+    // Mark the captain on the returned player list (captain is now in Games sheet, not game sheet)
+    if (captain_username !== undefined) {
+      for (const p of allPlayers) {
+        p.captain = captain_username && p.name === captain_username ? 'Y' : '';
+      }
+    }
+
     // Define sort priority orders for logical team display
     // Selection status priority: Playing first, then Reserves, then Reserve Team, then unselected
-    const selectionOrder = { 'Y': 0, 'R': 1, 'T': 2, '': 3 };
+    const selectionOrder: Record<string, number> = { 'Y': 0, 'R': 1, 'T': 2, '': 3, 'O': 4 };
 
     // Position priority: Skip first, then Lead, Two, Three, then unassigned
     const positionOrder = { 'S': 0, '1': 1, '2': 2, '3': 3, '': 4 };

@@ -106,6 +106,33 @@ export function checkForUnsavedChanges(): boolean {
 }
 
 /**
+ * Clear all drafts whose key starts with `FormDraft-{formName}-`.
+ * Use instead of clearDraft when the exact userName may be uncertain
+ * (e.g. session timing issues) to ensure no orphaned draft key is left behind.
+ */
+export function clearDraftsByFormName(formName: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const prefix = `FormDraft-${formName}-`;
+    Object.keys(sessionStorage)
+      .filter(k => k.startsWith(prefix))
+      .forEach(k => sessionStorage.removeItem(k));
+  } catch (error) {
+    console.error(`[clearDraftsByFormName] Failed for ${formName}:`, error);
+  }
+}
+
+/**
+ * Dispatch a browser-level event so other components (e.g. Navbar) can
+ * re-check for unsaved changes immediately after a programmatic draft clear.
+ */
+export function notifyDraftsChanged(): void {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('drafts-changed'));
+  }
+}
+
+/**
  * Clear all form drafts from sessionStorage
  * Used when switching users or logging out
  */
@@ -130,10 +157,26 @@ export function clearAllDrafts(): void {
 }
 
 /**
+ * Human-readable labels for each form draft key.
+ * Used in unsaved-changes warnings to tell the user exactly where their drafts are.
+ */
+const DRAFT_DISPLAY_NAMES: Record<string, string> = {
+  Profile:          'Your profile',
+  Renewals:         'Renewals',
+  FriendliesGame:   'Friendlies game',
+  InternalGame:     'Internal game',
+  CleaningRota:     'Cleaning rota',
+  TeaRota:          'Tea rota',
+  MemberSuggestion: 'Member suggestion',
+  Club:             'Club details',
+  NewClub:          'New club',
+};
+
+/**
  * Get list of all form names with unsaved drafts
  * Useful for showing user which forms have unsaved changes
  *
- * @returns Array of form names with drafts (e.g., ['Profile', 'Renewals'])
+ * @returns Array of raw form names with drafts (e.g., ['Profile', 'Renewals'])
  */
 export function getFormsWithDrafts(): string[] {
   if (typeof window === 'undefined') return []; // Skip on server-side
@@ -155,4 +198,18 @@ export function getFormsWithDrafts(): string[] {
     console.error('[getFormsWithDrafts] Failed to get forms with drafts:', error);
     return [];
   }
+}
+
+/**
+ * Build a human-readable summary of which forms have unsaved drafts.
+ * Used in logout / switch-user warning dialogs.
+ *
+ * @returns E.g. "Your profile, Friendlies game" or empty string if none
+ */
+export function getUnsavedChangesSummary(): string {
+  const rawNames = getFormsWithDrafts();
+  if (rawNames.length === 0) return '';
+
+  const labels = rawNames.map(name => DRAFT_DISPLAY_NAMES[name] ?? name);
+  return labels.join(', ');
 }

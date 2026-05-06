@@ -18,6 +18,7 @@ import {
 } from './types/friendlies';
 import { parseNormalizedDate, normalizeToUKDate } from './date-utils';
 import { withRetry } from './sheets';
+import { getPetrolBands } from './clubs-sheets';
 
 // ============================================================================
 // ENVIRONMENT VARIABLE GETTERS
@@ -405,8 +406,15 @@ export async function getGames(statusFilter?: GameStatus, typeFilter?: GameType[
     // Extract club suffix (appended to club name in UI, e.g. 'A' → 'Henfield A')
     const clubSuffix = get(row, 'club_suffix') || '';
 
-    // Extract optional special instructions message
-    const message = get(row, 'message') || '';
+    // Extract optional special instructions message (column renamed from "Message" to "Special Instructions")
+    const specialInstructions = get(row, 'special_instructions') || get(row, 'message') || '';
+
+    // Extract optional pickup information (for away game car sharing)
+    // Supports both column names "Pickup Info" and "Pickup Information"
+    const pickupInfo = get(row, 'pickup_info') || get(row, 'pickup_information') || '';
+
+    // Extract captain of the day's userName (stored in Games sheet after migration)
+    const captain = get(row, 'captain') || '';
 
     // Build complete Game object
     const game: Game = {
@@ -436,7 +444,9 @@ export async function getGames(statusFilter?: GameStatus, typeFilter?: GameType[
       paired,
       gameType,
       clubSuffix,
-      message,
+      specialInstructions,
+      pickupInfo,
+      captain,
     };
 
     // Add game to array
@@ -616,15 +626,49 @@ export async function updateGameMessage(tabName: string, message: string, rowNum
     throw new Error(`Game not found: ${tabName || `row ${rowNumber}`}`);
   }
 
-  if (colMap['message'] === undefined) {
-    throw new Error('No "Message" column found in Games sheet');
+  // Accept either "Special Instructions" (new name) or "Message" (old name) as the column header
+  const msgColKey = colMap['special_instructions'] !== undefined ? 'special_instructions' : 'message';
+  if (colMap[msgColKey] === undefined) {
+    throw new Error('No "Special Instructions" or "Message" column found in Games sheet');
   }
 
   await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `Games!${getColumnLetter(colMap['message'])}${game.rowNumber}`,
+    range: `Games!${getColumnLetter(colMap[msgColKey])}${game.rowNumber}`,
     valueInputOption: 'RAW',
     requestBody: { values: [[message]] },
+  });
+}
+
+/**
+ * Update the pickup information for a game in the Games sheet.
+ * The 'Pickup Info' column must exist in the Games sheet.
+ */
+export async function updateGamePickupInfo(tabName: string, pickupInfo: string, rowNumber?: number): Promise<void> {
+  const spreadsheetId = getFriendliesSpreadsheetId();
+  const colMap = await getColumnMap(spreadsheetId, 'Games');
+  const sheets = getSheetsClient();
+
+  const games = await getGames();
+  let game = tabName ? games.find(g => g.tabName === tabName) : undefined;
+  if (!game && rowNumber) {
+    game = games.find(g => g.rowNumber === rowNumber);
+  }
+  if (!game) {
+    throw new Error(`Game not found: ${tabName || `row ${rowNumber}`}`);
+  }
+
+  // Accept either "Pickup Info" or "Pickup Information" as the column header
+  const pickupColKey = colMap['pickup_info'] !== undefined ? 'pickup_info' : 'pickup_information';
+  if (colMap[pickupColKey] === undefined) {
+    throw new Error('No "Pickup Info" or "Pickup Information" column found in Games sheet');
+  }
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `Games!${getColumnLetter(colMap[pickupColKey])}${game.rowNumber}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[pickupInfo]] },
   });
 }
 
@@ -705,6 +749,36 @@ export async function updateGameCounts(
 }
 
 /**
+ * Update the captain of the day for a game in the Games sheet
+ * Captain is stored as the player's userName in a "Captain" column on the Games sheet
+ * Pass an empty string to clear the captain designation
+ * @param tabName The game's tab name (used to find the row in Games sheet)
+ * @param captainUserName The userName of the captain, or '' to clear
+ */
+export async function updateCaptain(tabName: string, captainUserName: string): Promise<void> {
+  const spreadsheetId = getFriendliesSpreadsheetId();
+  const colMap = await getColumnMap(spreadsheetId, 'Games');
+
+  // If the Games sheet doesn't have a Captain column yet, do nothing
+  if (colMap['captain'] === undefined) {
+    console.warn('[updateCaptain] No Captain column found in Games sheet — skipping');
+    return;
+  }
+
+  const games = await getGames();
+  const game = games.find(g => g.tabName === tabName);
+  if (!game) throw new Error(`Game not found: ${tabName}`);
+
+  const sheets = getSheetsClient();
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `Games!${getColumnLetter(colMap['captain'])}${game.rowNumber}`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: { values: [[captainUserName]] },
+  });
+}
+
+/**
  * Add players directly to a game sheet tab with their stats
  * Optimized version that fetches all data once and does a single batch write
  * Used by add-players API to add players in one operation
@@ -769,6 +843,7 @@ export async function addPlayersToGameSheetDirect(
   const pickedColIndex = gameSheetColMap['picked'];
   const percentPlayedColIndex = gameSheetColMap['percent_played'];
   const driverBarColIndex = gameSheetColMap['driver_bar'];
+  const selectedColIndex = gameSheetColMap['selected'];
 
   // Calculate starting row for new players
   let nextRow = gameSheetRows.length + 1;
@@ -799,6 +874,14 @@ export async function addPlayersToGameSheetDirect(
         batchData.push({
           range: `'${tabName}'!${getColumnLetter(nameDownColIndex)}${nextRow}:${getColumnLetter(driverBarColIndex)}${nextRow}`,
           values: [[stats.nameDown, stats.picked, percentPlayedDecimal, driverBar.code]],
+        });
+      }
+
+      // Set position to 'R' (Reserve) — same default as addPlayerToGameSheet
+      if (selectedColIndex !== undefined) {
+        batchData.push({
+          range: `'${tabName}'!${getColumnLetter(selectedColIndex)}${nextRow}`,
+          values: [['R']],
         });
       }
 
@@ -912,6 +995,12 @@ export async function createGameColumn(tabName: string): Promise<void> {
 
   // Get the current headers array (or empty array if no headers exist)
   const headers = response.data.values?.[0] || [];
+
+  // If the column already exists (re-opening a previously opened game), skip creation
+  if (headers.some((h: string) => h === tabName)) {
+    console.log('[createGameColumn] Column already exists for tabName:', tabName, '— skipping');
+    return;
+  }
 
   // Calculate the next available column index and letter
   // If there are 10 headers (A-J), next column is K (index 10)
@@ -1462,7 +1551,7 @@ export async function batchUpdatePlayerEntries(
  */
 export async function getEnteredPlayers(
   tabName: string
-): Promise<Array<{ userName: string; fullName: string; status: 'E' | 'M' }>> {
+): Promise<Array<{ userName: string; fullName: string; status: string }>> {
   const spreadsheetId = getFriendliesSpreadsheetId();
   const sheets = getSheetsClient();
 
@@ -1486,7 +1575,7 @@ export async function getEnteredPlayers(
   });
 
   const rows = response.data.values || [];
-  const enteredPlayers: Array<{ userName: string; fullName: string; status: 'E' | 'M' }> = [];
+  const enteredPlayers: Array<{ userName: string; fullName: string; status: string }> = [];
 
   // Get column map to find userName column in Players sheet
   const colMap = await getColumnMap(spreadsheetId, 'Players');
@@ -1524,17 +1613,12 @@ export async function getEnteredPlayers(
     const row = rows[i];
     const entryStatus = row[gameColumnIndex];
 
-    // Only include players with E or M status
-    if (entryStatus === 'E' || entryStatus === 'M') {
+    // Include any player with a non-empty status in this game's column
+    if (entryStatus && entryStatus.trim() !== '') {
       const userName = row[userNameColIndex] || '';
-      // Look up full name from Members sheet
+      if (!userName) continue;
       const fullName = fullNameLookup[userName] || userName;
-
-      enteredPlayers.push({
-        userName,
-        fullName,
-        status: entryStatus as 'E' | 'M',
-      });
+      enteredPlayers.push({ userName, fullName, status: entryStatus });
     }
   }
 
@@ -1996,6 +2080,25 @@ export async function createGameSheet(tabName: string, playerFilter?: string[]):
     }
   }
 
+  // If the sheet already existed, exclude players who are already in it (avoid duplicates)
+  // This handles the re-open scenario: game set back to Upcoming then opened again
+  if (gameSheetExists && enteredPlayers.length > 0) {
+    try {
+      const existingSheetResponse = await sheets.spreadsheets.values.get({
+        spreadsheetId: getFriendliesSpreadsheetId(),
+        range: `'${tabName}'!A2:A`,
+      });
+      const existingRows = existingSheetResponse.data.values || [];
+      const existingUserNames = new Set(existingRows.map((r: any[]) => (r[0] || '').toLowerCase()));
+      // Keep only players NOT already in the sheet
+      const newPlayers = enteredPlayers.filter(u => !existingUserNames.has(u.toLowerCase()));
+      enteredPlayers.length = 0;
+      enteredPlayers.push(...newPlayers);
+    } catch {
+      // If we can't read the sheet, proceed with all entered players (may create duplicates but better than failing)
+    }
+  }
+
   // Add entered players to the game sheet with their stats (if any entered)
   if (enteredPlayers.length > 0) {
     // Get column map for the newly created game sheet
@@ -2076,7 +2179,7 @@ export async function createGameSheet(tabName: string, playerFilter?: string[]):
           });
         }
 
-        // Set all players to Reserve ('R') by default when game is closed
+        // Set all players to Reserve ('R') by default when game is opened
         // Captain then promotes players to Playing ('Y') or Reserve Team ('T')
         if (selectedColIndex !== undefined) {
           const col = getColumnLetter(selectedColIndex);
@@ -2116,6 +2219,184 @@ export async function createGameSheet(tabName: string, playerFilter?: string[]):
 
   // Return count of players added to game sheet
   return { enteredCount: enteredPlayers.length };
+}
+
+/**
+ * Add a single player to an existing game sheet.
+ * Called when a player enters an open game (Selected='R') or when a captain
+ * adds a player via the Add Players button (Selected='R').
+ * Skips silently if the game sheet does not exist or the player is already in it.
+ */
+export async function addPlayerToGameSheet(tabName: string, userName: string, selected: string = 'R', carNumber?: string): Promise<void> {
+  const spreadsheetId = getFriendliesSpreadsheetId();
+  const sheets = getSheetsClient();
+
+  // Confirm the game sheet exists
+  const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
+  const sheetExists = spreadsheet.data.sheets?.some(
+    s => s.properties?.title === tabName
+  );
+  if (!sheetExists) return; // Sheet not created yet — skip
+
+  // Get column map for the game sheet
+  const gameSheetColMap = await getColumnMap(spreadsheetId, tabName);
+  const nameColIndex = gameSheetColMap['name'] ?? gameSheetColMap['user_name'] ?? 0;
+  const nameDownColIndex = gameSheetColMap['name_down'];
+  const pickedColIndex = gameSheetColMap['picked'];
+  const percentPlayedColIndex = gameSheetColMap['percent_played'];
+  const driverBarColIndex = gameSheetColMap['driver_bar'];
+  const selectedColIndex = gameSheetColMap['selected'];
+
+  // Read existing player names to check for duplicates and find next empty row
+  const existingResponse = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${tabName}'!A2:A`,
+  });
+  const existingRows = existingResponse.data.values || [];
+
+  // Check if player is already in the sheet
+  const alreadyIn = existingRows.some((r: any[]) => (r[0] || '').toLowerCase() === userName.toLowerCase());
+  if (alreadyIn) return;
+
+  // Next empty row = header (1) + existing players + 1
+  const nextRow = 2 + existingRows.length;
+
+  // Read Players and Members sheets for stats
+  const playersColMap = await getColumnMap(spreadsheetId, 'Players');
+  const playersResponse = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: 'Players!A:ZZ',
+  });
+  const playersRows = playersResponse.data.values || [];
+  const playersHeaders = playersRows[0] || [];
+
+  const membersSpreadsheetId = getMembersSpreadsheetId();
+  const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
+  const membersResponse = await sheets.spreadsheets.values.get({
+    spreadsheetId: membersSpreadsheetId,
+    range: 'Members!A:ZZ',
+  });
+  const membersRows = membersResponse.data.values || [];
+
+  const stats = getPlayerStatsFromCache(userName, playersRows, playersColMap, playersHeaders, tabName);
+  const driverBar = getDriverBarInfoFromCache(userName, membersRows, membersColMap);
+
+  const batchUpdates: { range: string; values: (string | number)[][] }[] = [];
+
+  // Player name
+  batchUpdates.push({
+    range: `'${tabName}'!${getColumnLetter(nameColIndex)}${nextRow}`,
+    values: [[userName]],
+  });
+
+  if (nameDownColIndex !== undefined) {
+    batchUpdates.push({
+      range: `'${tabName}'!${getColumnLetter(nameDownColIndex)}${nextRow}`,
+      values: [[stats.nameDown]],
+    });
+  }
+
+  if (pickedColIndex !== undefined) {
+    batchUpdates.push({
+      range: `'${tabName}'!${getColumnLetter(pickedColIndex)}${nextRow}`,
+      values: [[stats.picked]],
+    });
+  }
+
+  if (percentPlayedColIndex !== undefined) {
+    const pct = stats.percentPlayed > 1 ? stats.percentPlayed / 100 : stats.percentPlayed;
+    batchUpdates.push({
+      range: `'${tabName}'!${getColumnLetter(percentPlayedColIndex)}${nextRow}`,
+      values: [[pct]],
+    });
+  }
+
+  if (driverBarColIndex !== undefined) {
+    batchUpdates.push({
+      range: `'${tabName}'!${getColumnLetter(driverBarColIndex)}${nextRow}`,
+      values: [[driverBar.code]],
+    });
+  }
+
+  if (selectedColIndex !== undefined) {
+    batchUpdates.push({
+      range: `'${tabName}'!${getColumnLetter(selectedColIndex)}${nextRow}`,
+      values: [[selected]],
+    });
+  }
+
+  // Set car number if provided (e.g. 'O' for own transport)
+  const carNumberColIndex = gameSheetColMap['car_number'];
+  if (carNumber !== undefined && carNumberColIndex !== undefined) {
+    batchUpdates.push({
+      range: `'${tabName}'!${getColumnLetter(carNumberColIndex)}${nextRow}`,
+      values: [[carNumber]],
+    });
+  }
+
+  if (batchUpdates.length > 0) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: { valueInputOption: 'USER_ENTERED', data: batchUpdates },
+    });
+  }
+}
+
+/**
+ * Remove a player's row from a game sheet.
+ * Called when a player removes their own entry from an open game, or when
+ * a captain deletes a player via the Add Players panel.
+ * Clears the entire row so the sheet stays tidy (no gaps in captain's view).
+ */
+export async function removePlayerFromGameSheet(tabName: string, userName: string): Promise<void> {
+  const spreadsheetId = getFriendliesSpreadsheetId();
+  const sheets = getSheetsClient();
+
+  // Confirm the game sheet exists
+  const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
+  const sheetDef = spreadsheet.data.sheets?.find(s => s.properties?.title === tabName);
+  if (!sheetDef) return; // Sheet doesn't exist — nothing to remove
+
+  // Read the name column (column A from row 2) to find the player's row
+  const colMap = await getColumnMap(spreadsheetId, tabName);
+  const nameColIndex = colMap['name'] ?? colMap['user_name'] ?? 0;
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${tabName}'!A2:ZZ`,
+  });
+  const rows = response.data.values || [];
+
+  // Find the player's row (1-indexed: row 2 = rows[0])
+  let playerRowIndex = -1;
+  for (let i = 0; i < rows.length; i++) {
+    if ((rows[i][nameColIndex] || '').toLowerCase() === userName.toLowerCase()) {
+      playerRowIndex = i + 2; // +2 because data starts at row 2
+      break;
+    }
+  }
+
+  if (playerRowIndex === -1) return; // Player not in sheet — nothing to do
+
+  const sheetId = sheetDef.properties?.sheetId;
+  if (sheetId === undefined) return;
+
+  // Delete the row entirely (shifts rows up, no gap)
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [{
+        deleteDimension: {
+          range: {
+            sheetId,
+            dimension: 'ROWS',
+            startIndex: playerRowIndex - 1, // 0-indexed
+            endIndex: playerRowIndex,       // exclusive
+          },
+        },
+      }],
+    },
+  });
 }
 
 /**
@@ -2245,7 +2526,7 @@ export async function getGameSheet(tabName: string): Promise<GameSheetPlayer[]> 
     const position = (get(row, 'position') || '') as '' | 'S' | '1' | '2' | '3';
 
     // Extract driving information
-    const driving = get(row, 'driving') || '';        // D = Driver, B = Bar, '' = Neither
+    const driving = get(row, 'driving') || '';        // Y = Driver, '' = Neither
     const carNumber = get(row, 'car_number') || '';   // Car number for drivers
 
     // Extract status and captain designation
@@ -2315,7 +2596,6 @@ export async function updateGameSheet(
     driving?: string;     // Driving assignment: D=Driver, B=Bar
     carNumber?: string;   // Car number for drivers
     status?: string;      // Player status: W=Withdrawn
-    captain?: string;     // Captain of the day: Y or blank
   }>
 ): Promise<void> {
   // Get spreadsheet ID and column mapping for this game's sheet
@@ -2376,13 +2656,6 @@ export async function updateGameSheet(
       });
     }
 
-    // Add captain of the day designation if provided
-    if (player.captain !== undefined) {
-      updates.push({
-        range: `'${tabName}'!${getColumnLetter(colMap['captain'])}${player.rowNumber}`,
-        values: [[player.captain]],
-      });
-    }
   }
 
   // Only make API call if there are updates to perform
@@ -2878,76 +3151,7 @@ function getDriverBarInfoFromCache(
   return { code, driver, bar };
 }
 
-/**
- * Add a player to a game sheet after entries have closed
- * Used by captains to manually add players who missed the entry deadline
- * Adds player name, fetches their stats, and marks them as 'E' (Entered) in Players sheet
- * Player is added to the next available row after existing players
- * @param tabName The game's tab name (sheet to add player to)
- * @param userName The player's username to add
- */
-export async function addPlayerToGameSheet(
-  tabName: string,
-  userName: string
-): Promise<void> {
-  // Get spreadsheet ID and column mapping for this game's sheet
-  const spreadsheetId = getFriendliesSpreadsheetId();
-  const colMap = await getColumnMap(spreadsheetId, tabName);
-  const sheets = getSheetsClient();
-
-  // Get list of current players to find where to insert the new player
-  const currentPlayers = await getGameSheet(tabName);
-
-  // Calculate next available row number
-  // If there are players, insert after last player; if sheet is empty, insert at row 2 (row 1 is header)
-  const nextRow = currentPlayers.length > 0
-    ? currentPlayers[currentPlayers.length - 1].rowNumber + 1
-    : 2;
-
-  // Write player's name to the game sheet (column may be 'user_name' or 'name')
-  const nameCol = getColumnLetter(colMap['user_name'] ?? colMap['name']);
-  await sheets.spreadsheets.values.update({
-    spreadsheetId,
-    range: `'${tabName}'!${nameCol}${nextRow}`,  // e.g., "'West Hoathly 25-Sep'!A5"
-    valueInputOption: 'USER_ENTERED',
-    requestBody: {
-      values: [[userName]],  // Single cell value (player's username)
-    },
-  });
-
-  // Fetch player statistics from Players sheet
-  const stats = await getPlayerStats(userName);
-
-  // Fetch driver/bar status from Members sheet
-  const driverBar = await getDriverBarInfo(userName);
-
-  // Calculate column range for stats (name_down through driver_bar)
-  const nameDownCol = getColumnLetter(colMap['name_down']);
-  const driverBarCol = getColumnLetter(colMap['driver_bar']);
-  // Write percentPlayed as decimal (0-1) for percentage-formatted cells
-  // Normalize: if value > 1, it's already a percentage (64 -> 0.64)
-  const percentPlayedDecimal = stats.percentPlayed > 1
-    ? stats.percentPlayed / 100
-    : stats.percentPlayed;
-
-  // Write all stats in a single row update
-  await sheets.spreadsheets.values.update({
-    spreadsheetId,
-    range: `'${tabName}'!${nameDownCol}${nextRow}:${driverBarCol}${nextRow}`,  // e.g., "C5:F5"
-    valueInputOption: 'USER_ENTERED',
-    requestBody: {
-      values: [[
-        stats.nameDown,         // How many games player has entered
-        stats.picked,           // How many times selected to play
-        percentPlayedDecimal,   // Percentage as decimal (0.64 for 64%) for percentage-formatted cells
-        driverBar.code,         // D=Driver, B=Bar, DB=Both, ''=Neither
-      ]],
-    },
-  });
-
-  // Mark player as 'E' (Entered) in Players sheet for this game
-  await updatePlayerEntry(userName, tabName, 'E');
-}
+// addPlayerToGameSheet is defined earlier in this file (near createGameSheet)
 
 /**
  * Batch add multiple players to a game sheet
@@ -3252,20 +3456,12 @@ export async function getClubDetails(clubName: string): Promise<ClubDetails | nu
   // Return null if club not found in clubs sheet
   if (!matchingRow) return null;
 
-  // Map driving band letters to petrol cost reimbursement amounts
-  // Band A (closest) = £2.00, Band D (furthest) = £5.00
-  const drivingBandMap: { [key: string]: number } = {
-    'A': 2.00,  // Closest clubs
-    'B': 3.00,  // Medium distance
-    'C': 4.00,  // Far clubs
-    'D': 5.00,  // Furthest clubs
-  };
+  // Get driving band from sheet (A, B, C, or D) — normalise to uppercase for lookup
+  const drivingBand = (get(matchingRow, 'driving_band') || '').trim().toUpperCase();
 
-  // Get driving band from sheet (A, B, C, or D)
-  const drivingBand = get(matchingRow, 'driving_band') || '';
-
-  // Look up petrol cost for this band (defaults to 0 if band not found)
-  const petrolCost = drivingBandMap[drivingBand] || 0;
+  // Look up petrol cost from the PetrolBands sheet (falls back to hardcoded values if sheet missing)
+  const petrolBands = await getPetrolBands();
+  const petrolCost = petrolBands[drivingBand] ?? 0;
 
   // Extract all club details and return ClubDetails object
   return {
@@ -3280,6 +3476,8 @@ export async function getClubDetails(clubName: string): Promise<ClubDetails | nu
     // Driving information
     drivingBand: drivingBand,  // Distance band (A-D)
     petrolCost: petrolCost,    // Calculated reimbursement amount
+    miles: get(matchingRow, 'miles') || '',
+    travelTime: get(matchingRow, 'travel_time') || '',
 
     // Address (stored in 4 separate fields for multiline addresses)
     address1: get(matchingRow, 'address_1') || '',  // First line (street number/name)
@@ -3890,6 +4088,7 @@ export async function createFixture(data: {
   paired?: string;
   maxPlayers?: number;
   message?: string;
+  pickupInfo?: string;
   tabDate?: string;
   tabName?: string;
   status?: string;
@@ -3925,7 +4124,11 @@ export async function createFixture(data: {
   set('dress', data.dress ?? '');
   set('paired', data.paired ?? '');
   if (data.maxPlayers !== undefined) set('max_capacity', data.maxPlayers);
-  set('message', data.message ?? '');
+  // Write to "Special Instructions" column (renamed from "Message"); fall back to old name
+  const msgColKeyCreate = colMap['special_instructions'] !== undefined ? 'special_instructions' : 'message';
+  set(msgColKeyCreate, data.message ?? '');
+  const pickupColKey = colMap['pickup_info'] !== undefined ? 'pickup_info' : 'pickup_information';
+  set(pickupColKey, data.pickupInfo ?? '');
   set('tab_date', data.tabDate ?? '');
   set('tab_name', data.tabName ?? '');
   set('status', data.status ?? '');
@@ -3961,6 +4164,7 @@ export async function updateFixture(
     paired?: string;
     maxPlayers?: number;
     message?: string;
+    pickupInfo?: string;
     tabDate?: string;
     tabName?: string;
     status?: string;
@@ -3998,7 +4202,11 @@ export async function updateFixture(
   addUpdate('dress', fields.dress);
   addUpdate('paired', fields.paired);
   addUpdate('max_capacity', fields.maxPlayers);
-  addUpdate('message', fields.message);
+  // Write to "Special Instructions" column (renamed from "Message"); fall back to old name
+  const msgColKeyUpdate = colMap['special_instructions'] !== undefined ? 'special_instructions' : 'message';
+  if (fields.message !== undefined) addUpdate(msgColKeyUpdate, fields.message);
+  const pickupKey = colMap['pickup_info'] !== undefined ? 'pickup_info' : 'pickup_information';
+  if (fields.pickupInfo !== undefined) addUpdate(pickupKey, fields.pickupInfo);
   addUpdate('tab_date', fields.tabDate);
   addUpdate('tab_name', fields.tabName);
   addUpdate('status', fields.status);

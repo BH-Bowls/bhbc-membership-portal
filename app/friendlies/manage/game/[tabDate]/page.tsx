@@ -11,10 +11,11 @@ import { Navbar } from '@/components/Navbar';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { EnteredPlayersModal } from '@/components/game-management/EnteredPlayersModal';
 import { SelectionHelperDialog } from '@/components/game-management/SelectionHelperDialog';
+import { GameInstructionsDialog } from '@/components/game-management/GameInstructionsDialog';
 import Link from 'next/link';
 import { usePhoneBackNavigation } from '@/hooks/usePhoneBackNavigation';
 import { GameSheetPlayer, Position } from '@/lib/types/friendlies';
-import { saveDraft, restoreDraft, clearDraft } from '@/lib/form-draft-utils';
+import { saveDraft, restoreDraft, clearDraftsByFormName, notifyDraftsChanged } from '@/lib/form-draft-utils';
 import { parseUKDate } from '@/lib/date-utils';
 
 // ============================================================================
@@ -41,6 +42,8 @@ interface GameData {
     entered: number;        // Number of players entered
     selected: number;       // Number of players selected
     reserves: number;       // Number of reserves
+    pickupInfo: string;     // Pickup point / time info (away games)
+    specialInstructions: string; // Optional special instructions message
   };
 
   // List of players with stats and selection info
@@ -74,9 +77,9 @@ function validateSelection(
     warnings.push('No bar volunteer found among selected players (home game).');
   }
 
-  // 3. Away game: incomplete driving / car details
+  // 3. Away game: incomplete driving / car details (reserves not required)
   if (isAway) {
-    const noDetails = selectedPlayers.filter(p => !p.carNumber && p.driving !== 'Y');
+    const noDetails = playingPlayers.filter(p => !p.carNumber && p.driving !== 'Y');
     if (noDetails.length > 0) {
       warnings.push(`Driving details incomplete for: ${noDetails.map(p => p.fullName).join(', ')}.`);
     }
@@ -204,6 +207,9 @@ export default function TeamSelectionPage() {
     message: '',
     onConfirm: () => {},
   });
+
+  // State: Instructions dialog (for editing special instructions and pickup info)
+  const [showInstructionsDialog, setShowInstructionsDialog] = useState(false);
 
   // Ref to track if initial setup has been done for this tabDate
   const setupDoneRef = useRef<string | null>(null);
@@ -427,15 +433,43 @@ export default function TeamSelectionPage() {
   }
 
   /**
+   * Refetch game data and merge into current state.
+   * Called after add/remove player operations to keep the game sheet player list in sync.
+   */
+  async function refreshGameData() {
+    if (!gameData) return;
+    try {
+      const gameResponse = await fetch(`/api/friendlies/manage/game/${tabDate}`);
+      const gameDataResult = await gameResponse.json();
+      if (gameResponse.ok) {
+        setGameData(gameDataResult);
+        if (isEditing) {
+          // Merge: keep existing edits, append any brand-new rows
+          const existingRowNumbers = new Set(players.map(p => p.rowNumber));
+          const newPlayers = gameDataResult.players.filter(
+            (p: GameSheetPlayer) => !existingRowNumbers.has(p.rowNumber)
+          );
+          if (newPlayers.length > 0) {
+            setPlayers(prev => [...prev, ...newPlayers]);
+          }
+        } else {
+          setPlayers(gameDataResult.players);
+          setOriginalPlayers(gameDataResult.players);
+        }
+      }
+    } catch (error) {
+      console.error('Error refreshing game data:', error);
+    }
+  }
+
+  /**
    * Handle adding players via the EnteredPlayersModal
-   * The add-players API now adds players to both Players sheet AND game sheet directly
-   * So we just need to refetch game data to update the UI
+   * The add-players API adds players to both Players sheet AND game sheet directly
    */
   async function handleAddPlayers(playerUserNames: string[]): Promise<{ success: boolean; error?: string }> {
     if (!gameData) return { success: false, error: 'Game data not loaded' };
 
     try {
-      // Call add-players endpoint which adds to Players sheet AND game sheet
       const response = await fetch('/api/friendlies/add-players', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -448,25 +482,7 @@ export default function TeamSelectionPage() {
       const data = await response.json();
 
       if (data.success) {
-        // Refetch game data to get updated player list (skip get-stats, it's done by add-players)
-        const gameResponse = await fetch(`/api/friendlies/manage/game/${tabDate}`);
-        const gameDataResult = await gameResponse.json();
-        if (gameResponse.ok) {
-          setGameData(gameDataResult);
-          // Merge new players with existing edits if editing
-          if (isEditing) {
-            const existingRowNumbers = new Set(players.map(p => p.rowNumber));
-            const newPlayers = gameDataResult.players.filter(
-              (p: GameSheetPlayer) => !existingRowNumbers.has(p.rowNumber)
-            );
-            if (newPlayers.length > 0) {
-              setPlayers([...players, ...newPlayers]);
-            }
-          } else {
-            setPlayers(gameDataResult.players);
-            setOriginalPlayers(gameDataResult.players);
-          }
-        }
+        await refreshGameData();
         return { success: true };
       } else {
         return { success: false, error: data.error || 'Failed to add players' };
@@ -499,14 +515,14 @@ export default function TeamSelectionPage() {
 
     try {
       // 1. Save selection to game sheet
+      const captainUserName = players.find(p => p.captain === 'Y')?.name || '';
       const selections = players.map(p => ({
         row_number: p.rowNumber,
-        selected: p.selected,
+        selected: p.status === 'W' ? '' : p.selected,
         team: p.team,
         position: p.position,
         driving: p.driving,
         car_number: p.carNumber,
-        captain: p.captain,
         status: p.status,
       }));
 
@@ -515,6 +531,7 @@ export default function TeamSelectionPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tab_name: gameData.game.tabName,
+          captain_username: captainUserName,
           selections,
         }),
       });
@@ -557,7 +574,9 @@ export default function TeamSelectionPage() {
 
       setPlayers(updatedPlayers);
       setOriginalPlayers(updatedPlayers);
-      clearDraft(draftFormName, userName);
+      clearDraftsByFormName(draftFormName);      // clears all keys regardless of username
+      sessionStorage.removeItem('friendlies_last_managed');
+      notifyDraftsChanged();                     // tell Navbar to re-check immediately
       setIsEditing(false); isEditingRef.current = false;
       // Success - no alert needed, UI reflects saved state
     } catch (error) {
@@ -567,7 +586,7 @@ export default function TeamSelectionPage() {
     } finally {
       setSaving(false);
     }
-  }, [gameData, players, draftFormName, userName]);
+  }, [gameData, players, draftFormName]);
 
   /**
    * Validate selection then save — shows a warnings modal if issues are found.
@@ -654,9 +673,11 @@ export default function TeamSelectionPage() {
    */
   const handleCancel = useCallback(() => {
     setPlayers(originalPlayers);
-    clearDraft(draftFormName, userName);
+    clearDraftsByFormName(draftFormName);        // clears all keys regardless of username
+    sessionStorage.removeItem('friendlies_last_managed');
+    notifyDraftsChanged();                       // tell Navbar to re-check immediately
     setIsEditing(false); isEditingRef.current = false;
-  }, [originalPlayers, draftFormName, userName]);
+  }, [originalPlayers, draftFormName]);
 
   // ============================================================================
   // Local State Update Functions
@@ -782,7 +803,13 @@ export default function TeamSelectionPage() {
     });
     carGroups.sort((a, b) => a.carNumber.localeCompare(b.carNumber));
 
-    return { teams, reserves, reserveTeams, carGroups, ownTransport };
+    // Opposition players: selected === 'O'
+    const opposition = players.filter(p => p.selected === 'O');
+
+    // Withdrawn players: status === 'W'
+    const withdrawn = players.filter(p => p.status === 'W');
+
+    return { teams, reserves, reserveTeams, carGroups, ownTransport, opposition, withdrawn };
   }, [players]);
 
   // ============================================================================
@@ -846,7 +873,32 @@ export default function TeamSelectionPage() {
 
         {/* Header with back link and game details */}
         <div className="mb-6">
-          <Link href="/friendlies/manage" className="text-blue-600 hover:text-blue-800 mb-2 inline-block">← Back to Manage Games</Link>
+          <div className="flex items-center justify-between mb-2">
+            <Link href="/friendlies/manage" className="text-blue-600 hover:text-blue-800">← Back to Manage Games</Link>
+            <div className="flex gap-2 items-center">
+              {!isEditing && (
+                <button
+                  onClick={startEditing}
+                  className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors flex items-center gap-2 text-sm"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                  Edit Selection
+                </button>
+              )}
+              <button
+                onClick={() => setShowSelectionHelper(true)}
+                className="bg-amber-500 text-white px-4 py-2 rounded hover:bg-amber-600 transition-colors flex items-center gap-1.5 text-sm"
+                title="Selection guidance — bar/drivers, reserve priority, buddy pairs"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.347.347a3.001 3.001 0 01-2.83 2.03H9.76a3 3 0 01-2.83-2.03l-.346-.347z" />
+                </svg>
+                Selection Helper
+              </button>
+            </div>
+          </div>
 
           <h1 className="text-3xl font-bold text-gray-900">{game.clubName} - Team Selection</h1>
 
@@ -878,21 +930,29 @@ export default function TeamSelectionPage() {
         </div>
 
         {/* Action buttons panel */}
-        <div className="bg-white rounded-lg shadow p-4 mb-6 flex flex-wrap gap-3">
-          {/* Edit button - only show when not editing */}
+        <div className="bg-white rounded-lg shadow p-4 mb-6 flex flex-wrap gap-3 items-center">
+          {/* Add Players button — always visible */}
+          <button
+            onClick={() => setShowAddPlayersModal(true)}
+            className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition-colors flex items-center gap-2"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            Add Players
+          </button>
+
+          {/* Instructions button — opens dialog to edit special instructions and pickup info */}
           {!isEditing && (
             <button
-              onClick={startEditing}
-              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors flex items-center gap-2"
+              onClick={() => setShowInstructionsDialog(true)}
+              className="bg-amber-600 text-white px-4 py-2 rounded hover:bg-amber-700 transition-colors"
             >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-              </svg>
-              Edit Selection
+              Instructions
             </button>
           )}
 
-          {/* Publish / Republish — shown when not editing, for X (selecting) or S (published) games */}
+          {/* Publish / Republish — hidden when editing, for X (selecting) or S (published) games */}
           {!isEditing && (game.status === 'X' || game.status === 'S') && (
             <button
               onClick={() => {
@@ -912,48 +972,27 @@ export default function TeamSelectionPage() {
             </button>
           )}
 
-          {/* Add Players button - only show when editing */}
-          {isEditing && (
-            <button
-              onClick={() => setShowAddPlayersModal(true)}
-              className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition-colors flex items-center gap-2"
+          {/* Print Match Card link — hidden when editing */}
+          {!isEditing && (
+            <Link
+              href={`/friendlies/match-card/${tabDate}`}
+              onClick={() => markPrintNavigation(gameData!)}
+              className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition-colors"
             >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
-              Add Players
-            </button>
+              Print Match Card
+            </Link>
           )}
 
-          {/* Print Match Card link - always visible */}
-          <Link
-            href={`/friendlies/match-card/${tabDate}`}
-            onClick={() => markPrintNavigation(gameData!)}
-            className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition-colors"
-          >
-            Print Match Card
-          </Link>
-
-          {/* Print Picker Sheet link - always visible */}
-          <Link
-            href={`/friendlies/manage/picker/${tabDate}`}
-            onClick={() => markPrintNavigation(gameData!)}
-            className="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 transition-colors"
-          >
-            Print Picker Sheet
-          </Link>
-
-          {/* Selection Helper - captain guidance dialog */}
-          <button
-            onClick={() => setShowSelectionHelper(true)}
-            className="bg-amber-500 text-white px-4 py-2 rounded hover:bg-amber-600 transition-colors flex items-center gap-1.5"
-            title="Selection guidance — bar/drivers, reserve priority, buddy pairs"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.347.347a3.001 3.001 0 01-2.83 2.03H9.76a3 3 0 01-2.83-2.03l-.346-.347z" />
-            </svg>
-            Selection Helper
-          </button>
+          {/* Print Picker Sheet link — hidden when editing */}
+          {!isEditing && (
+            <Link
+              href={`/friendlies/manage/picker/${tabDate}`}
+              onClick={() => markPrintNavigation(gameData!)}
+              className="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 transition-colors"
+            >
+              Print Picker Sheet
+            </Link>
+          )}
         </div>
 
             {/* Selection table - main UI for selecting players and assigning teams */}
@@ -984,9 +1023,9 @@ export default function TeamSelectionPage() {
                   {players.map(player => (
                     <tr
                       key={player.rowNumber}
-                      className={player.status === 'W' ? 'bg-red-50' : ''}
+                      className={`text-gray-900 ${player.status === 'W' ? 'bg-red-50' : ''}`}
                     >
-                      <td className="px-2 py-2 text-sm font-medium">
+                      <td className="px-2 py-2 text-sm font-medium text-gray-900">
                         <span
                           className="cursor-help"
                           title={player.last8Games && player.last8Games.length > 0 ? player.last8Games.join('\n') : 'No recent games'}
@@ -1002,7 +1041,7 @@ export default function TeamSelectionPage() {
                       </td>
 
                       <td className="px-2 py-2 text-sm">
-                        <span className="text-xs bg-gray-100 px-2 py-1 rounded">{player.driverBar}</span>
+                        <span className="text-xs bg-gray-100 text-gray-900 px-2 py-1 rounded">{player.driverBar}</span>
                       </td>
 
                       <td className="px-2 py-2">
@@ -1120,8 +1159,8 @@ export default function TeamSelectionPage() {
 
             {/* Instructions panel */}
             <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <h4 className="font-semibold mb-2">Instructions:</h4>
-              <ul className="text-sm space-y-1 list-disc list-inside">
+              <h4 className="font-semibold mb-2 text-gray-900">Instructions:</h4>
+              <ul className="text-sm space-y-1 list-disc list-inside text-gray-900">
                 <li>Player stats are populated when the game is closed and when new players are added</li>
                 <li>Click <strong>Edit Selection</strong> to start editing</li>
                 <li>Select players as Y (Playing), R (Reserve), or T (Reserve Team)</li>
@@ -1144,11 +1183,11 @@ export default function TeamSelectionPage() {
                   previewData.teams.map(team => (
                     <div key={team.team} className="border border-gray-300 rounded bg-white">
                       <div className="bg-gray-100 px-3 py-1 border-b border-gray-300">
-                        <span className="text-sm font-semibold">Team {team.team}</span>
+                        <span className="text-sm font-semibold text-gray-900">Team {team.team}</span>
                       </div>
                       <div className="px-3 py-1">
                         {team.players.map(p => (
-                          <div key={p.rowNumber} className="flex text-sm py-0.5">
+                          <div key={p.rowNumber} className="flex text-sm py-0.5 text-gray-900">
                             <span className="text-gray-700 w-6">{positionLabel(p.position)}</span>
                             <span className="flex-1 ml-2">
                               {p.fullName}
@@ -1167,11 +1206,11 @@ export default function TeamSelectionPage() {
                 {previewData.reserves.length > 0 && (
                   <div className="border border-gray-300 rounded bg-white">
                     <div className="bg-yellow-50 px-3 py-1 border-b border-gray-300">
-                      <span className="text-sm font-semibold">Reserves</span>
+                      <span className="text-sm font-semibold text-gray-900">Reserves</span>
                     </div>
                     <div className="px-3 py-1">
                       {previewData.reserves.map(p => (
-                        <div key={p.rowNumber} className="text-sm py-0.5">{p.fullName}</div>
+                        <div key={p.rowNumber} className="text-sm py-0.5 text-gray-900">{p.fullName}</div>
                       ))}
                     </div>
                   </div>
@@ -1181,9 +1220,9 @@ export default function TeamSelectionPage() {
                 {isAway && (previewData.carGroups.length > 0 || previewData.ownTransport.length > 0) && (
                   <div className="border border-gray-300 rounded bg-white">
                     <div className="bg-blue-50 px-3 py-1 border-b border-gray-300">
-                      <span className="text-sm font-semibold">Car Shares</span>
+                      <span className="text-sm font-semibold text-gray-900">Car Shares</span>
                     </div>
-                    <div className="px-3 py-1 text-sm space-y-1">
+                    <div className="px-3 py-1 text-sm text-gray-900 space-y-1">
                       {previewData.carGroups.map((group, idx) => (
                         <div key={idx} className="py-0.5">
                           <div className="font-medium text-gray-900">Car {group.carNumber}</div>
@@ -1209,7 +1248,7 @@ export default function TeamSelectionPage() {
                 {previewData.reserveTeams.map(team => (
                   <div key={team.team} className="border border-gray-300 rounded bg-white">
                     <div className="bg-orange-100 px-3 py-1 border-b border-gray-300">
-                      <span className="text-sm font-semibold">Reserve Team {team.team}</span>
+                      <span className="text-sm font-semibold text-gray-900">Reserve Team {team.team}</span>
                     </div>
                     <div className="px-3 py-1">
                       {team.players.map(p => (
@@ -1221,6 +1260,34 @@ export default function TeamSelectionPage() {
                     </div>
                   </div>
                 ))}
+
+                {/* Opposition */}
+                {previewData.opposition.length > 0 && (
+                  <div className="border border-blue-300 rounded bg-white">
+                    <div className="bg-blue-50 px-3 py-1 border-b border-blue-300">
+                      <span className="text-sm font-semibold text-blue-700">{gameData!.game.clubName}</span>
+                    </div>
+                    <div className="px-3 py-1">
+                      {previewData.opposition.map(p => (
+                        <div key={p.rowNumber} className="text-sm py-0.5 text-gray-900">{p.fullName}</div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Withdrawn */}
+                {previewData.withdrawn.length > 0 && (
+                  <div className="border border-red-200 rounded bg-white">
+                    <div className="bg-red-50 px-3 py-1 border-b border-red-200">
+                      <span className="text-sm font-semibold text-red-600">Withdrawn</span>
+                    </div>
+                    <div className="px-3 py-1">
+                      {previewData.withdrawn.map(p => (
+                        <div key={p.rowNumber} className="text-sm py-0.5 text-gray-500 line-through">{p.fullName}</div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1245,9 +1312,7 @@ export default function TeamSelectionPage() {
         gameName={game.clubName}
         ladiesMen={game.ladiesMen}
         currentUserRole={session?.user?.role}
-        onPlayersChanged={() => {}} // Refresh handled by onAddPlayers
-        addOnlyMode={true}
-        existingPlayerNames={players.map(p => p.name)}
+        onPlayersChanged={refreshGameData}
         onAddPlayers={handleAddPlayers}
       />
 
@@ -1570,6 +1635,35 @@ export default function TeamSelectionPage() {
             </div>
           </div>
         </div>
+      )}
+      {/* Instructions dialog — edit special instructions and pickup info */}
+      {showInstructionsDialog && gameData && (
+        <GameInstructionsDialog
+          isOpen={showInstructionsDialog}
+          mode="instructions"
+          game={{
+            tabName: gameData.game.tabName,
+            rowNumber: 0, // not needed for instructions mode save (tab_name is sufficient)
+            clubName: gameData.game.clubName,
+            date: gameData.game.date,
+            time: gameData.game.time,
+            format: gameData.game.format,
+            homeAway: gameData.game.homeAway,
+            specialInstructions: gameData.game.specialInstructions || '',
+            pickupInfo: gameData.game.pickupInfo || '',
+          }}
+          onConfirm={() => {
+            setShowInstructionsDialog(false);
+            // Refresh game data to get updated instructions
+            fetch(`/api/friendlies/manage/game/${tabDate}`)
+              .then(r => r.json())
+              .then(data => {
+                if (data.game) setGameData(prev => prev ? { ...prev, game: data.game } : prev);
+              })
+              .catch(() => {/* ignore */});
+          }}
+          onCancel={() => setShowInstructionsDialog(false)}
+        />
       )}
     </div>
   );

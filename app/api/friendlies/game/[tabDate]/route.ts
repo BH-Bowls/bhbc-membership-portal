@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, getGameSheet } from '@/lib/friendlies-sheets';
+import { getGames, getGameSheet, getClubDetails } from '@/lib/friendlies-sheets';
 
 export async function GET(
   request: NextRequest,
@@ -43,12 +43,19 @@ export async function GET(
       );
     }
 
-    // Read game sheet
-    const allPlayers = await getGameSheet(game.tabName);
+    // Read game sheet and club details in parallel (club details needed for petrol cost on away games)
+    const [allPlayers, clubDetailsResult] = await Promise.all([
+      getGameSheet(game.tabName),
+      game.homeAway === 'A' ? getClubDetails(game.clubName).catch(() => null) : Promise.resolve(null),
+    ]);
 
-    // Filter to show only selected players (Selected = Y/R/T)
+    // Collect withdrawn players (status='W') and opposition players (selected='O')
+    const withdrawnPlayers = allPlayers.filter(p => p.status === 'W');
+    const oppositionPlayers = allPlayers.filter(p => p.selected === 'O');
+
+    // Filter to show only selected (not withdrawn) players (Selected = Y/R/T)
     const selectedPlayers = allPlayers.filter(p =>
-      ['Y', 'R', 'T'].includes(p.selected)
+      ['Y', 'R', 'T'].includes(p.selected) && p.status !== 'W'
     );
 
     // Find current user's details
@@ -100,7 +107,9 @@ export async function GET(
           userName: p.name,  // Include userName for current user highlighting
           position: p.position,
           status: p.status,
-          isCaptain: p.captain === 'Y',
+          isCaptain: game.captain ? p.name === game.captain : p.captain === 'Y',
+          driving: p.driving,
+          carNumber: p.carNumber,
         })),
       });
     }
@@ -144,13 +153,16 @@ export async function GET(
       });
     }
 
-    // Find captain of day
-    let captain = null;
-    for (const p of allPlayers) {
-      if (p.captain === 'Y') {
-        captain = p;
-        break;
-      }
+    // Find captain of day — prefer Games sheet captain (userName), fall back to game sheet flag
+    let captainOfDay = '';
+    if (game.captain) {
+      // New: captain stored as userName on Games sheet
+      const captainPlayer = allPlayers.find(p => p.name === game.captain);
+      captainOfDay = captainPlayer ? captainPlayer.fullName : game.captain;
+    } else {
+      // Legacy: captain marked with 'Y' on individual game sheet row
+      const captainPlayer = allPlayers.find(p => p.captain === 'Y');
+      if (captainPlayer) captainOfDay = captainPlayer.fullName;
     }
 
     // Get user's status for this game
@@ -174,11 +186,6 @@ export async function GET(
       userConfirmed = currentUser.status === 'Y';
     }
 
-    let captainOfDay = '';
-    if (captain) {
-      captainOfDay = captain.fullName;  // Use fullName for display
-    }
-
     return NextResponse.json({
       game: {
         tabDate: game.tabDate,
@@ -193,6 +200,10 @@ export async function GET(
         userPosition: userPosition,
         userConfirmed: userConfirmed,
         userName: userName,  // Current user's userName for highlighting
+        pickupInfo: game.pickupInfo || '',
+        petrolCost: clubDetailsResult?.petrolCost ?? null,
+        miles: clubDetailsResult?.miles || '',
+        travelTime: clubDetailsResult?.travelTime || '',
       },
       teams,
       reserves: reserves.map(r => ({
@@ -203,6 +214,11 @@ export async function GET(
         status: r.status,
       })),
       reserveTeams: reserveTeamsList,
+      opposition: oppositionPlayers.map(p => ({ name: p.fullName })),
+      withdrawn: withdrawnPlayers.map(p => ({
+        name: p.fullName,
+        wasSelected: p.selected === 'Y' ? 'Playing' : p.selected === 'R' ? 'Reserve' : p.selected === 'T' ? 'Reserve Team' : '',
+      })),
       captainOfDay: captainOfDay,
     });
   } catch (error) {

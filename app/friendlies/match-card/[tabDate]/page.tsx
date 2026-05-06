@@ -190,13 +190,14 @@ export default function MatchCardPage() {
   // Extract Match Card Data
   // ============================================================================
 
-  const { game, teams, reserves, reserveTeams, captain, teaRota, clubDetails, clubContacts } = matchCard;
+  const { game, teams, reserves, reserveTeams, opposition, withdrawn, captain, teaRota, clubDetails, clubContacts } = matchCard;
 
   // Count rinks
   const rinkCount = teams.length;
 
   // Build car groups for away games
   const { carGroups, ownTransport } = game.homeAway === 'A' ? buildCarGroups(teams) : { carGroups: [], ownTransport: [] };
+
 
   // Format date
   const gameDate = parseUKDate(game.date);
@@ -354,6 +355,44 @@ export default function MatchCardPage() {
                   </div>
                 )}
 
+                {/* Opposition Section */}
+                {opposition && opposition.length > 0 && (
+                  <div className="mt-2 border-2 border-blue-400">
+                    <p className="text-sm font-bold text-center border-b border-blue-400 py-1 text-blue-700">
+                      {game.clubName}
+                    </p>
+                    <table className="w-full border-collapse text-sm">
+                      <tbody>
+                        {opposition.map((player, idx) => (
+                          <tr key={idx}>
+                            <td className="border border-blue-300 px-2 py-px">{player.name}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* Withdrawn Section */}
+                {withdrawn && withdrawn.length > 0 && (
+                  <div className="mt-2 border-2 border-red-300">
+                    <p className="text-sm font-bold text-center border-b border-red-300 py-1 text-red-600">
+                      Withdrawn
+                    </p>
+                    <table className="w-full border-collapse text-sm">
+                      <tbody>
+                        {withdrawn.map((player, idx) => (
+                          <tr key={idx}>
+                            <td className="border border-red-200 px-2 py-px line-through text-gray-500">
+                              {player.name}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
               </div>
 
               {/* ======================================================== */}
@@ -410,12 +449,22 @@ export default function MatchCardPage() {
                 )}
 
                 {/* Car Sharing Section (away games only) */}
-                {game.homeAway === 'A' && (carGroups.length > 0 || ownTransport.length > 0) && (
+                {game.homeAway === 'A' && (carGroups.length > 0 || ownTransport.length > 0 || game.pickupInfo) && (
                   <div className="border-2 border-gray-400 mb-4">
                     <div className="border-b border-gray-400 p-2">
                       <p className="font-bold text-sm">
                         Car Sharing - Petrol : £{clubDetails?.petrolCost?.toFixed(2) || '0.00'}
                       </p>
+                      {(clubDetails?.miles || clubDetails?.travelTime) && (
+                        <p className="text-xs text-gray-700 mt-0.5">
+                          {clubDetails.miles && <span><span className="font-medium">Distance:</span> {clubDetails.miles} miles</span>}
+                          {clubDetails.miles && clubDetails.travelTime && <span className="mx-2">·</span>}
+                          {clubDetails.travelTime && <span><span className="font-medium">Travel time:</span> {clubDetails.travelTime} minutes</span>}
+                        </p>
+                      )}
+                      {game.pickupInfo && (
+                        <p className="text-xs text-gray-700 mt-0.5">{game.pickupInfo}</p>
+                      )}
                     </div>
 
                     {/* Car Groups */}

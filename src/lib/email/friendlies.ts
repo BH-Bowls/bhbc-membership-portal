@@ -6,6 +6,7 @@
 import { sendEmail } from './mailer';
 import { getUserByUsername, getAllUsers } from '../sheets';
 import { Game, GameSheetPlayer } from '../types/friendlies';
+import { hasRole } from '../role-utils';
 
 /**
  * Get email addresses for all captains and admins
@@ -24,17 +25,8 @@ export async function getCaptainEmails(): Promise<string[]> {
 
     // Loop through all users
     for (const user of users) {
-      // Check if user is Captain or Admin
-      let isCaptainOrAdmin = false;
-      if (user.role === 'Captain') {
-        isCaptainOrAdmin = true;
-      }
-      if (user.role === 'Admin') {
-        isCaptainOrAdmin = true;
-      }
-
-      // Skip users who are not Captain/Admin
-      if (!isCaptainOrAdmin) {
+      // Check if user has Captain or Admin role (handles comma-separated roles e.g. "Captain,Rowland")
+      if (!hasRole(user.role, 'Captain', 'Admin')) {
         continue;
       }
 

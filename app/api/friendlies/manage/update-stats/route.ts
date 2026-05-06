@@ -193,9 +193,10 @@ export async function POST(request: NextRequest) {
 
         if (!status) continue;
 
-        // Name Down: only closed-game selected statuses — P, R, T (and withdrawn variants)
-        // D (entered but not selected) and E/M (open games) are excluded
-        if (['P', 'PW', 'R', 'RW', 'T', 'TW'].includes(status)) {
+        // Name Down: only closed-game selected statuses — P, R, T
+        // Withdrawn variants (PW, RW, TW) are excluded — player withdrew so should not count
+        // D (entered but not selected) and E/M (open games) are also excluded
+        if (['P', 'R', 'T'].includes(status)) {
           nameDown++;
         }
 

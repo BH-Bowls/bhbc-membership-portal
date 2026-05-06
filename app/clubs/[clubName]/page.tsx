@@ -183,6 +183,8 @@ export default function ClubDetailPage({ params }: PageProps) {
       website: club.website,
       latitude: club.latitude,
       longitude: club.longitude,
+      miles: club.miles,
+      travelTime: club.travelTime,
     });
     setIsEditingClub(true);
   }
@@ -446,6 +448,7 @@ export default function ClubDetailPage({ params }: PageProps) {
                 'bg-red-500'
               }`}>
                 Band {club.drivingBand}
+                {club.petrolCost > 0 && ` — £${club.petrolCost.toFixed(2)}`}
               </span>
             )}
           </div>
@@ -691,6 +694,26 @@ export default function ClubDetailPage({ params }: PageProps) {
                 </select>
               </div>
               <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Miles</label>
+                <input
+                  type="text"
+                  value={editedClub.miles || ''}
+                  onChange={(e) => setEditedClub({ ...editedClub, miles: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="e.g. 12.5"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Travel Time</label>
+                <input
+                  type="text"
+                  value={editedClub.travelTime || ''}
+                  onChange={(e) => setEditedClub({ ...editedClub, travelTime: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="e.g. 25 mins"
+                />
+              </div>
+              <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Latitude</label>
                 <input
                   type="number"
@@ -719,6 +742,13 @@ export default function ClubDetailPage({ params }: PageProps) {
                 </p>
               ) : (
                 <p className="text-gray-500 italic">Address not specified</p>
+              )}
+              {(club.miles || club.travelTime) && (
+                <p className="mt-2 text-sm text-gray-700">
+                  {club.miles && <span><span className="font-medium">Distance:</span> {club.miles} miles</span>}
+                  {club.miles && club.travelTime && <span className="mx-2">·</span>}
+                  {club.travelTime && <span><span className="font-medium">Travel time:</span> {club.travelTime}</span>}
+                </p>
               )}
             </>
           )}

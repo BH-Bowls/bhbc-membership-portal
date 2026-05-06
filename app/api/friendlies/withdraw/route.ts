@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, getGameSheet, updateGameSheet, updatePlayerEntry, updateGameCounts } from '@/lib/friendlies-sheets';
+import { getGames, getGameSheet, updateGameSheet, updatePlayerEntry, updateGameCounts, removePlayerFromGameSheet } from '@/lib/friendlies-sheets';
 import { sendWithdrawalEmail } from '@/lib/email/friendlies';
 import { WithdrawRequest } from '@/lib/types/friendlies';
 
@@ -54,6 +54,8 @@ export async function POST(request: NextRequest) {
     if (game.status === 'O') {
       // Remove player's entry from Players sheet (set to empty string)
       await updatePlayerEntry(userName, game.tabName, '');
+      // Remove player's row from the individual game sheet
+      await removePlayerFromGameSheet(game.tabName, userName);
 
       // Recalculate entered count in Games sheet
       const { getGoogleSheetsClient } = await import('@/lib/sheets');
