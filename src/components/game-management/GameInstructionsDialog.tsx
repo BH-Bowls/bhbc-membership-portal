@@ -536,19 +536,21 @@ export function GameInstructionsDialog({
             </div>
           )}
 
-          {/* Special Instructions */}
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Special Instructions
-            </label>
-            <textarea
-              value={specialInstructions}
-              onChange={e => setSpecialInstructions(e.target.value)}
-              rows={3}
-              placeholder="e.g. Please wear whites. Meet at the clubhouse 30 minutes before start."
-              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400 resize-y"
-            />
-          </div>
+          {/* Special Instructions — shown when opening a game or editing instructions only */}
+          {(mode === 'open' || mode === 'instructions') && (
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Special Instructions
+              </label>
+              <textarea
+                value={specialInstructions}
+                onChange={e => setSpecialInstructions(e.target.value)}
+                rows={3}
+                placeholder="e.g. Please wear whites. Meet at the clubhouse 30 minutes before start."
+                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400 resize-y"
+              />
+            </div>
+          )}
 
           {/* Away game: Pickup Information */}
           {game.homeAway === 'A' && (

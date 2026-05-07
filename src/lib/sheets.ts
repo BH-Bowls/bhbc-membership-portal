@@ -110,7 +110,11 @@ function applyRetryToValues(sheets: ReturnType<typeof google.sheets>): void {
   }
 }
 
+let _sheetsClient: ReturnType<typeof google.sheets> | null = null;
+
 export function getGoogleSheetsClient() {
+  if (_sheetsClient) return _sheetsClient;
+
   const auth = new google.auth.GoogleAuth({
     credentials: {
       client_email: getServiceAccountEmail(),
@@ -121,6 +125,7 @@ export function getGoogleSheetsClient() {
 
   const sheets = google.sheets({ version: 'v4', auth });
   applyRetryToValues(sheets);
+  _sheetsClient = sheets;
   return sheets;
 }
 

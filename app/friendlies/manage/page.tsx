@@ -530,6 +530,16 @@ export default function ManageGamesPage() {
   // ============================================================================
 
   /** Returns the list of options for the per-row action dropdown */
+  function getDefaultAction(game: Game): string {
+    switch (game.status) {
+      case '':  return 'open';
+      case 'O': return 'close';
+      case 'X': return 'select-team';
+      case 'S': return 'record-result';
+      default:  return '';
+    }
+  }
+
   function getActionOptions(game: Game, isLastManaged: boolean): { value: string; label: string }[] {
     switch (game.status) {
       case '':
@@ -567,7 +577,7 @@ export default function ManageGamesPage() {
 
   /** Execute the selected action for a game row */
   function handleGoAction(game: Game) {
-    const action = actionSelections[game.tabName];
+    const action = actionSelections[game.tabName] ?? getDefaultAction(game);
     if (!action) return;
 
     switch (action) {
@@ -1060,7 +1070,7 @@ export default function ManageGamesPage() {
                         {(() => {
                           const opts = getActionOptions(game, isLastManaged);
                           if (opts.length === 0) return null;
-                          const selected = actionSelections[game.tabName] || '';
+                          const selected = actionSelections[game.tabName] ?? getDefaultAction(game);
                           return (
                             <div className="flex items-center gap-1.5">
                               <select

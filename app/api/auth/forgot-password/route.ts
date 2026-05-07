@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   generatePasswordResetToken,
   countRecentResetRequests,
-  getUserByUsername,
+  getAllUsers,
   updateEmailSentStatus,
   logMemberEmail,
 } from '@/lib/sheets';
@@ -38,40 +38,38 @@ async function sendPasswordResetEmail(
       }
     );
 
-    // Log to MemberEmails sheet
-    await logMemberEmail({
-      userName,
-      emailAddress: email,
-      templateName: 'Password Reset',
-      subject,
-      success: result.success,
-      errorMessage: result.error,
-      sentBy: 'System',
-      attachments: [],
-    });
-
-    // Update Member Email Sent Status in Members sheet
-    await updateEmailSentStatus(userName, result.success, result.error);
+    await Promise.all([
+      logMemberEmail({
+        userName,
+        emailAddress: email,
+        templateName: 'Password Reset',
+        subject,
+        success: result.success,
+        errorMessage: result.error,
+        sentBy: 'System',
+        attachments: [],
+      }),
+      updateEmailSentStatus(userName, result.success, result.error),
+    ]);
 
     return result;
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : 'Unknown error';
     console.error('Error sending password reset email:', error);
 
-    // Log failed attempt to MemberEmails sheet
-    await logMemberEmail({
-      userName,
-      emailAddress: email,
-      templateName: 'Password Reset',
-      subject: 'BHBC Password Reset Request',
-      success: false,
-      errorMessage: errorMsg,
-      sentBy: 'System',
-      attachments: [],
-    });
-
-    // Update Member Email Sent Status in Members sheet
-    await updateEmailSentStatus(userName, false, errorMsg);
+    await Promise.all([
+      logMemberEmail({
+        userName,
+        emailAddress: email,
+        templateName: 'Password Reset',
+        subject: 'BHBC Password Reset Request',
+        success: false,
+        errorMessage: errorMsg,
+        sentBy: 'System',
+        attachments: [],
+      }),
+      updateEmailSentStatus(userName, false, errorMsg),
+    ]);
 
     return { success: false, error: errorMsg };
   }
@@ -106,18 +104,13 @@ export async function POST(request: NextRequest) {
     // Always return success to prevent username/email enumeration
     // But only send email if user exists
     if (token) {
-      // Get user details for email
-      let user = await getUserByUsername(identifier);
       const normalizedIdentifier = identifier.toLowerCase();
-
-      // If not found by username, try finding by email
-      if (!user) {
-        const { getAllUsers } = await import('@/lib/sheets');
-        const allUsers = await getAllUsers();
-        user = allUsers.find(
-          (u) => u.emailAddress?.toLowerCase() === normalizedIdentifier
-        ) || null;
-      }
+      const allUsers = await getAllUsers();
+      const user = allUsers.find(
+        (u) =>
+          u.userName.toLowerCase() === normalizedIdentifier ||
+          (u.emailAddress && u.emailAddress.toLowerCase() === normalizedIdentifier)
+      ) ?? null;
 
       if (user && user.emailAddress) {
         // Get base URL from request

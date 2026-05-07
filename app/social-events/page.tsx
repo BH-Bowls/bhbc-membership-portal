@@ -15,6 +15,8 @@ import { EnteredPlayersModal } from '@/components/game-management/EnteredPlayers
 
 type FilterType = 'all' | 'O' | 'upcoming';
 
+const CACHE_KEY = 'social_events_cache';
+
 export default function SocialEventsPage() {
   const { data: session } = useSession();
   const [events, setEvents] = useState<SocialEvent[]>([]);
@@ -25,21 +27,29 @@ export default function SocialEventsPage() {
   const [detailsModalEvent, setDetailsModalEvent] = useState<SocialEvent | null>(null);
 
   useEffect(() => {
+    const cached = sessionStorage.getItem(CACHE_KEY);
+    if (cached) {
+      setEvents(JSON.parse(cached));
+      setLoading(false);
+      fetchEvents({ silent: true });
+      return;
+    }
     fetchEvents();
   }, []);
 
-  async function fetchEvents() {
-    setLoading(true);
+  async function fetchEvents({ silent = false }: { silent?: boolean } = {}) {
+    if (!silent) setLoading(true);
     try {
       const response = await fetch('/api/social-events/events');
       const data = await response.json();
       if (data.events) {
         setEvents(data.events);
+        sessionStorage.setItem(CACHE_KEY, JSON.stringify(data.events));
       }
     } catch (error) {
-      alert('Failed to load events. Please refresh the page.');
+      if (!silent) alert('Failed to load events. Please refresh the page.');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }
 

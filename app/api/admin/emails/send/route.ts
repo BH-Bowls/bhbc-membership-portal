@@ -210,75 +210,59 @@ export async function POST(request: NextRequest) {
 
               // Check if email send was successful
               if (result.success) {
-                // Increment success counter
                 succeeded++;
 
-                // Log to MemberEmails sheet (full audit trail)
-                await logMemberEmail({
-                  userName: member.userName,
-                  emailAddress: member.emailAddress,
-                  templateName,
-                  subject: templateSubject,
-                  success: true,
-                  sentBy: adminUserName,
-                  attachments: attachmentNames,
-                });
+                await Promise.all([
+                  logMemberEmail({
+                    userName: member.userName,
+                    emailAddress: member.emailAddress,
+                    templateName,
+                    subject: templateSubject,
+                    success: true,
+                    sentBy: adminUserName,
+                    attachments: attachmentNames,
+                  }),
+                  updateEmailSentStatus(member.userName, true),
+                ]);
 
-                // Update Members sheet column (quick reference)
-                await updateEmailSentStatus(member.userName, true);
-
-                // Send success event
-                sendEvent({
-                  type: 'success',
-                  userName,
-                });
+                sendEvent({ type: 'success', userName });
               } else {
-                // Increment failure counter
                 failed++;
 
-                // Log to MemberEmails sheet (full audit trail)
-                await logMemberEmail({
+                await Promise.all([
+                  logMemberEmail({
+                    userName: member.userName,
+                    emailAddress: member.emailAddress,
+                    templateName,
+                    subject: templateSubject,
+                    success: false,
+                    errorMessage: result.error,
+                    sentBy: adminUserName,
+                    attachments: attachmentNames,
+                  }),
+                  updateEmailSentStatus(member.userName, false, result.error),
+                ]);
+
+                sendEvent({ type: 'error', userName, error: result.error || 'Unknown error' });
+              }
+            } catch (error) {
+              failed++;
+
+              const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+
+              await Promise.all([
+                logMemberEmail({
                   userName: member.userName,
                   emailAddress: member.emailAddress,
                   templateName,
                   subject: templateSubject,
                   success: false,
-                  errorMessage: result.error,
+                  errorMessage: errorMsg,
                   sentBy: adminUserName,
                   attachments: attachmentNames,
-                });
-
-                // Update Members sheet column (quick reference)
-                await updateEmailSentStatus(member.userName, false, result.error);
-
-                // Send error event
-                sendEvent({
-                  type: 'error',
-                  userName,
-                  error: result.error || 'Unknown error',
-                });
-              }
-            } catch (error) {
-              // Increment failure counter
-              failed++;
-
-              // Get error message
-              const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-
-              // Log to MemberEmails sheet (full audit trail)
-              await logMemberEmail({
-                userName: member.userName,
-                emailAddress: member.emailAddress,
-                templateName,
-                subject: templateSubject,
-                success: false,
-                errorMessage: errorMsg,
-                sentBy: adminUserName,
-                attachments: attachmentNames,
-              });
-
-              // Update Members sheet column (quick reference)
-              await updateEmailSentStatus(member.userName, false, errorMsg);
+                }),
+                updateEmailSentStatus(member.userName, false, errorMsg),
+              ]);
 
               // Send error event
               sendEvent({

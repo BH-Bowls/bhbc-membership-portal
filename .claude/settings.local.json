@@ -48,7 +48,9 @@
       "Bash(xargs -I {} sh -c 'echo \"=== {} ===\" && head -30 {}')",
       "Bash(xargs -I {} head -20 {})",
       "Bash(awk -F: '$2 > 1130 && $2 < 1250')",
-      "Bash(git diff *)"
+      "Bash(git diff *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\liam\\\\Documents\\\\bhbc-membership-portal\" -Recurse -Filter \"*.ts\" -o File)",
+      "Bash(Select-Object -ExpandProperty FullName)"
     ]
   }
 }

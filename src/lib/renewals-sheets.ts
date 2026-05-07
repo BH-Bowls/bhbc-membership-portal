@@ -8,13 +8,13 @@ import {
   getColumnLetter,
   updateEmailSentStatus,
   logMemberEmail,
+  getGoogleSheetsClient,
 } from './sheets';
 import {
   createRowFieldGetter,
   createRowNumberGetter,
   wrapError,
 } from './banking-sheets';
-import { google } from 'googleapis';
 import { sendTemplateEmail, isEmailConfigured } from './email/mailer';
 
 // ============================================================================
@@ -105,30 +105,6 @@ function getSpreadsheetId(): string {
   const id = process.env.MEMBERS_SPREADSHEET_ID;
   if (!id) throw new Error('MEMBERS_SPREADSHEET_ID not set');
   return id;
-}
-
-function getServiceAccountEmail(): string {
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  if (!email) throw new Error('GOOGLE_SERVICE_ACCOUNT_EMAIL not set');
-  return email;
-}
-
-function getPrivateKey(): string {
-  const key = process.env.GOOGLE_PRIVATE_KEY;
-  if (!key) throw new Error('GOOGLE_PRIVATE_KEY not set');
-  return key.replace(/\\n/g, '\n');
-}
-
-function getGoogleSheetsClient() {
-  const auth = new google.auth.GoogleAuth({
-    credentials: {
-      client_email: getServiceAccountEmail(),
-      private_key: getPrivateKey(),
-    },
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-  });
-
-  return google.sheets({ version: 'v4', auth });
 }
 
 // Email transporter moved to centralized email/mailer.ts

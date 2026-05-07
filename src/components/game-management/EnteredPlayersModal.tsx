@@ -407,7 +407,7 @@ export function EnteredPlayersModal({
 
                 {/* Selected players list */}
                 {selectedPlayers.length > 0 && (
-                  <div className="mt-4 space-y-2">
+                  <div className="mt-4 max-h-64 overflow-y-auto space-y-2 pr-1">
                     {selectedPlayers.map(userName => {
                       const player = availablePlayers.find(p => p.userName === userName);
                       return (

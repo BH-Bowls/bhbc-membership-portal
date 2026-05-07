@@ -171,25 +171,14 @@ export async function updateRowlandComp(
   const colMap = await getColumnMap('RowlandControl', sid());
   const sheets = getGoogleSheetsClient();
 
-  // Find the row number for this compId
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId: sid(),
-    range: 'RowlandControl!A:A',
-  });
-  const rows = response.data.values ?? [];
-  const compIdColIdx = colMap['comp_id'];
-  const rowNumber = rows.findIndex((r, i) => i > 0 && r[0] === compId) + 1;
-  if (rowNumber < 1) throw new Error(`Comp ${compId} not found in RowlandControl`);
-  const sheetRow = rowNumber + 1; // +1 because findIndex is 0-based and we skip header
-
-  // Re-fetch full row to get compIdCol position correct
   const fullResp = await sheets.spreadsheets.values.get({
     spreadsheetId: sid(),
-    range: `RowlandControl!A:Z`,
+    range: 'RowlandControl!A:Z',
   });
   const allRows = fullResp.data.values ?? [];
+  const compIdColIdx = colMap['comp_id'];
   const dataRowIdx = allRows.findIndex((r, i) => i > 0 && String(r[compIdColIdx] ?? '') === compId);
-  if (dataRowIdx < 0) throw new Error(`Comp ${compId} not found`);
+  if (dataRowIdx < 0) throw new Error(`Comp ${compId} not found in RowlandControl`);
   const actualSheetRow = dataRowIdx + 1; // 1-based sheet row
 
   const fieldMap: Record<string, string | number | null> = {};

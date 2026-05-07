@@ -104,6 +104,21 @@ export default function HelpFriendliesPage() {
             </Step>
           </HelpSection>
 
+          <HelpSection title="Away games">
+            <Body>
+              Away game cards show additional travel information to help you plan:
+            </Body>
+            <div className="mt-1 space-y-1 text-sm text-gray-700 mb-2">
+              <p><strong>Pickup information</strong> — shown in italics on the card once the Captain has set it. This details where and when cars are leaving from.</p>
+              <p><strong>Petrol cost</strong> — shown next to the Away badge if a reimbursement amount has been set.</p>
+            </div>
+            <Body>
+              When you tick a checkbox to enter an away game, an <strong>Own Transport</strong> option
+              appears below the checkbox. Tick this if you are making your own way to the venue and
+              do not need a lift — the Captain can see this when arranging lifts.
+            </Body>
+          </HelpSection>
+
           <HelpSection title="Team sheet">
             <Body>
               Once the Captain has selected the team and published the game, a{' '}
@@ -125,8 +140,39 @@ export default function HelpFriendliesPage() {
               <p><span className="text-gray-500">Not entered</span> — you did not enter this game.</p>
             </div>
             <Body>
+              The team sheet also lists any <strong>Opposition players</strong> — BHBC members who
+              are playing for the opposing team that day.
+            </Body>
+            <Body>
               Use the <strong>My Entries</strong> tab to quickly find your upcoming games.
             </Body>
+          </HelpSection>
+
+          <HelpSection title="My Stats">
+            <Body>
+              The <strong>My Stats</strong> tab shows a complete record of every friendly you have
+              been involved in.
+            </Body>
+            <Body>
+              The <strong>Summary</strong> sub-view shows totals for each outcome:
+            </Body>
+            <div className="mt-1 space-y-1 text-sm text-gray-700 mb-2">
+              <p><strong>Selected</strong> — you were in the main playing team.</p>
+              <p><strong>Reserve</strong> — you were on the reserve list.</p>
+              <p><strong>Reserve Team</strong> — you played in a reserve rink.</p>
+              <p><strong>Opposition</strong> — you played for the opposing team.</p>
+              <p><strong>Withdrawn</strong> — you withdrew after being selected.</p>
+              <p><strong>Cancelled / Abandoned</strong> — the game did not complete.</p>
+              <p><strong>Entered</strong> — you entered but the game has not yet closed.</p>
+            </div>
+            <Body>
+              Switch to <strong>Detail</strong> to see the full per-game list, sorted most recent
+              first, with the club, date, format, and your status for each game.
+            </Body>
+            <Note>
+              Captains and Admins see a player selector at the top of the My Stats tab and can view
+              the stats for any member.
+            </Note>
           </HelpSection>
 
           <HelpSection title="Confirming and withdrawing once selected">

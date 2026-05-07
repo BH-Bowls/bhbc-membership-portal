@@ -816,7 +816,7 @@ const SETTINGS_SHEET = 'CompetitionsSettings';
 
 export async function getCompetitionMessage(): Promise<string> {
   const spreadsheetId = getCompetitionsSpreadsheetId();
-  const sheets = await getGoogleSheetsClient();
+  const sheets = getGoogleSheetsClient();
 
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
@@ -835,7 +835,7 @@ export async function getCompetitionMessage(): Promise<string> {
 
 export async function setCompetitionMessage(message: string): Promise<void> {
   const spreadsheetId = getCompetitionsSpreadsheetId();
-  const sheets = await getGoogleSheetsClient();
+  const sheets = getGoogleSheetsClient();
 
   // Find the row with key 'message'
   const res = await sheets.spreadsheets.values.get({

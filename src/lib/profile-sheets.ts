@@ -8,9 +8,9 @@ import {
   getColumnMap,
   getColumnLetter,
   clearColumnMapCache,
+  getGoogleSheetsClient,
 } from './sheets';
 import { wrapError, camelToSnakeCase } from './banking-sheets';
-import { google } from 'googleapis';
 
 // Re-export for convenience
 export { type User };
@@ -19,54 +19,10 @@ export { type User };
 // Environment Getters
 // ============================================================================
 
-/**
- * Get the Google Sheets spreadsheet ID from environment variables
- * This is the Members spreadsheet that contains user profile data
- */
 function getSpreadsheetId(): string {
   const id = process.env.MEMBERS_SPREADSHEET_ID;
   if (!id) throw new Error('MEMBERS_SPREADSHEET_ID not set');
   return id;
-}
-
-/**
- * Get the Google service account email from environment variables
- * This is used for authentication with Google Sheets API
- */
-function getServiceAccountEmail(): string {
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  if (!email) throw new Error('GOOGLE_SERVICE_ACCOUNT_EMAIL not set');
-  return email;
-}
-
-/**
- * Get the Google service account private key from environment variables
- * The key contains escaped newlines (\n) that need to be converted to actual newlines
- */
-function getPrivateKey(): string {
-  const key = process.env.GOOGLE_PRIVATE_KEY;
-  if (!key) throw new Error('GOOGLE_PRIVATE_KEY not set');
-
-  // Convert escaped newlines to actual newlines for the private key
-  return key.replace(/\\n/g, '\n');
-}
-
-/**
- * Create an authenticated Google Sheets API client
- * Uses service account credentials for server-side access
- */
-function getGoogleSheetsClient() {
-  // Set up authentication with service account credentials
-  const auth = new google.auth.GoogleAuth({
-    credentials: {
-      client_email: getServiceAccountEmail(),
-      private_key: getPrivateKey(),
-    },
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-  });
-
-  // Return authenticated sheets client
-  return google.sheets({ version: 'v4', auth });
 }
 
 // ============================================================================

@@ -38,67 +38,36 @@ export async function POST(request: NextRequest) {
     // Fetch all games to verify each game exists and is open
     const allGames = await getGames();
 
-    // Initialize results array to track success/failure for each game
-    const results: EnterGamesResponse['results'] = [];
-
-    // Process each game entry request
-    for (const tabName of game_ids) {
-      try {
-        // Find the game in our games list
-        let game = null;
-        for (const g of allGames) {
-          if (g.tabName === tabName) {
-            game = g;
-            break;
-          }
-        }
-
-        // Skip if game doesn't exist
-        if (!game) {
-          results.push({ game_id: tabName, entered: false, error: 'Game not found' });
-          continue;
-        }
-
-        // Only allow entry if game status is 'O' (Open)
-        if (game.status !== 'O') {
-          results.push({ game_id: tabName, entered: false, error: 'Game not open for entry' });
-          continue;
-        }
-
-        // Check capacity limits (if maxPlayers is set)
-        if (game.maxPlayers && game.maxPlayers > 0) {
-          const capacityCheck = canEnterGame(game, false); // Friendlies don't allow waitlist
-          if (!capacityCheck.canEnter) {
-            results.push({
-              game_id: tabName,
-              entered: false,
-              error: capacityCheck.reason || 'Cannot enter game'
-            });
-            continue;
-          }
-        }
-
-        // Update this user's entry in Players sheet to 'E' (Entered)
-        // Also add the player to the individual game sheet with Selected='R'
+    // Process all game entries in parallel — each game writes to a different
+    // column in Players sheet and a different game sheet tab, so no conflicts.
+    const results: EnterGamesResponse['results'] = await Promise.all(
+      game_ids.map(async (tabName) => {
         try {
-          await updatePlayerEntry(userName, game.tabName, 'E');
-          // Add to game sheet (silently skipped if sheet doesn't exist yet)
-          const gameCarNumber = car_numbers?.[tabName];
-          await addPlayerToGameSheet(game.tabName, userName, 'R', gameCarNumber);
-          results.push({ game_id: tabName, entered: true });
-        } catch (updateError: any) {
-          // Record error if update fails
-          results.push({
-            game_id: tabName,
-            entered: false,
-            error: updateError.message || 'Update failed'
-          });
+          const game = allGames.find(g => g.tabName === tabName);
+
+          if (!game) return { game_id: tabName, entered: false, error: 'Game not found' };
+          if (game.status !== 'O') return { game_id: tabName, entered: false, error: 'Game not open for entry' };
+
+          if (game.maxPlayers && game.maxPlayers > 0) {
+            const capacityCheck = canEnterGame(game, false); // Friendlies don't allow waitlist
+            if (!capacityCheck.canEnter) {
+              return { game_id: tabName, entered: false, error: capacityCheck.reason || 'Cannot enter game' };
+            }
+          }
+
+          try {
+            await updatePlayerEntry(userName, game.tabName, 'E');
+            const gameCarNumber = car_numbers?.[tabName];
+            await addPlayerToGameSheet(game.tabName, userName, 'R', gameCarNumber);
+            return { game_id: tabName, entered: true };
+          } catch (updateError: any) {
+            return { game_id: tabName, entered: false, error: updateError.message || 'Update failed' };
+          }
+        } catch {
+          return { game_id: tabName, entered: false, error: 'Processing failed' };
         }
-      } catch (error) {
-        // Catch any unexpected errors for this game
-        results.push({ game_id: tabName, entered: false, error: 'Processing failed' });
-      }
-    }
+      })
+    );
 
     // Update entered counts in Games sheet for all successfully entered games
     // This requires counting actual entries in Players sheet to get accurate totals

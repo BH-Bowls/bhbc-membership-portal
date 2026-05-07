@@ -42,19 +42,40 @@ export default function HelpFriendlyManagementPage() {
             </div>
           </HelpSection>
 
+          <HelpSection title="The Actions dropdown">
+            <Body>
+              Each game row has a dropdown and a green <strong>Go</strong> button. The dropdown
+              pre-selects the most common next action for each status — so for an Open game it
+              defaults to <em>Close Entries</em>, for a Selecting game it defaults to{' '}
+              <em>Select Team</em>, and so on. Click <strong>Go</strong> to run it, or change the
+              dropdown first if you want a different action.
+            </Body>
+            <Body>
+              All available actions for a game&apos;s current status are listed in the dropdown,
+              including the backward steps described below.
+            </Body>
+          </HelpSection>
+
           <HelpSection title="Opening a game for entries">
             <Step n={1}>Go to <strong>Friendly Management</strong> from the navigation menu.</Step>
             <Step n={2}>Find the game in the <strong>Upcoming</strong> tab (or All).</Step>
-            <Step n={3}>Click <strong>Open</strong> in the Actions column and confirm.</Step>
+            <Step n={3}>Select <strong>Open</strong> from the dropdown and click <strong>Go</strong>, or click Go directly if Open is already the default.</Step>
+            <Step n={4}>
+              A dialog appears. For <strong>away games</strong>, club details (distance, travel time,
+              general information) are shown automatically. You can set the{' '}
+              <strong>Pickup Information</strong> — where and when cars leave — at this point, or
+              add it later. For away games, a default pickup time is pre-calculated from the travel
+              time and match start time.
+            </Step>
+            <Step n={5}>Optionally add <strong>Special Instructions</strong> (dress code, early arrival, etc.), then click <strong>Open</strong>.</Step>
             <Body>
-              The game is now open. Members can enter from the Friendlies page. The entry count
-              updates live as members add themselves.
+              Members can now enter from the Friendlies page. The entry count updates live.
             </Body>
           </HelpSection>
 
           <HelpSection title="Closing entries and selecting the team">
-            <Step n={1}>When you are ready to pick the team, click <strong>Close</strong> next to the game.</Step>
-            <Step n={2}>Confirm — this closes entries and creates an internal selection sheet.</Step>
+            <Step n={1}>When you are ready to pick the team, select <strong>Close Entries</strong> and click <strong>Go</strong>.</Step>
+            <Step n={2}>A dialog appears. For away games you can update the <strong>Pickup Information</strong> before closing. Click <strong>Close</strong> — this closes entries and creates an internal selection sheet.</Step>
             <Step n={3}>Click <strong>Select Team</strong> to open the selection page.</Step>
             <Step n={4}>Mark each player as Playing, Reserve, or Reserve Team.</Step>
             <Step n={5}>Assign a team number and position (Skip, Lead, 2nd, 3rd) to playing members.</Step>
@@ -172,26 +193,30 @@ export default function HelpFriendlyManagementPage() {
 
           <HelpSection title="Publishing the selection">
             <Body>
-              You can publish from two places — the <strong>Manage list</strong> (Publish button in
-              the Actions column) or directly from the <strong>selection page</strong> (the teal
-              Publish button in the toolbar, visible when you are not editing).
+              You can publish from two places — the <strong>Manage list</strong> (select Publish
+              from the dropdown and click Go) or directly from the <strong>selection page</strong>{' '}
+              (the teal Publish button in the toolbar, visible when you are not editing).
             </Body>
-            <Step n={1}>Click <strong>Publish</strong>. A dialog appears with options.</Step>
+            <Step n={1}>Click <strong>Publish</strong>. A dialog appears.</Step>
             <Step n={2}>
+              For away games, you can review or update the <strong>Pickup Information</strong>
+              before publishing — this is what appears on the game card for members.
+            </Step>
+            <Step n={3}>
               Tick <strong>Email entered players</strong> to send a personalised notification to
               each person who entered the game. Each email shows their individual status (Selected,
               Reserve, or not selected), team details, and a link to view and sign off their name
               online or at the clubhouse.
             </Step>
-            <Step n={3}>
+            <Step n={4}>
               For home games, tick <strong>Email tea rota</strong> to notify the members assigned
               to tea duty.
             </Step>
-            <Step n={4}>
+            <Step n={5}>
               Before sending to everyone, click <strong>Send Test Email</strong> to receive a
               preview of the email at your own address. You can do this as many times as you like.
             </Step>
-            <Step n={5}>Click <strong>Publish</strong> to confirm.</Step>
+            <Step n={6}>Click <strong>Publish</strong> to confirm.</Step>
             <Body>
               Once published, members can see the full team on the Friendlies page. The selection
               page toolbar shows an orange <strong>Republish</strong> button — use this if you
@@ -205,18 +230,66 @@ export default function HelpFriendlyManagementPage() {
             </Note>
           </HelpSection>
 
-          <HelpSection title="Adding a special instructions message">
+          <HelpSection title="Special Instructions and Pickup Information">
             <Body>
-              Any game (at any active status) can have a message attached — for example, a change
-              of dress code, an early arrival request, or parking information.
+              Both fields can be set or changed at any point using the{' '}
+              <strong>Instructions</strong> button on the game editor page (the teal button in the
+              toolbar when not in edit mode).
             </Body>
-            <Step n={1}>Click <strong>Message</strong> in the Actions column next to the game.</Step>
-            <Step n={2}>Type the instructions in the dialog and click <strong>Save</strong>.</Step>
-            <Step n={3}>Members will see a <strong>See Special Instructions</strong> link on the game card, which opens the message in a popup.</Step>
+            <div className="mt-1 space-y-1 text-sm text-gray-700 mb-2">
+              <p>
+                <strong>Special Instructions</strong> — a free-text message members see as a{' '}
+                <em>See Special Instructions</em> link on the game card. Use it for dress code
+                changes, early arrival requests, parking notes, etc. Available when opening a game
+                or via the Instructions button.
+              </p>
+              <p>
+                <strong>Pickup Information</strong> — shown on the game card for away games,
+                below the date and time. Use it to detail which cars are going and where they
+                are picking up from. Available on all away game dialogs (Open, Close, Publish, and
+                Instructions).
+              </p>
+            </div>
             <Tip>
-              The Message button is amber when a message already exists, grey when there is none.
-              Clear the text and save to remove a message.
+              For away games, the Pickup Information field is pre-filled with a calculated default
+              pickup time (based on the travel time to the venue) when you first open a game.
+              Edit it freely before saving.
             </Tip>
+          </HelpSection>
+
+          <HelpSection title="Reverting a game to a previous status">
+            <Body>
+              If you need to step a game back — for example to reopen entries after closing early
+              by mistake — use the dropdown options prefixed with a left arrow:
+            </Body>
+            <div className="mt-1 space-y-1 text-sm text-gray-700 mb-2">
+              <p><strong>← Upcoming</strong> (available when Open) — reverts to Upcoming, closing entries without creating a selection sheet.</p>
+              <p><strong>← Open</strong> (available when Selecting) — reopens entries so members can enter or withdraw again.</p>
+              <p><strong>← Selecting</strong> (available when Selected/Published) — unpublishes the selection. Members can no longer see the team sheet. Use Publish again when ready.</p>
+            </div>
+            <Note>
+              Reverting does not delete any data — player entries and selection choices are
+              preserved. It simply changes the game status.
+            </Note>
+          </HelpSection>
+
+          <HelpSection title="Opposition players">
+            <Body>
+              A member can be recorded as playing for the opposing team by setting their status
+              to <strong>Opposition</strong> on the selection page. They appear in a dedicated
+              Opposition box on the published team sheet, and the game counts as{' '}
+              <em>Opposition</em> in their personal stats rather than as a normal entry.
+            </Body>
+          </HelpSection>
+
+          <HelpSection title="Player Stats view">
+            <Body>
+              The Manage page has a toggle at the top right between <strong>Games</strong> and{' '}
+              <strong>Player Stats</strong>. The Player Stats view shows a sortable table of
+              every player who has entries, with columns for Selected, Reserve, Reserve Team,
+              Opposition, Withdrawn, Cancelled, Abandoned, Entered, and Total. Click any column
+              header to sort by that column.
+            </Body>
           </HelpSection>
 
           <HelpSection title="Recording a result">

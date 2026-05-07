@@ -203,28 +203,24 @@ export default function FriendliesPage() {
       setFilter(savedFilter);
     }
 
-    // Restore game list from cache only on back-navigation
+    // Restore game list from cache for instant display, then background-refresh
     const CACHE_KEY = 'friendlies_games_cache';
     const BACK_FLAG = 'friendlies_back_nav';
 
-    const isBackNav = sessionStorage.getItem(BACK_FLAG) === 'true';
-    sessionStorage.removeItem(BACK_FLAG); // consume immediately — only fires once
+    sessionStorage.removeItem(BACK_FLAG); // consume back-nav flag (no longer used for cache gating)
 
-    if (isBackNav) {
-      const cached = sessionStorage.getItem(CACHE_KEY);
-      if (cached) {
-        try {
-          setGames(JSON.parse(cached));
-          setLoading(false);
-          return;
-        } catch {
-          // Bad cache — fall through to fresh fetch
-        }
+    const cached = sessionStorage.getItem(CACHE_KEY);
+    if (cached) {
+      try {
+        setGames(JSON.parse(cached));
+        setLoading(false);
+        fetchGames({ silent: true }); // refresh in background
+        return;
+      } catch {
+        // Bad cache — fall through to fresh fetch
       }
     }
 
-    // Fresh navigation (or cache miss) — clear stale cache and fetch from server
-    sessionStorage.removeItem(CACHE_KEY);
     fetchGames();
   }, []);
 

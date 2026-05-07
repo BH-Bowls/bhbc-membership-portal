@@ -120,34 +120,23 @@ export async function POST(request: NextRequest) {
       const rows = membersResponse.data.values || [];
       const headers = rows[0] || [];
 
-      // Update count for each successfully entered event
+      // Compute all counts first (CPU-only, no I/O), then write in parallel
+      const countUpdates: { event_id: string; count: number }[] = [];
       for (const result of successfulEntries) {
         const event = allEvents.find(e => e.tabName === result.event_id);
-
-        if (event) {
-          // Find event column index
-          let eventColIndex = -1;
-          for (let i = 0; i < headers.length; i++) {
-            if (headers[i] === event.tabName) {
-              eventColIndex = i;
-              break;
-            }
-          }
-
-          if (eventColIndex !== -1) {
-            // Count members who have entered this event
-            let enteredCount = 0;
-            for (let i = 1; i < rows.length; i++) {
-              if (rows[i][eventColIndex]) {
-                enteredCount++;
-              }
-            }
-
-            // Update the entered count in Events sheet
-            await updateEventCounts(result.event_id, { entered: enteredCount });
-          }
+        if (!event) continue;
+        const eventColIndex = headers.indexOf(event.tabName);
+        if (eventColIndex === -1) continue;
+        let enteredCount = 0;
+        for (let i = 1; i < rows.length; i++) {
+          if (rows[i][eventColIndex]) enteredCount++;
         }
+        countUpdates.push({ event_id: result.event_id, count: enteredCount });
       }
+
+      await Promise.all(
+        countUpdates.map(({ event_id, count }) => updateEventCounts(event_id, { entered: count }))
+      );
     }
 
     // Return success response with results for each event

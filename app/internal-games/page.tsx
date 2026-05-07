@@ -22,6 +22,8 @@ interface InternalGameWithUserStatus extends InternalGame {
 
 type FilterType = 'all' | 'O' | 'upcoming';
 
+const CACHE_KEY = 'internal_games_cache';
+
 export default function InternalGamesPage() {
   const { data: session } = useSession();
   const [games, setGames] = useState<InternalGameWithUserStatus[]>([]);
@@ -34,6 +36,13 @@ export default function InternalGamesPage() {
   const [detailsModalGame, setDetailsModalGame] = useState<InternalGameWithUserStatus | null>(null);
 
   useEffect(() => {
+    const cached = sessionStorage.getItem(CACHE_KEY);
+    if (cached) {
+      setGames(JSON.parse(cached));
+      setLoading(false);
+      fetchGames({ silent: true });
+      return;
+    }
     fetchGames();
   }, []);
 
@@ -47,18 +56,19 @@ export default function InternalGamesPage() {
     }
   }, [games]);
 
-  async function fetchGames() {
-    setLoading(true);
+  async function fetchGames({ silent = false }: { silent?: boolean } = {}) {
+    if (!silent) setLoading(true);
     try {
       const response = await fetch('/api/internal-games/games');
       const data = await response.json();
       if (data.games) {
         setGames(data.games);
+        sessionStorage.setItem(CACHE_KEY, JSON.stringify(data.games));
       }
     } catch (error) {
-      alert('Failed to load games. Please refresh the page.');
+      if (!silent) alert('Failed to load games. Please refresh the page.');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }
 

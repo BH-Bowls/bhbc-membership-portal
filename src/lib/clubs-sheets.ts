@@ -2,7 +2,6 @@
 // Google Sheets operations for Clubs feature - handles all data access and manipulation
 // for clubs and their contacts from the Match Day Contacts spreadsheet
 
-import { google } from 'googleapis';
 import bcrypt from 'bcryptjs';
 import {
   Club,
@@ -13,6 +12,7 @@ import {
   CreateContactRequest,
   UpdateContactRequest,
 } from './types/clubs';
+import { getGoogleSheetsClient } from './sheets';
 
 // ============================================================================
 // ENVIRONMENT VARIABLE GETTERS
@@ -29,49 +29,6 @@ export function getMatchDayContactsSpreadsheetId(): string {
     throw new Error('MATCH_DAY_CONTACTS_SPREADSHEET_ID environment variable is not set');
   }
   return id;
-}
-
-/**
- * Get the Google service account email from environment variables
- * @returns Service account email
- */
-function getServiceAccountEmail(): string {
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  if (!email) {
-    throw new Error('GOOGLE_SERVICE_ACCOUNT_EMAIL environment variable is not set');
-  }
-  return email;
-}
-
-/**
- * Get the Google service account private key from environment variables
- * @returns Private key string with actual newline characters
- */
-function getPrivateKey(): string {
-  const key = process.env.GOOGLE_PRIVATE_KEY;
-  if (!key) {
-    throw new Error('GOOGLE_PRIVATE_KEY environment variable is not set');
-  }
-  return key.replace(/\\n/g, '\n');
-}
-
-// ============================================================================
-// GOOGLE SHEETS CLIENT
-// ============================================================================
-
-/**
- * Create and return an authenticated Google Sheets API client
- * @returns Google Sheets API v4 client
- */
-function getSheetsClient() {
-  const auth = new google.auth.GoogleAuth({
-    credentials: {
-      client_email: getServiceAccountEmail(),
-      private_key: getPrivateKey(),
-    },
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-  });
-  return google.sheets({ version: 'v4', auth });
 }
 
 // ============================================================================
@@ -117,7 +74,7 @@ async function getColumnMap(
     return columnMapCache[spreadsheetId][sheetName];
   }
 
-  const sheets = getSheetsClient();
+  const sheets = getGoogleSheetsClient();
 
   // Fetch header row
   const response = await sheets.spreadsheets.values.get({
@@ -172,7 +129,7 @@ export async function getPetrolBands(): Promise<Record<string, number>> {
   try {
     const spreadsheetId = getMatchDayContactsSpreadsheetId();
     const colMap = await getColumnMap(spreadsheetId, 'PetrolBands');
-    const sheets = getSheetsClient();
+    const sheets = getGoogleSheetsClient();
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
@@ -217,7 +174,7 @@ export async function getClubs(): Promise<Club[]> {
     getColumnMap(spreadsheetId, 'clubs'),
     getPetrolBands(),
   ]);
-  const sheets = getSheetsClient();
+  const sheets = getGoogleSheetsClient();
 
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
@@ -298,7 +255,7 @@ export async function getClubByName(clubName: string): Promise<Club | null> {
 export async function getContactsForClub(clubName: string): Promise<ClubContact[]> {
   const spreadsheetId = getMatchDayContactsSpreadsheetId();
   const colMap = await getColumnMap(spreadsheetId, 'Contacts');
-  const sheets = getSheetsClient();
+  const sheets = getGoogleSheetsClient();
 
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
@@ -375,7 +332,7 @@ export async function getClubWithContacts(clubName: string): Promise<ClubWithCon
 export async function createClub(clubData: CreateClubRequest): Promise<Club> {
   const spreadsheetId = getMatchDayContactsSpreadsheetId();
   const colMap = await getColumnMap(spreadsheetId, 'clubs');
-  const sheets = getSheetsClient();
+  const sheets = getGoogleSheetsClient();
 
   // Check if club already exists
   const existing = await getClubByName(clubData.clubName);
@@ -453,7 +410,7 @@ export async function updateClub(clubName: string, updates: UpdateClubRequest): 
 
   const spreadsheetId = getMatchDayContactsSpreadsheetId();
   const colMap = await getColumnMap(spreadsheetId, 'clubs');
-  const sheets = getSheetsClient();
+  const sheets = getGoogleSheetsClient();
 
   // Build update data
   const updateData: { range: string; values: any[][] }[] = [];
@@ -526,7 +483,7 @@ export async function deleteClub(clubName: string): Promise<void> {
   }
 
   const spreadsheetId = getMatchDayContactsSpreadsheetId();
-  const sheets = getSheetsClient();
+  const sheets = getGoogleSheetsClient();
 
   // First, delete all contacts for this club
   const contacts = await getContactsForClub(clubName);
@@ -591,7 +548,7 @@ export async function addContact(contactData: CreateContactRequest): Promise<Clu
 
   const spreadsheetId = getMatchDayContactsSpreadsheetId();
   const colMap = await getColumnMap(spreadsheetId, 'Contacts');
-  const sheets = getSheetsClient();
+  const sheets = getGoogleSheetsClient();
 
   // Get header row to build new row
   const headerResponse = await sheets.spreadsheets.values.get({
@@ -667,7 +624,7 @@ export async function addContact(contactData: CreateContactRequest): Promise<Clu
 export async function updateContact(rowNumber: number, updates: UpdateContactRequest): Promise<ClubContact> {
   const spreadsheetId = getMatchDayContactsSpreadsheetId();
   const colMap = await getColumnMap(spreadsheetId, 'Contacts');
-  const sheets = getSheetsClient();
+  const sheets = getGoogleSheetsClient();
 
   // Get current contact data
   const response = await sheets.spreadsheets.values.get({
@@ -765,7 +722,7 @@ export async function updateContact(rowNumber: number, updates: UpdateContactReq
  */
 async function deleteContactByRowNumber(rowNumber: number): Promise<void> {
   const spreadsheetId = getMatchDayContactsSpreadsheetId();
-  const sheets = getSheetsClient();
+  const sheets = getGoogleSheetsClient();
 
   // Get the sheet ID for the Contacts sheet
   const spreadsheet = await sheets.spreadsheets.get({
@@ -812,7 +769,7 @@ async function deleteContactByRowNumber(rowNumber: number): Promise<void> {
 export async function deleteContact(clubName: string, rowNumber: number): Promise<void> {
   const spreadsheetId = getMatchDayContactsSpreadsheetId();
   const colMap = await getColumnMap(spreadsheetId, 'Contacts');
-  const sheets = getSheetsClient();
+  const sheets = getGoogleSheetsClient();
 
   // Get current contact data to verify it belongs to the specified club
   const response = await sheets.spreadsheets.values.get({
@@ -855,7 +812,7 @@ export interface ClubAuthResult {
 export async function getClubLoginRecord(clubId: string): Promise<ClubLoginRecord | null> {
   const spreadsheetId = getMatchDayContactsSpreadsheetId();
   const colMap = await getColumnMap(spreadsheetId, 'clubs');
-  const sheets = getSheetsClient();
+  const sheets = getGoogleSheetsClient();
 
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
@@ -933,7 +890,7 @@ export async function changeClubPassword(
   const passwordCol = colMap['password'];
   if (passwordCol === undefined) return { success: false, error: 'Password column not found in sheet' };
 
-  const sheets = getSheetsClient();
+  const sheets = getGoogleSheetsClient();
   const updates: { range: string; values: string[][] }[] = [
     {
       range: `clubs!${getColumnLetter(passwordCol)}${record.rowNumber}`,
@@ -964,7 +921,7 @@ export async function changeClubPassword(
 export async function getAllClubsForImpersonation(): Promise<{ clubId: string; clubName: string }[]> {
   const spreadsheetId = getMatchDayContactsSpreadsheetId();
   const colMap = await getColumnMap(spreadsheetId, 'clubs');
-  const sheets = getSheetsClient();
+  const sheets = getGoogleSheetsClient();
 
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
@@ -989,7 +946,7 @@ export async function getAllClubsForImpersonation(): Promise<{ clubId: string; c
 /** Get all contacts with Include = Y, enriched with their club's credentials. */
 export async function getClubContactsToEmail(): Promise<ContactWithCredentials[]> {
   const spreadsheetId = getMatchDayContactsSpreadsheetId();
-  const sheets = getSheetsClient();
+  const sheets = getGoogleSheetsClient();
 
   const [contactsColMap, clubsColMap] = await Promise.all([
     getColumnMap(spreadsheetId, 'Contacts'),
@@ -1062,7 +1019,7 @@ export async function getClubContactsToEmail(): Promise<ContactWithCredentials[]
 export async function getDistinctContactRoles(): Promise<string[]> {
   const spreadsheetId = getMatchDayContactsSpreadsheetId();
   const colMap = await getColumnMap(spreadsheetId, 'Contacts');
-  const sheets = getSheetsClient();
+  const sheets = getGoogleSheetsClient();
 
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
@@ -1105,7 +1062,7 @@ export interface ContactWithCredentials {
 /** Get contacts matching a given role, enriched with their club's credentials. */
 export async function getContactsWithCredentialsByRole(role: string): Promise<ContactWithCredentials[]> {
   const spreadsheetId = getMatchDayContactsSpreadsheetId();
-  const sheets = getSheetsClient();
+  const sheets = getGoogleSheetsClient();
 
   const [contactsColMap, clubsColMap] = await Promise.all([
     getColumnMap(spreadsheetId, 'Contacts'),

@@ -130,7 +130,10 @@ function getPrivateKey(): string {
  * The service account must have been granted edit access to all required spreadsheets
  * @returns Google Sheets API v4 client ready to make API calls
  */
+let _sheetsClient: ReturnType<typeof google.sheets> | null = null;
+
 export function getSheetsClient() {
+  if (_sheetsClient) return _sheetsClient;
   // Create Google Auth instance with service account credentials
   const auth = new google.auth.GoogleAuth({
     credentials: {
@@ -151,6 +154,7 @@ export function getSheetsClient() {
     values[method] = (...args: any[]) => withRetry(() => original(...args));
   }
 
+  _sheetsClient = sheets;
   return sheets;
 }
 
@@ -191,6 +195,11 @@ interface ColumnMapCache {
 }
 
 let columnMapCache: ColumnMapCache = {};
+
+// ── Club details cache ────────────────────────────────────────────────────────
+// Club details rarely change; cache per club name for 5 minutes.
+const _clubDetailsCache = new Map<string, { data: ClubDetails | null; ts: number }>();
+const CLUB_DETAILS_CACHE_TTL_MS = 5 * 60_000;
 
 /**
  * Get column mapping from header row
@@ -3412,6 +3421,11 @@ export async function getDriverBarInfo(userName: string): Promise<DriverBarInfo>
  * Address is stored in 4 separate fields (address_1 through address_4) plus post code
  */
 export async function getClubDetails(clubName: string): Promise<ClubDetails | null> {
+  const cached = _clubDetailsCache.get(clubName);
+  if (cached && Date.now() - cached.ts < CLUB_DETAILS_CACHE_TTL_MS) {
+    return cached.data;
+  }
+
   // Get Match Day Contacts spreadsheet ID from environment
   const spreadsheetId = getMatchDayContactsSpreadsheetId();
 
@@ -3454,7 +3468,10 @@ export async function getClubDetails(clubName: string): Promise<ClubDetails | nu
   }
 
   // Return null if club not found in clubs sheet
-  if (!matchingRow) return null;
+  if (!matchingRow) {
+    _clubDetailsCache.set(clubName, { data: null, ts: Date.now() });
+    return null;
+  }
 
   // Get driving band from sheet (A, B, C, or D) — normalise to uppercase for lookup
   const drivingBand = (get(matchingRow, 'driving_band') || '').trim().toUpperCase();
@@ -3463,8 +3480,8 @@ export async function getClubDetails(clubName: string): Promise<ClubDetails | nu
   const petrolBands = await getPetrolBands();
   const petrolCost = petrolBands[drivingBand] ?? 0;
 
-  // Extract all club details and return ClubDetails object
-  return {
+  // Extract all club details, cache, and return ClubDetails object
+  const result: ClubDetails = {
     // Contact information
     clubName: get(matchingRow, 'club_name') || '',         // Official club name
     clubNumber: get(matchingRow, 'club_number') || '',     // Club phone number
@@ -3496,6 +3513,9 @@ export async function getClubDetails(clubName: string): Promise<ClubDetails | nu
     website: get(matchingRow, 'website') || '',        // Club's official website
     bhWebsite: get(matchingRow, 'bh_website') || '',   // BHBC-specific website link
   };
+
+  _clubDetailsCache.set(clubName, { data: result, ts: Date.now() });
+  return result;
 }
 
 /**
