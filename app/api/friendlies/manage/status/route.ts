@@ -17,7 +17,7 @@ import {
   getTeaRotaEntry,
 } from '@/lib/friendlies-sheets';
 // addPlayerToGameSheet / removePlayerFromGameSheet imported below in enter/withdraw routes
-import { sendGamePublishedEmail, sendTeaRotaEmail } from '@/lib/email/friendlies';
+import { sendGamePublishedEmail, sendTeaRotaEmail, sendGameCancelledEmail, sendTeaRotaCancelledEmail } from '@/lib/email/friendlies';
 import { getAllUsers } from '@/lib/sheets';
 import { ChangeStatusRequest, ChangeStatusResponse, GameStatus } from '@/lib/types/friendlies';
 import { hasRole } from '@/lib/role-utils';
@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
 
     // Parse request body
     const body: ChangeStatusRequest = await request.json();
-    const { tab_name, row_number, action, bhbc_score, opponent_score, reason, who, send_email, send_tea_rota_email } = body;
+    const { tab_name, row_number, action, expected_status, bhbc_score, opponent_score, reason, who, send_email, email_player_names, send_tea_rota_email } = body;
 
     // Fetch all games from Games sheet
     const games = await getGames();
@@ -56,7 +56,6 @@ export async function POST(request: NextRequest) {
     // If not found and rowNumber provided, find by rowNumber
     if (!game && row_number) {
       game = games.find(g => g.rowNumber === row_number) || null;
-      console.log('[Status API] Looking up game by rowNumber:', row_number, 'found:', !!game);
     }
 
     // Return 404 if game doesn't exist
@@ -64,9 +63,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
 
+    const statusLabel = (s: string) => ({ '': 'Upcoming', O: 'Open', L: 'Allocating', X: 'Selecting', S: 'Selected', P: 'Played', C: 'Cancelled', A: 'Abandoned' }[s] ?? s);
+
+    // Pre-check: if client sent expected_status, reject if it no longer matches
+    if (expected_status !== undefined && game.status !== expected_status) {
+      return NextResponse.json(
+        {
+          error: `This game is now ${statusLabel(game.status)} — it was changed in another session. Close this dialog and refresh the game list.`,
+          current_status: game.status,
+        },
+        { status: 409 },
+      );
+    }
+
     // Generate effectiveTabName - this will be used for all operations
     // Format: "ClubName DD MMM YY" (e.g., "West Hoathly 13 Jan 25")
-    console.log('[Status API] Game data - date:', game.date, 'tabDate:', game.tabDate, 'clubName:', game.clubName);
 
     // Use tabDate field if available, otherwise format the date field
     let tabDatePart = game.tabDate || '';
@@ -122,7 +133,6 @@ export async function POST(request: NextRequest) {
     }
 
     const effectiveTabName = `${game.clubName} ${tabDatePart}`.trim();
-    console.log('[Status API] Generated effectiveTabName:', effectiveTabName, 'for game at row', game.rowNumber);
 
     // Get current status (empty string if not set)
     let currentStatus = game.status;
@@ -144,7 +154,7 @@ export async function POST(request: NextRequest) {
       case 'open':
         if (currentStatus !== '') {
           return NextResponse.json(
-            { error: 'Can only open games with blank status' },
+            { error: `Can only open Upcoming games — this game is ${statusLabel(currentStatus)}. Refresh the game list.` },
             { status: 400 }
           );
         }
@@ -187,10 +197,9 @@ export async function POST(request: NextRequest) {
       // CLOSE: Transition from 'O' (Open) to 'X' (Selecting/Closed for entries)
       // Also handles 'L' → 'X' for paired games after allocation
       case 'close':
-        // Validate that game is currently Open or Allocating
         if (currentStatus !== 'O' && currentStatus !== 'L') {
           return NextResponse.json(
-            { error: 'Can only close games with Open or Allocating status' },
+            { error: `Can only close Open games — this game is ${statusLabel(currentStatus)}. Refresh the game list.` },
             { status: 400 }
           );
         }
@@ -202,10 +211,9 @@ export async function POST(request: NextRequest) {
 
       // PUBLISH: Transition from 'X' (Selecting) to 'S' (Selected/Published team)
       case 'publish':
-        // Validate that game is currently in Selecting status
         if (currentStatus !== 'X') {
           return NextResponse.json(
-            { error: 'Can only publish games with Selecting status' },
+            { error: `Can only publish Selecting games — this game is ${statusLabel(currentStatus)}. Refresh the game list.` },
             { status: 400 }
           );
         }
@@ -229,13 +237,20 @@ export async function POST(request: NextRequest) {
             }
 
             // Build player list with email addresses and selection status
-            const playersWithEmails = gamePlayers.map(player => ({
+            let playersWithEmails = gamePlayers.map(player => ({
+              userName: player.name,
               fullName: player.fullName || player.name,
               email: userEmailMap.get(player.name.toLowerCase()) || null,
               selected: player.selected,
               team: player.team,
               position: player.position,
             }));
+
+            // If specific players requested, filter to just those usernames
+            if (email_player_names && email_player_names.length > 0) {
+              const targetSet = new Set(email_player_names.map(n => n.toLowerCase()));
+              playersWithEmails = playersWithEmails.filter(p => targetSet.has(p.userName.toLowerCase()));
+            }
 
             // Derive app URL from the incoming request so custom domains work correctly
             const appUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
@@ -325,13 +340,18 @@ export async function POST(request: NextRequest) {
                 userEmailMap.set(user.userName.toLowerCase(), user.emailAddress);
               }
             }
-            const playersWithEmails = gamePlayers.map(player => ({
+            let playersWithEmails = gamePlayers.map(player => ({
+              userName: player.name,
               fullName: player.fullName || player.name,
               email: userEmailMap.get(player.name.toLowerCase()) || null,
               selected: player.selected,
               team: player.team,
               position: player.position,
             }));
+            if (email_player_names && email_player_names.length > 0) {
+              const targetSet = new Set(email_player_names.map(n => n.toLowerCase()));
+              playersWithEmails = playersWithEmails.filter(p => targetSet.has(p.userName.toLowerCase()));
+            }
             const appUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
             const result = await sendGamePublishedEmail(game, playersWithEmails, appUrl, true);
             emailResult = {
@@ -380,6 +400,102 @@ export async function POST(request: NextRequest) {
 
         // Set new status to Cancelled
         newStatus = 'C';
+
+        // Email all entered players with a METHOD:CANCEL ICS
+        if (send_email) {
+          try {
+            const allUsers = await getAllUsers();
+            const userEmailMap = new Map<string, string>();
+            const userNameMap = new Map<string, string>();
+            for (const user of allUsers) {
+              if (user.userName) {
+                if (user.emailAddress) userEmailMap.set(user.userName.toLowerCase(), user.emailAddress);
+                userNameMap.set(user.userName.toLowerCase(), user.fullName || user.userName);
+              }
+            }
+
+            // Fetch Players sheet to find everyone who entered this game
+            const { getGoogleSheetsClient } = await import('@/lib/sheets');
+            const sheets = getGoogleSheetsClient();
+            const playersResponse = await sheets.spreadsheets.values.get({
+              spreadsheetId: process.env.FRIENDLIES_SPREADSHEET_ID!,
+              range: 'Players!A:ZZ',
+            });
+            const rows = playersResponse.data.values || [];
+            const headers = rows[0] || [];
+            const gameColIndex = headers.findIndex((h: string) => h === effectiveTabName);
+            const userNameColIndex = headers.findIndex((h: string) =>
+              h.toLowerCase().replace(/\s+/g, '_') === 'user_name'
+            );
+
+            const enteredPlayers: Array<{ userName: string; fullName: string; email: string | null }> = [];
+            if (gameColIndex !== -1 && userNameColIndex !== -1) {
+              for (let i = 1; i < rows.length; i++) {
+                const row = rows[i];
+                const entry = row[gameColIndex];
+                const uName = row[userNameColIndex];
+                if (entry && uName) {
+                  enteredPlayers.push({
+                    userName: uName,
+                    fullName: userNameMap.get(uName.toLowerCase()) || uName,
+                    email: userEmailMap.get(uName.toLowerCase()) || null,
+                  });
+                }
+              }
+            }
+
+            const appUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
+            const cancelResult = await sendGameCancelledEmail(game, enteredPlayers, appUrl, reason);
+            emailResult = {
+              emailsSent: cancelResult.emailsSent,
+              playersWithoutEmail: cancelResult.playersWithoutEmail,
+              emailError: cancelResult.error,
+            };
+          } catch (emailError) {
+            console.error('Error sending cancellation emails:', emailError);
+            emailResult.emailError = emailError instanceof Error ? emailError.message : 'Failed to send emails';
+          }
+        }
+
+        // Email tea rota members for home games
+        if (send_tea_rota_email && game.homeAway === 'H') {
+          try {
+            const teaEntry = await getTeaRotaEntry(game.rowNumber);
+            if (teaEntry) {
+              const allUsersForRota = await getAllUsers();
+              const rotaEmailMap = new Map<string, string>();
+              const rotaNameMap = new Map<string, string>();
+              for (const user of allUsersForRota) {
+                if (user.userName) {
+                  if (user.emailAddress) rotaEmailMap.set(user.userName.toLowerCase(), user.emailAddress);
+                  rotaNameMap.set(user.userName.toLowerCase(), user.fullName || user.userName);
+                }
+              }
+              const teaMembers = [
+                { role: 'Tea Lead', userName: teaEntry.teaLead },
+                { role: 'Tea First', userName: teaEntry.teaFirst },
+                { role: 'Tea Second', userName: teaEntry.teaSecond },
+              ]
+                .filter(m => m.userName && m.userName.trim() !== '')
+                .map(m => ({
+                  role: m.role,
+                  fullName: rotaNameMap.get(m.userName.toLowerCase()) || m.userName,
+                  email: rotaEmailMap.get(m.userName.toLowerCase()) || null,
+                }));
+
+              const rotaResult = await sendTeaRotaCancelledEmail(game, teaMembers, reason);
+              teaRotaEmailResult = {
+                emailsSent: rotaResult.emailsSent,
+                membersWithoutEmail: rotaResult.membersWithoutEmail,
+                emailError: rotaResult.error,
+              };
+            }
+          } catch (teaEmailError) {
+            console.error('Error sending tea rota cancellation email:', teaEmailError);
+            teaRotaEmailResult.emailError = teaEmailError instanceof Error ? teaEmailError.message : 'Failed to send tea rota email';
+          }
+        }
+
         break;
 
       // ABANDON: Transition from 'S' (Selected) to 'A' (Abandoned)

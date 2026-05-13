@@ -27,7 +27,7 @@ export async function PUT(req: Request) {
   }
 
   try {
-    await updateGameMessage(tabName, message, rowNumber);
+    await updateGameMessage(tabName, message, rowNumber, session.user?.userName);
     return NextResponse.json({ ok: true });
   } catch (err: any) {
     console.error('PUT /api/friendlies/manage/message error:', err);

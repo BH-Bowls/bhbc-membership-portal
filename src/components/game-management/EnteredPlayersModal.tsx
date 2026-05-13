@@ -37,6 +37,7 @@ interface EnteredPlayersModalProps {
   pairedGameIds?: string[]; // Additional tabNames for paired games (add players to all)
   gameType: 'friendlies' | 'internal-games' | 'social-events';
   gameName: string; // Display name (club name, game name, or event name)
+  gameStatus?: string; // Current game status — used to offer Remove vs Withdraw choice on selected games
   ladiesMen?: string; // For gender validation (Friendlies/Internal Games only)
   currentUserRole?: string; // For capacity restrictions
   maxPlayers?: number; // For capacity checking
@@ -54,6 +55,7 @@ export function EnteredPlayersModal({
   pairedGameIds,
   gameType,
   gameName,
+  gameStatus,
   ladiesMen,
   currentUserRole,
   maxPlayers,
@@ -69,6 +71,7 @@ export function EnteredPlayersModal({
   const [selectedPlayers, setSelectedPlayers] = useState<string[]>([]);
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
+  const [removeDialog, setRemoveDialog] = useState<{ userName: string; fullName: string } | null>(null);
   const [error, setError] = useState('');
 
   // Check if user is captain or admin (no capacity restrictions)
@@ -238,7 +241,8 @@ export function EnteredPlayersModal({
     }
   }
 
-  async function handleRemovePlayer(userName: string) {
+  async function handleRemovePlayer(userName: string, forceRemove = false) {
+    setRemoveDialog(null);
     setRemoving(userName);
     setError('');
 
@@ -249,6 +253,7 @@ export function EnteredPlayersModal({
         body: JSON.stringify({
           gameId,
           playerUserName: userName,
+          forceRemove,
         }),
       });
 
@@ -289,6 +294,7 @@ export function EnteredPlayersModal({
   const handleClose = () => {
     setShowAddDialog(false);
     setSelectedPlayers([]);
+    setRemoveDialog(null);
     setError('');
     onClose();
   };
@@ -297,6 +303,41 @@ export function EnteredPlayersModal({
 
   return (
     <>
+      {/* Remove or Withdraw dialog — shown for selected games */}
+      {removeDialog && (
+        <div className="fixed inset-0 z-[110] overflow-y-auto">
+          <div className="fixed inset-0 bg-black bg-opacity-60" onClick={() => setRemoveDialog(null)} />
+          <div className="flex min-h-full items-center justify-center p-4">
+            <div className="relative bg-white rounded-lg shadow-xl max-w-sm w-full p-6" onClick={e => e.stopPropagation()}>
+              <h3 className="text-lg font-semibold text-gray-900 mb-1">Remove {removeDialog.fullName}?</h3>
+              <p className="text-sm text-gray-600 mb-5">
+                This game has been selected. Do you want to <strong>withdraw</strong> the player (they appear as withdrawn in the sheet) or <strong>remove</strong> them completely (e.g. to move them to another game)?
+              </p>
+              <div className="flex gap-3 justify-end">
+                <button
+                  onClick={() => setRemoveDialog(null)}
+                  className="px-4 py-2 text-sm text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => handleRemovePlayer(removeDialog.userName, false)}
+                  className="px-4 py-2 text-sm text-white bg-amber-600 rounded hover:bg-amber-700"
+                >
+                  Withdraw
+                </button>
+                <button
+                  onClick={() => handleRemovePlayer(removeDialog.userName, true)}
+                  className="px-4 py-2 text-sm text-white bg-red-600 rounded hover:bg-red-700"
+                >
+                  Remove
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Backdrop */}
       <div
         className="fixed inset-0 bg-black bg-opacity-50 z-40"
@@ -448,7 +489,13 @@ export function EnteredPlayersModal({
                       </div>
                       {isCaptainOrAdmin && (
                         <button
-                          onClick={() => handleRemovePlayer(player.userName)}
+                          onClick={() => {
+                            if (gameStatus === 'S') {
+                              setRemoveDialog({ userName: player.userName, fullName: player.fullName });
+                            } else {
+                              handleRemovePlayer(player.userName);
+                            }
+                          }}
                           disabled={removing === player.userName}
                           className="text-red-600 hover:text-red-800 disabled:opacity-50 flex items-center gap-1"
                           title="Remove player"

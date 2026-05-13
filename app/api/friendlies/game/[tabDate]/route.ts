@@ -11,13 +11,8 @@ export async function GET(
   try {
     const session = await getServerSession(authOptions);
 
-    // Check if user is logged in
-    if (!session || !session.user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
     const { tabDate } = await params;
-    const userName = session.user.userName;
+    const userName = session?.user?.userName ?? null;
 
     // Get game details
     const games = await getGames();
@@ -35,8 +30,8 @@ export async function GET(
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
 
-    // Verify game status is S, P, C, or A
-    if (!['S', 'P', 'C', 'A'].includes(game.status)) {
+    // Verify game is in a viewable state (not Upcoming or Allocating)
+    if (!['O', 'X', 'S', 'P', 'C', 'A'].includes(game.status)) {
       return NextResponse.json(
         { error: 'Game details not available yet' },
         { status: 400 }
@@ -199,7 +194,7 @@ export async function GET(
         userTeam: userTeam,
         userPosition: userPosition,
         userConfirmed: userConfirmed,
-        userName: userName,  // Current user's userName for highlighting
+        userName: userName ?? '',  // Current user's userName for highlighting
         pickupInfo: game.pickupInfo || '',
         petrolCost: clubDetailsResult?.petrolCost ?? null,
         miles: clubDetailsResult?.miles || '',

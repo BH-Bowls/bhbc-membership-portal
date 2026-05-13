@@ -87,20 +87,28 @@ export default function ManageGamesPage() {
     isOpen: boolean;
     tabName: string;
     gameStatus: string;  // Current game status to determine available options
+    homeAway: string;    // 'H' or 'A' — controls tea rota email option visibility
+    entered: number;     // Number of entered players — controls player email option visibility
     status: 'P' | 'C' | 'A' | '';  // Played, Cancelled, Abandoned
     bhbcScore: string;
     opponentScore: string;
     reason: string;
     who: 'Burgess Hill' | 'Opponent' | '';
+    sendEmail: boolean;
+    sendTeaRotaEmail: boolean;
   }>({
     isOpen: false,
     tabName: '',
     gameStatus: '',
+    homeAway: '',
+    entered: 0,
     status: '',
     bhbcScore: '',
     opponentScore: '',
     reason: '',
     who: '',
+    sendEmail: false,
+    sendTeaRotaEmail: false,
   });
 
   // State: Instructions dialog (replaces separate message/pickup/publish dialogs)
@@ -118,6 +126,13 @@ export default function ManageGamesPage() {
 
   // State: Per-row action dropdown selections (keyed by tabName)
   const [actionSelections, setActionSelections] = useState<Record<string, string>>({});
+
+  // State: Lock warning dialog — shown when navigating to a game that is already locked
+  const [manageLockDialog, setManageLockDialog] = useState<{
+    lockedBy: string;
+    lockedAt: string;
+    onProceed: () => void;
+  } | null>(null);
 
   // State: Manage page view toggle — Games list or Player Stats
   const [manageView, setManageView] = useState<'games' | 'stats'>('games');
@@ -235,16 +250,17 @@ export default function ManageGamesPage() {
   /**
    * Change game status via API
    * Generic function for all status changes (open, close, publish, etc.)
-   * @param tabName Game tab name identifier
-   * @param action Action to perform (open, close, publish, played, cancel)
-   * @param additionalData Optional data for action (e.g., scores for played)
+   * Automatically includes expected_status for optimistic-locking; returns 409 if stale.
    */
   async function changeStatus(tabName: string, action: string, additionalData?: any, rowNumber?: number) {
-    // Show loading indicator for this specific game (use rowNumber as key if tabName is empty)
     setActionLoading(tabName || `row-${rowNumber}`);
 
+    // Look up the game's current status so we can send expected_status
+    const currentGame = games.find(g =>
+      (tabName && g.tabName === tabName) || (rowNumber && g.rowNumber === rowNumber)
+    );
+
     try {
-      // Call status change API
       const response = await fetch('/api/friendlies/manage/status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -252,29 +268,29 @@ export default function ManageGamesPage() {
           tab_name: tabName,
           row_number: rowNumber,
           action,
+          expected_status: currentGame?.status,
           ...additionalData,
         }),
       });
 
       const data = await response.json();
 
-      // Check if status change was successful
       if (response.ok) {
-        // Clear the stale action selection for this game so the dropdown resets
         const key = tabName || `row-${rowNumber}`;
         setActionSelections(prev => { const next = { ...prev }; delete next[key]; return next; });
-        // Refresh games list to show updated status
+        await fetchGames();
+      } else if (response.status === 409) {
+        // Status has changed since page loaded — clear cache and refresh
+        alert("This game's status has changed since you last loaded the page. The page will now refresh.");
+        sessionStorage.removeItem('friendlies_manage_games_cache');
         await fetchGames();
       } else {
-        // Show error message
         alert(data.error || 'Failed to update status');
       }
     } catch (error) {
-      // Network or other error
       console.error('Error changing status:', error);
       alert('Failed to update status');
     } finally {
-      // Hide loading indicator
       setActionLoading(null);
     }
   }
@@ -421,7 +437,7 @@ export default function ManageGamesPage() {
    * Handle game outcome button click (Mark Played, Cancel, Abandon)
    * Opens the outcome dialog for entering game result details
    */
-  function handleGameOutcome(tabName: string, gameStatus: string) {
+  function handleGameOutcome(tabName: string, gameStatus: string, homeAway = '', entered = 0) {
     // For non-selected games, auto-select Cancel since it's the only option
     const autoStatus = gameStatus !== 'S' ? 'C' : '';
 
@@ -429,11 +445,15 @@ export default function ManageGamesPage() {
       isOpen: true,
       tabName,
       gameStatus,
+      homeAway,
+      entered,
       status: autoStatus as 'P' | 'C' | 'A' | '',
       bhbcScore: '',
       opponentScore: '',
       reason: '',
       who: '',
+      sendEmail: false,
+      sendTeaRotaEmail: false,
     });
   }
 
@@ -441,7 +461,7 @@ export default function ManageGamesPage() {
    * Submit game outcome from the dialog
    */
   function submitOutcome() {
-    const { tabName, status, bhbcScore, opponentScore, reason, who } = outcomeDialog;
+    const { tabName, status, bhbcScore, opponentScore, reason, who, sendEmail, sendTeaRotaEmail } = outcomeDialog;
 
     // Close dialog
     setOutcomeDialog({ ...outcomeDialog, isOpen: false });
@@ -453,8 +473,13 @@ export default function ManageGamesPage() {
         opponent_score: parseInt(opponentScore),
       });
     } else if (status === 'C') {
-      // Mark as Cancelled - need reason and who
-      changeStatus(tabName, 'cancel', { reason, who });
+      // Mark as Cancelled - need reason and who, optionally email players/tea rota
+      changeStatus(tabName, 'cancel', {
+        reason,
+        who,
+        send_email: sendEmail,
+        send_tea_rota_email: sendTeaRotaEmail,
+      });
     } else if (status === 'A') {
       // Mark as Abandoned - need scores, reason, and who
       changeStatus(tabName, 'abandon', {
@@ -576,7 +601,7 @@ export default function ManageGamesPage() {
   }
 
   /** Execute the selected action for a game row */
-  function handleGoAction(game: Game) {
+  async function handleGoAction(game: Game) {
     const action = actionSelections[game.tabName] ?? getDefaultAction(game);
     if (!action) return;
 
@@ -588,10 +613,31 @@ export default function ManageGamesPage() {
         handleCloseGame(game);
         break;
       case 'select-team':
-      case 'edit':
-        sessionStorage.setItem('friendlies_last_managed', game.tabName);
-        router.push(`/friendlies/manage/game/${encodeURIComponent(game.tabName)}`);
+      case 'edit': {
+        // Check live lock status from server (client state may be stale)
+        const navigate = () => {
+          sessionStorage.setItem('friendlies_last_managed', game.tabName);
+          router.push(`/friendlies/manage/game/${encodeURIComponent(game.tabName)}`);
+        };
+        try {
+          const lockRes = await fetch(`/api/friendlies/manage/lock?tab_name=${encodeURIComponent(game.tabName)}`);
+          if (lockRes.ok) {
+            const lockData = await lockRes.json();
+            if (lockData.lockedBy && lockData.lockedBy !== session?.user?.userName) {
+              setManageLockDialog({
+                lockedBy: lockData.lockedBy,
+                lockedAt: lockData.lockedAt || '',
+                onProceed: () => { setManageLockDialog(null); navigate(); },
+              });
+              return;
+            }
+          }
+        } catch {
+          // If the check fails, navigate anyway — selection page will catch it
+        }
+        navigate();
         break;
+      }
       case 'publish':
         openInstructionsDialog(game, 'publish');
         break;
@@ -600,7 +646,7 @@ export default function ManageGamesPage() {
         break;
       case 'record-result':
       case 'cancel':
-        handleGameOutcome(game.tabName, game.status);
+        handleGameOutcome(game.tabName, game.status, game.homeAway, game.entered);
         break;
       case 'reopen':
         handleRevertGame(game, 'reopen', 'Open', 'Upcoming');
@@ -1009,7 +1055,7 @@ export default function ManageGamesPage() {
                           )}
                           {['', 'O', 'L'].includes(gameA.status) && (
                             <button
-                              onClick={() => handleGameOutcome(gameA.tabName, gameA.status)}
+                              onClick={() => handleGameOutcome(gameA.tabName, gameA.status, gameA.homeAway, gameA.entered)}
                               disabled={isPairLoading}
                               className="text-red-600 hover:text-red-800 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                             >
@@ -1123,6 +1169,7 @@ export default function ManageGamesPage() {
             homeAway: instructionsDialog.game.homeAway,
             specialInstructions: instructionsDialog.game.specialInstructions,
             pickupInfo: instructionsDialog.game.pickupInfo,
+            status: instructionsDialog.game.status,
           }}
           onConfirm={handleInstructionsConfirm}
           onCancel={() => setInstructionsDialog({ isOpen: false, mode: 'open', game: null })}
@@ -1280,6 +1327,36 @@ export default function ManageGamesPage() {
                         <option value="Opponent">Opponent</option>
                       </select>
                     </div>
+
+                    {/* Email options — only for Cancelled games with entered players */}
+                    {outcomeDialog.status === 'C' && outcomeDialog.entered > 0 && (
+                      <div className="border-t border-gray-200 pt-3 space-y-2">
+                        <p className="text-sm font-medium text-gray-700">Notify by email</p>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={outcomeDialog.sendEmail}
+                            onChange={(e) => setOutcomeDialog({ ...outcomeDialog, sendEmail: e.target.checked })}
+                            className="rounded border-gray-300 text-blue-600"
+                          />
+                          <span className="text-sm text-gray-700">
+                            Email all entered players ({outcomeDialog.entered})
+                            <span className="text-gray-500"> — includes calendar cancellation</span>
+                          </span>
+                        </label>
+                        {outcomeDialog.homeAway === 'H' && (
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={outcomeDialog.sendTeaRotaEmail}
+                              onChange={(e) => setOutcomeDialog({ ...outcomeDialog, sendTeaRotaEmail: e.target.checked })}
+                              className="rounded border-gray-300 text-blue-600"
+                            />
+                            <span className="text-sm text-gray-700">Email tea rota members</span>
+                          </label>
+                        )}
+                      </div>
+                    )}
                   </>
                 )}
               </div>
@@ -1315,6 +1392,54 @@ export default function ManageGamesPage() {
           currentUserRole={session?.user.role}
           onPlayersChanged={fetchGames}
         />
+      )}
+
+      {/* Selection Lock Warning Dialog — shown when navigating to a game locked by another captain */}
+      {manageLockDialog && (
+        <div className="fixed inset-0 z-[100] overflow-y-auto">
+          <div className="fixed inset-0 bg-black bg-opacity-50" />
+          <div className="flex min-h-full items-center justify-center p-4">
+            <div
+              className="relative bg-white rounded-lg shadow-xl max-w-md w-full p-6"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-center w-12 h-12 mx-auto mb-4 rounded-full bg-amber-100">
+                <svg className="w-6 h-6 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+                  />
+                </svg>
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900 text-center mb-2">Selection in Progress</h3>
+              <p className="text-sm text-gray-700 text-center mb-1">
+                <span className="font-medium text-gray-900">{manageLockDialog.lockedBy}</span> is currently editing the team selection for this game
+                {manageLockDialog.lockedAt ? (() => {
+                  const d = new Date(manageLockDialog.lockedAt);
+                  const date = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+                  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+                  return <> since {date} at {time}</>;
+                })() : null}.
+              </p>
+              <p className="text-sm text-gray-500 text-center mb-6">
+                You can continue to the page, but be aware that editing may conflict with their changes.
+              </p>
+              <div className="flex gap-3 justify-end">
+                <button
+                  onClick={() => setManageLockDialog(null)}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={manageLockDialog.onProceed}
+                  className="px-4 py-2 text-sm font-medium text-white bg-amber-600 rounded hover:bg-amber-700"
+                >
+                  Continue Anyway
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

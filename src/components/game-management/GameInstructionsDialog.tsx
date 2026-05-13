@@ -22,6 +22,7 @@ interface GameSummary {
   homeAway: 'H' | 'A';
   specialInstructions: string;
   pickupInfo: string;
+  status?: string;      // Current game status — sent as expected_status to catch stale state
 }
 
 interface ClubInfo {
@@ -102,8 +103,14 @@ export function GameInstructionsDialog({
   // Saving state
   const [saving, setSaving] = useState(false);
 
+  // Inline error — shown instead of alert() so the user stays in the dialog
+  const [dialogError, setDialogError] = useState('');
+
   // Publish-specific state
   const [sendEmail, setSendEmail] = useState(false);
+  const [emailMode, setEmailMode] = useState<'all' | 'selected'>('all');
+  const [emailPlayerOptions, setEmailPlayerOptions] = useState<{ userName: string; fullName: string }[]>([]);
+  const [selectedEmailPlayers, setSelectedEmailPlayers] = useState<Set<string>>(new Set());
   const [sendTeaRotaEmail, setSendTeaRotaEmail] = useState(false);
   const [testEmailState, setTestEmailState] = useState<{ sending: boolean; sent: boolean; error: string }>({
     sending: false, sent: false, error: '',
@@ -116,11 +123,16 @@ export function GameInstructionsDialog({
     setSpecialInstructions(game.specialInstructions || '');
     setPickupInfo(game.pickupInfo || '');
     setSaving(false);
+    setDialogError('');
     setSendEmail(false);
+    setEmailMode('all');
+    setEmailPlayerOptions([]);
+    setSelectedEmailPlayers(new Set());
     setSendTeaRotaEmail(false);
     setTestEmailState({ sending: false, sent: false, error: '' });
     setPublishResult(null);
     setClubInfo(null);
+
 
     // For away games, fetch club details
     if (game.homeAway === 'A') {
@@ -155,8 +167,8 @@ export function GameInstructionsDialog({
 
   async function handleSave() {
     setSaving(true);
+    setDialogError('');
     try {
-      // Save special instructions and pickup info in parallel
       const saves: Promise<Response>[] = [
         fetch('/api/friendlies/manage/message', {
           method: 'PUT',
@@ -185,22 +197,22 @@ export function GameInstructionsDialog({
       for (const res of results) {
         if (!res.ok) {
           const data = await res.json();
-          alert(data.error || 'Failed to save');
+          setDialogError(data.error || 'Failed to save');
           setSaving(false);
           return;
         }
       }
       onConfirm();
     } catch {
-      alert('Failed to save');
+      setDialogError('Failed to save');
       setSaving(false);
     }
   }
 
   async function handleOpenGame() {
     setSaving(true);
+    setDialogError('');
     try {
-      // First save instructions, then open game
       const saves: Promise<Response>[] = [
         fetch('/api/friendlies/manage/message', {
           method: 'PUT',
@@ -221,35 +233,34 @@ export function GameInstructionsDialog({
       for (const res of saveResults) {
         if (!res.ok) {
           const data = await res.json();
-          alert(data.error || 'Failed to save instructions');
+          setDialogError(data.error || 'Failed to save instructions');
           setSaving(false);
           return;
         }
       }
 
-      // Now open the game
       const res = await fetch('/api/friendlies/manage/status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tab_name: game.tabName, row_number: game.rowNumber, action: 'open' }),
+        body: JSON.stringify({ tab_name: game.tabName, row_number: game.rowNumber, action: 'open', expected_status: game.status ?? '' }),
       });
       if (!res.ok) {
         const data = await res.json();
-        alert(data.error || 'Failed to open game');
+        setDialogError(data.error || 'Failed to open game');
         setSaving(false);
         return;
       }
       onConfirm();
     } catch {
-      alert('Failed to open game');
+      setDialogError('Failed to open game');
       setSaving(false);
     }
   }
 
   async function handleCloseGame() {
     setSaving(true);
+    setDialogError('');
     try {
-      // Save instructions in parallel with close
       const saves: Promise<Response>[] = [
         fetch('/api/friendlies/manage/message', {
           method: 'PUT',
@@ -270,35 +281,34 @@ export function GameInstructionsDialog({
       for (const res of saveResults) {
         if (!res.ok) {
           const data = await res.json();
-          alert(data.error || 'Failed to save instructions');
+          setDialogError(data.error || 'Failed to save instructions');
           setSaving(false);
           return;
         }
       }
 
-      // Now close the game
       const res = await fetch('/api/friendlies/manage/status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tab_name: game.tabName, row_number: game.rowNumber, action: 'close' }),
+        body: JSON.stringify({ tab_name: game.tabName, row_number: game.rowNumber, action: 'close', expected_status: game.status ?? 'O' }),
       });
       if (!res.ok) {
         const data = await res.json();
-        alert(data.error || 'Failed to close game');
+        setDialogError(data.error || 'Failed to close game');
         setSaving(false);
         return;
       }
       onConfirm();
     } catch {
-      alert('Failed to close game');
+      setDialogError('Failed to close game');
       setSaving(false);
     }
   }
 
   async function handlePublish() {
     setSaving(true);
+    setDialogError('');
     try {
-      // Save instructions first
       const saves: Promise<Response>[] = [
         fetch('/api/friendlies/manage/message', {
           method: 'PUT',
@@ -319,26 +329,33 @@ export function GameInstructionsDialog({
       for (const res of saveResults) {
         if (!res.ok) {
           const data = await res.json();
-          alert(data.error || 'Failed to save instructions');
+          setDialogError(data.error || 'Failed to save instructions');
           setSaving(false);
           return;
         }
       }
 
-      // Now publish
+      const emailPlayerNames = sendEmail && emailMode === 'selected' && selectedEmailPlayers.size > 0
+        ? Array.from(selectedEmailPlayers)
+        : undefined;
+
+      const action = game.status === 'S' ? 'republish' : 'publish';
+
       const res = await fetch('/api/friendlies/manage/status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tab_name: game.tabName,
-          action: 'publish',
+          action,
+          expected_status: game.status ?? 'X',
           send_email: sendEmail,
+          email_player_names: emailPlayerNames,
           send_tea_rota_email: sendTeaRotaEmail,
         }),
       });
       const data = await res.json();
       if (!res.ok) {
-        alert(data.error || 'Failed to publish selection');
+        setDialogError(data.error || 'Failed to publish selection');
         setSaving(false);
         return;
       }
@@ -360,7 +377,7 @@ export function GameInstructionsDialog({
         onConfirm();
       }
     } catch {
-      alert('Failed to publish selection');
+      setDialogError('Failed to publish selection');
       setSaving(false);
     }
   }
@@ -575,15 +592,79 @@ export function GameInstructionsDialog({
                 <input
                   type="checkbox"
                   checked={sendEmail}
-                  onChange={e => setSendEmail(e.target.checked)}
+                  onChange={e => { setSendEmail(e.target.checked); if (!e.target.checked) { setEmailMode('all'); setSelectedEmailPlayers(new Set()); } }}
                   disabled={saving}
                   className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"
                 />
                 <div>
                   <span className="font-medium text-gray-900">Email entered players</span>
-                  <p className="text-sm text-gray-700">Send notification to all players who entered this game</p>
+                  <p className="text-sm text-gray-700">Send notification to players who entered this game</p>
                 </div>
               </label>
+
+              {/* Player scope toggle — only shown when email is checked */}
+              {sendEmail && (
+                <div className="ml-3 pl-3 border-l-2 border-blue-200 space-y-2">
+                  <div className="flex gap-4">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="radio" checked={emailMode === 'all'} onChange={() => { setEmailMode('all'); setSelectedEmailPlayers(new Set()); }} disabled={saving} className="text-blue-600" />
+                      <span className="text-sm text-gray-800">All players</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        checked={emailMode === 'selected'}
+                        onChange={() => {
+                          setEmailMode('selected');
+                          if (emailPlayerOptions.length === 0) {
+                            fetch(`/api/friendlies/entered-players?gameId=${encodeURIComponent(game.tabName)}`)
+                              .then(r => r.json())
+                              .then(d => {
+                                if (d.players) {
+                                  const nonWithdrawn = (d.players as { userName: string; fullName: string; status: string }[])
+                                    .filter(p => !['PW', 'RW', 'TW', 'EW', 'MW'].includes(p.status));
+                                  setEmailPlayerOptions(nonWithdrawn.map(p => ({ userName: p.userName, fullName: p.fullName })));
+                                }
+                              })
+                              .catch(() => {});
+                          }
+                        }}
+                        disabled={saving}
+                        className="text-blue-600"
+                      />
+                      <span className="text-sm text-gray-800">Select players</span>
+                    </label>
+                  </div>
+
+                  {emailMode === 'selected' && (
+                    <div className="mt-1 max-h-40 overflow-y-auto border border-gray-200 rounded bg-white divide-y divide-gray-100">
+                      {emailPlayerOptions.length === 0 ? (
+                        <p className="text-xs text-gray-500 p-3">Loading players…</p>
+                      ) : (
+                        emailPlayerOptions.map(p => (
+                          <label key={p.userName} className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-blue-50">
+                            <input
+                              type="checkbox"
+                              checked={selectedEmailPlayers.has(p.userName)}
+                              onChange={e => {
+                                const next = new Set(selectedEmailPlayers);
+                                if (e.target.checked) next.add(p.userName); else next.delete(p.userName);
+                                setSelectedEmailPlayers(next);
+                              }}
+                              disabled={saving}
+                              className="w-4 h-4 text-blue-600 rounded"
+                            />
+                            <span className="text-sm text-gray-900">{p.fullName}</span>
+                          </label>
+                        ))
+                      )}
+                    </div>
+                  )}
+                  {emailMode === 'selected' && selectedEmailPlayers.size === 0 && emailPlayerOptions.length > 0 && (
+                    <p className="text-xs text-amber-700">Select at least one player to email.</p>
+                  )}
+                </div>
+              )}
 
               {game.homeAway === 'H' && (
                 <label className="flex items-center gap-3 p-3 bg-gray-50 rounded cursor-pointer hover:bg-gray-100">
@@ -614,8 +695,15 @@ export function GameInstructionsDialog({
             </div>
           )}
 
+          {/* Inline error — shown instead of alert() when an API call fails */}
+          {dialogError && (
+            <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
+              {dialogError}
+            </div>
+          )}
+
           {/* Footer buttons */}
-          <div className={`flex items-center mt-2 ${mode === 'publish' ? 'justify-between' : 'justify-end'} gap-3`}>
+          <div className={`flex items-center mt-4 ${mode === 'publish' ? 'justify-between' : 'justify-end'} gap-3`}>
             {mode === 'publish' && (
               <button
                 onClick={handleSendTestEmail}
@@ -642,7 +730,7 @@ export function GameInstructionsDialog({
               </button>
               <button
                 onClick={handlePrimaryAction}
-                disabled={saving}
+                disabled={saving || (mode === 'publish' && sendEmail && emailMode === 'selected' && selectedEmailPlayers.size === 0)}
                 className="px-4 py-2 text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
               >
                 {saving && (

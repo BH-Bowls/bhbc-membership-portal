@@ -28,6 +28,12 @@ function isPublicRoute(pathname: string): boolean {
   // /clubs and all sub-paths (list + detail pages)
   if (pathname === '/clubs' || pathname.startsWith('/clubs/')) return true;
 
+  // /friendlies/game/[tabDate] — public read-only view of a game
+  if (pathname.startsWith('/friendlies/game/')) return true;
+
+  // /api/friendlies/game/[tabDate] — public API for game details
+  if (pathname.startsWith('/api/friendlies/game/')) return true;
+
   // /rowland/[compId] — but NOT setup pages
   if (pathname.startsWith('/rowland/')) {
     const segment = pathname.split('/')[2];

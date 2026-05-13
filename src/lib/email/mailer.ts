@@ -213,6 +213,12 @@ export async function sendTemplateEmail(
   }
 }
 
+export interface EmailAttachment {
+  filename: string;
+  content: string;
+  contentType: string;
+}
+
 /**
  * Send plain email without template
  * Sends email directly from provided content without loading from template file
@@ -222,13 +228,15 @@ export async function sendTemplateEmail(
  * @param subject Email subject line
  * @param text Plain text version of email (required)
  * @param html Optional HTML version of email (falls back to text if not provided)
+ * @param attachments Optional array of file attachments (e.g. .ics calendar files)
  * @returns Promise with success status and error message if failed
  */
 export async function sendEmail(
   to: string,
   subject: string,
   text: string,
-  html?: string
+  html?: string,
+  attachments?: EmailAttachment[]
 ): Promise<{ success: boolean; error?: string }> {
   try {
     // Verify SMTP credentials are configured before attempting to send
@@ -256,6 +264,9 @@ export async function sendEmail(
       html: htmlContent,
       // REMOVED custom headers temporarily to test if they're causing Gmail to drop emails
     };
+    if (attachments && attachments.length > 0) {
+      mailOptions.attachments = attachments;
+    }
     await transporter.sendMail(mailOptions);
 
     // Log successful send for monitoring

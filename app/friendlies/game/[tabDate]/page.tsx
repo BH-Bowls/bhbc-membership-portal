@@ -103,7 +103,8 @@ interface GameDetails {
  */
 export default function GameDetailsPage() {
   // Get current user session
-  const { data: session } = useSession();
+  const { data: session, status: authStatus } = useSession();
+  const isGuest = !session;
 
   // Get route parameters (tabDate from URL)
   const params = useParams();
@@ -120,6 +121,9 @@ export default function GameDetailsPage() {
 
   // State: Loading indicator while fetching game details
   const [loading, setLoading] = useState(true);
+
+  // State: Fetch error (shown in-page with retry button instead of alert+redirect)
+  const [fetchError, setFetchError] = useState<string>('');
 
   // State: Action loading indicator for confirm/withdraw buttons
   const [actionLoading, setActionLoading] = useState(false);
@@ -152,7 +156,6 @@ export default function GameDetailsPage() {
    * Runs when tabDate parameter changes
    */
   useEffect(() => {
-    // Fetch game details from API
     fetchGameDetails();
   }, [tabDate]);
 
@@ -166,35 +169,22 @@ export default function GameDetailsPage() {
    * Redirects to friendlies list if game not found or error occurs
    */
   async function fetchGameDetails() {
-    // Show loading spinner
     setLoading(true);
+    setFetchError('');
 
     try {
-      // Call API to get game details for this tabDate
       const response = await fetch(`/api/friendlies/game/${tabDate}`);
       const data = await response.json();
 
-      // Check if request was successful
       if (response.ok) {
-        // Update game details state
         setGameDetails(data);
       } else {
-        // Log error and show alert
-        console.error('Error:', data.error);
-        alert(data.error || 'Failed to load game details');
-
-        // Redirect back to friendlies list
-        router.push('/friendlies');
+        setFetchError(data.error || 'Failed to load game details');
       }
     } catch (error) {
-      // Network or other error
       console.error('Error fetching game details:', error);
-      alert('Failed to load game details');
-
-      // Redirect back to friendlies list
-      router.push('/friendlies');
+      setFetchError('Failed to load game details — please try again.');
     } finally {
-      // Hide loading spinner whether success or failure
       setLoading(false);
     }
   }
@@ -449,7 +439,7 @@ export default function GameDetailsPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar userName={session?.user.name ?? undefined} userRole={session?.user.role ?? undefined} />
+        <Navbar userName={session?.user.name ?? undefined} userRole={session?.user.role ?? undefined} showLogoOnly={isGuest} />
         <div className="container mx-auto px-4 py-8 max-w-6xl">
           <div className="text-center py-12">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
@@ -460,10 +450,28 @@ export default function GameDetailsPage() {
     );
   }
 
-  // Return null if no game details (should redirect in fetchGameDetails)
-  if (!gameDetails) {
-    return null;
+  // Show in-page error with retry button (replaces alert+redirect for transient failures)
+  if (fetchError) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <Navbar userName={session?.user.name ?? undefined} userRole={session?.user.role ?? undefined} showLogoOnly={isGuest} />
+        <div className="container mx-auto px-4 py-8 max-w-6xl">
+          <div className="max-w-md mx-auto mt-16 bg-white rounded-lg shadow border border-red-200 p-8 text-center">
+            <p className="text-red-700 font-medium mb-2">Unable to load game details</p>
+            <p className="text-gray-600 text-sm mb-6">{fetchError}</p>
+            <button
+              onClick={fetchGameDetails}
+              className="inline-block bg-blue-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-blue-700 transition-colors"
+            >
+              Try Again
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
+
+  if (!gameDetails) return null;
 
   // Destructure game details for easier access
   const { game, teams, reserves, reserveTeams, opposition, withdrawn, captainOfDay } = gameDetails;
@@ -476,7 +484,7 @@ export default function GameDetailsPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Navigation bar */}
-      <Navbar userName={session?.user.name ?? undefined} userRole={session?.user.role ?? undefined} />
+      <Navbar userName={session?.user.name ?? undefined} userRole={session?.user.role ?? undefined} showLogoOnly={isGuest} />
 
       <div className="container mx-auto px-4 py-8 max-w-6xl">
         {/* Flash message for success/error feedback */}
@@ -507,10 +515,25 @@ export default function GameDetailsPage() {
             <span className="font-semibold">This game has been abandoned.</span>
           </div>
         )}
+        {['O', 'X'].includes(game.status) && (
+          <div className="mb-4 p-4 rounded-lg bg-blue-50 border border-blue-200 text-blue-800">
+            <span className="font-semibold">Team selection has not yet taken place.</span>
+            {' '}The players listed below have entered this game.
+          </div>
+        )}
 
         {/* Header with back button and game info */}
         <div className="mb-6">
-          <Link href="/friendlies" className="text-blue-600 hover:text-blue-800 mb-2 inline-block">← Back to Games</Link>
+          {isGuest ? (
+            <Link
+              href={`/api/auth/signin?callbackUrl=${encodeURIComponent(`/friendlies/game/${tabDate}`)}`}
+              className="text-blue-600 hover:text-blue-800 mb-2 inline-block"
+            >
+              ← Sign In
+            </Link>
+          ) : (
+            <Link href="/friendlies" className="text-blue-600 hover:text-blue-800 mb-2 inline-block">← Back to Games</Link>
+          )}
 
           {/* Game title (opponent club name) */}
           <h1 className="text-3xl font-bold text-gray-900">{game.clubName}</h1>
@@ -539,8 +562,8 @@ export default function GameDetailsPage() {
           </div>
         </div>
 
-        {/* User Status section - show if user is selected for this game */}
-        {game.userStatus && (
+        {/* User Status section - only meaningful once team selection has been published */}
+        {game.userStatus && !['O', 'X'].includes(game.status) && (
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
             <div className="flex items-center justify-between">
               <div>
@@ -602,8 +625,8 @@ export default function GameDetailsPage() {
           </div>
         )}
 
-        {/* Teams section - show all playing teams */}
-        <div className="bg-white rounded-lg shadow border border-gray-200 p-6 mb-6">
+        {/* Teams section - only shown once selection has been published */}
+        {teams.length > 0 && <div className="bg-white rounded-lg shadow border border-gray-200 p-6 mb-6">
           <h2 className="text-2xl font-bold mb-4 text-gray-900">Teams</h2>
 
           {/* Grid of teams (2 columns on desktop) */}
@@ -652,12 +675,14 @@ export default function GameDetailsPage() {
               </div>
             ))}
           </div>
-        </div>
+        </div>}
 
-        {/* Reserves section - show if there are any reserves */}
+        {/* Reserves / entry list section */}
         {reserves.length > 0 && (
           <div className="bg-white rounded-lg shadow border border-gray-200 p-6 mb-6">
-            <h2 className="text-2xl font-bold mb-4 text-gray-900">Reserves</h2>
+            <h2 className="text-2xl font-bold mb-4 text-gray-900">
+              {['O', 'X'].includes(game.status) ? 'Players Entered' : 'Reserves'}
+            </h2>
 
             {/* List of reserve players */}
             <div className="space-y-2">
@@ -801,15 +826,6 @@ export default function GameDetailsPage() {
           </div>
         )}
 
-        {/* Match Card Link - button to view detailed match card */}
-        <div className="text-center">
-          <Link
-            href={`/friendlies/match-card/${tabDate}`}
-            className="inline-block bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            View Match Card
-          </Link>
-        </div>
       </div>
 
       {/* Confirmation Dialog */}

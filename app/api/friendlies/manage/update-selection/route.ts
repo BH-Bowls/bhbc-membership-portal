@@ -47,6 +47,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
 
+    // Lock guard: only the captain who holds the lock may save selections.
+    // If the game has no lock columns yet (lockedBy is always ''), we skip the check.
+    if (game.lockedBy && game.lockedBy !== session.user.userName) {
+      return NextResponse.json(
+        { error: 'locked', lockedBy: game.lockedBy, lockedAt: game.lockedAt },
+        { status: 409 },
+      );
+    }
+
     // Validate that game is in a status that allows selection updates
     // X = Selecting (captain is picking team), S = Selected (team published, can still adjust)
     if (!['X', 'S'].includes(game.status)) {

@@ -8,6 +8,11 @@ import type { CompMatch } from '@/types/competitions';
 import type { RowlandMatch } from '@/types/rowland';
 import { ROWLAND_ROUND_LABELS } from '@/types/rowland';
 
+function driveImageSrc(url: string): string {
+  const m = url?.match(/\/file\/d\/([^/]+)/);
+  return m ? `https://drive.google.com/uc?export=view&id=${m[1]}` : url;
+}
+
 export interface RowlandResultData {
   homePlayers?: string[];
   awayPlayers?: string[];
@@ -117,25 +122,53 @@ export function RowlandMatchDialog({
     if (!scoreSheetFile || !uploadPath) return uploadedUrl;
     setUploading(true);
     try {
-      let uploadBlob: Blob = scoreSheetFile;
+      let uploadFile: File = scoreSheetFile;
+      let uploadMime = scoreSheetFile.type || 'image/jpeg';
       let uploadName = scoreSheetFile.name || 'score-sheet.jpg';
       try {
         const compressed = await compressImage(scoreSheetFile);
-        uploadBlob = compressed.blob;
+        uploadFile = new File([compressed.blob], compressed.name, { type: 'image/jpeg' });
+        uploadMime = 'image/jpeg';
         uploadName = compressed.name;
       } catch {
-        // compression failed — upload original and let the server enforce size limit
+        // compression failed — upload original
       }
-      const fd = new FormData();
-      fd.append('file', uploadBlob, uploadName);
-      const res = await fetch(`${uploadPath}/score-sheet`, { method: 'POST', body: fd });
-      if (!res.ok) {
-        let msg = 'Upload failed';
-        try { const d = await res.json(); msg = d.error || msg; } catch { /* non-JSON error body */ }
+
+      // matchId is the last segment of uploadPath
+      const matchId = uploadPath.split('/').pop()!;
+
+      // Step 1: get Drive resumable upload session
+      const sessionRes = await fetch('/api/attachments/upload-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entityId: matchId, fileName: uploadName, mimeType: uploadMime, category: 'Rowland' }),
+      });
+      if (!sessionRes.ok) throw new Error('Failed to create upload session');
+      const { sessionUri } = await sessionRes.json();
+
+      // Step 2: PUT file bytes directly to Drive
+      const driveRes = await fetch(sessionUri, {
+        method: 'PUT',
+        headers: { 'Content-Type': uploadMime },
+        body: uploadFile,
+      });
+      if (!driveRes.ok) throw new Error(`Drive upload failed: ${driveRes.status}`);
+      const { id: fileId } = await driveRes.json();
+
+      // Step 3: confirm with server — sets permissions and stores URL in sheet
+      const confirmRes = await fetch(`${uploadPath}/score-sheet`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileId }),
+      });
+      if (!confirmRes.ok) {
+        let msg = 'Failed to save score sheet';
+        try { const d = await confirmRes.json(); msg = d.error || msg; } catch { /* */ }
         throw new Error(msg);
       }
-      const { url } = await res.json();
+      const { url } = await confirmRes.json();
       setUploadedUrl(url);
+      setScoreSheetPreview(url);
       setScoreSheetFile(null);
       return url;
     } catch (err: any) {
@@ -306,7 +339,7 @@ export function RowlandMatchDialog({
                         <div className="flex items-center gap-2">
                           <a href={scoreSheetPreview} target="_blank" rel="noopener noreferrer">
                             <img
-                              src={scoreSheetPreview}
+                              src={driveImageSrc(scoreSheetPreview)}
                               alt="Score sheet"
                               className="h-16 w-auto rounded border border-gray-200 object-cover"
                             />

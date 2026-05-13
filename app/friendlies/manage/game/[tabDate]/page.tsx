@@ -10,7 +10,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { EnteredPlayersModal } from '@/components/game-management/EnteredPlayersModal';
-import { SelectionHelperDialog } from '@/components/game-management/SelectionHelperDialog';
+import { SelectionHelperPanel } from '@/components/game-management/SelectionHelperPanel';
 import { GameInstructionsDialog } from '@/components/game-management/GameInstructionsDialog';
 import Link from 'next/link';
 import { usePhoneBackNavigation } from '@/hooks/usePhoneBackNavigation';
@@ -166,13 +166,22 @@ export default function TeamSelectionPage() {
 
   // State: Add Players modal visibility
   const [showAddPlayersModal, setShowAddPlayersModal] = useState(false);
-  const [showSelectionHelper, setShowSelectionHelper] = useState(false);
+
+  // State: right panel tab toggle ('preview' or 'helper')
+  const [rightPanelTab, setRightPanelTab] = useState<'preview' | 'helper'>('preview');
 
   // State: Swap modal
   const [swapModal, setSwapModal] = useState<{ sourceRowNumber: number; targetRowNumber: number | null } | null>(null);
 
   // State: Save-warnings modal (list of issues found before saving)
   const [saveWarnings, setSaveWarnings] = useState<string[]>([]);
+
+  // State: Lock dialog — shown when another captain holds the selection lock
+  const [lockDialog, setLockDialog] = useState<{
+    lockedBy: string;
+    lockedAt: string;
+    onOverride: () => void;
+  } | null>(null);
 
   // State: Confirmation dialog
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -422,18 +431,30 @@ export default function TeamSelectionPage() {
       const gameDataResult = await gameResponse.json();
       if (gameResponse.ok) {
         setGameData(gameDataResult);
+        // Always update originalPlayers and cache so Cancel / print-back-nav stay current
+        setOriginalPlayers(gameDataResult.players);
+        saveToCache(gameDataResult);
         if (isEditing) {
-          // Merge: keep existing edits, append any brand-new rows
-          const existingRowNumbers = new Set(players.map(p => p.rowNumber));
-          const newPlayers = gameDataResult.players.filter(
-            (p: GameSheetPlayer) => !existingRowNumbers.has(p.rowNumber)
-          );
-          if (newPlayers.length > 0) {
-            setPlayers(prev => [...prev, ...newPlayers]);
-          }
+          // Merge: preserve unsaved edits for players still in the sheet,
+          // drop players who were removed, and update status for withdrawn ones.
+          setPlayers(prev => {
+            const freshMap = new Map<number, GameSheetPlayer>(
+              gameDataResult.players.map((p: GameSheetPlayer) => [p.rowNumber, p])
+            );
+            const merged = prev
+              .filter(p => freshMap.has(p.rowNumber)) // drop fully removed players
+              .map(p => {
+                const fresh = freshMap.get(p.rowNumber)!;
+                // If withdrawn externally, use fresh state (don't preserve stale edits)
+                return fresh.status === 'W' ? fresh : p;
+              });
+            // Append any brand-new rows not yet in the editing state
+            const existingRows = new Set(prev.map(p => p.rowNumber));
+            const added = gameDataResult.players.filter((p: GameSheetPlayer) => !existingRows.has(p.rowNumber));
+            return [...merged, ...added];
+          });
         } else {
           setPlayers(gameDataResult.players);
-          setOriginalPlayers(gameDataResult.players);
         }
       }
     } catch (error) {
@@ -473,16 +494,64 @@ export default function TeamSelectionPage() {
   }
 
   // ============================================================================
+  // Lock Helpers
+  // ============================================================================
+
+  const releaseLock = useCallback(async (tabName: string) => {
+    try {
+      await fetch('/api/friendlies/manage/lock', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tab_name: tabName }),
+      });
+    } catch { /* ignore */ }
+  }, []);
+
+  const acquireLock = useCallback(async (tabName: string, force = false) => {
+    try {
+      const res = await fetch('/api/friendlies/manage/lock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tab_name: tabName, force }),
+      });
+      if (res.ok) return { acquired: true as const };
+      if (res.status === 409) {
+        const data = await res.json();
+        return { acquired: false as const, lockedBy: data.lockedBy as string, lockedAt: data.lockedAt as string };
+      }
+      return { acquired: true as const }; // graceful degradation on other errors
+    } catch {
+      return { acquired: true as const };
+    }
+  }, []);
+
+  // ============================================================================
   // Edit Mode Functions
   // ============================================================================
 
   /**
-   * Enter edit mode
+   * Enter edit mode — acquires the selection lock first.
+   * Shows a blocking dialog if the game is already locked by another captain.
    */
-  const startEditing = useCallback(() => {
+  const startEditing = useCallback(async () => {
+    if (!gameData) return;
+    const lockResult = await acquireLock(gameData.game.tabName);
+    if (!lockResult.acquired) {
+      setLockDialog({
+        lockedBy: lockResult.lockedBy,
+        lockedAt: lockResult.lockedAt,
+        onOverride: async () => {
+          setLockDialog(null);
+          await acquireLock(gameData.game.tabName, true);
+          setOriginalPlayers(players);
+          setIsEditing(true); isEditingRef.current = true;
+        },
+      });
+      return;
+    }
     setOriginalPlayers(players);
     setIsEditing(true); isEditingRef.current = true;
-  }, [players]);
+  }, [gameData, players, acquireLock]);
 
   /**
    * Perform the actual save — called directly or after the user confirms warnings.
@@ -516,6 +585,20 @@ export default function TeamSelectionPage() {
       });
 
       const data = await response.json();
+
+      if (response.status === 409) {
+        // Another captain has taken the selection lock — show dialog
+        setLockDialog({
+          lockedBy: data.lockedBy || 'another captain',
+          lockedAt: data.lockedAt || '',
+          onOverride: async () => {
+            setLockDialog(null);
+            await acquireLock(gameData.game.tabName, true);
+            await doSave();
+          },
+        });
+        return;
+      }
 
       if (!response.ok) {
         alert(data.error || 'Failed to save selection');
@@ -556,6 +639,8 @@ export default function TeamSelectionPage() {
       clearDraftsByFormName(draftFormName);      // clears all keys regardless of username
       sessionStorage.removeItem('friendlies_last_managed');
       notifyDraftsChanged();                     // tell Navbar to re-check immediately
+      // Release selection lock now that save is complete
+      await releaseLock(gameData.game.tabName);
       setIsEditing(false); isEditingRef.current = false;
       // Success - no alert needed, UI reflects saved state
     } catch (error) {
@@ -565,7 +650,7 @@ export default function TeamSelectionPage() {
     } finally {
       setSaving(false);
     }
-  }, [gameData, players, draftFormName]);
+  }, [gameData, players, draftFormName, acquireLock, releaseLock]);
 
   /**
    * Validate selection then save — shows a warnings modal if issues are found.
@@ -581,15 +666,16 @@ export default function TeamSelectionPage() {
   }, [gameData, players, doSave]);
 
   /**
-   * Cancel changes and exit edit mode
+   * Cancel changes and exit edit mode — releases the selection lock.
    */
-  const handleCancel = useCallback(() => {
+  const handleCancel = useCallback(async () => {
+    if (gameData) await releaseLock(gameData.game.tabName);
     setPlayers(originalPlayers);
     clearDraftsByFormName(draftFormName);        // clears all keys regardless of username
     sessionStorage.removeItem('friendlies_last_managed');
     notifyDraftsChanged();                       // tell Navbar to re-check immediately
     setIsEditing(false); isEditingRef.current = false;
-  }, [originalPlayers, draftFormName]);
+  }, [originalPlayers, draftFormName, gameData, releaseLock]);
 
   // ============================================================================
   // Local State Update Functions
@@ -779,9 +865,9 @@ export default function TeamSelectionPage() {
       />
 
       <div className="px-4 py-8">
-        {/* Two-column layout: left = all content, right = live preview (when editing) */}
-        <div className={isEditing ? 'flex gap-6' : ''}>
-          <div className={isEditing ? 'flex-1 min-w-0' : ''}>
+        {/* Two-column layout: left = all content, right = preview / helper panel */}
+        <div className="lg:flex lg:gap-6">
+          <div className="lg:flex-1 lg:min-w-0">
 
         {/* Header with back link and game details */}
         <div className="mb-6">
@@ -799,16 +885,6 @@ export default function TeamSelectionPage() {
                   Edit Selection
                 </button>
               )}
-              <button
-                onClick={() => setShowSelectionHelper(true)}
-                className="bg-amber-500 text-white px-4 py-2 rounded hover:bg-amber-600 transition-colors flex items-center gap-1.5 text-sm"
-                title="Selection guidance — bar/drivers, reserve priority, buddy pairs"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.347.347a3.001 3.001 0 01-2.83 2.03H9.76a3 3 0 01-2.83-2.03l-.346-.347z" />
-                </svg>
-                Selection Helper
-              </button>
             </div>
           </div>
 
@@ -905,9 +981,9 @@ export default function TeamSelectionPage() {
         </div>
 
             {/* Selection table - main UI for selecting players and assigning teams */}
-            <div className="bg-white rounded-lg shadow overflow-x-auto">
+            <div className="bg-white rounded-lg shadow">
               <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
+                <thead className="bg-gray-50 sticky top-16 z-10">
                   <tr>
                     <th className="px-2 py-2 text-left text-xs font-medium text-gray-700 uppercase">Name</th>
                     <th className="px-2 py-2 text-left text-xs font-medium text-gray-700 uppercase">Stats</th>
@@ -924,7 +1000,7 @@ export default function TeamSelectionPage() {
                     )}
 
                     <th className="px-2 py-2 text-left text-xs font-medium text-gray-700 uppercase">Cpt</th>
-                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-700 uppercase">Status</th>
+                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-700 uppercase">Conf</th>
                   </tr>
                 </thead>
 
@@ -1042,22 +1118,17 @@ export default function TeamSelectionPage() {
                       </td>
 
                       <td className="px-2 py-2 text-sm">
-                        {isEditing ? (
-                          <select
-                            value={player.status}
-                            onChange={e => updatePlayer(player.rowNumber, 'status', e.target.value)}
-                            tabIndex={-1}
-                            className="text-sm border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          >
-                            <option value="">-</option>
-                            <option value="Y">Confirmed</option>
-                            <option value="W">Withdrawn</option>
-                          </select>
+                        {player.status === 'W' ? (
+                          <span className="text-red-600 text-xs">Withdrawn</span>
                         ) : (
-                          <>
-                            {player.status === 'Y' && <span className="text-green-600">Confirmed</span>}
-                            {player.status === 'W' && <span className="text-red-600">Withdrawn</span>}
-                          </>
+                          <input
+                            type="checkbox"
+                            checked={player.status === 'Y'}
+                            onChange={e => updatePlayer(player.rowNumber, 'status', e.target.checked ? 'Y' : '')}
+                            disabled={!isEditing}
+                            tabIndex={-1}
+                            className={`w-4 h-4 ${!isEditing ? 'cursor-not-allowed' : ''}`}
+                          />
                         )}
                       </td>
                     </tr>
@@ -1071,21 +1142,55 @@ export default function TeamSelectionPage() {
               <h4 className="font-semibold mb-2 text-gray-900">Instructions:</h4>
               <ul className="text-sm space-y-1 list-disc list-inside text-gray-900">
                 <li>Player stats are populated when the game is closed and when new players are added</li>
-                <li>Click <strong>Edit Selection</strong> to start editing</li>
-                <li>Select players as Y (Playing), R (Reserve), or T (Reserve Team)</li>
-                <li>Assign team numbers and positions for selected players</li>
+                <li>Click <strong>Edit Selection</strong> to start editing — if another captain is already editing you can wait or override them</li>
+                <li>Assign team numbers and positions for selected players — <strong>hover over a name</strong> to see their stats and recent game entries</li>
+                <li>Players set to Y (Playing) automatically when a team number is entered; change to R (Reserve) or T (Reserve Team) if needed</li>
                 <li>Select ONE captain of the day (radio button)</li>
                 <li>For away games, mark drivers and assign car numbers</li>
+                <li>The <strong>Conf</strong> column shows a tick when a player has confirmed; withdrawn players show "Withdrawn"</li>
+                <li>The right-hand panel shows a <strong>Live Preview</strong> of teams as you select, or switch to <strong>Selection Helper</strong> for fairness guidance (reserve streaks, first timers, buddy pairs, % played)</li>
                 <li>Click <strong>Save</strong> to save selections (also updates Players sheet), or <strong>Cancel</strong> to discard changes</li>
+                <li><strong>Adding/removing players:</strong> use the <strong>Add Players</strong> button. During Open or Selecting, removing a player deletes them from the game entirely. Once Published, you are asked whether to <strong>Remove</strong> (completely — e.g. to move them to another game) or <strong>Withdraw</strong> (marks them as withdrawn in the sheet)</li>
+                <li><strong>Publishing/Republishing:</strong> tick <em>Email entered players</em> to notify players. Choose <em>All players</em> or <em>Select players</em> — use Select when only one swap was made so you only email the replacement</li>
               </ul>
             </div>
           </div>
 
-          {/* Right side: live preview panel (only visible when editing, hidden on small screens) */}
-          {isEditing && (
-            <div className="w-64 shrink-0 hidden lg:block">
-              <div className="sticky top-2 max-h-[calc(100vh-1rem)] overflow-y-auto space-y-3 pr-1">
-                <h3 className="font-bold text-sm text-gray-700 uppercase tracking-wide">Live Preview</h3>
+          {/* Right side: tabbed panel — Live Preview / Selection Helper */}
+          <div className="w-64 shrink-0 hidden lg:block">
+            <div className="sticky top-20 max-h-[calc(100vh-5.5rem)] overflow-y-auto pr-1">
+
+              {/* Tab toggle */}
+              <div className="flex border-b border-gray-200 mb-3">
+                <button
+                  onClick={() => setRightPanelTab('preview')}
+                  className={`flex-1 py-1.5 text-xs font-semibold transition-colors ${
+                    rightPanelTab === 'preview'
+                      ? 'text-blue-600 border-b-2 border-blue-600'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  Live Preview
+                </button>
+                <button
+                  onClick={() => setRightPanelTab('helper')}
+                  className={`flex-1 py-1.5 text-xs font-semibold transition-colors ${
+                    rightPanelTab === 'helper'
+                      ? 'text-amber-600 border-b-2 border-amber-500'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  Selection Helper
+                </button>
+              </div>
+
+              {/* Selection Helper tab */}
+              {rightPanelTab === 'helper' && gameData && (
+                <SelectionHelperPanel tabName={gameData.game.tabName} active={rightPanelTab === 'helper'} />
+              )}
+
+              {/* Live Preview tab */}
+              {rightPanelTab === 'preview' && <div className="space-y-3">
 
                 {/* Teams */}
                 {previewData.teams.length > 0 ? (
@@ -1197,9 +1302,9 @@ export default function TeamSelectionPage() {
                     </div>
                   </div>
                 )}
-              </div>
+              </div>}
             </div>
-          )}
+          </div>
         </div>
       </div>
 
@@ -1219,17 +1324,11 @@ export default function TeamSelectionPage() {
         gameId={game.tabName}
         gameType="friendlies"
         gameName={game.clubName}
+        gameStatus={game.status}
         ladiesMen={game.ladiesMen}
         currentUserRole={session?.user?.role}
         onPlayersChanged={refreshGameData}
         onAddPlayers={handleAddPlayers}
-      />
-
-      {/* Selection Helper Dialog */}
-      <SelectionHelperDialog
-        isOpen={showSelectionHelper}
-        onClose={() => setShowSelectionHelper(false)}
-        tabName={game.tabName}
       />
 
       {/* ================================================================== */}
@@ -1363,6 +1462,56 @@ export default function TeamSelectionPage() {
           </div>
         </div>
       )}
+      {/* ================================================================== */}
+      {/* Selection Lock Dialog */}
+      {/* ================================================================== */}
+      {lockDialog && (
+        <div className="fixed inset-0 z-[100] overflow-y-auto">
+          <div className="fixed inset-0 bg-black bg-opacity-50" />
+          <div className="flex min-h-full items-center justify-center p-4">
+            <div
+              className="relative bg-white rounded-lg shadow-xl max-w-md w-full p-6"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-center w-12 h-12 mx-auto mb-4 rounded-full bg-amber-100">
+                <svg className="w-6 h-6 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+                  />
+                </svg>
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900 text-center mb-2">Selection in Progress</h3>
+              <p className="text-sm text-gray-700 text-center mb-1">
+                <span className="font-medium text-gray-900">{lockDialog.lockedBy}</span> is currently editing the team selection for this game
+                {lockDialog.lockedAt ? (() => {
+                  const d = new Date(lockDialog.lockedAt);
+                  const date = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+                  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+                  return <> since {date} at {time}</>;
+                })() : null}.
+              </p>
+              <p className="text-sm text-gray-500 text-center mb-6">
+                You can override and take over, but their unsaved changes will be discarded.
+              </p>
+              <div className="flex gap-3 justify-end">
+                <button
+                  onClick={() => setLockDialog(null)}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={lockDialog.onOverride}
+                  className="px-4 py-2 text-sm font-medium text-white bg-amber-600 rounded hover:bg-amber-700"
+                >
+                  Override
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Instructions / Publish dialog */}
       {instructionsDialogMode && gameData && (
         <GameInstructionsDialog
@@ -1378,6 +1527,7 @@ export default function TeamSelectionPage() {
             homeAway: gameData.game.homeAway,
             specialInstructions: gameData.game.specialInstructions || '',
             pickupInfo: gameData.game.pickupInfo || '',
+            status: gameData.game.status,
           }}
           onConfirm={() => {
             setInstructionsDialogMode(null);

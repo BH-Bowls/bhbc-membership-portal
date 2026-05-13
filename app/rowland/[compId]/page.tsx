@@ -13,6 +13,12 @@ import type { RowlandResultData } from '@/components/rowland/RowlandMatchDialog'
 import type { CompMatch, CompMemberInfo, CompRound } from '@/types/competitions';
 import type { RowlandComp, RowlandMatch } from '@/types/rowland';
 import { ROWLAND_COMP_NAMES, ROWLAND_ROUND_LABELS, rowlandTeamDisplayName } from '@/types/rowland';
+
+// Convert a Drive /view URL to a raw image URL usable in <img> tags.
+function driveImageSrc(url: string): string {
+  const m = url?.match(/\/file\/d\/([^/]+)/);
+  return m ? `https://drive.google.com/uc?export=view&id=${m[1]}` : url;
+}
 import type { ClubContact } from '@/lib/types/clubs';
 
 const LS_KEY = 'rowland_selected_club';
@@ -450,7 +456,7 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
               ✕ Close
             </button>
             <img
-              src={scoreSheetPopup}
+              src={driveImageSrc(scoreSheetPopup)}
               alt="Score sheet"
               className="w-full h-auto rounded shadow-xl"
             />

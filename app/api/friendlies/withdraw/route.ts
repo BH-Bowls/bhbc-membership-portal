@@ -7,8 +7,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getGames, getGameSheet, updateGameSheet, updatePlayerEntry, updateGameCounts, removePlayerFromGameSheet } from '@/lib/friendlies-sheets';
-import { sendWithdrawalEmail } from '@/lib/email/friendlies';
-import { WithdrawRequest } from '@/lib/types/friendlies';
+import { sendWithdrawalEmail, sendWithdrawalNoticeEmail } from '@/lib/email/friendlies';
+import type { WithdrawRequest, Game } from '@/lib/types/friendlies';
+import { getUserByUsername } from '@/lib/sheets';
 
 // POST handler - Withdraws user from a game
 export async function POST(request: NextRequest) {
@@ -46,8 +47,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
 
-    // Get application URL for email links
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    // Derive app URL from the incoming request so custom domains work correctly
+    const appUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
 
     // Handle withdrawal differently based on game status
     // Scenario 1: Game is still Open - simple removal
@@ -92,6 +93,17 @@ export async function POST(request: NextRequest) {
 
         // Update the entered count in Games sheet
         await updateGameCounts(game.tabName, { entered: enteredCount });
+      }
+
+      // Send withdrawal notice to the player (fire-and-forget)
+      try {
+        const user = await getUserByUsername(userName);
+        if (user?.emailAddress) {
+          const fullName = user.fullName || (user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : userName);
+          await sendWithdrawalNoticeEmail(user.emailAddress, userName, fullName, game, appUrl);
+        }
+      } catch (emailError) {
+        console.error('Error sending withdrawal notice email:', emailError);
       }
 
       // Return success for Open game withdrawal
@@ -159,6 +171,17 @@ export async function POST(request: NextRequest) {
           },
           appUrl
         );
+      }
+
+      // Send withdrawal notice to the player (fire-and-forget)
+      try {
+        const user = await getUserByUsername(userName);
+        if (user?.emailAddress) {
+          const fullName = user.fullName || (user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : userName);
+          await sendWithdrawalNoticeEmail(user.emailAddress, userName, fullName, game, appUrl);
+        }
+      } catch (emailError) {
+        console.error('Error sending withdrawal notice email:', emailError);
       }
 
       // Return success for closed game withdrawal

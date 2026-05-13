@@ -1,15 +1,25 @@
 // src/components/AttachmentUpload.tsx
-// Upload component for suggestion attachments with drag-and-drop
+// Upload component for entity attachments.
+// Images are compressed client-side before upload.
+// File bytes go browser → Google Drive directly (no Vercel payload limit).
 
 'use client';
 
 import { useState, useRef } from 'react';
+import imageCompression from 'browser-image-compression';
 import type { AttachmentType } from '@/types/attachments';
 
 interface AttachmentUploadProps {
-  apiBasePath: string; // e.g. "/api/suggestions/2026-001" or "/api/invite-games/IG-2026-001"
+  apiBasePath: string; // e.g. "/api/suggestions/SG-2026-001"
   onUploadComplete: () => void;
   onCancel: () => void;
+}
+
+const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+
+// Extract entityId from apiBasePath — last path segment.
+function entityIdFromPath(apiBasePath: string): string {
+  return apiBasePath.split('/').filter(Boolean).pop() || '';
 }
 
 export function AttachmentUpload({
@@ -22,108 +32,144 @@ export function AttachmentUpload({
   const [url, setUrl] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadPhase, setUploadPhase] = useState<'compressing' | 'uploading' | 'saving' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-  };
-
+  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); setIsDragging(true); };
+  const handleDragLeave = (e: React.DragEvent) => { e.preventDefault(); setIsDragging(false); };
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-
-    const droppedFile = e.dataTransfer.files[0];
-    if (droppedFile) {
-      handleFileSelect(droppedFile);
-    }
+    const dropped = e.dataTransfer.files[0];
+    if (dropped) handleFileSelect(dropped);
   };
 
-  const handleFileSelect = (selectedFile: File) => {
-    // Validate file size (50MB max)
-    const maxSize = 50 * 1024 * 1024;
-    if (selectedFile.size > maxSize) {
+  const handleFileSelect = (selected: File) => {
+    if (selected.size > 50 * 1024 * 1024) {
       setError('File size exceeds 50MB limit');
       return;
     }
-
-    // Auto-detect type from the file
-    const imageTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-    if (imageTypes.includes(selectedFile.type)) {
-      setType('image');
-    } else {
-      setType('document');
-    }
-
-    setFile(selectedFile);
+    setType(IMAGE_TYPES.includes(selected.type) ? 'image' : 'document');
+    setFile(selected);
     setError(null);
-  };
-
-  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (selectedFile) {
-      handleFileSelect(selectedFile);
-    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    // Validation
-    if (!description.trim()) {
-      setError('Description is required');
-      return;
-    }
-
-    if (type === 'link' && !url.trim()) {
-      setError('URL is required for links');
-      return;
-    }
-
-    if (type !== 'link' && !file) {
-      setError('Please select a file');
-      return;
-    }
+    if (!description.trim()) { setError('Description is required'); return; }
+    if (type === 'link' && !url.trim()) { setError('URL is required for links'); return; }
+    if (type !== 'link' && !file) { setError('Please select a file'); return; }
 
     setUploading(true);
 
     try {
-      const formData = new FormData();
-      formData.append('type', type);
-      formData.append('description', description);
-
       if (type === 'link') {
-        formData.append('url', url);
-      } else if (file) {
-        formData.append('file', file);
-      }
-
-      const response = await fetch(`${apiBasePath}/attachments`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      const data = await response.json();
-
-      if (response.ok) {
+        await fetch(`${apiBasePath}/attachments`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'link', description, url }),
+        }).then(async (r) => {
+          if (!r.ok) throw new Error((await r.json()).error || 'Failed to save link');
+        });
         onUploadComplete();
-      } else {
-        setError(data.error || 'Failed to upload attachment');
+        return;
       }
-    } catch (error) {
-      console.error('Upload error:', error);
-      setError('Failed to upload attachment');
+
+      // ── File upload ──────────────────────────────────────────────────────
+      let uploadFile: File = file!;
+      let finalMimeType = file!.type;
+      let finalFileName = file!.name;
+
+      // Compress and convert images to WebP client-side before upload
+      if (IMAGE_TYPES.includes(file!.type)) {
+        setUploadPhase('compressing');
+        try {
+          const compressed = await imageCompression(file!, {
+            maxSizeMB: 2,
+            maxWidthOrHeight: 2000,
+            useWebWorker: true,
+            fileType: 'image/webp',
+            initialQuality: 0.85,
+          });
+          // Always use WebP — it's the right web format regardless of size comparison
+          uploadFile = new File(
+            [compressed],
+            file!.name.replace(/\.(jpg|jpeg|png|gif|webp)$/i, '.webp'),
+            { type: 'image/webp' }
+          );
+          finalMimeType = 'image/webp';
+          finalFileName = uploadFile.name;
+        } catch {
+          // Compression failed — upload original
+        }
+      }
+
+      // Step 1: get a Drive resumable upload session URI from our server
+      setUploadPhase('uploading');
+      const entityId = entityIdFromPath(apiBasePath);
+      const sessionRes = await fetch('/api/attachments/upload-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entityId, fileName: finalFileName, mimeType: finalMimeType }),
+      });
+      if (!sessionRes.ok) {
+        throw new Error((await sessionRes.json()).error || 'Failed to create upload session');
+      }
+      const { sessionUri } = await sessionRes.json();
+
+      // Step 2: PUT the file directly to Drive (bypasses Vercel entirely)
+      const driveRes = await fetch(sessionUri, {
+        method: 'PUT',
+        headers: { 'Content-Type': finalMimeType },
+        body: uploadFile,
+      });
+      if (!driveRes.ok) {
+        const text = await driveRes.text();
+        throw new Error(`Drive upload failed: ${driveRes.status} ${text}`);
+      }
+      const driveFile = await driveRes.json();
+      const fileId: string = driveFile.id;
+
+      // Step 3: confirm with our server — sets permissions and stores in Sheets
+      setUploadPhase('saving');
+      const confirmRes = await fetch(`${apiBasePath}/attachments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type,
+          description,
+          fileId,
+          fileName: finalFileName,
+          mimeType: finalMimeType,
+          fileSize: uploadFile.size,
+        }),
+      });
+      if (!confirmRes.ok) {
+        throw new Error((await confirmRes.json()).error || 'Failed to save attachment');
+      }
+
+      onUploadComplete();
+    } catch (err) {
+      console.error('Upload error:', err);
+      setError(err instanceof Error ? err.message : 'Failed to upload attachment');
     } finally {
       setUploading(false);
+      setUploadPhase(null);
+    }
+  };
+
+  const uploadButtonLabel = () => {
+    if (!uploading) return 'Upload';
+    switch (uploadPhase) {
+      case 'compressing': return 'Compressing…';
+      case 'uploading':   return 'Uploading…';
+      case 'saving':      return 'Saving…';
+      default:            return 'Uploading…';
     }
   };
 
@@ -134,20 +180,14 @@ export function AttachmentUpload({
       <form onSubmit={handleSubmit} className="space-y-4">
         {/* Type Selection */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Attachment Type
-          </label>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Attachment Type</label>
           <div className="flex gap-4">
             <label className="flex items-center">
               <input
                 type="radio"
                 value="file"
                 checked={type !== 'link'}
-                onChange={() => {
-                  setType('image');
-                  setFile(null);
-                  setUrl('');
-                }}
+                onChange={() => { setType('image'); setFile(null); setUrl(''); }}
                 className="mr-2"
               />
               File
@@ -157,10 +197,7 @@ export function AttachmentUpload({
                 type="radio"
                 value="link"
                 checked={type === 'link'}
-                onChange={() => {
-                  setType('link');
-                  setFile(null);
-                }}
+                onChange={() => { setType('link'); setFile(null); }}
                 className="mr-2"
               />
               Link
@@ -170,9 +207,7 @@ export function AttachmentUpload({
 
         {/* Description */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Description *
-          </label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Description *</label>
           <input
             type="text"
             value={description}
@@ -183,12 +218,10 @@ export function AttachmentUpload({
           />
         </div>
 
-        {/* URL Input (for links) */}
+        {/* URL Input */}
         {type === 'link' && (
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              URL *
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">URL *</label>
             <input
               type="url"
               value={url}
@@ -200,27 +233,23 @@ export function AttachmentUpload({
           </div>
         )}
 
-        {/* File Upload (for images/documents) */}
+        {/* File Drop Zone */}
         {type !== 'link' && (
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              File *
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">File *</label>
             <div
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
               className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
-                isDragging
-                  ? 'border-blue-500 bg-blue-50'
-                  : 'border-gray-300 hover:border-gray-400'
+                isDragging ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-gray-400'
               }`}
             >
               <input
                 ref={fileInputRef}
                 id="attachment-file-input"
                 type="file"
-                onChange={handleFileInputChange}
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileSelect(f); }}
                 accept="*"
                 className="sr-only"
               />
@@ -229,74 +258,44 @@ export function AttachmentUpload({
                 type="file"
                 accept="image/*"
                 capture="environment"
-                onChange={handleFileInputChange}
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileSelect(f); }}
                 className="sr-only"
               />
               {file ? (
                 <div className="space-y-2">
                   <p className="text-sm font-medium text-gray-900">{file.name}</p>
-                  <p className="text-xs text-gray-500">
-                    {(file.size / 1024 / 1024).toFixed(2)} MB
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setFile(null)}
-                    className="text-sm text-red-600 hover:text-red-700"
-                  >
+                  <p className="text-xs text-gray-500">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
+                  <button type="button" onClick={() => setFile(null)} className="text-sm text-red-600 hover:text-red-700">
                     Remove
                   </button>
                 </div>
               ) : (
                 <div className="space-y-2">
-                  <svg
-                    className="mx-auto h-12 w-12 text-gray-400"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-                    />
+                  <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                   </svg>
                   <div className="text-sm text-gray-600">
-                    <label
-                      htmlFor="attachment-file-input"
-                      className="text-blue-600 hover:text-blue-700 font-medium cursor-pointer"
-                    >
+                    <label htmlFor="attachment-file-input" className="text-blue-600 hover:text-blue-700 font-medium cursor-pointer">
                       Choose a file
-                    </label>{' '}
-                    or drag and drop
+                    </label>{' '}or drag and drop
                   </div>
                   <div className="text-sm text-gray-500">
                     or{' '}
-                    <button
-                      type="button"
-                      onClick={() => cameraInputRef.current?.click()}
-                      className="text-blue-600 hover:text-blue-700 font-medium"
-                    >
+                    <button type="button" onClick={() => cameraInputRef.current?.click()} className="text-blue-600 hover:text-blue-700 font-medium">
                       take a photo
                     </button>
                   </div>
-                  <p className="text-xs text-gray-500">
-                    Images, PDFs, documents, spreadsheets — up to 50MB
-                  </p>
+                  <p className="text-xs text-gray-500">Images, PDFs, documents, spreadsheets — up to 50MB</p>
                 </div>
               )}
             </div>
           </div>
         )}
 
-        {/* Error Message */}
         {error && (
-          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
-            {error}
-          </div>
+          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">{error}</div>
         )}
 
-        {/* Actions */}
         <div className="flex justify-end gap-3 pt-2">
           <button
             type="button"
@@ -313,22 +312,11 @@ export function AttachmentUpload({
           >
             {uploading && (
               <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                />
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
               </svg>
             )}
-            {uploading ? 'Uploading...' : 'Upload'}
+            {uploadButtonLabel()}
           </button>
         </div>
       </form>

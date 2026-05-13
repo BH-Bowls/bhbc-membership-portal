@@ -61,6 +61,7 @@ export async function POST(request: NextRequest) {
     // Build a single-player payload representing the sender.
     // If they're in the game use their real status; otherwise show "Selected — Playing" as a demo.
     const previewPlayer = {
+      userName: session.user.userName,
       fullName: session.user.name || session.user.userName || 'Captain',
       email: userEmail,
       selected: (senderInGame?.selected || 'Y') as string,

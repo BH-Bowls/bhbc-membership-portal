@@ -127,6 +127,8 @@ export interface Game {
   pickupInfo: string;           // Optional pickup point information for away game car sharing
   petrolCost?: number | null;   // Petrol reimbursement amount for away games (populated at API layer)
   captain?: string;             // Captain of the day's userName (stored on Games sheet)
+  lockedBy: string;             // Username of captain currently editing the selection ('' if unlocked)
+  lockedAt: string;             // ISO timestamp when lock was acquired ('' if unlocked)
 }
 
 /**
@@ -419,11 +421,13 @@ export interface ChangeStatusRequest {
   tab_name: string;    // Game tabName to update (may be empty for unopened games)
   row_number?: number; // Row number in Games sheet (used to identify unopened games)
   action: 'open' | 'close' | 'allocate' | 'publish' | 'republish' | 'played' | 'cancel' | 'abandon' | 'reopen' | 'reopen-entries' | 'unpublish'; // Status transition action
+  expected_status?: string; // Client's known current status — server rejects with 409 if it doesn't match
   bhbc_score?: number;      // Burgess Hill score (required for 'played' and 'abandon')
   opponent_score?: number;  // Opponent score (required for 'played' and 'abandon')
   reason?: string;          // Reason for cancellation/abandonment (required for 'cancel' and 'abandon')
   who?: string;             // Who initiated cancellation (required for 'cancel')
   send_email?: boolean;     // Whether to send email notification to players (for 'publish' action)
+  email_player_names?: string[]; // When set, only email these specific players (subset of all entered players)
   send_tea_rota_email?: boolean; // Whether to send email notification to tea rota members (for 'publish' action, home games only)
 }
 

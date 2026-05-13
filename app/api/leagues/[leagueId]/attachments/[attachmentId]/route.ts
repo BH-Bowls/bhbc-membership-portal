@@ -1,5 +1,4 @@
 // app/api/leagues/[leagueId]/attachments/[attachmentId]/route.ts
-// GET (proxy/download) + DELETE for a single league attachment
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
@@ -8,8 +7,9 @@ import {
   getLeagueAttachmentById,
   deleteLeagueAttachment,
 } from '@/lib/leagues-attachments-sheets';
-import { deleteFileFromCloudinary, fetchFileFromCloudinary } from '@/lib/cloudinary';
 import { hasRole } from '@/lib/role-utils';
+import { deleteFileFromDrive, isDriveFileId, driveEmbedUrl, driveDownloadUrl } from '@/lib/drive';
+import { deleteFileFromCloudinary, fetchFileFromCloudinary } from '@/lib/cloudinary';
 
 const MIME_FROM_EXTENSION: Record<string, string> = {
   '.pdf': 'application/pdf',
@@ -20,10 +20,6 @@ const MIME_FROM_EXTENSION: Record<string, string> = {
   '.txt': 'text/plain',
 };
 
-/**
- * GET /api/leagues/[leagueId]/attachments/[attachmentId]
- * ?inline=true → view in browser; default → download
- */
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ leagueId: string; attachmentId: string }> }
@@ -36,21 +32,21 @@ export async function GET(
     }
 
     const attachment = await getLeagueAttachmentById(attachmentId);
-    if (!attachment) {
-      return NextResponse.json({ error: 'Attachment not found' }, { status: 404 });
-    }
+    if (!attachment) return NextResponse.json({ error: 'Attachment not found' }, { status: 404 });
     if (attachment.leagueId !== leagueId) {
       return NextResponse.json({ error: 'Attachment does not belong to this league' }, { status: 400 });
     }
 
-    if (attachment.type === 'link') {
-      return NextResponse.redirect(attachment.url);
+    if (attachment.type === 'link') return NextResponse.redirect(attachment.url);
+    if (!attachment.driveFileId) return NextResponse.json({ error: 'File not available' }, { status: 404 });
+
+    if (isDriveFileId(attachment.driveFileId)) {
+      const inline = request.nextUrl.searchParams.get('inline') === 'true';
+      const url = inline ? driveEmbedUrl(attachment.driveFileId) : driveDownloadUrl(attachment.driveFileId);
+      return NextResponse.redirect(url);
     }
 
-    if (!attachment.driveFileId) {
-      return NextResponse.json({ error: 'File not available' }, { status: 404 });
-    }
-
+    // Legacy Cloudinary
     const resourceType = attachment.type === 'image' ? 'image' : 'raw';
     const { buffer, contentType: cloudinaryContentType } =
       await fetchFileFromCloudinary(attachment.driveFileId, resourceType as 'image' | 'raw');
@@ -63,9 +59,7 @@ export async function GET(
 
     const inline = request.nextUrl.searchParams.get('inline') === 'true';
     const filename = attachment.fileName || attachment.description || 'download';
-    const disposition = inline
-      ? `inline; filename="${filename}"`
-      : `attachment; filename="${filename}"`;
+    const disposition = inline ? `inline; filename="${filename}"` : `attachment; filename="${filename}"`;
 
     return new NextResponse(new Uint8Array(buffer), {
       status: 200,
@@ -82,10 +76,6 @@ export async function GET(
   }
 }
 
-/**
- * DELETE /api/leagues/[leagueId]/attachments/[attachmentId]
- * Committee only.
- */
 export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ leagueId: string; attachmentId: string }> }
@@ -101,15 +91,19 @@ export async function DELETE(
     }
 
     const attachment = await getLeagueAttachmentById(attachmentId);
-    if (!attachment) {
-      return NextResponse.json({ error: 'Attachment not found' }, { status: 404 });
-    }
+    if (!attachment) return NextResponse.json({ error: 'Attachment not found' }, { status: 404 });
     if (attachment.leagueId !== leagueId) {
       return NextResponse.json({ error: 'Attachment does not belong to this league' }, { status: 400 });
     }
 
     if (attachment.driveFileId) {
-      try { await deleteFileFromCloudinary(attachment.driveFileId); } catch { /* best effort */ }
+      try {
+        if (isDriveFileId(attachment.driveFileId)) {
+          await deleteFileFromDrive(attachment.driveFileId);
+        } else {
+          await deleteFileFromCloudinary(attachment.driveFileId);
+        }
+      } catch { /* best effort */ }
     }
 
     const result = await deleteLeagueAttachment(attachmentId);

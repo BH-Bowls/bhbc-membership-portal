@@ -5,8 +5,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, updatePlayerEntry, getEnteredPlayers, updateGameCounts, removePlayerFromGameSheet } from '@/lib/friendlies-sheets';
+import { getGames, updatePlayerEntry, getEnteredPlayers, updateGameCounts, removePlayerFromGameSheet, getGameSheet, updateGameSheet } from '@/lib/friendlies-sheets';
 import { hasRole } from '@/lib/role-utils';
+import { getUserByUsername } from '@/lib/sheets';
+import { sendWithdrawnByAdminNoticeEmail, sendRemovedNoticeEmail } from '@/lib/email/friendlies';
 
 // POST handler - Removes a player from a game (Players column + game sheet row)
 export async function POST(request: NextRequest) {
@@ -20,7 +22,7 @@ export async function POST(request: NextRequest) {
 
     // Parse request body
     const body = await request.json();
-    const { gameId, playerUserName } = body;
+    const { gameId, playerUserName, forceRemove = false } = body;
 
     // Validate input
     if (!gameId || !playerUserName) {
@@ -59,18 +61,60 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Clear the player's entry in the Players column
-    await updatePlayerEntry(playerUserName, game.tabName, '');
+    const appUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
 
-    // Remove the player's row from the individual game sheet
+    if (game.status === 'S' && !forceRemove) {
+      // Published game — mark as withdrawn rather than delete.
+      // Player stays on the game sheet so the captain can see who dropped out.
+      const players = await getGameSheet(game.tabName);
+      const playerInGame = players.find(p => p.name === playerUserName);
+
+      if (playerInGame) {
+        await updateGameSheet(game.tabName, [{ rowNumber: playerInGame.rowNumber, status: 'W' }]);
+        const withdrawnStatus =
+          playerInGame.selected === 'Y' ? 'PW' :
+          playerInGame.selected === 'R' ? 'RW' :
+          playerInGame.selected === 'T' ? 'TW' : 'EW';
+        await updatePlayerEntry(playerUserName, game.tabName, withdrawnStatus as any);
+      } else {
+        // Not in game sheet — just clear the Players column
+        await updatePlayerEntry(playerUserName, game.tabName, '');
+      }
+
+      // Send withdrawal notice to the player (fire-and-forget)
+      try {
+        const user = await getUserByUsername(playerUserName);
+        if (user?.emailAddress) {
+          const fullName = user.fullName || (user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : playerUserName);
+          await sendWithdrawnByAdminNoticeEmail(user.emailAddress, playerUserName, fullName, game, appUrl);
+        }
+      } catch (emailError) {
+        console.error('[remove-player] Error sending withdrawal notice email:', emailError);
+      }
+
+      return NextResponse.json({ success: true, withdrawn: true });
+    }
+
+    // Open / Selecting — remove the player completely
+    await updatePlayerEntry(playerUserName, game.tabName, '');
     await removePlayerFromGameSheet(game.tabName, playerUserName);
 
-    // Update the entered count in Games sheet
     try {
       const enteredPlayers = await getEnteredPlayers(game.tabName);
       await updateGameCounts(game.tabName, { entered: enteredPlayers.length });
-    } catch (countError) {
-      // Don't fail the request, player was removed successfully
+    } catch {
+      // Don't fail — player was removed successfully
+    }
+
+    // Send removal notice to the player (fire-and-forget)
+    try {
+      const user = await getUserByUsername(playerUserName);
+      if (user?.emailAddress) {
+        const fullName = user.fullName || (user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : playerUserName);
+        await sendRemovedNoticeEmail(user.emailAddress, playerUserName, fullName, game, appUrl);
+      }
+    } catch (emailError) {
+      console.error('[remove-player] Error sending removal notice email:', emailError);
     }
 
     return NextResponse.json({ success: true });

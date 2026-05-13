@@ -1,5 +1,7 @@
 // src/components/AttachmentsList.tsx
-// Display and manage suggestion attachments
+// Display and manage entity attachments.
+// Drive files open directly from Google (no server proxy).
+// Legacy Cloudinary files still go through the server proxy.
 
 'use client';
 
@@ -8,37 +10,42 @@ import type { Attachment } from '@/types/attachments';
 import { ConfirmDialog } from './ConfirmDialog';
 
 interface AttachmentsListProps {
-  apiBasePath: string; // e.g. "/api/suggestions/2026-001" or "/api/invite-games/IG-2026-001"
+  apiBasePath: string;
   attachments: Attachment[];
   canDelete: boolean;
   onDelete: () => void;
 }
 
-// MIME types / extensions that browsers can display inline
-const VIEWABLE_MIME_TYPES = ['application/pdf'];
-const VIEWABLE_EXTENSIONS = ['.pdf'];
+// ── Drive URL helpers (duplicated here so this client component stays self-contained) ──
 
-function isViewableInBrowser(attachment: Attachment): boolean {
-  if (attachment.type === 'image' || attachment.type === 'link') return true;
-  const mime = (attachment.mimeType || '').toLowerCase();
-  if (VIEWABLE_MIME_TYPES.includes(mime)) return true;
-  const name = (attachment.fileName || '').toLowerCase();
-  return VIEWABLE_EXTENSIONS.some((ext) => name.endsWith(ext));
+function isDriveFileId(id: string | null | undefined): boolean {
+  return !!id && !id.includes('/');
+}
+function driveEmbedUrl(id: string): string {
+  return `https://drive.google.com/file/d/${id}/preview`;
+}
+function driveDownloadUrl(id: string): string {
+  return `https://drive.google.com/uc?export=download&id=${id}`;
+}
+function driveThumbnailUrl(id: string): string {
+  return `https://drive.google.com/thumbnail?id=${id}&sz=w200`;
+}
+function driveViewUrl(id: string): string {
+  return `https://drive.google.com/file/d/${id}/view`;
 }
 
-/**
- * Build the server-side proxy URL for an attachment.
- *   ?inline=true  → Content-Disposition: inline  (view in browser)
- *   (default)     → Content-Disposition: attachment (download)
- */
-function getProxyUrl(
-  apiBasePath: string,
-  attachment: Attachment,
-  inline: boolean
-): string {
+// ── Legacy Cloudinary proxy helpers ──────────────────────────────────────────
+
+function getProxyUrl(apiBasePath: string, attachment: Attachment, inline: boolean): string {
   const base = `${apiBasePath}/attachments/${attachment.attachmentId}`;
   return inline ? `${base}?inline=true` : base;
 }
+
+function isCloudinaryFile(attachment: Attachment): boolean {
+  return !!attachment.driveFileId && !isDriveFileId(attachment.driveFileId);
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
 
 export function AttachmentsList({
   apiBasePath,
@@ -52,50 +59,30 @@ export function AttachmentsList({
     isOpen: boolean;
     attachmentId: string | null;
     description: string;
-  }>({
-    isOpen: false,
-    attachmentId: null,
-    description: '',
-  });
+  }>({ isOpen: false, attachmentId: null, description: '' });
 
-  // Auto-dismiss toast
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(null), 4000);
     return () => clearTimeout(timer);
   }, [toast]);
 
-  // ---- Handlers ----
-
   const handleDeleteClick = (attachment: Attachment) => {
-    setConfirmDialog({
-      isOpen: true,
-      attachmentId: attachment.attachmentId,
-      description: attachment.description,
-    });
+    setConfirmDialog({ isOpen: true, attachmentId: attachment.attachmentId, description: attachment.description });
   };
 
   const handleDeleteConfirm = async () => {
     if (!confirmDialog.attachmentId) return;
-
     setDeletingId(confirmDialog.attachmentId);
-
     try {
-      const response = await fetch(
-        `${apiBasePath}/attachments/${confirmDialog.attachmentId}`,
-        {
-          method: 'DELETE',
-        }
-      );
-
+      const response = await fetch(`${apiBasePath}/attachments/${confirmDialog.attachmentId}`, { method: 'DELETE' });
       if (response.ok) {
         onDelete();
       } else {
         const data = await response.json();
         alert(data.error || 'Failed to delete attachment');
       }
-    } catch (error) {
-      console.error('Delete error:', error);
+    } catch {
       alert('Failed to delete attachment');
     } finally {
       setDeletingId(null);
@@ -103,103 +90,73 @@ export function AttachmentsList({
     }
   };
 
-  /**
-   * Handle clicking a document attachment.
-   * Viewable files (PDF): open via proxy with ?inline=true in a new tab.
-   * Other documents: navigate to proxy URL which triggers download with correct filename.
-   */
-  const handleDocumentClick = (
-    e: React.MouseEvent,
-    attachment: Attachment
-  ) => {
+  const handleDocumentClick = (e: React.MouseEvent, attachment: Attachment) => {
     e.preventDefault();
 
-    if (isViewableInBrowser(attachment)) {
-      // Open inline in new tab — the server sets Content-Disposition: inline
+    if (isDriveFileId(attachment.driveFileId)) {
+      // All Drive files open in Google's viewer (handles PDFs, Word, Excel, etc.)
+      window.open(driveEmbedUrl(attachment.driveFileId!), '_blank');
+      return;
+    }
+
+    // Legacy Cloudinary — proxy through server
+    const VIEWABLE_MIME = ['application/pdf'];
+    const VIEWABLE_EXT = ['.pdf'];
+    const mime = (attachment.mimeType || '').toLowerCase();
+    const name = (attachment.fileName || '').toLowerCase();
+    const isViewable = VIEWABLE_MIME.includes(mime) || VIEWABLE_EXT.some((e) => name.endsWith(e));
+
+    if (isViewable) {
       window.open(getProxyUrl(apiBasePath, attachment, true), '_blank');
     } else {
-      // Trigger download — the server sets Content-Disposition: attachment with filename
-      // Using a hidden link avoids popup blockers
       const a = document.createElement('a');
       a.href = getProxyUrl(apiBasePath, attachment, false);
-      a.download = ''; // browser will use the Content-Disposition filename
+      a.download = '';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      const filename = attachment.fileName || attachment.description;
-      setToast(`Downloaded "${filename}"`);
+      setToast(`Downloaded "${attachment.fileName || attachment.description}"`);
     }
   };
 
-  // ---- Helpers ----
+  const getThumbnailSrc = (attachment: Attachment): string | null => {
+    if (attachment.type !== 'image' || attachment.isDeleted) return null;
+    if (isDriveFileId(attachment.driveFileId)) return driveThumbnailUrl(attachment.driveFileId!);
+    return attachment.url || null; // Cloudinary CDN URL
+  };
 
-  const getThumbnailUrl = (attachment: Attachment) => {
-    if (attachment.type === 'image' && attachment.url) {
-      return attachment.url;
-    }
-    return null;
+  const getImageHref = (attachment: Attachment): string => {
+    if (isDriveFileId(attachment.driveFileId)) return driveViewUrl(attachment.driveFileId!);
+    return attachment.url;
   };
 
   const getIcon = (attachment: Attachment) => {
     if (attachment.isDeleted) {
       return (
         <svg className="h-8 w-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-          />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
         </svg>
       );
     }
-
     if (attachment.type === 'link') {
       return (
         <svg className="h-8 w-8 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"
-          />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
         </svg>
       );
     }
-
-    if (attachment.type === 'document') {
-      return (
-        <svg className="h-8 w-8 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"
-          />
-        </svg>
-      );
-    }
-
-    return null;
+    return (
+      <svg className="h-8 w-8 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+      </svg>
+    );
   };
-
-  // ---- Render ----
 
   if (attachments.length === 0) {
     return (
       <div className="text-center py-8 text-gray-500">
-        <svg
-          className="mx-auto h-12 w-12 text-gray-400 mb-3"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
-          />
+        <svg className="mx-auto h-12 w-12 text-gray-400 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
         </svg>
         <p>No attachments yet</p>
       </div>
@@ -210,6 +167,7 @@ export function AttachmentsList({
     <div className="space-y-3">
       {attachments.map((attachment) => {
         const isDocument = attachment.type === 'document';
+        const thumbnailSrc = getThumbnailSrc(attachment);
 
         return (
           <div
@@ -222,27 +180,19 @@ export function AttachmentsList({
           >
             {/* Thumbnail or Icon */}
             <div className="flex-shrink-0">
-              {attachment.type === 'image' && !attachment.isDeleted ? (
-                <a
-                  href={attachment.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block"
-                >
+              {attachment.type === 'image' && !attachment.isDeleted && thumbnailSrc ? (
+                <a href={getImageHref(attachment)} target="_blank" rel="noopener noreferrer" className="block">
                   <img
-                    src={getThumbnailUrl(attachment) || ''}
+                    src={thumbnailSrc}
                     alt={attachment.description}
                     className="w-16 h-16 object-cover rounded border border-gray-300 hover:opacity-80 transition-opacity"
                     onError={(e) => {
-                      e.currentTarget.src =
-                        'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"%3E%3Cpath strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"%3E%3C/path%3E%3C/svg%3E';
+                      e.currentTarget.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"%3E%3Cpath strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"%3E%3C/path%3E%3C/svg%3E';
                     }}
                   />
                 </a>
               ) : (
-                <div className="w-16 h-16 flex items-center justify-center">
-                  {getIcon(attachment)}
-                </div>
+                <div className="w-16 h-16 flex items-center justify-center">{getIcon(attachment)}</div>
               )}
             </div>
 
@@ -252,12 +202,8 @@ export function AttachmentsList({
                 <div className="flex-1 min-w-0">
                   {attachment.isDeleted ? (
                     <div>
-                      <p className="text-sm font-medium text-red-700">
-                        {attachment.description}
-                      </p>
-                      <p className="text-xs text-red-600 mt-1">
-                        File no longer available
-                      </p>
+                      <p className="text-sm font-medium text-red-700">{attachment.description}</p>
+                      <p className="text-xs text-red-600 mt-1">File no longer available</p>
                     </div>
                   ) : isDocument ? (
                     <button
@@ -268,7 +214,7 @@ export function AttachmentsList({
                     </button>
                   ) : (
                     <a
-                      href={attachment.url}
+                      href={attachment.type === 'link' ? attachment.url : getImageHref(attachment)}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline block truncate"
@@ -277,27 +223,28 @@ export function AttachmentsList({
                     </a>
                   )}
 
-                  {/* Metadata */}
+                  {/* Drive download link for documents */}
+                  {isDocument && !attachment.isDeleted && isDriveFileId(attachment.driveFileId) && (
+                    <a
+                      href={driveDownloadUrl(attachment.driveFileId!)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-gray-500 hover:text-gray-700 mt-0.5 inline-block"
+                    >
+                      Download
+                    </a>
+                  )}
+
                   <div className="flex flex-wrap items-center gap-2 mt-1 text-xs text-gray-500">
                     <span className="capitalize">{attachment.type}</span>
                     {attachment.fileName && (
-                      <>
-                        <span>•</span>
-                        <span className="truncate max-w-[200px]">
-                          {attachment.fileName}
-                        </span>
-                      </>
+                      <><span>•</span><span className="truncate max-w-[200px]">{attachment.fileName}</span></>
                     )}
                     {attachment.fileSize && (
-                      <>
-                        <span>•</span>
-                        <span>{(attachment.fileSize / 1024 / 1024).toFixed(2)} MB</span>
-                      </>
+                      <><span>•</span><span>{(attachment.fileSize / 1024 / 1024).toFixed(2)} MB</span></>
                     )}
                     <span>•</span>
-                    <span>
-                      Added by {attachment.addedByUsername}
-                    </span>
+                    <span>Added by {attachment.addedByUsername}</span>
                   </div>
                 </div>
 
@@ -311,7 +258,6 @@ export function AttachmentsList({
                         ? 'text-red-400'
                         : 'text-red-600 hover:text-red-700 hover:bg-red-50'
                     }`}
-                    title="Delete attachment"
                   >
                     {deletingId === attachment.attachmentId ? (
                       <span className="flex items-center gap-1.5">
@@ -321,9 +267,7 @@ export function AttachmentsList({
                         </svg>
                         Deleting...
                       </span>
-                    ) : (
-                      'Delete'
-                    )}
+                    ) : 'Delete'}
                   </button>
                 )}
               </div>
@@ -332,9 +276,8 @@ export function AttachmentsList({
         );
       })}
 
-      {/* Download toast */}
       {toast && (
-        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3 bg-gray-800 text-white px-5 py-3 rounded-lg shadow-lg animate-fade-in">
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3 bg-gray-800 text-white px-5 py-3 rounded-lg shadow-lg">
           <svg className="h-5 w-5 text-green-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
           </svg>
@@ -347,7 +290,6 @@ export function AttachmentsList({
         </div>
       )}
 
-      {/* Confirm Dialog */}
       <ConfirmDialog
         isOpen={confirmDialog.isOpen}
         title="Delete Attachment"
@@ -356,11 +298,7 @@ export function AttachmentsList({
         confirmDisabled={!!deletingId}
         confirmVariant="danger"
         onConfirm={handleDeleteConfirm}
-        onCancel={() => {
-          if (!deletingId) {
-            setConfirmDialog({ isOpen: false, attachmentId: null, description: '' });
-          }
-        }}
+        onCancel={() => { if (!deletingId) setConfirmDialog({ isOpen: false, attachmentId: null, description: '' }); }}
       />
     </div>
   );

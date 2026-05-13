@@ -27,7 +27,7 @@ export async function PUT(req: Request) {
   }
 
   try {
-    await updateGamePickupInfo(tabName, pickupInfo, rowNumber);
+    await updateGamePickupInfo(tabName, pickupInfo, rowNumber, session.user?.userName);
     return NextResponse.json({ ok: true });
   } catch (err: any) {
     console.error('PUT /api/friendlies/manage/pickup-info error:', err);

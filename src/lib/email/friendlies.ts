@@ -7,6 +7,7 @@ import { sendEmail } from './mailer';
 import { getUserByUsername, getAllUsers } from '../sheets';
 import { Game, GameSheetPlayer } from '../types/friendlies';
 import { hasRole } from '../role-utils';
+import { buildFriendlyICSAttachment, isGmailAddress, icsUpdatesEnabled } from '../ics-utils';
 
 /**
  * Get email addresses for all captains and admins
@@ -74,19 +75,14 @@ export async function sendWithdrawalEmail(
     const user = await getUserByUsername(userName);
 
     // Build full name with fallback chain
-    // Priority: fullKnownAs → firstName + lastName → userName
+    // Priority: fullName → firstName + lastName → userName
     let userFullName = '';
 
-    // Try fullKnownAs first (preferred display name)
-    if (user && user.fullKnownAs) {
-      userFullName = user.fullKnownAs;
-    }
-    // Try building name from firstName + lastName
-    else if (user && user.firstName && user.lastName) {
-      userFullName = user.firstName + ' ' + user.lastName;
-    }
-    // Fall back to username
-    else {
+    if (user && user.fullName) {
+      userFullName = user.fullName;
+    } else if (user && user.firstName && user.lastName) {
+      userFullName = `${user.firstName} ${user.lastName}`;
+    } else {
       userFullName = userName;
     }
 
@@ -254,6 +250,7 @@ Friendlies Management System
 export async function sendGamePublishedEmail(
   game: Game,
   players: Array<{
+    userName?: string;   // Used in ICS UID — optional for backwards compatibility
     fullName: string;
     email: string | null;
     selected?: string;   // SelectionStatus: 'Y' | 'R' | 'T' | ''
@@ -377,6 +374,25 @@ Friendlies Management System
 </html>
       `.trim();
 
+      // ICS on publish is gated by ICS_UPDATE_EMAILS env flag; Gmail users always skipped
+      const icsAttachment = (icsUpdatesEnabled() && player.userName && !isGmailAddress(player.email!))
+        ? buildFriendlyICSAttachment({
+            tabName: game.tabName,
+            userName: player.userName,
+            sequence: isRepublish ? 2 : 1,
+            method: 'REQUEST',
+            status: 'TENTATIVE',
+            dateStr: game.date,
+            timeStr: game.time,
+            clubName: game.clubName,
+            homeAway: game.homeAway,
+            format: game.format,
+            trigger: 'published',
+            organizerEmail: process.env.SMTP_USER,
+            attendeeEmail: player.email!,
+          })
+        : null;
+
       try {
         await transporter.sendMail({
           from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
@@ -384,6 +400,7 @@ Friendlies Management System
           subject,
           text,
           html,
+          ...(icsAttachment ? { attachments: [icsAttachment] } : {}),
         });
         emailsSent++;
       } catch (playerError) {
@@ -553,6 +570,222 @@ Friendlies Management System
 }
 
 /**
+ * Send game cancellation notification email to all entered players
+ * Includes a METHOD:CANCEL ICS attachment to remove the event from their calendar
+ */
+export async function sendGameCancelledEmail(
+  game: Game,
+  players: Array<{ userName: string; fullName: string; email: string | null }>,
+  appUrl: string,
+  reason?: string,
+): Promise<{ success: boolean; emailsSent: number; playersWithoutEmail: string[]; error?: string }> {
+  try {
+    const playersWithEmail = players.filter(p => p.email && p.email.trim() !== '');
+    const playersWithoutEmail = players.filter(p => !p.email || p.email.trim() === '').map(p => p.fullName);
+
+    if (playersWithEmail.length === 0) {
+      return { success: true, emailsSent: 0, playersWithoutEmail };
+    }
+
+    const { getEmailTransporter, isEmailConfigured } = await import('./mailer');
+    if (!isEmailConfigured()) {
+      return { success: false, emailsSent: 0, playersWithoutEmail, error: 'Email service not configured' };
+    }
+
+    const transporter = getEmailTransporter(true);
+    const subject = `Game Cancelled — ${game.clubName} ${game.date}`;
+    const venue = game.homeAway === 'H' ? 'Home' : `Away at ${game.clubName}`;
+    const reasonLine = reason ? `\nReason: ${reason}` : '';
+
+    const BUTTON_STYLE = 'display:inline-block;background-color:#0066cc;color:#ffffff;padding:12px 24px;text-decoration:none;border-radius:5px;margin-top:15px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;';
+
+    let emailsSent = 0;
+
+    for (const player of playersWithEmail) {
+      // ICS on cancel is gated by ICS_UPDATE_EMAILS env flag; Gmail users always skipped
+      const ics = (icsUpdatesEnabled() && !isGmailAddress(player.email!))
+        ? buildFriendlyICSAttachment({
+            tabName: game.tabName,
+            userName: player.userName,
+            sequence: 99,
+            method: 'CANCEL',
+            status: 'CANCELLED',
+            dateStr: game.date,
+            timeStr: game.time,
+            clubName: game.clubName,
+            homeAway: game.homeAway,
+            format: game.format,
+            trigger: 'cancelled',
+            organizerEmail: process.env.SMTP_USER,
+            attendeeEmail: player.email!,
+          })
+        : null;
+
+      const text = [
+        `Hi ${player.fullName},`,
+        '',
+        `The ${game.homeAway === 'H' ? 'home' : 'away'} friendly against ${game.clubName} on ${game.date} has been cancelled.`,
+        '',
+        `Date: ${game.date}`,
+        `Time: ${game.time}`,
+        `Venue: ${venue}`,
+        `Format: ${game.format}`,
+        reasonLine,
+        '',
+        ...(ics ? ['A calendar cancellation is attached to remove this event from your calendar.', ''] : []),
+        '---',
+        'Burgess Hill Bowls Club',
+      ].filter(l => l !== undefined).join('\n');
+
+      const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background-color: #dc2626; color: #ffffff; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+    .header h2 { margin: 0; color: #ffffff; }
+    .content { background-color: #f9f9f9; padding: 20px; border: 1px solid #ddd; }
+    .details { background-color: #ffffff; padding: 15px; margin: 15px 0; border-left: 4px solid #dc2626; }
+    .footer { text-align: center; padding: 15px; color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header"><h2>Game Cancelled</h2></div>
+    <div class="content">
+      <p>Hi <strong>${player.fullName}</strong>,</p>
+      <p>The friendly against <strong>${game.clubName}</strong> has been cancelled.</p>
+      <div class="details">
+        <p><strong>Date:</strong> ${game.date}</p>
+        <p><strong>Time:</strong> ${game.time}</p>
+        <p><strong>Venue:</strong> ${venue}</p>
+        <p><strong>Format:</strong> ${game.format}</p>
+        ${reason ? `<p><strong>Reason:</strong> ${reason}</p>` : ''}
+      </div>
+      ${ics ? '<p>A calendar cancellation is attached to remove this event from your calendar.</p>' : ''}
+    </div>
+    <div class="footer"><p>Burgess Hill Bowls Club - Friendlies Management System</p></div>
+  </div>
+</body>
+</html>`.trim();
+
+      try {
+        await transporter.sendMail({
+          from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
+          to: player.email!,
+          subject,
+          text,
+          html,
+          ...(ics ? { attachments: [ics] } : {}),
+        });
+        emailsSent++;
+      } catch (playerError) {
+        console.error(`Failed to send cancellation email to ${player.fullName}:`, playerError);
+      }
+    }
+
+    transporter.close();
+    console.log(`✓ Cancellation notification sent to ${emailsSent} player(s) for ${game.tabName}`);
+    return { success: true, emailsSent, playersWithoutEmail };
+  } catch (error) {
+    console.error('Error sending game cancelled email:', error);
+    return { success: false, emailsSent: 0, playersWithoutEmail: [], error: error instanceof Error ? error.message : 'Failed to send email' };
+  }
+}
+
+/**
+ * Send tea rota cancellation notice for a home game
+ * Plain notification — no ICS needed since the tea rota email has no calendar event
+ */
+export async function sendTeaRotaCancelledEmail(
+  game: Game,
+  teaMembers: Array<{ role: string; fullName: string; email: string | null }>,
+  reason?: string,
+): Promise<{ success: boolean; emailsSent: number; membersWithoutEmail: string[]; error?: string }> {
+  try {
+    const membersWithEmail = teaMembers.filter(m => m.email && m.email.trim() !== '');
+    const membersWithoutEmail = teaMembers.filter(m => !m.email || m.email.trim() === '').map(m => m.fullName);
+
+    if (membersWithEmail.length === 0) {
+      return { success: true, emailsSent: 0, membersWithoutEmail };
+    }
+
+    const { getEmailTransporter, isEmailConfigured } = await import('./mailer');
+    if (!isEmailConfigured()) {
+      return { success: false, emailsSent: 0, membersWithoutEmail, error: 'Email service not configured' };
+    }
+
+    const transporter = getEmailTransporter();
+    const subject = `Tea Duty Cancelled — ${game.clubName} ${game.date}`;
+    const reasonLine = reason ? `\nReason: ${reason}` : '';
+
+    const rotaTextLines = teaMembers.map(m => `${m.role}: ${m.fullName}`).join('\n');
+    const rotaHtmlRows = teaMembers
+      .map(m => `<tr><td style="padding:4px 12px 4px 0;font-weight:bold;">${m.role}</td><td style="padding:4px 0;">${m.fullName}</td></tr>`)
+      .join('\n');
+
+    const text = [
+      `The home game against ${game.clubName} on ${game.date} has been cancelled.`,
+      'You are no longer required for tea duty.',
+      reasonLine,
+      '',
+      `Tea Rota (for your reference):`,
+      rotaTextLines,
+      '',
+      '---',
+      'Burgess Hill Bowls Club',
+    ].join('\n');
+
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background-color: #dc2626; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+    .content { background-color: #f9f9f9; padding: 20px; border: 1px solid #ddd; }
+    .details { background-color: white; padding: 15px; margin: 15px 0; border-left: 4px solid #dc2626; }
+    .footer { text-align: center; padding: 15px; color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header"><h2>Tea Duty Cancelled</h2></div>
+    <div class="content">
+      <p>The home game against <strong>${game.clubName}</strong> on <strong>${game.date}</strong> has been cancelled.</p>
+      <p><strong>You are no longer required for tea duty.</strong></p>
+      <div class="details">
+        ${reason ? `<p><strong>Reason:</strong> ${reason}</p>` : ''}
+        <p><strong>Tea Rota (for reference):</strong></p>
+        <table style="border-collapse:collapse;">${rotaHtmlRows}</table>
+      </div>
+    </div>
+    <div class="footer"><p>Burgess Hill Bowls Club - Friendlies Management System</p></div>
+  </div>
+</body>
+</html>`.trim();
+
+    const toList = membersWithEmail.map(m => m.email).join(', ');
+    await transporter.sendMail({
+      from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
+      to: toList,
+      subject,
+      text,
+      html,
+    });
+
+    console.log(`✓ Tea rota cancellation sent to ${membersWithEmail.length} member(s) for ${game.tabName}`);
+    return { success: true, emailsSent: membersWithEmail.length, membersWithoutEmail };
+  } catch (error) {
+    console.error('Error sending tea rota cancellation email:', error);
+    return { success: false, emailsSent: 0, membersWithoutEmail: [], error: error instanceof Error ? error.message : 'Failed to send email' };
+  }
+}
+
+/**
  * Send game status change notification (future enhancement placeholder)
  * Currently just logs the status change - not yet implemented
  * Future use: notify all entered players when game status changes
@@ -579,4 +812,327 @@ export async function sendGameStatusChangeEmail(
   // - Fetch all players who entered this game
   // - Build appropriate message based on status
   // - Send personalized emails showing their selection status
+}
+
+// ─── Player notification emails (entry, withdrawal, removal) ─────────────────
+
+const PLAYER_BUTTON_STYLE =
+  'display:inline-block;background-color:#0066cc;color:#ffffff;padding:12px 24px;' +
+  'text-decoration:none;border-radius:5px;margin-top:15px;font-family:Arial,sans-serif;' +
+  'font-size:14px;font-weight:bold;';
+
+function buildFriendlyPlayerHtml(opts: {
+  heading: string;
+  headerColor: string;
+  fullName: string;
+  introHtml: string;
+  game: Game;
+  noteHtml?: string;
+  gameUrl: string;
+  buttonText: string;
+}): string {
+  const venue = opts.game.homeAway === 'H' ? 'Home' : `Away at ${opts.game.clubName}`;
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background-color: ${opts.headerColor}; color: #ffffff; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+    .header h2 { margin: 0; color: #ffffff; }
+    .content { background-color: #f9f9f9; padding: 20px; border: 1px solid #ddd; }
+    .details { background-color: #ffffff; padding: 15px; margin: 15px 0; border-left: 4px solid ${opts.headerColor}; }
+    .footer { text-align: center; padding: 15px; color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header"><h2>${opts.heading}</h2></div>
+    <div class="content">
+      <p>Hi <strong>${opts.fullName}</strong>,</p>
+      <p>${opts.introHtml}</p>
+      <div class="details">
+        <p><strong>Date:</strong> ${opts.game.date}</p>
+        <p><strong>Time:</strong> ${opts.game.time}</p>
+        <p><strong>Venue:</strong> ${venue}</p>
+        <p><strong>Format:</strong> ${opts.game.format}</p>
+      </div>
+      ${opts.noteHtml ?? ''}
+      <a href="${opts.gameUrl}" style="${PLAYER_BUTTON_STYLE}">${opts.buttonText}</a>
+    </div>
+    <div class="footer"><p>Burgess Hill Bowls Club - Friendlies Management System</p></div>
+  </div>
+</body>
+</html>`.trim();
+}
+
+function resolveDisplayName(user: { fullName?: string | null; firstName?: string | null; lastName?: string | null } | null, fallback: string): string {
+  if (!user) return fallback;
+  if (user.fullName) return user.fullName;
+  if (user.firstName && user.lastName) return `${user.firstName} ${user.lastName}`;
+  return fallback;
+}
+
+/**
+ * Send entry confirmation email to a player.
+ * When addedByAdmin is true the intro reads "You have been entered" (passive);
+ * otherwise "You have entered" (active). ICS is always attached.
+ */
+export async function sendEntryConfirmedEmail(
+  emailAddress: string,
+  userName: string,
+  fullName: string,
+  game: Game,
+  appUrl: string,
+  addedByAdmin = false,
+): Promise<void> {
+  const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}`;
+  const venue = game.homeAway === 'H' ? 'Home' : `Away at ${game.clubName}`;
+  const subject = `Friendly Entry Confirmed — ${game.clubName} ${game.date}`;
+  const introText = addedByAdmin
+    ? `You have been entered in the friendly against ${game.clubName}.`
+    : `You have entered the friendly against ${game.clubName}.`;
+  const introHtml = addedByAdmin
+    ? `You have been entered in the friendly against <strong>${game.clubName}</strong>.`
+    : `You have entered the friendly against <strong>${game.clubName}</strong>.`;
+
+  const ics = buildFriendlyICSAttachment({
+    tabName: game.tabName,
+    userName,
+    sequence: 0,
+    method: 'REQUEST',
+    status: 'TENTATIVE',
+    dateStr: game.date,
+    timeStr: game.time,
+    clubName: game.clubName,
+    homeAway: game.homeAway,
+    format: game.format,
+    trigger: 'entered',
+    organizerEmail: process.env.SMTP_USER,
+    attendeeEmail: emailAddress,
+  });
+
+  const text = [
+    `Hi ${fullName},`,
+    '',
+    introText,
+    '',
+    `Date: ${game.date}`,
+    `Time: ${game.time}`,
+    `Venue: ${venue}`,
+    `Format: ${game.format}`,
+    '',
+    'The event is marked as tentative until the team is published.',
+    'A calendar attachment is included.',
+    '',
+    `View game: ${gameUrl}`,
+    '',
+    '---',
+    'Burgess Hill Bowls Club',
+  ].join('\n');
+
+  const html = buildFriendlyPlayerHtml({
+    heading: 'Friendly Entry Confirmed',
+    headerColor: '#0066cc',
+    fullName,
+    introHtml,
+    game,
+    noteHtml: '<p>The event is marked as tentative until the team is published. A calendar attachment is included.</p>',
+    gameUrl,
+    buttonText: 'View Game Details',
+  });
+
+  await sendEmail(emailAddress, subject, text, html, [ics]);
+}
+
+/**
+ * Send withdrawal confirmation to a player who withdrew themselves from a game.
+ * ICS cancel is gated on icsUpdatesEnabled() and the address not being Gmail.
+ */
+export async function sendWithdrawalNoticeEmail(
+  emailAddress: string,
+  userName: string,
+  fullName: string,
+  game: Game,
+  appUrl: string,
+): Promise<void> {
+  const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}`;
+  const venue = game.homeAway === 'H' ? 'Home' : `Away at ${game.clubName}`;
+  const subject = `Friendly Withdrawal — ${game.clubName} ${game.date}`;
+
+  const ics = (icsUpdatesEnabled() && !isGmailAddress(emailAddress))
+    ? buildFriendlyICSAttachment({
+        tabName: game.tabName,
+        userName,
+        sequence: 99,
+        method: 'CANCEL',
+        status: 'CANCELLED',
+        dateStr: game.date,
+        timeStr: game.time,
+        clubName: game.clubName,
+        homeAway: game.homeAway,
+        format: game.format,
+        trigger: 'withdrawn',
+        organizerEmail: process.env.SMTP_USER,
+        attendeeEmail: emailAddress,
+      })
+    : null;
+
+  const text = [
+    `Hi ${fullName},`,
+    '',
+    `You have withdrawn from the friendly against ${game.clubName} on ${game.date}.`,
+    '',
+    `Date: ${game.date}`,
+    `Time: ${game.time}`,
+    `Venue: ${venue}`,
+    `Format: ${game.format}`,
+    '',
+    ...(ics ? ['A calendar cancellation is attached to remove this event from your calendar.', ''] : []),
+    `View game: ${gameUrl}`,
+    '',
+    '---',
+    'Burgess Hill Bowls Club',
+  ].join('\n');
+
+  const html = buildFriendlyPlayerHtml({
+    heading: 'Friendly Withdrawal',
+    headerColor: '#d97706',
+    fullName,
+    introHtml: `You have withdrawn from the friendly against <strong>${game.clubName}</strong> on ${game.date}.`,
+    game,
+    noteHtml: ics ? '<p>A calendar cancellation is attached to remove this event from your calendar.</p>' : undefined,
+    gameUrl,
+    buttonText: 'View Game',
+  });
+
+  await sendEmail(emailAddress, subject, text, html, ics ? [ics] : undefined);
+}
+
+/**
+ * Send notice to a player removed from an Open/Selecting game by a captain.
+ * ICS cancel is gated on icsUpdatesEnabled() and the address not being Gmail.
+ */
+export async function sendRemovedNoticeEmail(
+  emailAddress: string,
+  userName: string,
+  fullName: string,
+  game: Game,
+  appUrl: string,
+): Promise<void> {
+  const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}`;
+  const venue = game.homeAway === 'H' ? 'Home' : `Away at ${game.clubName}`;
+  const subject = `Friendly Entry Removed — ${game.clubName} ${game.date}`;
+
+  const ics = (icsUpdatesEnabled() && !isGmailAddress(emailAddress))
+    ? buildFriendlyICSAttachment({
+        tabName: game.tabName,
+        userName,
+        sequence: 99,
+        method: 'CANCEL',
+        status: 'CANCELLED',
+        dateStr: game.date,
+        timeStr: game.time,
+        clubName: game.clubName,
+        homeAway: game.homeAway,
+        format: game.format,
+        trigger: 'withdrawn',
+        organizerEmail: process.env.SMTP_USER,
+        attendeeEmail: emailAddress,
+      })
+    : null;
+
+  const text = [
+    `Hi ${fullName},`,
+    '',
+    `You have been removed from the friendly against ${game.clubName} on ${game.date}.`,
+    '',
+    `Date: ${game.date}`,
+    `Time: ${game.time}`,
+    `Venue: ${venue}`,
+    `Format: ${game.format}`,
+    '',
+    ...(ics ? ['A calendar cancellation is attached to remove this event from your calendar.', ''] : []),
+    `View game: ${gameUrl}`,
+    '',
+    '---',
+    'Burgess Hill Bowls Club',
+  ].join('\n');
+
+  const html = buildFriendlyPlayerHtml({
+    heading: 'Friendly Entry Removed',
+    headerColor: '#d97706',
+    fullName,
+    introHtml: `You have been removed from the friendly against <strong>${game.clubName}</strong> on ${game.date}.`,
+    game,
+    noteHtml: ics ? '<p>A calendar cancellation is attached to remove this event from your calendar.</p>' : undefined,
+    gameUrl,
+    buttonText: 'View Game',
+  });
+
+  await sendEmail(emailAddress, subject, text, html, ics ? [ics] : undefined);
+}
+
+/**
+ * Send notice to a player withdrawn from a Selected game by a captain.
+ * ICS cancel is gated on icsUpdatesEnabled() and the address not being Gmail.
+ */
+export async function sendWithdrawnByAdminNoticeEmail(
+  emailAddress: string,
+  userName: string,
+  fullName: string,
+  game: Game,
+  appUrl: string,
+): Promise<void> {
+  const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}`;
+  const venue = game.homeAway === 'H' ? 'Home' : `Away at ${game.clubName}`;
+  const subject = `Friendly Withdrawal — ${game.clubName} ${game.date}`;
+
+  const ics = (icsUpdatesEnabled() && !isGmailAddress(emailAddress))
+    ? buildFriendlyICSAttachment({
+        tabName: game.tabName,
+        userName,
+        sequence: 99,
+        method: 'CANCEL',
+        status: 'CANCELLED',
+        dateStr: game.date,
+        timeStr: game.time,
+        clubName: game.clubName,
+        homeAway: game.homeAway,
+        format: game.format,
+        trigger: 'withdrawn',
+        organizerEmail: process.env.SMTP_USER,
+        attendeeEmail: emailAddress,
+      })
+    : null;
+
+  const text = [
+    `Hi ${fullName},`,
+    '',
+    `You have been withdrawn from the friendly against ${game.clubName} on ${game.date}.`,
+    '',
+    `Date: ${game.date}`,
+    `Time: ${game.time}`,
+    `Venue: ${venue}`,
+    `Format: ${game.format}`,
+    '',
+    ...(ics ? ['A calendar cancellation is attached to remove this event from your calendar.', ''] : []),
+    `View game: ${gameUrl}`,
+    '',
+    '---',
+    'Burgess Hill Bowls Club',
+  ].join('\n');
+
+  const html = buildFriendlyPlayerHtml({
+    heading: 'Friendly Withdrawal',
+    headerColor: '#d97706',
+    fullName,
+    introHtml: `You have been withdrawn from the friendly against <strong>${game.clubName}</strong> on ${game.date}.`,
+    game,
+    noteHtml: ics ? '<p>A calendar cancellation is attached to remove this event from your calendar.</p>' : undefined,
+    gameUrl,
+    buttonText: 'View Game',
+  });
+
+  await sendEmail(emailAddress, subject, text, html, ics ? [ics] : undefined);
 }

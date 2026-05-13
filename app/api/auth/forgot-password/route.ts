@@ -98,6 +98,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // If the identifier looks like an email address, check for shared accounts.
+    // Using a shared email is ambiguous — the reset would go to whichever user
+    // happens to appear first in the sheet. Block this and prompt for a username.
+    if (identifier.includes('@')) {
+      const normalizedEmail = identifier.toLowerCase();
+      const allUsers = await getAllUsers();
+      const matchingUsers = allUsers.filter(
+        u => u.emailAddress && u.emailAddress.toLowerCase() === normalizedEmail
+      );
+      if (matchingUsers.length > 1) {
+        return NextResponse.json(
+          { error: 'More than one account shares this email address. Please enter your username instead.' },
+          { status: 400 }
+        );
+      }
+    }
+
     // Generate reset token (this also logs the request for rate limiting)
     const token = await generatePasswordResetToken(identifier);
 

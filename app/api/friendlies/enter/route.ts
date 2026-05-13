@@ -8,6 +8,8 @@ import { authOptions } from '@/lib/auth';
 import { getGames, updatePlayerEntry, batchUpdateGameCounts, addPlayerToGameSheet } from '@/lib/friendlies-sheets';
 import { EnterGamesRequest, EnterGamesResponse } from '@/lib/types/friendlies';
 import { canEnterGame } from '@/lib/game-management/capacity';
+import { getUserByUsername } from '@/lib/sheets';
+import { sendEntryConfirmedEmail } from '@/lib/email/friendlies';
 
 // POST handler - Enters user into one or more games
 export async function POST(request: NextRequest) {
@@ -122,6 +124,24 @@ export async function POST(request: NextRequest) {
       // Batch update all counts in a single API call
       if (countUpdates.length > 0) {
         await batchUpdateGameCounts(countUpdates);
+      }
+    }
+
+    // Send entry confirmation emails (fire-and-forget — failures do not affect the response)
+    if (successfulEntries.length > 0) {
+      try {
+        const user = await getUserByUsername(userName);
+        if (user?.emailAddress) {
+          const fullName = user.fullName || (user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : userName);
+          const appUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
+          for (const result of successfulEntries) {
+            const game = allGames.find(g => g.tabName === result.game_id);
+            if (!game) continue;
+            await sendEntryConfirmedEmail(user.emailAddress, userName, fullName, game, appUrl);
+          }
+        }
+      } catch (emailError) {
+        console.error('Error sending entry confirmation emails:', emailError);
       }
     }
 

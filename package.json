@@ -15,6 +15,7 @@
   "dependencies": {
     "@ducanh2912/next-pwa": "^10.2.9",
     "bcryptjs": "^3.0.3",
+    "browser-image-compression": "^2.0.2",
     "cloudinary": "^2.8.0",
     "date-fns": "^4.1.0",
     "docx-templates": "^4.15.0",

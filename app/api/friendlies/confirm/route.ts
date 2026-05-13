@@ -7,6 +7,9 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getGames, getGameSheet, updateGameSheet } from '@/lib/friendlies-sheets';
 import { ConfirmParticipationRequest } from '@/lib/types/friendlies';
+import { getUserByUsername } from '@/lib/sheets';
+import { buildFriendlyICSAttachment, isGmailAddress, icsUpdatesEnabled } from '@/lib/ics-utils';
+import { sendEmail } from '@/lib/email/mailer';
 
 // POST handler - Confirms player's participation in a selected game
 export async function POST(request: NextRequest) {
@@ -87,6 +90,46 @@ export async function POST(request: NextRequest) {
         status: 'Y',
       },
     ]);
+
+    // Send ICS confirmation email (fire-and-forget — failure does not affect the response)
+    // Gated by ICS_UPDATE_EMAILS flag; Gmail users always skipped
+    try {
+      const user = await getUserByUsername(userName);
+      if (icsUpdatesEnabled() && user?.emailAddress && !isGmailAddress(user.emailAddress)) {
+        const ics = buildFriendlyICSAttachment({
+          tabName: game.tabName,
+          userName,
+          sequence: 99,
+          method: 'REQUEST',
+          status: 'CONFIRMED',
+          dateStr: game.date,
+          timeStr: game.time,
+          clubName: game.clubName,
+          homeAway: game.homeAway,
+          format: game.format,
+          trigger: 'confirmed',
+          organizerEmail: process.env.SMTP_USER,
+          attendeeEmail: user.emailAddress,
+        });
+        const subject = `Participation Confirmed — ${game.clubName} ${game.date}`;
+        const text = [
+          `You have confirmed your participation in the friendly against ${game.clubName}.`,
+          '',
+          `Date: ${game.date}`,
+          `Time: ${game.time}`,
+          `Venue: ${game.homeAway === 'H' ? 'Home' : `Away at ${game.clubName}`}`,
+          `Format: ${game.format}`,
+          '',
+          'A calendar attachment is included to update the event in your calendar.',
+          '',
+          '---',
+          'Burgess Hill Bowls Club',
+        ].join('\n');
+        await sendEmail(user.emailAddress, subject, text, undefined, [ics]);
+      }
+    } catch (icsError) {
+      console.error('Error sending confirm ICS email:', icsError);
+    }
 
     // Return success response
     return NextResponse.json({

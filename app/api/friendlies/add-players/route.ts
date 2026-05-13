@@ -5,9 +5,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, batchUpdatePlayerEntries, addPlayersToGameSheetDirect, updateGameCounts, getEnteredPlayers } from '@/lib/friendlies-sheets';
+import { getGames, batchUpdatePlayerEntries, addPlayersToGameSheetDirect, updateGameCounts } from '@/lib/friendlies-sheets';
 import { canEnterGame } from '@/lib/game-management/capacity';
 import { hasRole } from '@/lib/role-utils';
+import { getAllUsers } from '@/lib/sheets';
+import { sendEntryConfirmedEmail } from '@/lib/email/friendlies';
 
 // POST handler - Adds players with M (manually added) status
 export async function POST(request: NextRequest) {
@@ -93,15 +95,33 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Re-count from Players sheet for an accurate total (avoids drift from incremental updates)
+    // Update entered count using the known delta — avoids re-reading Players + Members sheets
     const addedCount = results.filter(r => r.added).length;
     if (addedCount > 0) {
       try {
-        const currentPlayers = await getEnteredPlayers(game.tabName);
-        await updateGameCounts(game.tabName, { entered: currentPlayers.length });
+        await updateGameCounts(game.tabName, { entered: game.entered + addedCount });
       } catch (countError) {
         console.error('[Friendlies API] Error updating entered count:', countError);
       }
+    }
+
+    // Send entry confirmation emails to each successfully added player (fire-and-forget)
+    if (addedCount > 0) {
+      (async () => {
+        try {
+          const addedUserNames = results.filter(r => r.added).map(r => r.userName);
+          const allUsers = await getAllUsers();
+          const appUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
+          for (const userName of addedUserNames) {
+            const user = allUsers.find(u => u.userName.toLowerCase() === userName.toLowerCase());
+            if (!user?.emailAddress) continue;
+            const fullName = user.fullName || (user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : userName);
+            await sendEntryConfirmedEmail(user.emailAddress, userName, fullName, game, appUrl, true);
+          }
+        } catch (emailError) {
+          console.error('[add-players] Error sending entry confirmation emails:', emailError);
+        }
+      })();
     }
 
     return NextResponse.json({ success: true, results, addedToGameSheet: ['O', 'X', 'S'].includes(game.status) });

@@ -425,6 +425,10 @@ export async function getGames(statusFilter?: GameStatus, typeFilter?: GameType[
     // Extract captain of the day's userName (stored in Games sheet after migration)
     const captain = get(row, 'captain') || '';
 
+    // Extract selection lock fields
+    const lockedBy = get(row, 'locked_by') || '';
+    const lockedAt = get(row, 'locked_at') || '';
+
     // Build complete Game object
     const game: Game = {
       rowNumber,
@@ -456,6 +460,8 @@ export async function getGames(statusFilter?: GameStatus, typeFilter?: GameType[
       specialInstructions,
       pickupInfo,
       captain,
+      lockedBy,
+      lockedAt,
     };
 
     // Add game to array
@@ -516,18 +522,19 @@ export async function updateGameStatus(
   // Fetch all games to find the row for this specific game
   const games = await getGames();
 
-  // Search for the game we're updating
+  // Search for the game we're updating.
+  // rowNumber is the authoritative identifier when provided — it comes directly from the
+  // game object found in the API route and cannot collide with another game's tabName
+  // (e.g. when opening a new game whose effectiveTabName matches an existing published game).
   let game = null;
 
-  // First try to find by tabName if provided and not empty
-  if (tabName && tabName.trim() !== '') {
-    game = games.find(g => g.tabName === tabName) || null;
-  }
-
-  // If not found and rowNumber provided, find by rowNumber
-  if (!game && additionalData?.rowNumber) {
+  if (additionalData?.rowNumber) {
     game = games.find(g => g.rowNumber === additionalData.rowNumber) || null;
-    console.log('[updateGameStatus] Found game by rowNumber:', additionalData.rowNumber, 'found:', !!game);
+    if (!game && tabName && tabName.trim() !== '') {
+      game = games.find(g => g.tabName === tabName) || null;
+    }
+  } else if (tabName && tabName.trim() !== '') {
+    game = games.find(g => g.tabName === tabName) || null;
   }
 
   // Throw error if game not found in Games sheet
@@ -548,13 +555,10 @@ export async function updateGameStatus(
   // This ensures the Tab Name column in spreadsheet matches the calculated tabName
   // Always write it to ensure spreadsheet is populated even if parser calculated it as fallback
   if ((newStatus === 'O' || newStatus === 'X') && colMap['tab_name'] !== undefined) {
-    console.log('[updateGameStatus] Updating Tab Name to:', tabName, 'at row', game.rowNumber);
     updates.push({
       range: `Games!${getColumnLetter(colMap['tab_name'])}${game.rowNumber}`,
-      values: [[tabName]],  // Use the tabName parameter which is already calculated
+      values: [[tabName]],
     });
-  } else {
-    console.log('[updateGameStatus] NOT updating Tab Name. newStatus:', newStatus, 'tab_name column exists:', colMap['tab_name'] !== undefined);
   }
 
   // Add BHBC score if provided (used when transitioning to Played or Abandoned)
@@ -615,13 +619,179 @@ export async function updateGameStatus(
       valueInputOption: 'USER_ENTERED',
     },
   });
+
+  // Append audit log entry (failures are swallowed inside appendManageLog)
+  await appendManageLog({
+    username: additionalData?.modifiedBy ?? '',
+    action: `status:${newStatus}`,
+    tabName: game.tabName || tabName,
+    rowNumber: game.rowNumber,
+    oldStatus: game.status,
+    newStatus,
+  });
+}
+
+// ============================================================================
+// MANAGE LOG
+// ============================================================================
+
+/**
+ * Append a row to the ManageLog sheet for audit trail.
+ * Creates the sheet if it doesn't exist. Failures are swallowed so they
+ * never block the actual operation being logged.
+ */
+export async function appendManageLog(entry: {
+  username: string;
+  action: string;
+  tabName: string;
+  rowNumber?: number;
+  oldStatus?: string;
+  newStatus?: string;
+}): Promise<void> {
+  try {
+    const spreadsheetId = getFriendliesSpreadsheetId();
+    const sheets = getSheetsClient();
+
+    // Ensure the ManageLog sheet exists
+    const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties.title' });
+    const exists = meta.data.sheets?.some(s => s.properties?.title === 'ManageLog');
+    if (!exists) {
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [{
+            addSheet: {
+              properties: { title: 'ManageLog' },
+            },
+          }],
+        },
+      });
+      // Write header row
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: 'ManageLog!A1:G1',
+        valueInputOption: 'RAW',
+        requestBody: {
+          values: [['timestamp', 'username', 'action', 'tab_name', 'row_number', 'old_status', 'new_status']],
+        },
+      });
+    }
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: 'ManageLog!A:G',
+      valueInputOption: 'RAW',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: {
+        values: [[
+          new Date().toISOString(),
+          entry.username,
+          entry.action,
+          entry.tabName,
+          entry.rowNumber ?? '',
+          entry.oldStatus ?? '',
+          entry.newStatus ?? '',
+        ]],
+      },
+    });
+  } catch {
+    // Never let logging failure propagate
+  }
+}
+
+// ============================================================================
+// SELECTION LOCK
+// ============================================================================
+
+/**
+ * Acquire the selection lock for a game.
+ * If the game is already locked by someone else, returns the existing lock info
+ * without overwriting (caller must use force=true to override).
+ * Returns the resulting lock state.
+ */
+export async function acquireGameLock(
+  tabName: string,
+  username: string,
+  rowNumber?: number,
+  force = false,
+): Promise<{ acquired: boolean; lockedBy: string; lockedAt: string }> {
+  const spreadsheetId = getFriendliesSpreadsheetId();
+  const colMap = await getColumnMap(spreadsheetId, 'Games');
+  const sheets = getSheetsClient();
+
+  if (colMap['locked_by'] === undefined || colMap['locked_at'] === undefined) {
+    // Column not set up yet — treat as unlocked, skip write
+    return { acquired: true, lockedBy: username, lockedAt: new Date().toISOString() };
+  }
+
+  const games = await getGames();
+  const game = rowNumber
+    ? (games.find(g => g.rowNumber === rowNumber) ?? games.find(g => g.tabName === tabName))
+    : games.find(g => g.tabName === tabName);
+
+  if (!game) throw new Error(`Game not found: ${tabName}`);
+
+  // If already locked by someone else and not forcing, return existing lock
+  if (game.lockedBy && game.lockedBy !== username && !force) {
+    return { acquired: false, lockedBy: game.lockedBy, lockedAt: game.lockedAt };
+  }
+
+  const now = new Date().toISOString();
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      valueInputOption: 'RAW',
+      data: [
+        { range: `Games!${getColumnLetter(colMap['locked_by'])}${game.rowNumber}`, values: [[username]] },
+        { range: `Games!${getColumnLetter(colMap['locked_at'])}${game.rowNumber}`, values: [[now]] },
+      ],
+    },
+  });
+
+  return { acquired: true, lockedBy: username, lockedAt: now };
+}
+
+/**
+ * Release the selection lock for a game.
+ * Only clears the lock if it is currently held by the requesting user.
+ * Silently succeeds if the lock is already clear or held by someone else.
+ */
+export async function releaseGameLock(
+  tabName: string,
+  username: string,
+  rowNumber?: number,
+): Promise<void> {
+  const spreadsheetId = getFriendliesSpreadsheetId();
+  const colMap = await getColumnMap(spreadsheetId, 'Games');
+  const sheets = getSheetsClient();
+
+  if (colMap['locked_by'] === undefined || colMap['locked_at'] === undefined) return;
+
+  const games = await getGames();
+  const game = rowNumber
+    ? (games.find(g => g.rowNumber === rowNumber) ?? games.find(g => g.tabName === tabName))
+    : games.find(g => g.tabName === tabName);
+
+  if (!game) return;
+  if (game.lockedBy && game.lockedBy !== username) return; // someone else owns it
+
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      valueInputOption: 'RAW',
+      data: [
+        { range: `Games!${getColumnLetter(colMap['locked_by'])}${game.rowNumber}`, values: [['']] },
+        { range: `Games!${getColumnLetter(colMap['locked_at'])}${game.rowNumber}`, values: [['']] },
+      ],
+    },
+  });
 }
 
 /**
  * Update the special instructions message for a game in the Games sheet.
  * The 'message' column must exist in the Games sheet.
  */
-export async function updateGameMessage(tabName: string, message: string, rowNumber?: number): Promise<void> {
+export async function updateGameMessage(tabName: string, message: string, rowNumber?: number, modifiedBy?: string): Promise<void> {
   const spreadsheetId = getFriendliesSpreadsheetId();
   const colMap = await getColumnMap(spreadsheetId, 'Games');
   const sheets = getSheetsClient();
@@ -647,13 +817,14 @@ export async function updateGameMessage(tabName: string, message: string, rowNum
     valueInputOption: 'RAW',
     requestBody: { values: [[message]] },
   });
+
 }
 
 /**
  * Update the pickup information for a game in the Games sheet.
  * The 'Pickup Info' column must exist in the Games sheet.
  */
-export async function updateGamePickupInfo(tabName: string, pickupInfo: string, rowNumber?: number): Promise<void> {
+export async function updateGamePickupInfo(tabName: string, pickupInfo: string, rowNumber?: number, modifiedBy?: string): Promise<void> {
   const spreadsheetId = getFriendliesSpreadsheetId();
   const colMap = await getColumnMap(spreadsheetId, 'Games');
   const sheets = getSheetsClient();
@@ -679,6 +850,7 @@ export async function updateGamePickupInfo(tabName: string, pickupInfo: string, 
     valueInputOption: 'RAW',
     requestBody: { values: [[pickupInfo]] },
   });
+
 }
 
 /**
@@ -1564,26 +1736,19 @@ export async function getEnteredPlayers(
   const spreadsheetId = getFriendliesSpreadsheetId();
   const sheets = getSheetsClient();
 
-  // Fetch header row to find game column
-  const headersResponse = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: 'Players!1:1',
-  });
-
-  const headers = headersResponse.data.values?.[0] || [];
-  const gameColumnIndex = headers.findIndex(h => h === tabName);
-
-  if (gameColumnIndex === -1) {
-    throw new Error(`Game column not found: ${tabName}`);
-  }
-
-  // Fetch all Players sheet data
+  // Fetch all Players sheet data in one call — row 0 is the header row
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
     range: 'Players!A:ZZ',
   });
 
   const rows = response.data.values || [];
+  const headers = rows[0] || [];
+  const gameColumnIndex = headers.findIndex((h: string) => h === tabName);
+
+  if (gameColumnIndex === -1) {
+    throw new Error(`Game column not found: ${tabName}`);
+  }
   const enteredPlayers: Array<{ userName: string; fullName: string; status: string }> = [];
 
   // Get column map to find userName column in Players sheet

@@ -8,7 +8,7 @@ import {
   getSpreadsheetId,
 } from './sheets';
 import { createRowFieldGetter, createRowNumberGetter, wrapError } from './banking-sheets';
-import { checkFileExists } from './cloudinary';
+import { checkDriveFileExists, isDriveFileId } from './drive';
 import type { InviteGameAttachment, AttachmentType } from '@/types/attachments';
 
 // ============================================================================
@@ -292,8 +292,9 @@ export async function validateInviteGameAttachments(
 
     for (const attachment of attachments) {
       if (attachment.isDeleted || !attachment.driveFileId) continue;
+      if (!isDriveFileId(attachment.driveFileId)) continue;
 
-      const exists = await checkFileExists(attachment.driveFileId);
+      const exists = await checkDriveFileExists(attachment.driveFileId);
 
       if (!exists && attachment._rowNumber) {
         attachment.isDeleted = true;

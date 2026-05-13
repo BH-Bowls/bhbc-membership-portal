@@ -8,7 +8,7 @@ import {
   getSpreadsheetId,
 } from './sheets';
 import { createRowFieldGetter, createRowNumberGetter, wrapError } from './banking-sheets';
-import { checkFileExists } from './cloudinary';
+import { checkDriveFileExists, isDriveFileId } from './drive';
 import type { SuggestionAttachment, AttachmentType } from '@/types/attachments';
 
 // ============================================================================
@@ -275,11 +275,11 @@ export async function validateAttachments(
     const updates: any[] = [];
 
     for (const attachment of attachments) {
-      // Skip if already marked as deleted or no Cloudinary file
+      // Only validate Drive files — Cloudinary legacy files are assumed present until migrated
       if (attachment.isDeleted || !attachment.driveFileId) continue;
+      if (!isDriveFileId(attachment.driveFileId)) continue;
 
-      // Check if Cloudinary file exists
-      const exists = await checkFileExists(attachment.driveFileId);
+      const exists = await checkDriveFileExists(attachment.driveFileId);
 
       if (!exists && attachment._rowNumber) {
         // Mark as deleted

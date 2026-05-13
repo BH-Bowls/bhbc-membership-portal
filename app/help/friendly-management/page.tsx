@@ -83,7 +83,11 @@ export default function HelpFriendlyManagementPage() {
             <Step n={7}>Save your changes — you can return and edit at any time before publishing.</Step>
             <Note>
               Players who did not enter online can still be added manually using the{' '}
-              <strong>Add Players</strong> button, which appears when you are in edit mode.
+              <strong>Add Players</strong> button on the selection page. If you remove a player
+              after the game has been published, you will be asked whether to{' '}
+              <strong>Withdraw</strong> them (marks them as withdrawn in the stats) or{' '}
+              <strong>Remove</strong> them completely (no trace in the stats — useful when
+              moving a player between the two games in a paired game).
             </Note>
           </HelpSection>
 
@@ -117,56 +121,63 @@ export default function HelpFriendlyManagementPage() {
               <p><strong>FE</strong> (Future Entered) — number of future open games the player has already entered. Useful context when balancing the team.</p>
             </div>
             <Body>
-              The last 6 games history (shown in a tooltip on the selection page and on the Picker
-              Sheet) shows only closed-game outcomes — P, R, T, D etc. Future entries are not
-              included so the history stays meaningful.
+              Hover over any player&apos;s name on the selection page to see their last 6 games
+              history as a tooltip — P (Playing), R (Reserve), T (Reserve Team), D (Did not enter),
+              etc. The same history also appears on the Picker Sheet. Only closed-game outcomes are
+              shown, so the history stays meaningful.
             </Body>
           </HelpSection>
 
           <HelpSection title="Selection Helper">
             <Body>
-              The amber <strong>Selection Helper</strong> button (next to Print Picker Sheet) opens
-              a panel that surfaces key considerations before you finalise the team. It analyses the
-              current entered players and highlights:
+              The <strong>Selection Helper</strong> is an inline panel in the right-hand column
+              of the selection page, accessible via the tab toggle at the top of that column. It
+              analyses the entered players and surfaces key considerations to help you finalise
+              the team:
             </Body>
             <div className="mt-1 space-y-2 text-sm text-gray-700 mb-2">
               <p>
-                <strong>🍺 Bar Volunteers</strong> (home games) — lists all entered players who are
-                willing to do bar duty, and warns if none are currently selected.
-              </p>
-              <p>
-                <strong>🚗 Drivers Needed</strong> (away games) — calculates how many cars are
-                required (total players ÷ 4) and lists available drivers. Warns if the number of
-                selected drivers is below what is needed.
-              </p>
-              <p>
-                <strong>⭐ Recent Reserves</strong> — lists all entered players whose most recent
-                closed game was a reserve, regardless of whether they are already selected for this
-                game. Sorted by consecutive reserve streak: one reserve in a row is shown in
+                <strong>Recent Reserves</strong> — players whose most recent closed game was a
+                reserve outcome, sorted by consecutive reserve streak. One reserve is shown in
                 yellow, two in orange, three or more in red. Each player&apos;s current selection
-                status is shown alongside their name. Ties are broken by % played (lower first).
+                status is shown alongside their name.
               </p>
               <p>
-                <strong>🌟 First Timers</strong> — any entered player who has never been picked to
+                <strong>First Timers</strong> — any entered player who has never been picked to
                 play in a friendly.
               </p>
               <p>
-                <strong>💑 Couples / Buddies</strong> — buddy pairs (set up in member profiles)
+                <strong>Couples / Buddies</strong> — buddy pairs (set up in member profiles)
                 where both players have entered this game. Worth trying to put them on the same
-                rink. Shows each person&apos;s current selection status alongside their name.
+                rink.
               </p>
               <p>
-                <strong>📊 % Played</strong> — shows the group average percentage played, then
-                lists any players who are more than 10 percentage points above or below that
-                average as a fairness prompt. Players who have never been picked (shown in First
-                Timers) are not repeated here. If everyone is within 10% of the average, a
-                reassuring &ldquo;no fairness concerns&rdquo; message is shown instead.
+                <strong>% Played</strong> — shows the group average percentage played, then flags
+                any players more than 10 percentage points above or below that average as a
+                fairness prompt. If everyone is within range, a &ldquo;no fairness concerns&rdquo;
+                message is shown instead.
               </p>
             </div>
             <Tip>
-              The Selection Helper loads fresh data when you open it. You can close and reopen it
-              at any point during selection to see an updated picture as you make changes.
+              Use the <strong>Refresh</strong> button within the helper to reload the analysis
+              after making selection changes. The <strong>?</strong> toggle shows a brief
+              explanation of each section.
             </Tip>
+          </HelpSection>
+
+          <HelpSection title="Concurrent editing lock">
+            <Body>
+              Only one captain can edit a game at a time. When you enter edit mode the system
+              records your name and the time. If another captain tries to edit the same game while
+              you have it open, they will see a dialog showing who is currently editing and when
+              they started.
+            </Body>
+            <Body>
+              The other captain can choose to wait, or click <strong>Override</strong> to take
+              over the lock and open the editor themselves. If you are overridden, your
+              in-progress changes will not be saved automatically — save or cancel before
+              stepping away to avoid conflicts.
+            </Body>
           </HelpSection>
 
           <HelpSection title="Print buttons">
@@ -206,7 +217,9 @@ export default function HelpFriendlyManagementPage() {
               Tick <strong>Email entered players</strong> to send a personalised notification to
               each person who entered the game. Each email shows their individual status (Selected,
               Reserve, or not selected), team details, and a link to view and sign off their name
-              online or at the clubhouse.
+              online or at the clubhouse. By default all entered players are emailed — switch to{' '}
+              <strong>Select players</strong> to choose specific recipients (useful after a late
+              swap when only one or two people need to know about the change).
             </Step>
             <Step n={4}>
               For home games, tick <strong>Email tea rota</strong> to notify the members assigned
@@ -222,7 +235,8 @@ export default function HelpFriendlyManagementPage() {
               page toolbar shows an orange <strong>Republish</strong> button — use this if you
               need to update the selection after publishing and want to notify players again.
               Republish sends the same email but with the subject <em>Team Selection Updated</em>
-              rather than <em>Team Selection Published</em>.
+              rather than <em>Team Selection Published</em>. The same All / Select players option
+              is available — after a single swap, email just the affected players.
             </Body>
             <Note>
               Tea duty members are assigned on the <strong>Tea Rota</strong> page (Lookups → Tea

@@ -43,6 +43,7 @@ Example: `BHBC-FRIENDLY-25Apr26-jsmith@bhbc.org.uk`
 | Team republished (re-issued) | 2 | TENTATIVE | PUBLISH | Increment if published more than once |
 | Participation confirmed | 99 | CONFIRMED | PUBLISH | Final confirmed state |
 | Withdrawn | 99 | CANCELLED | CANCEL | Removes event from calendar |
+| Game cancelled (by captain) | 99 | CANCELLED | CANCEL | Sent to all entered players; removes event from calendar |
 
 > If the team is published more than once (e.g. squad amended), increment SEQUENCE
 > each time. Simplest approach: store the current SEQUENCE in the game sheet, or
@@ -100,11 +101,13 @@ Game times are stored as local UK time (no timezone in sheet). When building the
 | File | Change |
 |---|---|
 | `src/lib/ics-utils.ts` | New. `buildFriendlyICS(params)` → returns `.ics` string |
-| `src/lib/email.ts` | Modify `sendEmail()` to accept optional `attachments` array |
+| `src/lib/email/mailer.ts` | Modify `sendEmail()` to accept optional `attachments` array |
 | `app/api/friendlies/enter/route.ts` | Attach ICS on successful entry |
 | `app/api/friendlies/confirm/route.ts` | Attach ICS on successful confirm |
 | `app/api/friendlies/withdraw/route.ts` | Attach ICS (METHOD:CANCEL) on successful withdraw |
-| `src/lib/friendlies-sheets.ts` | `publishTeams()` — attach ICS when publishing |
+| `src/lib/email/friendlies.ts` | `sendGamePublishedEmail` — attach per-player ICS; add `sendGameCancelledEmail` and `sendTeaRotaCancelledEmail` |
+| `app/api/friendlies/manage/status/route.ts` | `cancel` case — send cancellation emails with ICS to all entered players; send tea rota cancellation for home games |
+| `app/friendlies/manage/page.tsx` | Cancel dialog — add email player / email tea rota checkboxes |
 
 ## Email attachment format (Nodemailer)
 
