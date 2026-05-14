@@ -17,7 +17,7 @@ import { ROWLAND_COMP_NAMES, ROWLAND_ROUND_LABELS, rowlandTeamDisplayName } from
 // Convert a Drive /view URL to a raw image URL usable in <img> tags.
 function driveImageSrc(url: string): string {
   const m = url?.match(/\/file\/d\/([^/]+)/);
-  return m ? `https://drive.google.com/uc?export=view&id=${m[1]}` : url;
+  return m ? `/api/drive-image?id=${m[1]}` : url;
 }
 import type { ClubContact } from '@/lib/types/clubs';
 
@@ -448,20 +448,21 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
           onClick={() => setScoreSheetPopup(null)}
         >
-          <div className="relative max-w-3xl w-full" onClick={(e) => e.stopPropagation()}>
+          <div className="relative" onClick={(e) => e.stopPropagation()}>
             <button
               onClick={() => setScoreSheetPopup(null)}
-              className="absolute -top-8 right-0 text-white/80 hover:text-white text-sm"
+              className="absolute top-2 right-2 z-10 bg-black/60 hover:bg-black/90 text-white rounded-full w-8 h-8 flex items-center justify-center text-base leading-none"
+              aria-label="Close"
             >
-              ✕ Close
+              ✕
             </button>
             <img
               src={driveImageSrc(scoreSheetPopup)}
               alt="Score sheet"
-              className="w-full h-auto rounded shadow-xl"
+              className="max-w-[90vw] max-h-[85vh] w-auto h-auto rounded shadow-xl"
             />
             <a
-              href={scoreSheetPopup}
+              href={driveImageSrc(scoreSheetPopup)}
               target="_blank"
               rel="noopener noreferrer"
               className="block mt-2 text-center text-xs text-white/60 hover:text-white/90"

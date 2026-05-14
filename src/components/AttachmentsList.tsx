@@ -1,7 +1,5 @@
 // src/components/AttachmentsList.tsx
 // Display and manage entity attachments.
-// Drive files open directly from Google (no server proxy).
-// Legacy Cloudinary files still go through the server proxy.
 
 'use client';
 
@@ -16,7 +14,7 @@ interface AttachmentsListProps {
   onDelete: () => void;
 }
 
-// ── Drive URL helpers (duplicated here so this client component stays self-contained) ──
+// ── Drive URL helpers ────────────────────────────────────────────────────────
 
 function isDriveFileId(id: string | null | undefined): boolean {
   return !!id && !id.includes('/');
@@ -27,11 +25,8 @@ function driveEmbedUrl(id: string): string {
 function driveDownloadUrl(id: string): string {
   return `https://drive.google.com/uc?export=download&id=${id}`;
 }
-function driveThumbnailUrl(id: string): string {
-  return `https://drive.google.com/thumbnail?id=${id}&sz=w200`;
-}
-function driveViewUrl(id: string): string {
-  return `https://drive.google.com/file/d/${id}/view`;
+function driveProxyUrl(id: string): string {
+  return `/api/drive-image?id=${id}`;
 }
 
 // ── Legacy Cloudinary proxy helpers ──────────────────────────────────────────
@@ -55,6 +50,7 @@ export function AttachmentsList({
 }: AttachmentsListProps) {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
     attachmentId: string | null;
@@ -121,13 +117,16 @@ export function AttachmentsList({
 
   const getThumbnailSrc = (attachment: Attachment): string | null => {
     if (attachment.type !== 'image' || attachment.isDeleted) return null;
-    if (isDriveFileId(attachment.driveFileId)) return driveThumbnailUrl(attachment.driveFileId!);
-    return attachment.url || null; // Cloudinary CDN URL
+    if (isDriveFileId(attachment.driveFileId)) return driveProxyUrl(attachment.driveFileId!);
+    return attachment.url || null;
   };
 
-  const getImageHref = (attachment: Attachment): string => {
-    if (isDriveFileId(attachment.driveFileId)) return driveViewUrl(attachment.driveFileId!);
-    return attachment.url;
+  const openLightbox = (attachment: Attachment) => {
+    if (isDriveFileId(attachment.driveFileId)) {
+      setLightboxUrl(driveProxyUrl(attachment.driveFileId!));
+    } else {
+      setLightboxUrl(attachment.url);
+    }
   };
 
   const getIcon = (attachment: Attachment) => {
@@ -181,7 +180,7 @@ export function AttachmentsList({
             {/* Thumbnail or Icon */}
             <div className="flex-shrink-0">
               {attachment.type === 'image' && !attachment.isDeleted && thumbnailSrc ? (
-                <a href={getImageHref(attachment)} target="_blank" rel="noopener noreferrer" className="block">
+                <button onClick={() => openLightbox(attachment)} className="block">
                   <img
                     src={thumbnailSrc}
                     alt={attachment.description}
@@ -190,7 +189,7 @@ export function AttachmentsList({
                       e.currentTarget.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"%3E%3Cpath strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"%3E%3C/path%3E%3C/svg%3E';
                     }}
                   />
-                </a>
+                </button>
               ) : (
                 <div className="w-16 h-16 flex items-center justify-center">{getIcon(attachment)}</div>
               )}
@@ -212,9 +211,16 @@ export function AttachmentsList({
                     >
                       {attachment.description}
                     </button>
+                  ) : attachment.type === 'image' ? (
+                    <button
+                      onClick={() => openLightbox(attachment)}
+                      className="text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline block truncate text-left"
+                    >
+                      {attachment.description}
+                    </button>
                   ) : (
                     <a
-                      href={attachment.type === 'link' ? attachment.url : getImageHref(attachment)}
+                      href={attachment.url}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline block truncate"
@@ -287,6 +293,28 @@ export function AttachmentsList({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
+        </div>
+      )}
+
+      {lightboxUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setLightboxUrl(null)}
+        >
+          <div className="relative" onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => setLightboxUrl(null)}
+              className="absolute top-2 right-2 z-10 bg-black/60 hover:bg-black/90 text-white rounded-full w-8 h-8 flex items-center justify-center text-base leading-none"
+              aria-label="Close"
+            >
+              ✕
+            </button>
+            <img
+              src={lightboxUrl}
+              alt="Attachment"
+              className="max-w-[90vw] max-h-[85vh] w-auto h-auto rounded shadow-xl"
+            />
+          </div>
         </div>
       )}
 

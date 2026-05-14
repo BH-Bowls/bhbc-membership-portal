@@ -53,7 +53,8 @@
       "Bash(Select-Object -ExpandProperty FullName)",
       "Bash(git log *)",
       "PowerShell(Set-Content *)",
-      "Bash(git *)"
+      "Bash(git *)",
+      "Bash(npx dotenv *)"
     ]
   }
 }

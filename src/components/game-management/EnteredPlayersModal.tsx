@@ -98,7 +98,7 @@ export function EnteredPlayersModal({
       const data = await response.json();
 
       if (data.success) {
-        setEnteredPlayers(data.players || []);
+        setEnteredPlayers((data.players || []).sort((a: any, b: any) => a.fullName.localeCompare(b.fullName)));
       } else {
         setError(data.error || 'Failed to load players');
       }

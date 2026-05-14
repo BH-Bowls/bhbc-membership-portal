@@ -1,8 +1,6 @@
 # BHBC Membership Portal - Coding Standards
 
-**Target Audience**: Developers with Google Apps Script background
-
-**Principle**: Write code that is explicit, well-commented, and avoids heavily optimised Javascript, Behaviour change, complex syntax, deep abstractions and advanced patterns. Prioritize readability and maintenance over brevity.
+> For context on **why** these rules exist and the gotchas behind them, see `CLAUDE.md` at the project root.
 
 ---
 
@@ -441,34 +439,17 @@ import { getButtonClasses, getInputClasses, getBadgeClasses,
 <div className={getAlertClasses('warning')}>Please note…</div>
 ```
 
-### JIT compiler limitation
+### Changing the colour scheme
 
-Tailwind's JIT compiler only includes CSS classes it finds as **literal strings** in source files. It cannot process dynamically assembled class names from `theme.ts` variables. This is why `theme-helpers.ts` contains literal Tailwind class strings (e.g. `'bg-blue-500 hover:bg-blue-600 text-white'`) rather than reading from `theme.ts` at runtime.
-
-**If you change the colour scheme, you must update BOTH files:**
-1. `src/config/theme.ts` — the design token values (source of truth for humans)
-2. `src/config/theme-helpers.ts` — the literal class strings (source of truth for Tailwind)
+Update **both** files — they must stay in sync:
+1. `src/config/theme.ts` — design token values (human reference)
+2. `src/config/theme-helpers.ts` — literal Tailwind class strings (what the compiler sees)
 
 ---
 
 ## 11. Date Handling from Google Sheets
 
 Google Sheets stores dates in DD/MM/YYYY format, which JavaScript's `new Date()` does NOT parse correctly.
-
-### The Problem
-
-```typescript
-// ❌ BAD - Will parse incorrectly
-const date = "27/09/2025"; // From Google Sheet
-new Date(date).toLocaleDateString('en-GB'); // Shows as 2001 or 2000!
-```
-
-JavaScript expects dates in formats like:
-- ISO format: `"2025-09-27"` (YYYY-MM-DD)
-- US format: `"09/27/2025"` (MM/DD/YYYY)
-- NOT UK format: `"27/09/2025"` (DD/MM/YYYY) ❌
-
-### The Solution
 
 Use the utility functions in `src/lib/date-utils.ts` — never use `new Date(dateStr)` directly on a Sheets date string.
 
@@ -552,20 +533,18 @@ When you set a background colour on an element, always set a text colour on the 
 </div>
 ```
 
-### Opt out of dark mode if it isn't implemented
+### Dark mode
 
-If the app does not have a full dark mode design (dark variants for every background and component), add `color-scheme: light` to `:root` in `globals.css`. This prevents the browser from applying its automatic dark mode adaptation, which would otherwise make light-coloured text invisible on white backgrounds.
+`globals.css` must have `color-scheme: light` in `:root`. Do not add `@media (prefers-color-scheme: dark)` blocks.
 
 ```css
 /* globals.css */
 :root {
-  color-scheme: light; /* App does not support dark mode */
+  color-scheme: light;
   --background: #ffffff;
   --foreground: #171717;
 }
 ```
-
-Do not include a `@media (prefers-color-scheme: dark)` block unless every component in the app has been designed and tested in dark mode.
 
 ### Text colour scale
 
@@ -575,7 +554,7 @@ Do not include a `@media (prefers-color-scheme: dark)` block unless every compon
 | Secondary content, descriptions, hints | `text-gray-700` | ✅ Passes WCAG AA |
 | Placeholder / disabled / truly decorative | `text-gray-500` | ⚠️ Fails WCAG AA — use sparingly |
 
-**Avoid `text-gray-400`, `text-gray-500`, `text-gray-600` for any text a user needs to read.** These were the most common source of contrast failures across this project.
+**Avoid `text-gray-400`, `text-gray-500`, `text-gray-600` for any text a user needs to read.**
 
 ### Tables
 
@@ -671,7 +650,7 @@ Cloudinary uses three resource types. The upload function detects these automati
 
 ### Storing the reference in Google Sheets
 
-The Cloudinary `publicId` is stored in the `drive_file_id` column — this column name is legacy from when Google Drive was used. Do not rename it; there are rows in production with this column name.
+The Cloudinary `publicId` is stored in the `drive_file_id` column. Do not rename this column.
 
 ```typescript
 // Store after upload
@@ -780,18 +759,18 @@ await sendEmailWithAttachments(to, subject, html, [{ filename: 'doc.pdf', conten
 
 All three return `{ success: boolean; error?: string }`. Check the result — never assume success.
 
-### Bulk sends (multiple recipients) — the critical rule
+### Bulk sends (multiple recipients)
 
-**Never use `Promise.all()` to send emails in parallel.** Gmail limits simultaneous SMTP connections and will rate-limit or block your account if you open multiple connections at once.
+**Never use `Promise.all()` to send emails in parallel.** Use a pooled transporter and send sequentially:
 
-**❌ Wrong — parallel sends, will trigger Gmail rate limits:**
+**❌ Wrong:**
 ```typescript
 await Promise.all(players.map(player =>
   sendEmail(player.email, subject, text, html)
 ));
 ```
 
-**✅ Correct — sequential sends through a single pooled connection:**
+**✅ Correct:**
 ```typescript
 // Get a pooled transporter (maxConnections: 1, connection stays alive between sends)
 const transporter = getEmailTransporter(true);
@@ -815,7 +794,7 @@ for (const player of players) {
 transporter.close();
 ```
 
-The pooled transporter (`usePool: true`) reuses a single SMTP connection for all sends rather than creating a new TCP connection per email. This is both faster and within Gmail's connection limits.
+The pooled transporter (`usePool: true`) reuses a single SMTP connection for all sends.
 
 ### Sending to a group (where recipients know each other)
 
@@ -975,7 +954,7 @@ useEffect(() => {
 | API call failures | Inline error state at the top of the form |
 | Successful save/delete | Auto-dismiss toast |
 | Destructive action requiring confirmation | `<ConfirmDialog>` component |
-| Simple one-off error (avoid) | `alert()` — legacy pattern, prefer inline state |
+| Simple one-off error | `alert()` — avoid, use inline state instead |
 
 ---
 
@@ -1085,29 +1064,23 @@ const sheets = await getGoogleSheetsClient();
 const spreadsheetId = getSpreadsheetId(); // throws immediately if not configured
 ```
 
-**Why:** Inline `process.env` reads fail silently (returning `undefined`) and produce confusing downstream errors. A getter throws at the point of use with a message that tells the developer exactly which variable to add.
-
-**Convention:** One getter per spreadsheet / integration, grouped at the top of the file. All getters are exported so they can be verified in tests if needed.
+**Convention:** One getter per spreadsheet / integration, grouped at the top of the file. All getters are exported.
 
 ---
 
-## 21. Google Sheets Retry and Quota Handling
+## 21. Google Sheets — Always Use the Data Layer
 
-All Google Sheets API calls made through `src/lib/sheets.ts` are automatically wrapped in `withRetry()`, which retries up to 4 times with exponential backoff (1 s, 2 s, 4 s, 8 s) on 429 / quota-exceeded errors.
-
-**You do not need to implement retry logic yourself.** Always call data-layer functions (e.g. `getAllUsers()`, `updateGameData()`) rather than calling the Sheets SDK (`spreadsheets.values.get()`) directly from API routes or pages. The retry wrapper is applied to the SDK client at initialisation time inside `sheets.ts`.
+Always call data-layer functions in `src/lib/` rather than calling the Sheets SDK directly. Never call `spreadsheets.values.get()` from an API route or page.
 
 ```typescript
-// ✅ GOOD — goes through data layer, retry is automatic
+// ✅ GOOD — data layer handles retry, quota backoff, and column mapping
 import { getAllUsers } from '@/lib/sheets';
 const users = await getAllUsers();
 
-// ❌ BAD — raw SDK call, no retry, no column mapping
+// ❌ BAD — raw SDK call, bypasses all of the above
 const sheets = google.sheets({ version: 'v4', auth });
 const res = await sheets.spreadsheets.values.get({ ... });
 ```
-
-If you add a new data-layer function in `sheets.ts`, you don't need to wrap it — `withRetry` is patched onto all `spreadsheets.values.*` methods when the client is created.
 
 ---
 
@@ -1313,7 +1286,7 @@ const fetchData = async ({ silent = false }) => {
 };
 ```
 
-**When to use:** List pages that users navigate away from and back to frequently, especially in PWA / tablet contexts. **Do not use** for data that must always be fresh (e.g., a form's initial values before editing).
+**When to use:** List pages that users navigate away from and back to frequently. **Do not use** for data that must always be fresh (e.g., a form's initial values before editing).
 
 ---
 
@@ -1332,10 +1305,10 @@ const withPWA = withPWAInit({
 });
 ```
 
-**Implications for development:**
-- Service workers are not active in development (`NODE_ENV === "development"`) — test PWA behaviour with a production build (`npm run build && npm start`)
-- The manifest (`public/manifest.json`) and icons (`public/icons/`) must be kept up to date if the app name, colours, or icons change
-- Aggressive caching means API responses can be served from cache when offline — ensure data-mutating calls (POST/PUT/DELETE) are never cached by the service worker
+**Notes:**
+- Test PWA behaviour with a production build (`npm run build && npm start`) — service workers are disabled in development
+- Keep `public/manifest.json` and `public/icons/` up to date if the app name, colours, or icons change
+- Ensure POST/PUT/DELETE calls are never cached by the service worker
 
 ---
 
@@ -1370,8 +1343,7 @@ export async function POST(request: NextRequest) {
 ```
 
 **Notes:**
-- This is a simple, stateless rate limit — it resets if the server restarts. That's acceptable for low-traffic public forms.
-- Authenticated API routes do not need this — the session already provides identity and NextAuth handles brute-force protection on the login endpoint.
+- Authenticated routes do not need this — NextAuth handles login brute-force protection.
 - Return 429 with a human-readable message so the client can display it directly.
 
 ---
@@ -1406,7 +1378,7 @@ if (data.website) {
 }
 ```
 
-**Important:** Return `{ success: true }` (not a 400 or 422) so automated scripts don't detect the block and try different approaches. Combine with rate limiting (§27) for defence in depth.
+Return `{ success: true }` — not a 4xx — so bots don't detect the block. Combine with rate limiting (§27).
 
 ---
 

@@ -10,7 +10,7 @@ import { ROWLAND_ROUND_LABELS } from '@/types/rowland';
 
 function driveImageSrc(url: string): string {
   const m = url?.match(/\/file\/d\/([^/]+)/);
-  return m ? `https://drive.google.com/uc?export=view&id=${m[1]}` : url;
+  return m ? `/api/drive-image?id=${m[1]}` : url;
 }
 
 export interface RowlandResultData {
@@ -337,7 +337,7 @@ export function RowlandMatchDialog({
                       <label className="block text-xs text-gray-600 mb-1">Score sheet (optional)</label>
                       {scoreSheetPreview ? (
                         <div className="flex items-center gap-2">
-                          <a href={scoreSheetPreview} target="_blank" rel="noopener noreferrer">
+                          <a href={driveImageSrc(scoreSheetPreview)} target="_blank" rel="noopener noreferrer">
                             <img
                               src={driveImageSrc(scoreSheetPreview)}
                               alt="Score sheet"
