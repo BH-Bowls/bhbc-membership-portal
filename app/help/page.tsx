@@ -94,6 +94,12 @@ export default function HelpIndexPage() {
       href: '/help/leagues',
     },
     {
+      title: 'Availability Planner',
+      description:
+        'Coordinate dates and times with other members and visitors. Create events with candidate slots, collect Yes/Maybe/No responses, and pick the best time.',
+      href: '/help/availability',
+    },
+    {
       title: 'Lookups',
       description:
         'Find member contact details, club information, fixtures, and rota assignments — Members, Clubs, Fixtures, Tea Rota, Cleaning Rota, and Sweeping Rota.',

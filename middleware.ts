@@ -70,6 +70,12 @@ function isPublicRoute(pathname: string): boolean {
   // /api/clubs and all sub-paths
   if (pathname === '/api/clubs' || pathname.startsWith('/api/clubs/')) return true;
 
+  // /availability/guest — visitor token pages (no auth required)
+  if (pathname.startsWith('/availability/guest/')) return true;
+
+  // /api/availability/guest — public API endpoints for visitor token responses
+  if (pathname.startsWith('/api/availability/guest/')) return true;
+
   // /api/competitions/[compId] and sub-paths — but NOT admin/my/handicaps
   if (pathname.startsWith('/api/competitions/')) {
     const segment = pathname.split('/')[3];
