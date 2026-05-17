@@ -15,7 +15,7 @@ import { hasRole } from '@/lib/role-utils';
 // Remove a slot and cascade-delete its responses
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { eventId: string; slotId: string } }
+  { params }: { params: Promise<{ eventId: string; slotId: string }> }
 ) {
   try {
     // Verify user is authenticated
@@ -24,7 +24,7 @@ export async function DELETE(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { eventId, slotId } = params;
+    const { eventId, slotId } = await params;
 
     // Fetch event to check access and status
     const event = await getAvailabilityEventById(eventId);
