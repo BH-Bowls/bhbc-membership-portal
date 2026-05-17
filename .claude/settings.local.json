@@ -54,7 +54,20 @@
       "Bash(git log *)",
       "PowerShell(Set-Content *)",
       "Bash(git *)",
-      "Bash(npx dotenv *)"
+      "Bash(npx dotenv *)",
+      "Bash(mkdir -p \"C:\\\\Users\\\\liam\\\\Documents\\\\bhbc-membership-portal\\\\app\\\\api\\\\availability\\\\[eventId]\\\\slots\\\\[slotId]\")",
+      "Bash(mkdir -p \"C:\\\\Users\\\\liam\\\\Documents\\\\bhbc-membership-portal\\\\app\\\\api\\\\availability\\\\[eventId]\\\\respond\")",
+      "Bash(mkdir -p \"C:\\\\Users\\\\liam\\\\Documents\\\\bhbc-membership-portal\\\\app\\\\api\\\\availability\\\\[eventId]\\\\manage\")",
+      "Bash(mkdir -p \"C:\\\\Users\\\\liam\\\\Documents\\\\bhbc-membership-portal\\\\app\\\\api\\\\availability\\\\[eventId]\\\\conclude\")",
+      "Bash(mkdir -p \"C:\\\\Users\\\\liam\\\\Documents\\\\bhbc-membership-portal\\\\app\\\\api\\\\availability\\\\[eventId]\\\\reopen\")",
+      "Bash(mkdir -p \"C:\\\\Users\\\\liam\\\\Documents\\\\bhbc-membership-portal\\\\app\\\\availability\\\\[eventId]\\\\manage\")",
+      "Bash(mkdir -p \"C:\\\\Users\\\\liam\\\\Documents\\\\bhbc-membership-portal\\\\app\\\\availability\\\\guest\\\\[eventId]\")",
+      "Bash(npm run *)",
+      "Bash(Select-String *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\liam\\\\Documents\\\\bhbc-membership-portal\\\\app\\\\friendlies\" -Recurse -File -Filter \"*.tsx\" -o \"*.ts\")",
+      "Bash(Select-Object FullName)",
+      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\liam\\\\Documents\\\\bhbc-membership-portal\\\\app\\\\friendlies\" -Recurse -File | Where-Object { $_.Extension -in '.tsx', '.ts' } | Select-Object FullName)",
+      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\liam\\\\Documents\\\\bhbc-membership-portal\\\\app\\\\api\\\\friendlies\" -Recurse -File | Where-Object { $_.Extension -in '.tsx', '.ts' } | Select-Object FullName)"
     ]
   }
 }
