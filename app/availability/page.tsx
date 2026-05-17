@@ -282,7 +282,7 @@ export default function AvailabilityPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={session && session.user ? session.user.name : undefined} userRole={role} />
+      <Navbar userName={session && session.user && session.user.name ? session.user.name : undefined} userRole={role} />
       <div className="container mx-auto px-4 py-8 max-w-3xl">
 
         {/* Page header */}
