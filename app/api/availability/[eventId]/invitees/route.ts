@@ -17,7 +17,7 @@ import { hasRole } from '@/lib/role-utils';
 // Add new invitees to a private event and send them invite emails
 export async function POST(
   request: NextRequest,
-  { params }: { params: { eventId: string } }
+  { params }: { params: Promise<{ eventId: string }> }
 ) {
   try {
     // Verify user is authenticated
@@ -26,7 +26,7 @@ export async function POST(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { eventId } = params;
+    const { eventId } = await params;
 
     // Fetch event to check access and settings
     const event = await getAvailabilityEventById(eventId);

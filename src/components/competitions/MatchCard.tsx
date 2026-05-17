@@ -18,6 +18,7 @@ interface MatchCardProps {
   onClick?: (match: CompMatch) => void;
   canInteract: boolean; // true if this user can enter a score for this match
   roundPlayByDate?: string; // play-by date for the round — suppress match date if identical
+  isOnDate?: boolean;       // true when the match's playByDate is a fixed "play ON" day
   showFullNames?: boolean; // show all names for pairs/triples instead of "+N"
   onScoreSheetView?: (matchId: string, url: string) => void;
 }
@@ -33,6 +34,7 @@ export function MatchCard({
   onClick,
   canInteract,
   roundPlayByDate,
+  isOnDate = false,
   showFullNames = false,
   onScoreSheetView,
 }: MatchCardProps) {
@@ -149,7 +151,7 @@ export function MatchCard({
       {/* Play-by date banner — only when different from the round-level date */}
       {isPending && match.playByDate && match.playByDate !== roundPlayByDate && (
         <div className="px-2 pt-1 text-[10px] text-gray-400 leading-none">
-          By {formatDate(match.playByDate)}
+          {isOnDate ? 'On' : 'By'} {formatDate(match.playByDate)}
         </div>
       )}
 

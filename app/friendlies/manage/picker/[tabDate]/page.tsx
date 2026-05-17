@@ -212,6 +212,27 @@ export default function PickerSheetPage() {
   // Column headers for the last 6 games (generic per-player labels)
   const historyHeaders = ['Last', 'L-1', 'L-2', 'L-3', 'L-4', 'L-5'];
 
+  // Validation: returns which cells are invalid for a given player
+  function validatePlayer(player: GameSheetPlayer) {
+    const sel = player.selected;
+    if (player.status === 'W' || (sel !== 'Y' && sel !== 'T' && sel !== 'R')) {
+      return { teamInvalid: false, positionInvalid: false, carInvalid: false };
+    }
+    if (sel === 'Y' || sel === 'T') {
+      return {
+        teamInvalid: player.team === null || player.team === undefined,
+        positionInvalid: !player.position,
+        carInvalid: false,
+      };
+    }
+    // sel === 'R': must have no team, position, or car number
+    return {
+      teamInvalid: player.team !== null && player.team !== undefined,
+      positionInvalid: !!player.position,
+      carInvalid: !!(player.carNumber && player.carNumber.trim()),
+    };
+  }
+
   // ============================================================================
   // Render
   // ============================================================================
@@ -408,8 +429,11 @@ export default function PickerSheetPage() {
                     {sortedPlayers.map(player => {
                       const history = parsePlayerHistory(player.last8Games);
                       const isWithdrawn = player.status === 'W';
+                      const { teamInvalid, positionInvalid, carInvalid } = validatePlayer(player);
+                      const rowInvalid = teamInvalid || positionInvalid || carInvalid;
+                      const invalidCell = 'bg-amber-100 border-amber-500';
                       return (
-                        <tr key={player.rowNumber} className={`hover:bg-gray-50 print:hover:bg-transparent ${isWithdrawn ? 'bg-gray-100 opacity-60' : ''}`}>
+                        <tr key={player.rowNumber} className={`hover:bg-gray-50 print:hover:bg-transparent ${isWithdrawn ? 'bg-gray-100 opacity-60' : rowInvalid ? 'bg-amber-50' : ''}`}>
                           {/* Name */}
                           <td className={`border border-gray-400 px-1 py-[2px] font-medium truncate max-w-[120px] ${isWithdrawn ? 'line-through text-gray-500' : ''}`}>
                             {player.fullName}
@@ -426,12 +450,12 @@ export default function PickerSheetPage() {
                           </td>
 
                           {/* Team */}
-                          <td className="border border-gray-400 px-0.5 py-[2px] text-center">
+                          <td className={`border px-0.5 py-[2px] text-center ${teamInvalid ? invalidCell : 'border-gray-400'}`}>
                             {player.team || ''}
                           </td>
 
                           {/* Position */}
-                          <td className="border border-gray-400 px-0.5 py-[2px] text-center">
+                          <td className={`border px-0.5 py-[2px] text-center ${positionInvalid ? invalidCell : 'border-gray-400'}`}>
                             {player.position === '1' ? 'L' : (player.position || '')}
                           </td>
 
@@ -441,7 +465,7 @@ export default function PickerSheetPage() {
                               <td className="border border-gray-400 px-0.5 py-[2px] text-center">
                                 {player.driving === 'Y' ? 'Y' : ''}
                               </td>
-                              <td className="border border-gray-400 px-0.5 py-[2px] text-center">
+                              <td className={`border px-0.5 py-[2px] text-center ${carInvalid ? invalidCell : 'border-gray-400'}`}>
                                 {player.carNumber || ''}
                               </td>
                             </>

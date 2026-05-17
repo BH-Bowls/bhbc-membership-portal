@@ -14,7 +14,7 @@ import { hasRole } from '@/lib/role-utils';
 // Returns full event manage detail including all responses and invitee list
 export async function GET(
   request: NextRequest,
-  { params }: { params: { eventId: string } }
+  { params }: { params: Promise<{ eventId: string }> }
 ) {
   try {
     // Verify user is authenticated
@@ -23,7 +23,7 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { eventId } = params;
+    const { eventId } = await params;
 
     // Fetch event for access check
     const event = await getAvailabilityEventById(eventId);

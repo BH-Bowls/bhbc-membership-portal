@@ -108,6 +108,7 @@ export function GameInstructionsDialog({
 
   // Publish-specific state
   const [sendEmail, setSendEmail] = useState(false);
+  const [publishMessage, setPublishMessage] = useState('');
   const [emailMode, setEmailMode] = useState<'all' | 'selected'>('all');
   const [emailPlayerOptions, setEmailPlayerOptions] = useState<{ userName: string; fullName: string }[]>([]);
   const [selectedEmailPlayers, setSelectedEmailPlayers] = useState<Set<string>>(new Set());
@@ -125,6 +126,12 @@ export function GameInstructionsDialog({
     setSaving(false);
     setDialogError('');
     setSendEmail(false);
+    const isRepublish = game.status === 'S';
+    setPublishMessage(
+      isRepublish
+        ? `The team selection for the ${game.clubName} game has been updated.`
+        : `The team has been selected for the ${game.clubName} game.`
+    );
     setEmailMode('all');
     setEmailPlayerOptions([]);
     setSelectedEmailPlayers(new Set());
@@ -351,6 +358,7 @@ export function GameInstructionsDialog({
           send_email: sendEmail,
           email_player_names: emailPlayerNames,
           send_tea_rota_email: sendTeaRotaEmail,
+          publish_message: publishMessage || undefined,
         }),
       });
       const data = await res.json();
@@ -601,6 +609,23 @@ export function GameInstructionsDialog({
                   <p className="text-sm text-gray-700">Send notification to players who entered this game</p>
                 </div>
               </label>
+
+              {/* Editable intro message — shown when email is checked */}
+              {sendEmail && (
+                <div className="ml-3 pl-3 border-l-2 border-blue-200">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Email message
+                  </label>
+                  <textarea
+                    value={publishMessage}
+                    onChange={e => setPublishMessage(e.target.value)}
+                    rows={2}
+                    disabled={saving}
+                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400 resize-y disabled:opacity-50"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">HTML supported — e.g. <code>&lt;strong&gt;bold&lt;/strong&gt;</code>. New lines become line breaks.</p>
+                </div>
+              )}
 
               {/* Player scope toggle — only shown when email is checked */}
               {sendEmail && (

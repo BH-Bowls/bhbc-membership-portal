@@ -6,7 +6,7 @@
 
 import { withAuth } from 'next-auth/middleware';
 import { NextResponse } from 'next/server';
-import { hasRole } from './src/lib/role-utils';
+import { hasRole, isCommitteeMember } from './src/lib/role-utils';
 
 /**
  * Middleware function that runs on every protected route
@@ -125,6 +125,14 @@ export default withAuth(
     // These routes allow sending bulk emails to members
     if (pathname.startsWith('/admin/emails')) {
       if (!token || !hasRole(token.role as string, 'Admin')) {
+        return NextResponse.redirect(new URL('/', req.url));
+      }
+    }
+
+    // Protect /admin/stats routes - committee members (Admin, Captain, Treasurer, GMC)
+    // isCommitteeMember() matches the same roles the navbar uses for the admin menu
+    if (pathname.startsWith('/admin/stats')) {
+      if (!token || !isCommitteeMember(token.role as string)) {
         return NextResponse.redirect(new URL('/', req.url));
       }
     }

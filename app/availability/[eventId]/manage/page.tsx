@@ -3,7 +3,7 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, use } from 'react';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { Navbar } from '@/components/Navbar';
@@ -91,9 +91,9 @@ interface VisitorEntry {
   visitorEmail: string;
 }
 
-export default function ManageAvailabilityPage({ params }: { params: { eventId: string } }) {
+export default function ManageAvailabilityPage({ params }: { params: Promise<{ eventId: string }> }) {
   const { data: session, status } = useSession();
-  const { eventId } = params;
+  const { eventId } = use(params);
   const role = session && session.user ? session.user.role : '';
 
   const [detail, setDetail] = useState<AvailabilityManageDetail | null>(null);

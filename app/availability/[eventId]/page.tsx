@@ -3,7 +3,7 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, use } from 'react';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { Navbar } from '@/components/Navbar';
@@ -119,9 +119,9 @@ function ResponseBadge({ response }: { response: AvailabilityResponse | undefine
   return <span className="text-red-600 font-medium text-xs">✗</span>;
 }
 
-export default function AvailabilityEventPage({ params }: { params: { eventId: string } }) {
+export default function AvailabilityEventPage({ params }: { params: Promise<{ eventId: string }> }) {
   const { data: session, status } = useSession();
-  const { eventId } = params;
+  const { eventId } = use(params);
   const role = session && session.user ? session.user.role : '';
 
   const [detail, setDetail] = useState<AvailabilityEventDetail | null>(null);

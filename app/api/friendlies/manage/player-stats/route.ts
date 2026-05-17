@@ -65,7 +65,10 @@ export async function GET(_request: NextRequest) {
 
     // Build fullName lookup from Members sheet when Players sheet uses userName
     const fullNameLookup = new Map<string, string>();
-    if (usesUserName) {
+    // All playing members (PL / PM) — used to find who hasn't played
+    const playingMembers: { userName: string; fullName: string }[] = [];
+
+    {
       const membersId = getMembersSpreadsheetId();
       const membersColMap = await getColumnMap(membersId, 'Members');
       const membersResp = await sheets.spreadsheets.values.get({
@@ -75,9 +78,15 @@ export async function GET(_request: NextRequest) {
       const membersRows = membersResp.data.values || [];
       const uCol = membersColMap['user_name'] ?? 0;
       const fCol = membersColMap['full_name'] ?? membersColMap['name'] ?? 1;
+      const tCol = membersColMap['member_type'] ?? -1;
       for (let i = 1; i < membersRows.length; i++) {
         const r = membersRows[i];
-        if (r[uCol] && r[fCol]) fullNameLookup.set(r[uCol], r[fCol]);
+        if (!r[uCol] || !r[fCol]) continue;
+        fullNameLookup.set(r[uCol], r[fCol]);
+        const memberType: string = tCol >= 0 ? (r[tCol] || '') : '';
+        if (memberType === 'Playing Lady' || memberType === 'Playing Man') {
+          playingMembers.push({ userName: r[uCol], fullName: r[fCol] });
+        }
       }
     }
 
@@ -143,7 +152,13 @@ export async function GET(_request: NextRequest) {
     // Default sort: alphabetical by fullName
     playerStats.sort((a, b) => a.fullName.localeCompare(b.fullName));
 
-    return NextResponse.json({ players: playerStats });
+    // Playing members with no entry in the Players sheet
+    const playedUserNames = new Set(playerStats.map(p => p.userName));
+    const notPlayed = playingMembers
+      .filter(m => !playedUserNames.has(m.userName))
+      .sort((a, b) => a.fullName.localeCompare(b.fullName));
+
+    return NextResponse.json({ players: playerStats, notPlayed });
   } catch (error) {
     console.error('GET /api/friendlies/manage/player-stats error:', error);
     return NextResponse.json({ error: 'Failed to fetch player stats' }, { status: 500 });

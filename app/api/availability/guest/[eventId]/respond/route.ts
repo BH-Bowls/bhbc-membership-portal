@@ -39,7 +39,7 @@ function checkRateLimit(ip: string): boolean {
 // Save a visitor's slot responses using their token
 export async function POST(
   request: NextRequest,
-  { params }: { params: { eventId: string } }
+  { params }: { params: Promise<{ eventId: string }> }
 ) {
   // Apply stricter rate limiting
   const ip = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'unknown';
@@ -48,7 +48,7 @@ export async function POST(
   }
 
   try {
-    const { eventId } = params;
+    const { eventId } = await params;
 
     // Parse body
     const body: GuestRespondPayload = await request.json();

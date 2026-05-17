@@ -46,7 +46,12 @@ export default function ClubDetailPage({ params }: PageProps) {
 
   // Determine back URL based on where user came from
   const fromPage = searchParams.get('from');
-  const backUrl = fromPage === 'friendlies' ? '/friendlies' : '/clubs';
+  const fromTabDate = searchParams.get('tabDate');
+  const backUrl = fromPage === 'game' && fromTabDate
+    ? `/friendlies/game/${encodeURIComponent(fromTabDate)}`
+    : fromPage === 'friendlies'
+    ? '/friendlies'
+    : '/clubs';
 
   const [club, setClub] = useState<Club | null>(null);
   const [contacts, setContacts] = useState<ClubContact[]>([]);
@@ -366,9 +371,9 @@ export default function ClubDetailPage({ params }: PageProps) {
         <div className="container mx-auto px-4 py-8 max-w-4xl">
           <div className="text-center py-12 bg-white rounded-lg shadow">
             <p className="text-red-600">{error || 'Club not found'}</p>
-            <Link href={backUrl} className="mt-4 inline-block text-blue-500 hover:text-blue-600">
+            <a href={backUrl} className="mt-4 inline-block text-blue-500 hover:text-blue-600">
               Go Back
-            </Link>
+            </a>
           </div>
         </div>
       </div>
@@ -433,11 +438,11 @@ export default function ClubDetailPage({ params }: PageProps) {
                 </svg>
               </span>
             ) : (
-              <Link href={backUrl} className="text-gray-500 hover:text-gray-700">
+              <a href={backUrl} className="text-gray-500 hover:text-gray-700">
                 <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
                 </svg>
-              </Link>
+              </a>
             )}
             <h1 className="text-3xl font-bold text-gray-900">{club.clubName}</h1>
             {club.drivingBand && (

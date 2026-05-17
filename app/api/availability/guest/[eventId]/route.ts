@@ -32,7 +32,7 @@ function checkRateLimit(ip: string): boolean {
 // Returns event detail for a visitor using their unique token
 export async function GET(
   request: NextRequest,
-  { params }: { params: { eventId: string } }
+  { params }: { params: Promise<{ eventId: string }> }
 ) {
   // Apply rate limiting
   const ip = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'unknown';
@@ -41,7 +41,7 @@ export async function GET(
   }
 
   try {
-    const { eventId } = params;
+    const { eventId } = await params;
 
     // Token is required
     const token = request.nextUrl.searchParams.get('token');

@@ -55,8 +55,8 @@ export default function ManageGamesPage() {
   // State: List of all games
   const [games, setGames] = useState<Game[]>([]);
 
-  // State: Current filter selection (all or specific status)
-  const [filter, setFilter] = useState<'all' | GameStatus>('all');
+  // State: Current filter selection
+  const [filter, setFilter] = useState<'all' | 'upcoming' | 'open' | 'selecting' | 'played'>('all');
 
   // State: Loading indicator while fetching games
   const [loading, setLoading] = useState(true);
@@ -116,6 +116,7 @@ export default function ManageGamesPage() {
     isOpen: boolean;
     mode: InstructionsDialogMode;
     game: Game | null;
+    afterConfirm?: () => void;
   }>({ isOpen: false, mode: 'open', game: null });
 
   // State: Add Players modal (opens EnteredPlayersModal for a specific game)
@@ -139,11 +140,13 @@ export default function ManageGamesPage() {
 
   // State: Player stats data
   const [playerStats, setPlayerStats] = useState<PlayerStatRow[] | null>(null);
+  const [notPlayedStats, setNotPlayedStats] = useState<{ userName: string; fullName: string }[] | null>(null);
   const [playerStatsLoading, setPlayerStatsLoading] = useState(false);
 
   // State: Player stats sort
   const [statsSortCol, setStatsSortCol] = useState<keyof PlayerStatRow>('fullName');
   const [statsSortDir, setStatsSortDir] = useState<'asc' | 'desc'>('asc');
+  const [showNotPlayed, setShowNotPlayed] = useState(false);
 
   // ============================================================================
   // Effects
@@ -237,6 +240,7 @@ export default function ManageGamesPage() {
       const data = await res.json();
       if (res.ok) {
         setPlayerStats(data.players as PlayerStatRow[]);
+        setNotPlayedStats(data.notPlayed ?? []);
       } else {
         console.error('Player stats error:', data.error);
       }
@@ -417,8 +421,8 @@ export default function ManageGamesPage() {
   /**
    * Open the instructions dialog in a given mode for a game
    */
-  function openInstructionsDialog(game: Game, mode: InstructionsDialogMode) {
-    setInstructionsDialog({ isOpen: true, mode, game });
+  function openInstructionsDialog(game: Game, mode: InstructionsDialogMode, afterConfirm?: () => void) {
+    setInstructionsDialog({ isOpen: true, mode, game, afterConfirm });
   }
 
   /**
@@ -426,11 +430,16 @@ export default function ManageGamesPage() {
    */
   async function handleInstructionsConfirm() {
     const key = instructionsDialog.game?.tabName;
+    const after = instructionsDialog.afterConfirm;
     setInstructionsDialog({ isOpen: false, mode: 'open', game: null });
     if (key) {
       setActionSelections(prev => { const next = { ...prev }; delete next[key]; return next; });
     }
-    await fetchGames();
+    if (after) {
+      after();
+    } else {
+      await fetchGames();
+    }
   }
 
   /**
@@ -558,9 +567,12 @@ export default function ManageGamesPage() {
   function getDefaultAction(game: Game): string {
     switch (game.status) {
       case '':  return 'open';
-      case 'O': return 'close';
+      case 'O': return 'close-select';
       case 'X': return 'select-team';
       case 'S': return 'record-result';
+      case 'P':
+      case 'C':
+      case 'A': return 'revert-to-selected';
       default:  return '';
     }
   }
@@ -574,10 +586,11 @@ export default function ManageGamesPage() {
         ];
       case 'O':
         return [
-          { value: 'close',   label: 'Close Entries' },
-          { value: 'players', label: 'Add Players' },
-          { value: 'reopen',  label: '← Upcoming' },
-          { value: 'cancel',  label: 'Cancel Game' },
+          { value: 'close-select', label: 'Close & Select' },
+          { value: 'close',        label: 'Close' },
+          { value: 'players',      label: 'Add Players' },
+          { value: 'reopen',       label: '← Upcoming' },
+          { value: 'cancel',       label: 'Cancel Game' },
         ];
       case 'X':
         return [
@@ -595,6 +608,12 @@ export default function ManageGamesPage() {
           { value: 'unpublish', label: '← Selecting' },
           { value: 'cancel',    label: 'Cancel Game' },
         ];
+      case 'P':
+      case 'C':
+      case 'A':
+        return [
+          { value: 'revert-to-selected', label: '← Set to Selected' },
+        ];
       default:
         return [];
     }
@@ -611,6 +630,12 @@ export default function ManageGamesPage() {
         break;
       case 'close':
         handleCloseGame(game);
+        break;
+      case 'close-select':
+        openInstructionsDialog(game, 'close', () => {
+          sessionStorage.setItem('friendlies_last_managed', game.tabName);
+          router.push(`/friendlies/manage/game/${encodeURIComponent(game.tabName)}`);
+        });
         break;
       case 'select-team':
       case 'edit': {
@@ -657,6 +682,11 @@ export default function ManageGamesPage() {
       case 'unpublish':
         handleRevertGame(game, 'unpublish', 'Published', 'Selecting');
         break;
+      case 'revert-to-selected': {
+        const fromLabel = game.status === 'P' ? 'Played' : game.status === 'C' ? 'Cancelled' : 'Abandoned';
+        handleRevertGame(game, 'revert-to-selected', fromLabel, 'Selected');
+        break;
+      }
     }
   }
 
@@ -682,11 +712,12 @@ export default function ManageGamesPage() {
    * Returns subset of games that match current filter
    */
   const filteredGames = games.filter(game => {
-    // If 'all' filter selected, show all games
-    if (filter === 'all') return true;
-
-    // Otherwise, only show games with matching status
-    return game.status === filter;
+    if (filter === 'all')       return true;
+    if (filter === 'upcoming')  return game.status === '';
+    if (filter === 'open')      return game.status === 'O';
+    if (filter === 'selecting') return ['L', 'X', 'S'].includes(game.status);
+    if (filter === 'played')    return ['P', 'C', 'A'].includes(game.status);
+    return true;
   }).sort((a, b) => {
     // Sort by date (ascending) - earliest dates first
     const parseDate = (dateStr: string) => {
@@ -840,19 +871,23 @@ export default function ManageGamesPage() {
         {/* Filter tabs - allow captain to filter by game status (games view only) */}
         {manageView === 'games' && (
         <div className="flex gap-2 mb-6 border-b border-gray-200 overflow-x-auto">
-          {/* Loop through all possible status values */}
-          {(['all', '', 'O', 'L', 'X', 'S', 'P', 'C', 'A'] as const).map(status => (
+          {([
+            { value: 'all',       label: 'All' },
+            { value: 'upcoming',  label: 'Upcoming' },
+            { value: 'open',      label: 'Open' },
+            { value: 'selecting', label: 'Selecting' },
+            { value: 'played',    label: 'Played' },
+          ] as const).map(({ value, label }) => (
             <button
-              key={status}
-              onClick={() => setFilter(status)}
+              key={value}
+              onClick={() => setFilter(value)}
               className={`px-4 py-2 font-medium border-b-2 whitespace-nowrap ${
-                filter === status
+                filter === value
                   ? 'border-blue-500 text-blue-600'
                   : 'border-transparent text-gray-600 hover:text-gray-800'
               }`}
             >
-              {/* Display friendly label for each status */}
-              {status === 'all' ? 'All' : status === '' ? 'Upcoming' : status === 'L' ? 'Allocating' : status}
+              {label}
             </button>
           ))}
         </div>
@@ -909,6 +944,10 @@ export default function ManageGamesPage() {
           ];
 
           return (
+            <div>
+            <p className="text-sm text-gray-600 mb-3">
+              {sortedStats.length} {sortedStats.length === 1 ? 'member has' : 'members have'} played at least one friendly.
+            </p>
             <div className="bg-white rounded-lg shadow overflow-auto max-h-[70vh]">
               <table className="min-w-full divide-y divide-gray-200 text-sm">
                 <thead className="bg-gray-50 sticky top-0 z-10">
@@ -948,6 +987,35 @@ export default function ManageGamesPage() {
                 </tbody>
               </table>
             </div>
+
+            {/* Not-played section */}
+            {notPlayedStats !== null && (
+              <div className="mt-4">
+                <button
+                  onClick={() => setShowNotPlayed(v => !v)}
+                  className="flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-gray-900"
+                >
+                  <span>{showNotPlayed ? '▼' : '▶'}</span>
+                  <span>
+                    {notPlayedStats.length} playing {notPlayedStats.length === 1 ? 'member has' : 'members have'} not played any friendly
+                  </span>
+                </button>
+                {showNotPlayed && (
+                  <div className="mt-2 bg-white rounded-lg shadow border border-gray-200 p-4">
+                    {notPlayedStats.length === 0 ? (
+                      <p className="text-sm text-gray-500">All playing members have played at least one friendly.</p>
+                    ) : (
+                      <ul className="columns-2 sm:columns-3 lg:columns-4 gap-x-6 text-sm text-gray-700">
+                        {notPlayedStats.map(m => (
+                          <li key={m.userName} className="py-0.5">{m.fullName}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+            </div>
           );
         })()}
 
@@ -969,7 +1037,7 @@ export default function ManageGamesPage() {
                     Date/Time
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider">
-                    Club
+                    Club{filter === 'played' && <span className="normal-case font-normal text-gray-500"> / Score BH – Opp</span>}
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider">
                     Details
@@ -1086,8 +1154,22 @@ export default function ManageGamesPage() {
                       </td>
 
                       {/* Club name column */}
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                        {game.clubName}
+                      <td className="px-6 py-4 text-sm font-medium text-gray-900">
+                        <div>{game.clubName}</div>
+                        {filter === 'played' && game.status === 'P' && game.bhbcScore !== null && game.opponentScore !== null && (
+                          <div className="text-xs text-gray-500 font-normal mt-0.5">
+                            {game.bhbcScore} – {game.opponentScore}
+                          </div>
+                        )}
+                        {filter === 'played' && (game.status === 'C' || game.status === 'A') && (
+                          <div className="text-xs text-gray-500 font-normal mt-0.5 space-y-0.5">
+                            {game.status === 'A' && game.bhbcScore !== null && game.opponentScore !== null && (
+                              <div>{game.bhbcScore} – {game.opponentScore}</div>
+                            )}
+                            {game.who && <div>By: {game.who}</div>}
+                            {game.reason && <div>Reason: {game.reason}</div>}
+                          </div>
+                        )}
                       </td>
 
                       {/* Game details column (venue and format) */}

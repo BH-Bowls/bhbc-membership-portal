@@ -256,9 +256,13 @@ export async function sendGamePublishedEmail(
     selected?: string;   // SelectionStatus: 'Y' | 'R' | 'T' | ''
     team?: number | null;
     position?: string;
+    captain?: string;    // 'Y' if captain of the day
+    driving?: string;    // 'Y' if driving (away games)
+    carNumber?: string | null;
   }>,
   appUrl: string,
   isRepublish = false,
+  publishMessage?: string,
 ): Promise<{ success: boolean; emailsSent: number; playersWithoutEmail: string[]; error?: string }> {
   try {
     const playersWithEmail = players.filter(p => p.email && p.email.trim() !== '');
@@ -279,49 +283,109 @@ export async function sendGamePublishedEmail(
     // Use a pooled transporter so all sends share one persistent SMTP connection
     // rather than opening a new connection per email (which can trigger Gmail rate limits)
     const transporter = getEmailTransporter(true);
-    const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}`;
+    const gameBaseUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}`;
     const subject = isRepublish
       ? `Team Selection Updated - ${game.clubName} ${game.date}`
       : `Team Selection Published - ${game.clubName} ${game.date}`;
     const venue = game.homeAway === 'H' ? 'Home' : 'Away';
     const emailHeading = isRepublish ? 'Team Selection Updated' : 'Team Selection Published';
-    const emailIntro = isRepublish
+    const defaultIntroHtml = isRepublish
       ? `The team selection for the <strong>${game.clubName}</strong> game has been updated.`
       : `The team has been selected for the <strong>${game.clubName}</strong> game.`;
+    const defaultIntroText = isRepublish
+      ? `The team selection for the ${game.clubName} game has been updated.`
+      : `The team has been selected for the ${game.clubName} game.`;
+    const emailIntro = publishMessage ? publishMessage.replace(/\n/g, '<br>') : defaultIntroHtml;
+    const emailIntroText = publishMessage ? publishMessage : defaultIntroText;
 
     const BUTTON_STYLE = 'display:inline-block;background-color:#0066cc;color:#ffffff;padding:12px 24px;text-decoration:none;border-radius:5px;margin-top:15px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;';
 
-    // Resolve selection status to a human-readable label and colour
-    const resolveStatus = (selected?: string): { label: string; color: string } => {
-      switch (selected) {
-        case 'Y': return { label: 'Selected — Playing', color: '#1a7a1a' };
-        case 'R': return { label: 'Reserve', color: '#b45309' };
-        case 'T': return { label: 'Reserve Team', color: '#6b21a8' };
-        default:  return { label: 'Entered (not yet assigned)', color: '#555555' };
+    const positionLabel = (pos?: string) => {
+      switch (pos) {
+        case 'S': return 'Skip';
+        case '1': return 'Lead';
+        case '2': return 'Second';
+        case '3': return 'Third';
+        default:  return pos || '';
       }
+    };
+
+    const isAway = game.homeAway === 'A';
+
+    // Build status label, colour, and detail lines for a player
+    const buildStatusDetails = (player: typeof playersWithEmail[0]): {
+      statusLabel: string;
+      color: string;
+      textLines: string[];
+      htmlLines: string[];
+    } => {
+      const isCaptain = player.captain === 'Y';
+
+      if (player.selected === 'Y') {
+        const captainSuffix = isCaptain ? ' ★ Captain of the Day' : '';
+        const statusLabel = `Selected — Playing${captainSuffix}`;
+        const textLines: string[] = [];
+        const htmlLines: string[] = [];
+
+        if (player.team != null)  { textLines.push(`Team: ${player.team}`);                      htmlLines.push(`<p style="margin:4px 0;"><strong>Team:</strong> ${player.team}</p>`); }
+        if (player.position)      { textLines.push(`Position: ${positionLabel(player.position)}`); htmlLines.push(`<p style="margin:4px 0;"><strong>Position:</strong> ${positionLabel(player.position)}</p>`); }
+        if (isAway) {
+          const carNum = player.carNumber?.toUpperCase();
+          if (carNum === 'O') {
+            textLines.push('Travel: Own Transport');
+            htmlLines.push(`<p style="margin:4px 0;"><strong>Travel:</strong> Own Transport</p>`);
+          } else if (player.driving === 'Y' && player.carNumber) {
+            textLines.push(`Travel: Driving — Car ${player.carNumber}`);
+            htmlLines.push(`<p style="margin:4px 0;"><strong>Travel:</strong> Driving — Car ${player.carNumber}</p>`);
+          } else if (player.carNumber) {
+            textLines.push(`Travel: Passenger in Car ${player.carNumber}`);
+            htmlLines.push(`<p style="margin:4px 0;"><strong>Travel:</strong> Passenger in Car ${player.carNumber}</p>`);
+          }
+        }
+        return { statusLabel, color: '#1a7a1a', textLines, htmlLines };
+      }
+
+      if (player.selected === 'T') {
+        const textLines: string[] = [];
+        const htmlLines: string[] = [];
+        if (player.team != null)  { textLines.push(`Team: ${player.team}`);                      htmlLines.push(`<p style="margin:4px 0;"><strong>Team:</strong> ${player.team}</p>`); }
+        if (player.position)      { textLines.push(`Position: ${positionLabel(player.position)}`); htmlLines.push(`<p style="margin:4px 0;"><strong>Position:</strong> ${positionLabel(player.position)}</p>`); }
+        return { statusLabel: 'Reserve Team', color: '#6b21a8', textLines, htmlLines };
+      }
+
+      if (player.selected === 'R') {
+        return { statusLabel: 'Reserve', color: '#b45309', textLines: [], htmlLines: [] };
+      }
+
+      return { statusLabel: 'Entered (not yet assigned)', color: '#555555', textLines: [], htmlLines: [] };
     };
 
     let emailsSent = 0;
     const failedPlayers: string[] = [];
 
     for (const player of playersWithEmail) {
-      const { label, color } = resolveStatus(player.selected);
+      const gameUrl = player.userName
+        ? `${gameBaseUrl}?me=${encodeURIComponent(player.userName)}`
+        : gameBaseUrl;
 
-      const teamInfo = player.team != null ? ` — Team ${player.team}` : '';
+      const { statusLabel, color, textLines, htmlLines } = buildStatusDetails(player);
+      const isCaptain = player.captain === 'Y';
+
+      const textDetailBlock = textLines.length > 0 ? '\n' + textLines.join('\n') : '';
 
       const text = `
 ${emailHeading}
 
 Hi ${player.fullName},
 
-${isRepublish ? `The team selection for the ${game.clubName} game has been updated.` : `The team has been selected for the ${game.clubName} game.`}
+${emailIntroText}
 
 Date: ${game.date}
 Time: ${game.time}
 Venue: ${venue}
 Format: ${game.format}
 
-Your status: ${label}${teamInfo}
+Your status: ${statusLabel}${textDetailBlock}
 
 You can view the full team selection and sign off your name either by clicking the link below or visiting the clubhouse:
 ${gameUrl}
@@ -330,6 +394,10 @@ ${gameUrl}
 Burgess Hill Bowls Club
 Friendlies Management System
       `.trim();
+
+      const captainBadgeHtml = isCaptain
+        ? ` <span style="background-color:#7c3aed;color:#fff;font-size:11px;padding:2px 7px;border-radius:10px;vertical-align:middle;">★ Captain of the Day</span>`
+        : '';
 
       const html = `
 <!DOCTYPE html>
@@ -361,7 +429,11 @@ Friendlies Management System
         <p><strong>Format:</strong> ${game.format}</p>
       </div>
       <div class="status-box">
-        <p style="margin:0;"><strong>Your status:</strong> <span style="color:${color};font-weight:bold;">${label}</span>${teamInfo ? `<span style="color:#555;"> ${teamInfo}</span>` : ''}</p>
+        <p style="margin:0 0 ${htmlLines.length > 0 ? '8px' : '0'} 0;">
+          <strong>Your status:</strong>
+          <span style="color:${color};font-weight:bold;">${player.selected === 'Y' ? 'Selected — Playing' : statusLabel}</span>${captainBadgeHtml}
+        </p>
+        ${htmlLines.join('\n        ')}
       </div>
       <p>You can view the full team selection and sign off your name either by clicking the button below or visiting the clubhouse.</p>
       <a href="${gameUrl}" style="${BUTTON_STYLE}">View Game Details</a>
@@ -886,7 +958,7 @@ export async function sendEntryConfirmedEmail(
   appUrl: string,
   addedByAdmin = false,
 ): Promise<void> {
-  const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}`;
+  const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}?me=${encodeURIComponent(userName)}`;
   const venue = game.homeAway === 'H' ? 'Home' : `Away at ${game.clubName}`;
   const subject = `Friendly Entry Confirmed — ${game.clubName} ${game.date}`;
   const introText = addedByAdmin
@@ -956,7 +1028,7 @@ export async function sendWithdrawalNoticeEmail(
   game: Game,
   appUrl: string,
 ): Promise<void> {
-  const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}`;
+  const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}?me=${encodeURIComponent(userName)}`;
   const venue = game.homeAway === 'H' ? 'Home' : `Away at ${game.clubName}`;
   const subject = `Friendly Withdrawal — ${game.clubName} ${game.date}`;
 
@@ -1020,7 +1092,7 @@ export async function sendRemovedNoticeEmail(
   game: Game,
   appUrl: string,
 ): Promise<void> {
-  const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}`;
+  const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}?me=${encodeURIComponent(userName)}`;
   const venue = game.homeAway === 'H' ? 'Home' : `Away at ${game.clubName}`;
   const subject = `Friendly Entry Removed — ${game.clubName} ${game.date}`;
 
@@ -1084,7 +1156,7 @@ export async function sendWithdrawnByAdminNoticeEmail(
   game: Game,
   appUrl: string,
 ): Promise<void> {
-  const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}`;
+  const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}?me=${encodeURIComponent(userName)}`;
   const venue = game.homeAway === 'H' ? 'Home' : `Away at ${game.clubName}`;
   const subject = `Friendly Withdrawal — ${game.clubName} ${game.date}`;
 

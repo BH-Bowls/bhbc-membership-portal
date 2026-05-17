@@ -36,6 +36,8 @@ interface BracketViewProps {
   allowCompleteInteraction?: boolean;
   /** Map of round key (e.g. 'Prelim', 'R1', 'F') to play-by/finals date string */
   roundPlayByDates?: Record<string, string>;
+  /** Set of round keys where the date is a fixed "play ON" date rather than a "play BY" deadline */
+  roundOnDates?: Set<string>;
   /** Controls @page size set by the parent before printing */
   printOrientation?: 'landscape' | 'portrait';
   /** Called when a score sheet icon is clicked on a completed match */
@@ -122,6 +124,7 @@ export function BracketView({
   canEnterScores = false,
   allowCompleteInteraction = false,
   roundPlayByDates = {},
+  roundOnDates,
   printOrientation = 'landscape',
   onScoreSheetView,
 }: BracketViewProps) {
@@ -187,6 +190,15 @@ export function BracketView({
         layoutRoundSet.add(r);
         if (i + 1 < presentRounds.length) layoutRoundSet.add(presentRounds[i + 1]);
       }
+    });
+  }
+
+  // Set of date strings that are "play ON" dates (i.e. belong to a fixed round)
+  const onDateValues = new Set<string>();
+  if (roundOnDates) {
+    roundOnDates.forEach((r) => {
+      const d = roundPlayByDates[r];
+      if (d) onDateValues.add(d);
     });
   }
 
@@ -317,7 +329,7 @@ export function BracketView({
               <div>{COMP_ROUND_LABELS[r] ?? r}</div>
               {date && (
                 <div className={`text-[10px] mt-0.5 ${isActive ? 'text-blue-200' : 'text-gray-400'}`}>
-                  by {formatPlayByDate(date)}
+                  {roundOnDates && roundOnDates.has(r) ? 'on' : 'by'} {formatPlayByDate(date)}
                 </div>
               )}
             </button>
@@ -348,7 +360,7 @@ export function BracketView({
                     </div>
                     {date && (
                       <div className="text-[10px] text-gray-400 leading-none mt-0.5">
-                        by {formatPlayByDate(date)}
+                        {roundOnDates && roundOnDates.has(label) ? 'on' : 'by'} {formatPlayByDate(date)}
                       </div>
                     )}
                   </div>
@@ -419,6 +431,7 @@ export function BracketView({
                   canInteract={canInteract(geo.match)}
                   onClick={onMatchClick}
                   roundPlayByDate={roundPlayByDates[geo.match.round]}
+                  isOnDate={geo.match.playByDate ? onDateValues.has(geo.match.playByDate) : false}
                   showFullNames={true}
                   onScoreSheetView={onScoreSheetView}
                 />
@@ -462,7 +475,7 @@ export function BracketView({
                     </div>
                     {date && (
                       <div className="text-[8px] text-gray-400 leading-none mt-0.5">
-                        by {formatPlayByDate(date)}
+                        {roundOnDates && roundOnDates.has(label) ? 'on' : 'by'} {formatPlayByDate(date)}
                       </div>
                     )}
                   </div>

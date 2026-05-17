@@ -19,7 +19,7 @@ import type { MemberRespondPayload } from '@/types/availability';
 // Save the current member's responses for one or more slots
 export async function POST(
   request: NextRequest,
-  { params }: { params: { eventId: string } }
+  { params }: { params: Promise<{ eventId: string }> }
 ) {
   try {
     // Verify user is authenticated
@@ -28,7 +28,7 @@ export async function POST(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { eventId } = params;
+    const { eventId } = await params;
 
     // Fetch the event
     const event = await getAvailabilityEventById(eventId);

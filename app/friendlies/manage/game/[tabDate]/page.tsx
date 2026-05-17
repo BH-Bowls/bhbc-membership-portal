@@ -70,6 +70,17 @@ function validateSelection(
   // 1. No captain selected
   if (!players.some(p => p.captain === 'Y')) {
     warnings.push('No captain has been selected.');
+  } else {
+    // Captain is set but not actually playing
+    const captainPlayer = players.find(p => p.captain === 'Y');
+    if (captainPlayer && (captainPlayer.status === 'W' || captainPlayer.selected !== 'Y')) {
+      const reason = captainPlayer.status === 'W'
+        ? 'withdrawn'
+        : captainPlayer.selected === 'R' ? 'a reserve'
+        : captainPlayer.selected === 'T' ? 'in a reserve team'
+        : 'not playing';
+      warnings.push(`Captain ${captainPlayer.fullName} is not in the playing team (${reason}).`);
+    }
   }
 
   // 2. Home game: no bar person among playing players
@@ -695,6 +706,10 @@ export default function TeamSelectionPage() {
           if (field === 'team' && value && updated.selected === 'R') {
             updated.selected = 'Y';
           }
+          // Clear confirmation when selection status changes
+          if (field === 'selected' && value !== p.selected && p.status === 'Y') {
+            updated.status = '';
+          }
           return updated;
         }
         // Ensure only one captain at a time
@@ -717,6 +732,8 @@ export default function TeamSelectionPage() {
         position: b.position,
         driving: b.driving,
         carNumber: b.carNumber,
+        // Clear confirmation if the selection status changes as a result of the swap
+        status: a.status === 'Y' && b.selected !== a.selected ? '' : a.status,
       });
       return prev.map(p => {
         if (p.rowNumber === sourceRowNumber) return swapFields(p, tgt);
@@ -767,10 +784,10 @@ export default function TeamSelectionPage() {
         players: [...tPlayers].sort((a, b) => (positionOrder[a.position] ?? 99) - (positionOrder[b.position] ?? 99)),
       }));
 
-    // Car shares: from all selected players (Y, R, T)
+    // Car shares: Y and T only — reserves (R) are excluded
     const carMap = new Map<string, { driver: string; passengers: string[] }>();
     const ownTransport: string[] = [];
-    const allSelected = players.filter(p => p.selected === 'Y' || p.selected === 'R' || p.selected === 'T');
+    const allSelected = players.filter(p => p.selected === 'Y' || p.selected === 'T');
     allSelected.forEach(p => {
       if (p.carNumber && p.carNumber.toUpperCase() === 'O') {
         // 'O' means own transport
@@ -1008,7 +1025,7 @@ export default function TeamSelectionPage() {
                   {players.map(player => (
                     <tr
                       key={player.rowNumber}
-                      className={`text-gray-900 ${player.status === 'W' ? 'bg-red-50' : ''}`}
+                      className={`text-gray-900 ${player.status === 'W' ? 'bg-red-50' : (player.selected === 'Y' && player.team === null ? 'bg-orange-50' : '')}`}
                     >
                       <td className="px-2 py-2 text-sm font-medium text-gray-900">
                         <span

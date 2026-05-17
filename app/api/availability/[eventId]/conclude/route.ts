@@ -19,7 +19,7 @@ import type { ConcludeEventPayload } from '@/types/availability';
 // Mark the event as concluded with a winning slot, optionally send conclusion emails
 export async function POST(
   request: NextRequest,
-  { params }: { params: { eventId: string } }
+  { params }: { params: Promise<{ eventId: string }> }
 ) {
   try {
     // Verify user is authenticated
@@ -28,7 +28,7 @@ export async function POST(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { eventId } = params;
+    const { eventId } = await params;
 
     // Fetch event for access check
     const event = await getAvailabilityEventById(eventId);

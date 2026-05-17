@@ -213,6 +213,11 @@ export const authOptions: NextAuthOptions = {
       const threeMonthsInMs = 90 * 24 * 60 * 60 * 1000; // 90 days in milliseconds
       const loginTime = token.loginTime as number;
 
+      // Invalidate kiosk sessions created before 2026-05-18 (unauthorised access via removed guest link)
+      if (token.userName === 'clubhouse' && loginTime && loginTime < 1779062400000) {
+        throw new Error('Session expired');
+      }
+
       // Check if session has exceeded absolute expiration
       if (loginTime) {
         const currentTime = Date.now();

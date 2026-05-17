@@ -15,7 +15,7 @@ import { hasRole } from '@/lib/role-utils';
 // Add a new candidate date/time slot to an event
 export async function POST(
   request: NextRequest,
-  { params }: { params: { eventId: string } }
+  { params }: { params: Promise<{ eventId: string }> }
 ) {
   try {
     // Verify user is authenticated
@@ -24,7 +24,7 @@ export async function POST(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { eventId } = params;
+    const { eventId } = await params;
 
     // Fetch event to check access and status
     const event = await getAvailabilityEventById(eventId);

@@ -2,7 +2,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, getGameSheet, getClubDetails } from '@/lib/friendlies-sheets';
+import { getGames, getGameSheet, getClubDetails, getTeaRotaList } from '@/lib/friendlies-sheets';
+import { getUserByUsername } from '@/lib/sheets';
 
 export async function GET(
   request: NextRequest,
@@ -12,7 +13,19 @@ export async function GET(
     const session = await getServerSession(authOptions);
 
     const { tabDate } = await params;
+    const isAuthenticated = !!session?.user;
     const userName = session?.user?.userName ?? null;
+
+    // For unauthenticated visitors arriving via an email link, ?me= identifies the viewer
+    const meParam = !isAuthenticated ? (request.nextUrl.searchParams.get('me') ?? null) : null;
+    const viewerUserName = userName ?? meParam;
+
+    // Unauthenticated: show first name only, except for the viewer's own entry
+    function displayName(fullName: string, playerUserName: string): string {
+      if (isAuthenticated) return fullName;
+      if (viewerUserName && playerUserName === viewerUserName) return fullName;
+      return fullName.split(' ')[0];
+    }
 
     // Get game details
     const games = await getGames();
@@ -38,10 +51,11 @@ export async function GET(
       );
     }
 
-    // Read game sheet and club details in parallel (club details needed for petrol cost on away games)
-    const [allPlayers, clubDetailsResult] = await Promise.all([
+    // Read game sheet, club details, and tea rota in parallel
+    const [allPlayers, clubDetailsResult, teaRotaList] = await Promise.all([
       getGameSheet(game.tabName),
       game.homeAway === 'A' ? getClubDetails(game.clubName).catch(() => null) : Promise.resolve(null),
+      game.homeAway === 'H' ? getTeaRotaList().catch(() => null) : Promise.resolve(null),
     ]);
 
     // Collect withdrawn players (status='W') and opposition players (selected='O')
@@ -98,8 +112,8 @@ export async function GET(
       teams.push({
         team: teamNum,
         players: teamPlayers.map(p => ({
-          name: p.fullName,  // Use fullName for display
-          userName: p.name,  // Include userName for current user highlighting
+          name: displayName(p.fullName, p.name),
+          userName: p.name,
           position: p.position,
           status: p.status,
           isCaptain: game.captain ? p.name === game.captain : p.captain === 'Y',
@@ -140,8 +154,8 @@ export async function GET(
       reserveTeamsList.push({
         team: teamNum,
         players: teamPlayers.map(p => ({
-          name: p.fullName,  // Use fullName for display
-          userName: p.name,  // Include userName for current user highlighting
+          name: displayName(p.fullName, p.name),
+          userName: p.name,
           position: p.position,
           status: p.status,
         })),
@@ -151,13 +165,11 @@ export async function GET(
     // Find captain of day — prefer Games sheet captain (userName), fall back to game sheet flag
     let captainOfDay = '';
     if (game.captain) {
-      // New: captain stored as userName on Games sheet
       const captainPlayer = allPlayers.find(p => p.name === game.captain);
-      captainOfDay = captainPlayer ? captainPlayer.fullName : game.captain;
+      captainOfDay = captainPlayer ? displayName(captainPlayer.fullName, captainPlayer.name) : game.captain;
     } else {
-      // Legacy: captain marked with 'Y' on individual game sheet row
       const captainPlayer = allPlayers.find(p => p.captain === 'Y');
-      if (captainPlayer) captainOfDay = captainPlayer.fullName;
+      if (captainPlayer) captainOfDay = displayName(captainPlayer.fullName, captainPlayer.name);
     }
 
     // Get user's status for this game
@@ -181,6 +193,24 @@ export async function GET(
       userConfirmed = currentUser.status === 'Y';
     }
 
+    // Resolve tea duty for home games
+    let teaDuty = null;
+    if (teaRotaList) {
+      const teaEntry = teaRotaList.find(e => e.tabName === game.tabName);
+      if (teaEntry) {
+        const [leadUser, firstUser, secondUser] = await Promise.all([
+          teaEntry.teaLead ? getUserByUsername(teaEntry.teaLead) : Promise.resolve(null),
+          teaEntry.teaFirst ? getUserByUsername(teaEntry.teaFirst) : Promise.resolve(null),
+          teaEntry.teaSecond ? getUserByUsername(teaEntry.teaSecond) : Promise.resolve(null),
+        ]);
+        teaDuty = {
+          teaLead: teaEntry.teaLead ? { userName: teaEntry.teaLead, name: leadUser ? displayName(leadUser.fullName, teaEntry.teaLead) : teaEntry.teaLead } : null,
+          teaFirst: teaEntry.teaFirst ? { userName: teaEntry.teaFirst, name: firstUser ? displayName(firstUser.fullName, teaEntry.teaFirst) : teaEntry.teaFirst } : null,
+          teaSecond: teaEntry.teaSecond ? { userName: teaEntry.teaSecond, name: secondUser ? displayName(secondUser.fullName, teaEntry.teaSecond) : teaEntry.teaSecond } : null,
+        };
+      }
+    }
+
     return NextResponse.json({
       game: {
         tabDate: game.tabDate,
@@ -202,19 +232,20 @@ export async function GET(
       },
       teams,
       reserves: reserves.map(r => ({
-        name: r.fullName,  // Use fullName for display
-        userName: r.name,  // Include userName for current user highlighting
+        name: displayName(r.fullName, r.name),
+        userName: r.name,
         team: r.team,
         position: r.position,
         status: r.status,
       })),
       reserveTeams: reserveTeamsList,
-      opposition: oppositionPlayers.map(p => ({ name: p.fullName })),
+      opposition: oppositionPlayers.map(p => ({ name: displayName(p.fullName, '') })),
       withdrawn: withdrawnPlayers.map(p => ({
-        name: p.fullName,
+        name: displayName(p.fullName, p.name),
         wasSelected: p.selected === 'Y' ? 'Playing' : p.selected === 'R' ? 'Reserve' : p.selected === 'T' ? 'Reserve Team' : '',
       })),
       captainOfDay: captainOfDay,
+      teaDuty,
     });
   } catch (error) {
     console.error('GET /api/friendlies/game error:', error);

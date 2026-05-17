@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
 
     // Parse request body
     const body: ChangeStatusRequest = await request.json();
-    const { tab_name, row_number, action, expected_status, bhbc_score, opponent_score, reason, who, send_email, email_player_names, send_tea_rota_email } = body;
+    const { tab_name, row_number, action, expected_status, bhbc_score, opponent_score, reason, who, send_email, email_player_names, send_tea_rota_email, publish_message } = body;
 
     // Fetch all games from Games sheet
     const games = await getGames();
@@ -244,6 +244,9 @@ export async function POST(request: NextRequest) {
               selected: player.selected,
               team: player.team,
               position: player.position,
+              captain: player.captain,
+              driving: player.driving,
+              carNumber: player.carNumber,
             }));
 
             // If specific players requested, filter to just those usernames
@@ -256,7 +259,7 @@ export async function POST(request: NextRequest) {
             const appUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
 
             // Send the email
-            const result = await sendGamePublishedEmail(game, playersWithEmails, appUrl);
+            const result = await sendGamePublishedEmail(game, playersWithEmails, appUrl, false, publish_message);
 
             emailResult = {
               emailsSent: result.emailsSent,
@@ -347,13 +350,16 @@ export async function POST(request: NextRequest) {
               selected: player.selected,
               team: player.team,
               position: player.position,
+              captain: player.captain,
+              driving: player.driving,
+              carNumber: player.carNumber,
             }));
             if (email_player_names && email_player_names.length > 0) {
               const targetSet = new Set(email_player_names.map(n => n.toLowerCase()));
               playersWithEmails = playersWithEmails.filter(p => targetSet.has(p.userName.toLowerCase()));
             }
             const appUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
-            const result = await sendGamePublishedEmail(game, playersWithEmails, appUrl, true);
+            const result = await sendGamePublishedEmail(game, playersWithEmails, appUrl, true, publish_message);
             emailResult = {
               emailsSent: result.emailsSent,
               playersWithoutEmail: result.playersWithoutEmail,
@@ -552,6 +558,18 @@ export async function POST(request: NextRequest) {
           );
         }
         newStatus = 'X';
+        break;
+
+      // REVERT-TO-SELECTED: Transition from P/C/A back to 'S' (Selected)
+      // Leaves scores, reasons, and other outcome fields intact as default values for re-entry
+      case 'revert-to-selected':
+        if (!['P', 'C', 'A'].includes(currentStatus)) {
+          return NextResponse.json(
+            { error: 'Can only revert Played, Cancelled, or Abandoned games to Selected' },
+            { status: 400 }
+          );
+        }
+        newStatus = 'S';
         break;
 
       // Reject invalid action names

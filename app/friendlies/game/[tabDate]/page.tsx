@@ -85,6 +85,13 @@ interface GameDetails {
 
   // Captain of the Day
   captainOfDay: string;           // Full name of captain
+
+  // Tea duty assignments (home games only)
+  teaDuty: {
+    teaLead: { userName: string; name: string } | null;
+    teaFirst: { userName: string; name: string } | null;
+    teaSecond: { userName: string; name: string } | null;
+  } | null;
 }
 
 // ============================================================================
@@ -474,7 +481,7 @@ export default function GameDetailsPage() {
   if (!gameDetails) return null;
 
   // Destructure game details for easier access
-  const { game, teams, reserves, reserveTeams, opposition, withdrawn, captainOfDay } = gameDetails;
+  const { game, teams, reserves, reserveTeams, opposition, withdrawn, captainOfDay, teaDuty } = gameDetails;
 
 
   // ============================================================================
@@ -535,8 +542,15 @@ export default function GameDetailsPage() {
             <Link href="/friendlies" className="text-blue-600 hover:text-blue-800 mb-2 inline-block">← Back to Games</Link>
           )}
 
-          {/* Game title (opponent club name) */}
-          <h1 className="text-3xl font-bold text-gray-900">{game.clubName}</h1>
+          {/* Game title (opponent club name — links to club details) */}
+          <h1 className="text-3xl font-bold">
+            <Link
+              href={{ pathname: `/clubs/${encodeURIComponent(game.clubName)}`, query: { from: 'game', tabDate: decodeURIComponent(tabDate) } }}
+              className="text-blue-600 hover:text-blue-800 hover:underline"
+            >
+              {game.clubName}
+            </Link>
+          </h1>
 
           {/* Game date and time */}
           <div className="text-gray-900 mt-2">
@@ -794,6 +808,39 @@ export default function GameDetailsPage() {
             </div>
           );
         })()}
+
+        {/* Tea Duty section — home games only */}
+        {teaDuty && (teaDuty.teaLead || teaDuty.teaFirst || teaDuty.teaSecond) && (
+          <div className="bg-white rounded-lg shadow border border-gray-200 p-6 mb-6">
+            <h2 className="text-2xl font-bold mb-4 text-gray-900">Tea Duty</h2>
+            <div className="space-y-2">
+              {teaDuty.teaLead && (
+                <div className="flex items-center gap-3 p-2 rounded bg-gray-50">
+                  <span className="text-sm font-medium text-gray-500 w-20">Tea Lead</span>
+                  <span className={`font-medium text-gray-900${teaDuty.teaLead.userName === game.userName ? ' text-blue-700' : ''}`}>
+                    {teaDuty.teaLead.name}{teaDuty.teaLead.userName === game.userName ? ' (You)' : ''}
+                  </span>
+                </div>
+              )}
+              {teaDuty.teaFirst && (
+                <div className="flex items-center gap-3 p-2 rounded bg-gray-50">
+                  <span className="text-sm font-medium text-gray-500 w-20">Tea First</span>
+                  <span className={`font-medium text-gray-900${teaDuty.teaFirst.userName === game.userName ? ' text-blue-700' : ''}`}>
+                    {teaDuty.teaFirst.name}{teaDuty.teaFirst.userName === game.userName ? ' (You)' : ''}
+                  </span>
+                </div>
+              )}
+              {teaDuty.teaSecond && (
+                <div className="flex items-center gap-3 p-2 rounded bg-gray-50">
+                  <span className="text-sm font-medium text-gray-500 w-20">Tea Second</span>
+                  <span className={`font-medium text-gray-900${teaDuty.teaSecond.userName === game.userName ? ' text-blue-700' : ''}`}>
+                    {teaDuty.teaSecond.name}{teaDuty.teaSecond.userName === game.userName ? ' (You)' : ''}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Opposition Section - show if any opposition players recorded */}
         {opposition && opposition.length > 0 && (

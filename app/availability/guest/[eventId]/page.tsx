@@ -3,7 +3,7 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, use } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
 import { getButtonClasses, getAlertClasses } from '@/config/theme-helpers';
@@ -117,8 +117,8 @@ function ResponseBadge({ response }: { response: AvailabilityResponse | undefine
   return <span className="text-red-600 font-medium text-xs">✗</span>;
 }
 
-export default function GuestAvailabilityPage({ params }: { params: { eventId: string } }) {
-  const { eventId } = params;
+export default function GuestAvailabilityPage({ params }: { params: Promise<{ eventId: string }> }) {
+  const { eventId } = use(params);
   const searchParams = useSearchParams();
   const token = searchParams.get('token');
 

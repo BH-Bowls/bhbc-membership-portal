@@ -17,7 +17,7 @@ import { hasRole } from '@/lib/role-utils';
 // Returns full event detail for the member response page
 export async function GET(
   request: NextRequest,
-  { params }: { params: { eventId: string } }
+  { params }: { params: Promise<{ eventId: string }> }
 ) {
   try {
     // Verify user is authenticated
@@ -26,7 +26,7 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { eventId } = params;
+    const { eventId } = await params;
 
     // Fetch the event to check access
     const event = await getAvailabilityEventById(eventId);
@@ -62,7 +62,7 @@ export async function GET(
 // Update event fields (title, description, expiry, visibility settings, status)
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { eventId: string } }
+  { params }: { params: Promise<{ eventId: string }> }
 ) {
   try {
     // Verify user is authenticated
@@ -71,7 +71,7 @@ export async function PUT(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { eventId } = params;
+    const { eventId } = await params;
 
     // Fetch event to verify access
     const event = await getAvailabilityEventById(eventId);
@@ -132,7 +132,7 @@ export async function PUT(
 // Archive (soft-delete) the event
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { eventId: string } }
+  { params }: { params: Promise<{ eventId: string }> }
 ) {
   try {
     // Verify user is authenticated
@@ -141,7 +141,7 @@ export async function DELETE(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { eventId } = params;
+    const { eventId } = await params;
 
     // Fetch event to verify access
     const event = await getAvailabilityEventById(eventId);

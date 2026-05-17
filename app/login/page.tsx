@@ -208,23 +208,6 @@ function LoginForm() {
             </a>
           </div>
 
-          {/* Guest Mode */}
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-gray-200" />
-            </div>
-            <div className="relative flex justify-center text-xs">
-              <span className="px-2 bg-gray-50 text-gray-400">or</span>
-            </div>
-          </div>
-          <div>
-            <a
-              href="/kiosk"
-              className="flex w-full justify-center px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-            >
-              Continue as Guest
-            </a>
-          </div>
         </form>
 
         {/* Help Text */}
