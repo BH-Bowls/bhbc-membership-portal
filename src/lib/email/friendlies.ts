@@ -95,8 +95,19 @@ export async function sendWithdrawalEmail(
       return;
     }
 
+    // Build subject label from selection status: Y=Player, R=Reserve, T=Reserve Team
+    let subjectStatusLabel = '';
+    if (selection.selected === 'Y') {
+      subjectStatusLabel = 'Player';
+    } else if (selection.selected === 'R') {
+      subjectStatusLabel = 'Reserve';
+    } else if (selection.selected === 'T') {
+      subjectStatusLabel = 'Reserve Team';
+    }
+
     // Build email subject line with game details
-    const subject = `Friendly Match Withdrawal - ${game.clubName} ${game.tabName}`;
+    const statusPart = subjectStatusLabel ? ` - ${subjectStatusLabel}` : '';
+    const subject = `Friendly Match Withdrawal${statusPart} - ${game.clubName} ${game.tabName}`;
 
     // Convert selection status code to human-readable text
     // Y = Playing (Regular team), R = Reserve, T = Reserve Team
@@ -972,7 +983,7 @@ export async function sendEntryConfirmedEmail(
     tabName: game.tabName,
     userName,
     sequence: 0,
-    method: 'REQUEST',
+    method: 'PUBLISH',
     status: 'TENTATIVE',
     dateStr: game.date,
     timeStr: game.time,
@@ -980,8 +991,6 @@ export async function sendEntryConfirmedEmail(
     homeAway: game.homeAway,
     format: game.format,
     trigger: 'entered',
-    organizerEmail: process.env.SMTP_USER,
-    attendeeEmail: emailAddress,
   });
 
   const text = [

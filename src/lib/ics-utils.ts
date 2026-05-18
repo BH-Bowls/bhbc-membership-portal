@@ -188,6 +188,8 @@ export function buildFriendlyICSAttachment(params: FriendlyICSParams): ICSAttach
     contentType:
       params.method === 'CANCEL'
         ? 'text/calendar; method=CANCEL'
+        : params.method === 'PUBLISH'
+        ? 'text/calendar; method=PUBLISH'
         : 'text/calendar; method=REQUEST',
   };
 }
