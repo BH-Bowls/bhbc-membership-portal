@@ -1,0 +1,80 @@
+<!-- Subject: You've been added to a group — {{groupName}} -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>You've been added to a group</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f4f4;">
+  <table role="presentation" style="width: 100%; border-collapse: collapse;">
+    <tr>
+      <td align="center" style="padding: 40px 0;">
+        <table role="presentation" style="width: 600px; border-collapse: collapse; background-color: #ffffff; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+
+          <!-- Header -->
+          <tr>
+            <td style="background-color: {{HEADER_COLOR}}; padding: 40px 30px; text-align: center;">
+              <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: bold;">
+                {{BRAND_NAME}}
+              </h1>
+              <p style="margin: 10px 0 0 0; color: #E0E7FF; font-size: 16px;">
+                Availability Planner
+              </p>
+            </td>
+          </tr>
+
+          <!-- Content -->
+          <tr>
+            <td style="padding: 40px 30px;">
+              <p style="margin: 0 0 20px 0; font-size: 16px; color: #1F2937;">
+                Hello {{recipientName}},
+              </p>
+
+              <p style="margin: 0 0 20px 0; font-size: 16px; color: #1F2937;">
+                <strong>{{addedByName}}</strong> has added you to the group <strong>{{groupName}}</strong>.
+              </p>
+
+              {{#unless isVisitor}}
+              <!-- CTA button for portal members -->
+              <table role="presentation" style="margin: 30px 0;">
+                <tr>
+                  <td style="border-radius: 6px; background-color: {{BUTTON_COLOR}};">
+                    <a href="{{groupUrl}}"
+                       style="display: inline-block; padding: 14px 28px; font-size: 16px; color: #ffffff; text-decoration: none; font-weight: bold; border-radius: 6px;">
+                      View Group
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              {{/unless}}
+
+              {{#if isVisitor}}
+              <!-- Message for visitors — they receive invite emails when events are created -->
+              <p style="margin: 0 0 20px 0; font-size: 16px; color: #1F2937;">
+                You will receive an email with a link to respond when an availability poll is created for this group.
+              </p>
+              {{/if}}
+
+              <p style="margin: 30px 0 0 0; font-size: 16px; color: #1F2937;">
+                Best regards,<br>
+                <strong>{{BRAND_NAME}}</strong>
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background-color: #F9FAFB; padding: 20px 30px; text-align: center; border-top: 1px solid #E5E7EB;">
+              <p style="margin: 0; font-size: 14px; color: #6B7280;">
+                This is an automated email from the {{BRAND_NAME}} Members Portal.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

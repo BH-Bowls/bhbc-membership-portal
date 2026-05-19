@@ -1,415 +1,402 @@
 // app/availability/page.tsx
-// Availability Planner — member event list page
+// Availability Planner hub page — shows the user's groups and public events
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { Navbar } from '@/components/Navbar';
-import { getButtonClasses, getBadgeClasses, getCardClasses } from '@/config/theme-helpers';
-import type { AvailabilityEventSummary } from '@/types/availability';
+import { useSessionRefresh } from '@/hooks/useSessionRefresh';
+import { getButtonClasses, getBadgeClasses, getAlertClasses } from '@/config/theme-helpers';
+import type { AvailabilityGroupSummary, AvailabilityEventSummary } from '@/types/availability';
 
-const CACHE_KEY = 'AvailabilityListCache';
+// sessionStorage cache key for the hub page
+const CACHE_KEY = 'AvailabilityHubCache';
 
-// Format an ISO timestamp as a human-readable date
-function formatEventDate(isoString: string): string {
-  if (!isoString) {
-    return '';
-  }
-  const date = new Date(isoString);
-  if (isNaN(date.getTime())) {
-    return '';
-  }
-  return date.toLocaleDateString('en-GB', {
-    weekday: 'short', day: 'numeric', month: 'short', year: 'numeric',
-  });
+// Shape of cached hub data
+interface HubCache {
+  groups: AvailabilityGroupSummary[];
+  publicEvents: AvailabilityEventSummary[];
 }
 
-// Format a slot datetime as a short label
-function formatSlotDatetime(isoString: string): string {
-  if (!isoString) {
-    return '';
-  }
-  const date = new Date(isoString);
-  if (isNaN(date.getTime())) {
-    return '';
-  }
-  return date.toLocaleDateString('en-GB', {
-    day: 'numeric', month: 'short', year: 'numeric',
-  });
+// Format an ISO timestamp as a short date string for display
+function formatExpiry(iso: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-// Single event card component
-function EventCard({ event, currentUserName }: { event: AvailabilityEventSummary; currentUserName: string }) {
-  const isCreator = event.eventId && currentUserName;
-
-  return (
-    <div className={`${getCardClasses('md')} mb-3`}>
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex-1 min-w-0">
-          {/* Title and badges */}
-          <div className="flex flex-wrap items-center gap-2 mb-1">
-            <Link
-              href={`/availability/${event.eventId}`}
-              className="text-base font-semibold text-gray-900 hover:text-blue-600 truncate"
-            >
-              {event.title}
-            </Link>
-            {/* Visibility badge */}
-            {event.visibility === 'public' ? (
-              <span className={getBadgeClasses('success', 'sm')}>Public</span>
-            ) : (
-              <span className={getBadgeClasses('warning', 'sm')}>Private</span>
-            )}
-            {/* Status badge */}
-            {event.status === 'open' ? (
-              <span className={getBadgeClasses('success', 'sm')}>Open</span>
-            ) : event.status === 'concluded' ? (
-              <span className={getBadgeClasses('primary', 'sm')}>Concluded</span>
-            ) : (
-              <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-700">Closed</span>
-            )}
-          </div>
-
-          {/* Creator and expiry */}
-          <p className="text-sm text-gray-700 mb-1">
-            Created by {event.createdByName} &middot; Expires {formatEventDate(event.expiresAt)}
-          </p>
-
-          {/* Slots and responses count */}
-          <p className="text-sm text-gray-700 mb-1">
-            {event.slotCount} {event.slotCount === 1 ? 'slot' : 'slots'} &middot; {event.responseCount} {event.responseCount === 1 ? 'respondent' : 'respondents'}
-          </p>
-
-          {/* Concluded slot info */}
-          {event.status === 'concluded' && (event.concludedSlotLabel || event.concludedSlotDatetime) && (
-            <p className="text-sm font-medium text-green-700 mt-1">
-              Chosen: {event.concludedSlotLabel || formatSlotDatetime(event.concludedSlotDatetime)}
-            </p>
-          )}
-        </div>
-
-        {/* Actions */}
-        <div className="flex flex-col items-end gap-2 shrink-0">
-          <Link
-            href={`/availability/${event.eventId}`}
-            className={getButtonClasses('primary', 'sm')}
-          >
-            View
-          </Link>
-          {/* Show Manage link to event creator */}
-          {event.eventId && currentUserName && (
-            <ManageLink eventId={event.eventId} currentUserName={currentUserName} createdByName={event.createdByName} />
-          )}
-        </div>
-      </div>
-    </div>
-  );
+// Return a human-readable relative time string (e.g. "3 days ago")
+function relativeTime(iso: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const diffMs = Date.now() - d.getTime();
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  if (diffDays === 0) return 'today';
+  if (diffDays === 1) return 'yesterday';
+  if (diffDays < 7) return `${diffDays} days ago`;
+  const diffWeeks = Math.floor(diffDays / 7);
+  if (diffWeeks === 1) return '1 week ago';
+  if (diffWeeks < 5) return `${diffWeeks} weeks ago`;
+  return formatExpiry(iso);
 }
 
-// Conditionally show manage link — we can't pass the createdByUsername directly
-// from the summary, so we rely on the API having filtered correctly. We show
-// the Manage link only from within the parent component where we have the session.
-function ManageLink({ eventId, currentUserName, createdByName }: {
-  eventId: string;
-  currentUserName: string;
-  createdByName: string;
-}) {
-  return null; // Manage link is shown by the parent — see EventCard usage below
+// Return badge variant for an event status
+function statusBadgeVariant(status: string): 'success' | 'warning' | 'secondary' | 'danger' | 'primary' {
+  if (status === 'open') return 'success';
+  if (status === 'closed') return 'warning';
+  if (status === 'concluded') return 'primary';
+  if (status === 'archived') return 'secondary';
+  return 'secondary';
 }
 
-export default function AvailabilityPage() {
-  const { data: session, status } = useSession();
-  const [events, setEvents] = useState<AvailabilityEventSummary[]>([]);
+// Return badge variant for an event type
+function typeBadgeVariant(type: string): 'primary' | 'secondary' | 'warning' {
+  if (type === 'fixture') return 'warning';
+  if (type === 'signup') return 'secondary';
+  return 'primary';
+}
+
+// Capitalise first letter for display
+function capitalise(s: string): string {
+  if (!s) return '';
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+export default function AvailabilityHubPage() {
+  // Load session for navbar and user identity
+  const { data: session } = useSession();
+  useSessionRefresh();
+
+  // Groups visible to this user
+  const [groups, setGroups] = useState<AvailabilityGroupSummary[]>([]);
+  // Public events visible to all members
+  const [publicEvents, setPublicEvents] = useState<AvailabilityEventSummary[]>([]);
+  // Whether data is still loading for the first time
   const [loading, setLoading] = useState(true);
+  // Error message if fetching fails
   const [error, setError] = useState<string | null>(null);
-  const [showConcluded, setShowConcluded] = useState(false);
 
-  const currentUserName = session && session.user ? session.user.userName : '';
-
-  // Load from sessionStorage cache immediately, then re-fetch in background
+  // Fetch hub data on mount — show cache instantly, then re-fetch silently
   useEffect(() => {
-    if (status === 'loading') {
-      return;
-    }
-
-    // Attempt to restore cached data for instant display
-    try {
-      const cached = sessionStorage.getItem(CACHE_KEY);
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (parsed && Array.isArray(parsed.events)) {
-          setEvents(parsed.events);
-          setLoading(false);
-        }
-      }
-    } catch (cacheError) {
-      // Cache read failed — proceed with fresh fetch
-    }
-
-    // Fetch fresh data from the API
-    fetchEvents();
-  }, [status]);
-
-  async function fetchEvents() {
-    try {
-      setError(null);
-      const res = await fetch('/api/availability');
-      if (!res.ok) {
-        throw new Error('Failed to load events');
-      }
-      const data = await res.json();
-      const fetchedEvents: AvailabilityEventSummary[] = data.events || [];
-      setEvents(fetchedEvents);
-      setLoading(false);
-
-      // Update sessionStorage cache
+    // Check sessionStorage for cached hub data
+    const cached = sessionStorage.getItem(CACHE_KEY);
+    if (cached) {
       try {
-        sessionStorage.setItem(CACHE_KEY, JSON.stringify({ events: fetchedEvents }));
-      } catch (cacheError) {
-        // Cache write failed — not critical
+        const parsed: HubCache = JSON.parse(cached);
+        // Show cached data immediately so back-navigation feels instant
+        setGroups(parsed.groups);
+        setPublicEvents(parsed.publicEvents);
+        setLoading(false);
+        // Re-fetch in background to get fresh data
+        fetchHubData({ silent: true });
+        return;
+      } catch {
+        // Corrupt cache — ignore and fetch fresh
       }
-    } catch (fetchError) {
-      console.error('[AvailabilityPage] Fetch error:', fetchError);
-      setError('Failed to load events. Please refresh the page.');
-      setLoading(false);
+    }
+    // No cache — fetch with loading spinner
+    fetchHubData({ silent: false });
+  }, []);
+
+  // Fetch groups and public events sequentially (no Promise.all per coding standards)
+  async function fetchHubData({ silent }: { silent: boolean }) {
+    // Only show spinner if not using cached data
+    if (!silent) {
+      setLoading(true);
+    }
+    setError(null);
+
+    try {
+      // Step 1: fetch the user's groups
+      const groupsRes = await fetch('/api/availability/groups');
+      if (!groupsRes.ok) {
+        throw new Error('Failed to load groups');
+      }
+      const groupsData = await groupsRes.json();
+      const fetchedGroups: AvailabilityGroupSummary[] = groupsData.groups || [];
+
+      // Step 2: fetch public events (no group_id set)
+      const eventsRes = await fetch('/api/availability/events');
+      if (!eventsRes.ok) {
+        throw new Error('Failed to load public events');
+      }
+      const eventsData = await eventsRes.json();
+      const fetchedEvents: AvailabilityEventSummary[] = eventsData.events || [];
+
+      // Update state with fresh data
+      setGroups(fetchedGroups);
+      setPublicEvents(fetchedEvents);
+
+      // Persist to sessionStorage for instant back-navigation
+      const toCache: HubCache = { groups: fetchedGroups, publicEvents: fetchedEvents };
+      sessionStorage.setItem(CACHE_KEY, JSON.stringify(toCache));
+    } catch (err) {
+      // Only show error if this was a foreground fetch (user is waiting)
+      if (!silent) {
+        setError('Failed to load availability data. Please refresh the page.');
+      }
+      console.error('[AvailabilityHubPage] fetchHubData error:', err);
+    } finally {
+      if (!silent) {
+        setLoading(false);
+      }
     }
   }
 
-  const role = session && session.user ? session.user.role : '';
+  // Split public events into three sections for display
+  const userName = session && session.user ? session.user.userName : '';
 
-  // Separate events into sections
+  // Awaiting response: open events where hasResponded is false
   const awaitingResponse: AvailabilityEventSummary[] = [];
+  // Already responded: open or closed events where hasResponded is true
   const responded: AvailabilityEventSummary[] = [];
+  // Concluded or closed (all statuses except open without response)
   const concludedOrClosed: AvailabilityEventSummary[] = [];
 
-  for (const event of events) {
-    // Archived events are excluded from the list view
-    if (event.status === 'archived') {
-      continue;
-    }
-    if (event.status === 'concluded' || event.status === 'closed') {
-      concludedOrClosed.push(event);
-      continue;
-    }
-    // Open events
-    if (event.hasResponded) {
-      responded.push(event);
-    } else {
-      awaitingResponse.push(event);
+  // Categorise each public event into the correct section
+  for (let i = 0; i < publicEvents.length; i++) {
+    const ev = publicEvents[i];
+    // Concluded or archived events go to the bottom section
+    if (ev.status === 'concluded' || ev.status === 'archived') {
+      concludedOrClosed.push(ev);
+    } else if (ev.status === 'closed') {
+      // Closed events go to concluded/closed section
+      concludedOrClosed.push(ev);
+    } else if (ev.status === 'open') {
+      // Open: split by whether the user has responded
+      if (ev.hasResponded) {
+        responded.push(ev);
+      } else {
+        awaitingResponse.push(ev);
+      }
     }
   }
 
-  // Section component for a group of events
-  function Section({ title, items, emptyMessage }: {
-    title: string;
-    items: AvailabilityEventSummary[];
-    emptyMessage: string;
-  }) {
-    return (
-      <div className="mb-8">
-        <h2 className="text-lg font-semibold text-gray-900 mb-3">{title}</h2>
-        {items.length === 0 ? (
-          <p className="text-sm text-gray-700 italic">{emptyMessage}</p>
-        ) : (
-          <div>
-            {items.map((event) => (
-              <div key={event.eventId} className={`${getCardClasses('md')} mb-3`}>
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex-1 min-w-0">
-                    {/* Title and badges */}
-                    <div className="flex flex-wrap items-center gap-2 mb-1">
-                      <Link
-                        href={`/availability/${event.eventId}`}
-                        className="text-base font-semibold text-gray-900 hover:text-blue-600 truncate"
-                      >
-                        {event.title}
-                      </Link>
-                      {event.visibility === 'public' ? (
-                        <span className={getBadgeClasses('success', 'sm')}>Public</span>
-                      ) : (
-                        <span className={getBadgeClasses('warning', 'sm')}>Private</span>
-                      )}
-                      {event.status === 'open' ? (
-                        <span className={getBadgeClasses('success', 'sm')}>Open</span>
-                      ) : event.status === 'concluded' ? (
-                        <span className={getBadgeClasses('primary', 'sm')}>Concluded</span>
-                      ) : (
-                        <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-700">Closed</span>
-                      )}
-                    </div>
+  // Whether the concluded/closed section is expanded
+  const [showConcluded, setShowConcluded] = useState(false);
 
-                    {/* Metadata row */}
-                    <p className="text-sm text-gray-700 mb-1">
-                      Created by {event.createdByName} &middot; Expires {formatEventDate(event.expiresAt)}
-                    </p>
-                    <p className="text-sm text-gray-700 mb-1">
-                      {event.slotCount} {event.slotCount === 1 ? 'slot' : 'slots'} &middot; {event.responseCount} {event.responseCount === 1 ? 'respondent' : 'respondents'}
-                    </p>
-
-                    {/* Concluded slot info */}
-                    {event.status === 'concluded' && (event.concludedSlotLabel || event.concludedSlotDatetime) && (
-                      <p className="text-sm font-medium text-green-700 mt-1">
-                        Chosen: {event.concludedSlotLabel || formatSlotDatetime(event.concludedSlotDatetime)}
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Action buttons */}
-                  <div className="flex flex-col items-end gap-2 shrink-0">
-                    <Link
-                      href={`/availability/${event.eventId}`}
-                      className={getButtonClasses('primary', 'sm')}
-                    >
-                      View
-                    </Link>
-                    {/* Only show Manage to the creator — compare against the raw API data
-                        We use the createdByName check as a proxy; the API only returns events
-                        the user can see, and the manage link is an extra convenience */}
-                    {currentUserName && (
-                      <CreatorManageLink eventId={event.eventId} currentUserName={currentUserName} />
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  }
+  const role = session && session.user ? session.user.role : '';
+  const displayName = session && session.user && session.user.name ? session.user.name : undefined;
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <Navbar userName={session && session.user && session.user.name ? session.user.name : undefined} userRole={role} />
-      <div className="container mx-auto px-4 py-8 max-w-3xl">
+    <div className="min-h-screen bg-gray-50 text-gray-900">
+      <Navbar userName={displayName} userRole={role} />
 
-        {/* Page header */}
-        <div className="flex items-center justify-between mb-6">
+      <div className="container mx-auto px-4 py-8 max-w-4xl">
+
+        {/* Page header with action buttons */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Availability Planner</h1>
-            <p className="text-sm text-gray-700 mt-1">Coordinate dates and times with members and guests</p>
+            <h1 className="text-2xl font-bold text-gray-900">Availability</h1>
+            <p className="text-sm text-gray-700 mt-1">Schedule events and coordinate with your groups</p>
           </div>
-          <Link href="/availability/new" className={getButtonClasses('primary', 'md')}>
-            Create Event
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            {/* Create a public event (visible to all members) */}
+            <Link href="/availability/events/new" className={getButtonClasses('secondary', 'md')}>
+              Create Public Event
+            </Link>
+            {/* Create a new group */}
+            <Link href="/availability/groups/new" className={getButtonClasses('primary', 'md')}>
+              Create Group
+            </Link>
+          </div>
         </div>
 
-        {/* Loading state */}
-        {loading && (
-          <div className="text-center py-12">
-            <p className="text-gray-700">Loading events&hellip;</p>
-          </div>
-        )}
-
-        {/* Error state */}
-        {error && !loading && (
-          <div className="bg-red-50 border border-red-200 text-red-700 rounded-md p-4 mb-6">
+        {/* Error banner */}
+        {error && (
+          <div className={getAlertClasses('danger') + ' mb-4'}>
             {error}
           </div>
         )}
 
-        {/* Event sections */}
-        {!loading && !error && (
-          <div>
-            <Section
-              title="Awaiting your response"
-              items={awaitingResponse}
-              emptyMessage="No events awaiting your response."
-            />
+        {/* Loading spinner shown only on first load (no cached data) */}
+        {loading ? (
+          <div className="text-center py-16">
+            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+            <p className="mt-3 text-gray-700">Loading availability data…</p>
+          </div>
+        ) : (
+          <>
+            {/* ── Your Groups section ───────────────────────────────────── */}
+            <section className="mb-8">
+              <h2 className="text-lg font-semibold text-gray-900 mb-3">Your Groups</h2>
 
-            <Section
-              title="You've responded"
-              items={responded}
-              emptyMessage="You haven't responded to any open events yet."
-            />
+              {groups.length === 0 ? (
+                <div className="bg-white rounded-lg border border-gray-200 p-8 text-center">
+                  <p className="text-gray-700">You are not in any groups yet. Create one to get started.</p>
+                  <div className="mt-4">
+                    <Link href="/availability/groups/new" className={getButtonClasses('primary', 'md')}>
+                      Create Group
+                    </Link>
+                  </div>
+                </div>
+              ) : (
+                // Two-column grid on desktop, single column on mobile
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {groups.map((group) => (
+                    <div key={group.groupId} className="bg-white rounded-lg border border-gray-200 p-4 text-gray-900">
+                      {/* Group name and archived indicator */}
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <h3 className="font-semibold text-gray-900 text-base">{group.name}</h3>
+                        {group.status === 'archived' && (
+                          <span className={getBadgeClasses('secondary', 'sm')}>Archived</span>
+                        )}
+                      </div>
 
-            {/* Concluded / Closed section with toggle */}
-            <div className="mb-8">
-              <div className="flex items-center gap-3 mb-3">
-                <h2 className="text-lg font-semibold text-gray-900">Concluded / Closed</h2>
-                {concludedOrClosed.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setShowConcluded(!showConcluded)}
-                    className="text-sm text-blue-600 hover:text-blue-700 underline"
-                  >
-                    {showConcluded ? 'Hide' : `Show ${concludedOrClosed.length}`}
-                  </button>
+                      {/* Optional description */}
+                      {group.description && (
+                        <p className="text-sm text-gray-700 mb-3">{group.description}</p>
+                      )}
+
+                      {/* Member count and open event count badges */}
+                      <div className="flex flex-wrap gap-2 mb-3">
+                        <span className={getBadgeClasses('primary', 'sm')}>
+                          {group.memberCount} {group.memberCount === 1 ? 'member' : 'members'}
+                        </span>
+                        {group.openEventCount > 0 && (
+                          <span className={getBadgeClasses('success', 'sm')}>
+                            {group.openEventCount} open {group.openEventCount === 1 ? 'event' : 'events'}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex items-center gap-3">
+                        <Link
+                          href={`/availability/groups/${group.groupId}`}
+                          className={getButtonClasses('primary', 'sm')}
+                        >
+                          View Group
+                        </Link>
+                        {/* Manage link shown only to the group creator */}
+                        {group.isCreator && (
+                          <Link
+                            href={`/availability/groups/${group.groupId}`}
+                            className="text-sm text-blue-500 hover:text-blue-700 font-medium"
+                          >
+                            Manage
+                          </Link>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            {/* ── Public Events section ─────────────────────────────────── */}
+            <section>
+              <h2 className="text-lg font-semibold text-gray-900 mb-3">Public Events</h2>
+
+              {/* Sub-section: awaiting response */}
+              <div className="mb-4">
+                <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide mb-2">
+                  Awaiting your response
+                </h3>
+                {awaitingResponse.length === 0 ? (
+                  <p className="text-sm text-gray-700 py-2">No open events awaiting your response.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {awaitingResponse.map((ev) => (
+                      <EventCard key={ev.eventId} event={ev} />
+                    ))}
+                  </div>
                 )}
               </div>
 
-              {showConcluded ? (
-                concludedOrClosed.length === 0 ? (
-                  <p className="text-sm text-gray-700 italic">No concluded or closed events.</p>
+              {/* Sub-section: already responded */}
+              <div className="mb-4">
+                <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide mb-2">
+                  You&apos;ve responded
+                </h3>
+                {responded.length === 0 ? (
+                  <p className="text-sm text-gray-700 py-2">No events where you have responded.</p>
                 ) : (
-                  <div>
-                    {concludedOrClosed.map((event) => (
-                      <div key={event.eventId} className={`${getCardClasses('md')} mb-3`}>
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="flex-1 min-w-0">
-                            <div className="flex flex-wrap items-center gap-2 mb-1">
-                              <Link
-                                href={`/availability/${event.eventId}`}
-                                className="text-base font-semibold text-gray-900 hover:text-blue-600 truncate"
-                              >
-                                {event.title}
-                              </Link>
-                              {event.status === 'concluded' ? (
-                                <span className={getBadgeClasses('primary', 'sm')}>Concluded</span>
-                              ) : (
-                                <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-700">Closed</span>
-                              )}
-                            </div>
-                            <p className="text-sm text-gray-700 mb-1">
-                              Created by {event.createdByName}
-                            </p>
-                            {event.status === 'concluded' && (event.concludedSlotLabel || event.concludedSlotDatetime) && (
-                              <p className="text-sm font-medium text-green-700 mt-1">
-                                Chosen: {event.concludedSlotLabel || formatSlotDatetime(event.concludedSlotDatetime)}
-                              </p>
-                            )}
-                          </div>
-                          <div className="flex flex-col items-end gap-2 shrink-0">
-                            <Link
-                              href={`/availability/${event.eventId}`}
-                              className={getButtonClasses('primary', 'sm')}
-                            >
-                              View
-                            </Link>
-                            {currentUserName && (
-                              <CreatorManageLink eventId={event.eventId} currentUserName={currentUserName} />
-                            )}
-                          </div>
-                        </div>
-                      </div>
+                  <div className="space-y-3">
+                    {responded.map((ev) => (
+                      <EventCard key={ev.eventId} event={ev} />
                     ))}
                   </div>
-                )
-              ) : (
-                concludedOrClosed.length === 0 && (
-                  <p className="text-sm text-gray-700 italic">No concluded or closed events.</p>
-                )
-              )}
-            </div>
-          </div>
+                )}
+              </div>
+
+              {/* Sub-section: concluded or closed (collapsible) */}
+              <div>
+                <button
+                  onClick={() => setShowConcluded(!showConcluded)}
+                  className="flex items-center gap-2 text-sm font-medium text-gray-700 uppercase tracking-wide mb-2 hover:text-gray-900"
+                >
+                  <span>Concluded or Closed ({concludedOrClosed.length})</span>
+                  <span className="text-gray-500">{showConcluded ? '▲' : '▼'}</span>
+                </button>
+                {showConcluded && (
+                  concludedOrClosed.length === 0 ? (
+                    <p className="text-sm text-gray-700 py-2">No concluded or closed events.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {concludedOrClosed.map((ev) => (
+                        <EventCard key={ev.eventId} event={ev} />
+                      ))}
+                    </div>
+                  )
+                )}
+              </div>
+            </section>
+          </>
         )}
       </div>
     </div>
   );
 }
 
-// Shows Manage link — we call the manage API which enforces its own access check
-function CreatorManageLink({ eventId, currentUserName }: { eventId: string; currentUserName: string }) {
-  // We always show the manage link and let the server enforce access
-  // This avoids needing createdByUsername on the summary object for the UI check
+// ── EventCard sub-component ───────────────────────────────────────────────────
+// Displays a single public event summary card
+
+interface EventCardProps {
+  event: AvailabilityEventSummary;
+}
+
+function EventCard({ event }: EventCardProps) {
   return (
-    <Link
-      href={`/availability/${eventId}/manage`}
-      className="text-xs text-blue-600 hover:text-blue-700 underline"
-    >
-      Manage
-    </Link>
+    <div className="bg-white rounded-lg border border-gray-200 p-4 text-gray-900">
+      <div className="flex flex-wrap items-start justify-between gap-2 mb-2">
+        {/* Event title links to response page */}
+        <Link
+          href={`/availability/events/${event.eventId}`}
+          className="font-semibold text-blue-600 hover:text-blue-800 hover:underline"
+        >
+          {event.title}
+        </Link>
+        {/* Type and status badges */}
+        <div className="flex flex-wrap gap-1">
+          <span className={getBadgeClasses(typeBadgeVariant(event.type), 'sm')}>
+            {capitalise(event.type)}
+          </span>
+          <span className={getBadgeClasses(statusBadgeVariant(event.status), 'sm')}>
+            {capitalise(event.status)}
+          </span>
+        </div>
+      </div>
+
+      {/* Event metadata row */}
+      <div className="text-xs text-gray-700 space-y-0.5">
+        <p>Created by {event.createdByName}</p>
+        <p>
+          {event.slotCount} {event.slotCount === 1 ? 'slot' : 'slots'} ·{' '}
+          {event.responseCount} {event.responseCount === 1 ? 'response' : 'responses'} ·{' '}
+          Expires {formatExpiry(event.expiresAt)}
+        </p>
+        {/* Show winning slot if concluded */}
+        {event.status === 'concluded' && event.concludedSlotLabel && (
+          <p className="text-green-700 font-medium">
+            Chosen: {event.concludedSlotLabel}
+          </p>
+        )}
+      </div>
+    </div>
   );
 }

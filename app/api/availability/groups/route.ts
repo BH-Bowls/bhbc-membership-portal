@@ -1,0 +1,99 @@
+// app/api/availability/groups/route.ts
+// API endpoints for listing and creating availability groups
+
+import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/lib/auth';
+import { getGroups, createGroup, addGroupMembers } from '@/lib/availability-groups-sheets';
+import type { CreateGroupPayload } from '@/types/availability';
+
+// GET /api/availability/groups
+// Returns all groups visible to the calling user (creator + member)
+export async function GET(request: NextRequest) {
+  try {
+    // Verify the user is authenticated
+    const session = await getServerSession(authOptions);
+    if (!session || !session.user || !session.user.userName) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    // Fetch all groups visible to this user
+    const groups = await getGroups(session.user.userName);
+
+    return NextResponse.json({ groups });
+  } catch (error) {
+    console.error('[GET /api/availability/groups] Error:', error);
+    return NextResponse.json({ error: 'Failed to fetch groups' }, { status: 500 });
+  }
+}
+
+// POST /api/availability/groups
+// Create a new group and optionally add initial members
+export async function POST(request: NextRequest) {
+  try {
+    // Verify the user is authenticated
+    const session = await getServerSession(authOptions);
+    if (!session || !session.user || !session.user.userName) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    // Parse the request body
+    const body: CreateGroupPayload = await request.json();
+
+    // Validate required fields
+    if (!body.name || body.name.trim() === '') {
+      return NextResponse.json({ error: 'Group name is required' }, { status: 400 });
+    }
+
+    // Validate visitor members — each must have both name and email
+    if (body.visitorMembers) {
+      for (let i = 0; i < body.visitorMembers.length; i++) {
+        const v = body.visitorMembers[i];
+        if (!v.visitorName || v.visitorName.trim() === '') {
+          return NextResponse.json(
+            { error: `Visitor at index ${i} is missing a name` },
+            { status: 400 }
+          );
+        }
+        if (!v.visitorEmail || v.visitorEmail.trim() === '') {
+          return NextResponse.json(
+            { error: `Visitor at index ${i} is missing an email address` },
+            { status: 400 }
+          );
+        }
+      }
+    }
+
+    // Step 1: Create the group record
+    const groupId = await createGroup({
+      name: body.name.trim(),
+      description: body.description ? body.description.trim() : '',
+      createdByUsername: session.user.userName,
+      allowMemberManagement: body.allowMemberManagement === true,
+    });
+
+    // Step 2: Add initial members if any were provided
+    const memberUserNames = body.memberUserNames || [];
+    const visitorMembers = body.visitorMembers || [];
+
+    if (memberUserNames.length > 0 || visitorMembers.length > 0) {
+      // Add all initial members to the new group
+      await addGroupMembers(groupId, session.user.userName, memberUserNames, visitorMembers);
+
+      // Step 3: Send group-added notification to new portal members
+      // Import the email send function here to avoid circular dependencies
+      try {
+        const { sendGroupAddedEmail } = await import('@/lib/email/availability');
+        await sendGroupAddedEmail(groupId, memberUserNames, session.user.userName);
+      } catch (emailError) {
+        // Email failure should not block the group creation — log and continue
+        console.error('[POST /api/availability/groups] Email send failed:', emailError);
+      }
+    }
+
+    return NextResponse.json({ success: true, groupId });
+  } catch (error) {
+    console.error('[POST /api/availability/groups] Error:', error);
+    return NextResponse.json({ error: 'Failed to create group' }, { status: 500 });
+  }
+}

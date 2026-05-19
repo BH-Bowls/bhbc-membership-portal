@@ -1,161 +1,169 @@
 // app/api/availability/guest/[eventId]/respond/route.ts
-// Public API endpoint for visitors to submit their slot responses using their token
-// No authentication required — stricter rate limiting applies
+// Public API endpoint for visitors to save their availability responses using a token
+// Rate limit: 10 requests per 5 minutes per IP. No authentication required.
+// Includes honeypot bot prevention.
 
 import { NextRequest, NextResponse } from 'next/server';
 import {
-  getAvailabilityEventById,
+  getEventById,
   getSlotsForEvent,
   validateVisitorToken,
   upsertVisitorResponse,
-} from '@/lib/availability-sheets';
-import { getUserByUsername } from '@/lib/sheets';
-import { sendTemplateEmail } from '@/lib/email/mailer';
-import type { GuestRespondPayload } from '@/types/availability';
+} from '@/lib/availability-events-sheets';
+import type { AvailabilityResponse } from '@/types/availability';
 
-// In-memory rate limiting: 10 requests per 5 minutes per IP (stricter for POST)
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-const RATE_LIMIT_MAX = 10;
-const RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
-
-function checkRateLimit(ip: string): boolean {
-  const now = Date.now();
-  const record = rateLimitMap.get(ip);
-
-  if (!record || record.resetAt < now) {
-    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
-    return true;
-  }
-
-  if (record.count >= RATE_LIMIT_MAX) {
-    return false;
-  }
-
-  record.count += 1;
-  return true;
-}
+// In-memory rate limit store — keyed by IP address.
+// Stores timestamps of all submissions within the rate limit window.
+const submissionTimes: Map<string, number[]> = new Map();
+const RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+const RATE_LIMIT_MAX_REQUESTS = 10;
 
 // POST /api/availability/guest/[eventId]/respond
-// Save a visitor's slot responses using their token
+// Save visitor responses for one or more slots. Body: GuestRespondPayload + optional honeypot.
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ eventId: string }> }
 ) {
-  // Apply stricter rate limiting
-  const ip = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'unknown';
-  if (!checkRateLimit(ip)) {
-    return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+  // Rate limiting by IP — 10 requests per 5 minutes
+  const ip = request.headers.get('x-forwarded-for')
+    || request.headers.get('x-real-ip')
+    || 'unknown';
+
+  const now = Date.now();
+
+  // Get existing submission timestamps for this IP
+  let timestamps = submissionTimes.get(ip);
+  if (!timestamps) {
+    timestamps = [];
+  }
+
+  // Remove timestamps outside the rate limit window
+  const windowStart = now - RATE_LIMIT_WINDOW_MS;
+  const recentTimestamps = [];
+  for (let i = 0; i < timestamps.length; i++) {
+    if (timestamps[i] > windowStart) {
+      recentTimestamps.push(timestamps[i]);
+    }
+  }
+
+  // Check if the rate limit has been exceeded
+  if (recentTimestamps.length >= RATE_LIMIT_MAX_REQUESTS) {
+    return NextResponse.json(
+      { error: 'Too many requests. Please wait a few minutes before trying again.' },
+      { status: 429 }
+    );
   }
 
   try {
+    // Await the dynamic route param
     const { eventId } = await params;
 
-    // Parse body
-    const body: GuestRespondPayload = await request.json();
+    // Parse the request body
+    const body = await request.json();
 
-    // Honeypot check — bots fill the hidden 'website' field; return 200 silently
-    const bodyAny = body as any;
-    if (bodyAny.website) {
+    // Honeypot check — bots fill hidden fields that humans never see.
+    // Return silent success (not a 4xx) so bots don't know they were rejected.
+    if (body.website) {
+      console.log('[POST /api/availability/guest/[eventId]/respond] Honeypot triggered — rejecting bot submission');
       return NextResponse.json({ success: true });
     }
 
-    // Token is required in the body
+    // Record this legitimate request timestamp after honeypot check
+    recentTimestamps.push(now);
+    submissionTimes.set(ip, recentTimestamps);
+
+    // Validate token is present in the body
     if (!body.token) {
-      return NextResponse.json({ error: 'Token is required' }, { status: 401 });
+      return NextResponse.json({ error: 'Token is required' }, { status: 400 });
     }
 
-    // Step 1: Validate the token
+    // Step 1: Validate the visitor token and get the invitee record
     const invitee = await validateVisitorToken(eventId, body.token);
     if (!invitee) {
-      return NextResponse.json({ error: 'Invalid or expired token' }, { status: 401 });
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Step 2: Fetch the event and verify it is open and not expired
-    const event = await getAvailabilityEventById(eventId);
+    // Step 2: Fetch the event to check status and expiry
+    const event = await getEventById(eventId);
     if (!event) {
       return NextResponse.json({ error: 'Event not found' }, { status: 404 });
     }
 
+    // Event must be open to accept responses
     if (event.status !== 'open') {
       return NextResponse.json({ error: 'This event is not accepting responses' }, { status: 400 });
     }
 
-    const expiryDate = new Date(event.expiresAt);
-    if (expiryDate <= new Date()) {
+    // Check the event has not expired
+    const expiresAt = new Date(event.expiresAt);
+    if (expiresAt <= new Date()) {
       return NextResponse.json({ error: 'This event has expired' }, { status: 400 });
     }
 
-    // Step 3: Validate responses array
+    // Validate responses array is non-empty
     if (!body.responses || body.responses.length === 0) {
       return NextResponse.json({ error: 'At least one response is required' }, { status: 400 });
     }
 
+    // Validate each response entry
     const validResponses = ['yes', 'maybe', 'no'];
     for (let i = 0; i < body.responses.length; i++) {
-      const resp = body.responses[i];
-      if (!resp.slotId) {
-        return NextResponse.json({ error: `Response ${i + 1} is missing slotId` }, { status: 400 });
-      }
-      if (!resp.response || !validResponses.includes(resp.response)) {
+      const r = body.responses[i];
+      if (!r.slotId) {
         return NextResponse.json(
-          { error: `Response ${i + 1} has an invalid response value` },
+          { error: `Response at index ${i} is missing a slotId` },
+          { status: 400 }
+        );
+      }
+      if (!r.response || validResponses.indexOf(r.response) === -1) {
+        return NextResponse.json(
+          { error: `Response at index ${i} has an invalid response value` },
           { status: 400 }
         );
       }
     }
 
-    // Step 4: Verify all slotIds belong to this event
+    // Step 3: Verify each slotId belongs to this event
     const eventSlots = await getSlotsForEvent(eventId);
-    const validSlotIds = new Set<string>();
-    for (const slot of eventSlots) {
-      validSlotIds.add(slot.slotId);
+    const validSlotIds: Record<string, boolean> = {};
+    for (let i = 0; i < eventSlots.length; i++) {
+      validSlotIds[eventSlots[i].slotId] = true;
     }
 
     for (let i = 0; i < body.responses.length; i++) {
-      if (!validSlotIds.has(body.responses[i].slotId)) {
+      const r = body.responses[i];
+      if (!validSlotIds[r.slotId]) {
         return NextResponse.json(
-          { error: `Slot ${body.responses[i].slotId} does not belong to this event` },
+          { error: `Slot ${r.slotId} does not belong to this event` },
           { status: 400 }
         );
       }
     }
 
-    // Step 5: Upsert each response
-    for (const resp of body.responses) {
+    // Step 4: Save each visitor response — upsert (insert new or update existing)
+    for (let i = 0; i < body.responses.length; i++) {
+      const r = body.responses[i];
       await upsertVisitorResponse(
         eventId,
-        resp.slotId,
+        r.slotId,
         invitee.inviteeId,
         invitee.visitorName,
         invitee.visitorEmail,
-        resp.response
+        r.response as AvailabilityResponse
       );
     }
 
-    // Step 6: Send creator notification if opted in (failure must not block response)
+    // Step 5: If the event creator opted in to response notifications, send an email
     if (event.notifyCreatorOnResponse) {
       try {
-        const creator = await getUserByUsername(event.createdByUsername);
-        if (creator && creator.emailAddress) {
-          const appUrl = process.env.NEXTAUTH_URL || '';
-          const emailResult = await sendTemplateEmail(
-            creator.emailAddress,
-            `New response — ${event.title}`,
-            'availability-response-notification',
-            {
-              creatorName: creator.fullKnownAs || creator.firstName,
-              eventTitle: event.title,
-              respondentName: invitee.visitorName,
-              manageUrl: `${appUrl}/availability/${eventId}/manage`,
-            }
-          );
-
-          if (!emailResult.success) {
-            console.error('[guest/respond] Failed to send creator notification:', emailResult.error);
-          }
-        }
+        const { sendResponseNotificationEmailForVisitor } = await import('@/lib/email/availability');
+        await sendResponseNotificationEmailForVisitor(event.eventId, invitee.visitorName);
       } catch (emailError) {
-        console.error('[guest/respond] Error sending creator notification:', emailError);
+        // Email failure must not block the response — log and continue
+        console.error(
+          `[POST /api/availability/guest/[eventId]/respond] Notification email failed for event ${eventId}:`,
+          emailError
+        );
       }
     }
 

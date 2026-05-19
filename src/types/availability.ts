@@ -1,10 +1,90 @@
 // src/types/availability.ts
-// TypeScript types for the Availability Planner feature
+// TypeScript types for the Availability Planner v2 feature
 
-export type AvailabilityEventStatus = 'open' | 'closed' | 'concluded' | 'archived';
-export type AvailabilityVisibility = 'public' | 'private';
+// ─── Shared ───────────────────────────────────────────────────────────────────
+
 export type AvailabilityResponse = 'yes' | 'maybe' | 'no';
 export type AvailabilityRespondentType = 'member' | 'visitor';
+
+// ─── Groups ───────────────────────────────────────────────────────────────────
+
+export type AvailabilityGroupStatus = 'active' | 'archived';
+export type AvailabilityGroupMemberType = 'member' | 'visitor';
+
+// Full group record as stored in the sheet
+export interface AvailabilityGroup {
+  groupId: string;
+  name: string;
+  description: string;
+  createdByUsername: string;
+  allowMemberManagement: boolean;
+  teamId: string;               // optional FK to teams — blank by default
+  status: AvailabilityGroupStatus;
+  createdAt: string;            // ISO timestamp
+  updatedAt: string;            // ISO timestamp
+}
+
+// One member of a group
+export interface AvailabilityGroupMember {
+  memberId: string;
+  groupId: string;
+  memberType: AvailabilityGroupMemberType;
+  userName: string;             // blank for visitors
+  visitorName: string;          // blank for members
+  visitorEmail: string;         // blank for members
+  addedByUsername: string;
+  createdAt: string;
+}
+
+// Summary returned to the groups list / hub page
+export interface AvailabilityGroupSummary {
+  groupId: string;
+  name: string;
+  description: string;
+  createdByUsername: string;
+  status: AvailabilityGroupStatus;
+  memberCount: number;
+  openEventCount: number;
+  isCreator: boolean;           // resolved for the calling user
+  canManageMembers: boolean;    // resolved for the calling user
+}
+
+// Full group detail returned to the group page
+export interface AvailabilityGroupDetail {
+  group: AvailabilityGroup;
+  members: AvailabilityGroupMember[];
+  // Display names resolved for member-type group members
+  memberDisplayNames: Record<string, string>;   // userName → displayName
+  events: AvailabilityEventSummary[];
+  isCreator: boolean;
+  canManageMembers: boolean;
+}
+
+// Body for creating a group
+export interface CreateGroupPayload {
+  name: string;
+  description: string;
+  allowMemberManagement: boolean;
+  memberUserNames: string[];    // array of userNames to add immediately
+  visitorMembers: Array<{
+    visitorName: string;
+    visitorEmail: string;
+  }>;
+}
+
+// Body for adding members to a group
+export interface AddGroupMembersPayload {
+  memberUserNames: string[];
+  visitorMembers: Array<{
+    visitorName: string;
+    visitorEmail: string;
+  }>;
+}
+
+// ─── Events ───────────────────────────────────────────────────────────────────
+
+export type AvailabilityEventType = 'general' | 'fixture' | 'signup';
+export type AvailabilityEventStatus = 'open' | 'closed' | 'concluded' | 'archived';
 export type AvailabilityInviteeType = 'member' | 'visitor';
 
 // Full event record as stored in the sheet
@@ -13,8 +93,8 @@ export interface AvailabilityEvent {
   title: string;
   description: string;
   createdByUsername: string;
-  createdByName: string;        // resolved at read time — not stored
-  visibility: AvailabilityVisibility;
+  groupId: string;              // blank for public events
+  type: AvailabilityEventType;
   status: AvailabilityEventStatus;
   showResponsesToRespondents: boolean;
   notifyCreatorOnResponse: boolean;
@@ -23,8 +103,26 @@ export interface AvailabilityEvent {
   conclusionNote: string;
   concludedAt: string;          // ISO timestamp
   concludedByUsername: string;
-  createdAt: string;            // ISO timestamp
-  updatedAt: string;            // ISO timestamp
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Summary used in lists (group page event feed, public event list)
+export interface AvailabilityEventSummary {
+  eventId: string;
+  title: string;
+  description: string;
+  type: AvailabilityEventType;
+  status: AvailabilityEventStatus;
+  groupId: string;
+  createdByUsername: string;
+  createdByName: string;        // resolved at read time
+  expiresAt: string;
+  slotCount: number;
+  responseCount: number;
+  hasResponded: boolean;        // resolved for calling user
+  concludedSlotLabel: string;   // blank until concluded
+  concludedSlotDatetime: string;
 }
 
 // A single candidate date/time slot
@@ -32,7 +130,7 @@ export interface AvailabilitySlot {
   slotId: string;
   eventId: string;
   slotDatetime: string;         // ISO timestamp
-  slotLabel: string;            // if blank, UI formats slotDatetime
+  slotLabel: string;
   displayOrder: number;
   createdAt: string;
 }
@@ -43,109 +141,85 @@ export interface AvailabilityResponseRecord {
   eventId: string;
   slotId: string;
   respondentType: AvailabilityRespondentType;
-  userName: string;             // blank for visitors
-  visitorName: string;          // blank for members
-  visitorEmail: string;         // blank for members
+  userName: string;
+  visitorName: string;
+  visitorEmail: string;
   response: AvailabilityResponse;
   respondedAt: string;
   updatedAt: string;
   inviteeId: string;
 }
 
-// Invitee record (private events only)
+// Invitee record (snapshot of who was invited when event was created)
 export interface AvailabilityInvitee {
   inviteeId: string;
   eventId: string;
+  groupMemberId: string;        // FK to group member — blank for public event additions
   inviteeType: AvailabilityInviteeType;
-  userName: string;             // blank for visitors
-  visitorName: string;          // blank for members
-  visitorEmail: string;         // blank for members
+  userName: string;
+  visitorName: string;
+  visitorEmail: string;
   token: string;                // blank for members
   tokenExpiresAt: string;       // blank for members
   notifiedAt: string;
   createdAt: string;
 }
 
-// Shape passed to the create-event API
-export interface CreateEventPayload {
-  title: string;
-  description: string;
-  visibility: AvailabilityVisibility;
-  showResponsesToRespondents: boolean;
-  notifyCreatorOnResponse: boolean;
-  expiresAt: string;            // ISO timestamp
-  slots: Array<{
-    slotDatetime: string;       // ISO timestamp
-    slotLabel: string;
-  }>;
-  // Only present if visibility === 'private'
-  memberInvitees: string[];     // array of userNames
-  visitorInvitees: Array<{
-    visitorName: string;
-    visitorEmail: string;
-  }>;
+// One participant's responses across all slots — shown in the response grid
+export interface AvailabilityParticipantResponses {
+  displayName: string;
+  respondentType: AvailabilityRespondentType;
+  responses: Record<string, AvailabilityResponse>; // slotId → response
 }
 
-// Shape returned to the member event list page
-export interface AvailabilityEventSummary {
-  eventId: string;
-  title: string;
-  description: string;
-  createdByName: string;
-  visibility: AvailabilityVisibility;
-  status: AvailabilityEventStatus;
-  expiresAt: string;
-  slotCount: number;
-  responseCount: number;
-  // Whether the current logged-in member has responded to at least one slot
-  hasResponded: boolean;
-  // For private events — whether the current user is on the invitee list
-  isInvited: boolean;
-  // Set on concluded events
-  concludedSlotLabel: string;
-  concludedSlotDatetime: string;
-}
-
-// Full event detail returned to the response page
+// Full event detail returned to the member response page
 export interface AvailabilityEventDetail {
   event: AvailabilityEvent;
   slots: AvailabilitySlot[];
-  // The current user's responses, keyed by slotId
-  myResponses: Record<string, AvailabilityResponse>;
-  // If show_responses_to_respondents === 'Y', also return other responses
+  myResponses: Record<string, AvailabilityResponse>; // slotId → response
+  // Empty array if show_responses_to_respondents is false and caller is not creator
   allResponses: AvailabilityParticipantResponses[];
-  // The concluded slot detail (if event is concluded)
   concludedSlot: AvailabilitySlot | null;
 }
 
-// One participant's responses across all slots — shown in the grid
-export interface AvailabilityParticipantResponses {
-  displayName: string;          // member full name or visitor name
-  respondentType: AvailabilityRespondentType;
-  // Map of slotId → response (may have gaps if not responded to all slots)
-  responses: Record<string, AvailabilityResponse>;
-}
-
-// Shape returned to the manage page
+// Full detail returned to the manage page
 export interface AvailabilityManageDetail {
   event: AvailabilityEvent;
   slots: AvailabilitySlot[];
-  // Full response grid — all participants, all slots
   allResponses: AvailabilityParticipantResponses[];
-  // Raw response records (for totals per slot)
   responseSummary: Array<{
     slotId: string;
     yesCount: number;
     maybeCount: number;
     noCount: number;
   }>;
-  // For private events, the invitee list
   invitees: AvailabilityInvitee[];
-  // Names resolved for member invitees
   inviteeDisplayNames: Record<string, string>; // userName → displayName
 }
 
-// Body for the guest respond endpoint
+// Body for creating an event (group or public)
+export interface CreateEventPayload {
+  title: string;
+  description: string;
+  type: AvailabilityEventType;
+  showResponsesToRespondents: boolean;
+  notifyCreatorOnResponse: boolean;
+  expiresAt: string;            // ISO timestamp
+  slots: Array<{
+    slotDatetime: string;
+    slotLabel: string;
+  }>;
+}
+
+// Body for member respond endpoint
+export interface MemberRespondPayload {
+  responses: Array<{
+    slotId: string;
+    response: AvailabilityResponse;
+  }>;
+}
+
+// Body for guest respond endpoint
 export interface GuestRespondPayload {
   token: string;
   responses: Array<{
@@ -154,17 +228,9 @@ export interface GuestRespondPayload {
   }>;
 }
 
-// Body for the member respond endpoint
-export interface MemberRespondPayload {
-  responses: Array<{
-    slotId: string;
-    response: AvailabilityResponse;
-  }>;
-}
-
-// Body for the conclude endpoint
+// Body for conclude endpoint
 export interface ConcludeEventPayload {
   concludedSlotId: string;
-  conclusionNote: string;       // may be empty string
+  conclusionNote: string;
   notifyRespondents: boolean;
 }
