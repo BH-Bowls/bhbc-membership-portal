@@ -7,7 +7,7 @@
 
 import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { parseUKDate } from '@/lib/date-utils';
@@ -123,6 +123,8 @@ export default function GameDetailsPage() {
   const tabDate = params.tabDate as string;
   usePhoneBackNavigation('/friendlies');
 
+  const searchParams = useSearchParams();
+
   // State: Game details including teams and user status
   const [gameDetails, setGameDetails] = useState<GameDetails | null>(null);
 
@@ -154,6 +156,12 @@ export default function GameDetailsPage() {
     text: string;
   } | null>(null);
 
+  // State: Message Captains dialog
+  const [messageCaptainsOpen, setMessageCaptainsOpen] = useState(false);
+  const [messageText, setMessageText] = useState('');
+  const [messageSending, setMessageSending] = useState(false);
+  const [messageError, setMessageError] = useState<string | null>(null);
+
   // ============================================================================
   // Effects
   // ============================================================================
@@ -165,6 +173,19 @@ export default function GameDetailsPage() {
   useEffect(() => {
     fetchGameDetails();
   }, [tabDate]);
+
+  // Auto-open Message Captains dialog when ?action=message-captains is in the URL.
+  // If the user is not logged in, redirect to sign-in first with this page as the callbackUrl
+  // so the dialog opens automatically after they authenticate.
+  useEffect(() => {
+    if (loading || authStatus === 'loading') return;
+    if (searchParams.get('action') !== 'message-captains') return;
+    if (authStatus === 'unauthenticated') {
+      router.push(`/api/auth/signin?callbackUrl=${encodeURIComponent(window.location.href)}`);
+    } else {
+      setMessageCaptainsOpen(true);
+    }
+  }, [loading, authStatus, searchParams]);
 
   // ============================================================================
   // API Functions
@@ -330,6 +351,41 @@ export default function GameDetailsPage() {
     } finally {
       // Hide action loading indicator
       setActionLoading(false);
+    }
+  }
+
+  /**
+   * Send a message to all captains about this game
+   */
+  async function handleMessageCaptains() {
+    if (!messageText.trim()) {
+      setMessageError('Please enter a message.');
+      return;
+    }
+    setMessageSending(true);
+    setMessageError(null);
+    try {
+      const res = await fetch(`/api/friendlies/game/${tabDate}/message-captains`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: messageText.trim(),
+          clubName: gameDetails?.game.clubName ?? '',
+          gameDate: gameDetails?.game.date ?? '',
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setMessageCaptainsOpen(false);
+        setMessageText('');
+        setFlashMessage({ type: 'success', text: 'Your message has been sent to the captains.' });
+      } else {
+        setMessageError(data.error || 'Failed to send message.');
+      }
+    } catch {
+      setMessageError('An error occurred. Please try again.');
+    } finally {
+      setMessageSending(false);
     }
   }
 
@@ -577,7 +633,7 @@ export default function GameDetailsPage() {
         </div>
 
         {/* User Status section - only meaningful once team selection has been published */}
-        {game.userStatus && !['O', 'X'].includes(game.status) && (
+        {game.userStatus && !['O', 'X'].includes(game.status) ? (
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
             <div className="flex items-center justify-between">
               <div>
@@ -603,8 +659,8 @@ export default function GameDetailsPage() {
                 )}
               </div>
 
-              {/* Action buttons (Confirm and Withdraw) */}
-              <div className="flex gap-2">
+              {/* Action buttons (Confirm, Withdraw, Message Captains) */}
+              <div className="flex flex-wrap gap-2 justify-end">
                 {/* Confirm button - only show if game is Selected and user hasn't confirmed yet */}
                 {game.status === 'S' && !game.userConfirmed && ['Y', 'R', 'T'].includes(game.userStatus) && (
                   <button
@@ -626,8 +682,26 @@ export default function GameDetailsPage() {
                     {actionLoading ? 'Processing...' : 'Withdraw'}
                   </button>
                 )}
+
+                {/* Message Captains button */}
+                <button
+                  onClick={() => { setMessageCaptainsOpen(true); setMessageError(null); }}
+                  className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors"
+                >
+                  Message Captains
+                </button>
               </div>
             </div>
+          </div>
+        ) : !isGuest && (
+          /* No status box — show Message Captains as a standalone button */
+          <div className="flex justify-end mb-6">
+            <button
+              onClick={() => { setMessageCaptainsOpen(true); setMessageError(null); }}
+              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors"
+            >
+              Message Captains
+            </button>
           </div>
         )}
 
@@ -874,6 +948,47 @@ export default function GameDetailsPage() {
         )}
 
       </div>
+
+      {/* Message Captains Dialog */}
+      {messageCaptainsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 px-4">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-1">Message Captains</h2>
+            <p className="text-sm text-gray-700 mb-4">
+              Your message, name, and email address will be sent to the captains regarding{' '}
+              <strong>{game.clubName}</strong> ({game.date}).
+            </p>
+            {messageError && (
+              <p className="text-sm text-red-600 mb-3">{messageError}</p>
+            )}
+            <textarea
+              value={messageText}
+              onChange={(e) => setMessageText(e.target.value)}
+              rows={5}
+              maxLength={2000}
+              className="w-full border border-gray-300 rounded px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4"
+              placeholder="Type your message here…"
+              disabled={messageSending}
+            />
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => { setMessageCaptainsOpen(false); setMessageText(''); setMessageError(null); }}
+                disabled={messageSending}
+                className="px-4 py-2 text-sm rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleMessageCaptains}
+                disabled={messageSending}
+                className="px-4 py-2 text-sm rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {messageSending ? 'Sending…' : 'Send'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Confirmation Dialog */}
       <ConfirmDialog

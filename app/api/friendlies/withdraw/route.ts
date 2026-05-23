@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getGames, getGameSheet, updateGameSheet, updatePlayerEntry, updateGameCounts, removePlayerFromGameSheet } from '@/lib/friendlies-sheets';
+import { clearDiaryCache } from '@/lib/home-cache';
 import { sendWithdrawalEmail, sendWithdrawalNoticeEmail } from '@/lib/email/friendlies';
 import type { WithdrawRequest, Game } from '@/lib/types/friendlies';
 import { getUserByUsername } from '@/lib/sheets';
@@ -106,6 +107,9 @@ export async function POST(request: NextRequest) {
         console.error('Error sending withdrawal notice email:', emailError);
       }
 
+      // Invalidate the diary cache so the home page reflects the withdrawal
+      clearDiaryCache(userName);
+
       // Return success for Open game withdrawal
       return NextResponse.json({
         success: true,
@@ -183,6 +187,9 @@ export async function POST(request: NextRequest) {
       } catch (emailError) {
         console.error('Error sending withdrawal notice email:', emailError);
       }
+
+      // Invalidate the diary cache so the home page reflects the withdrawal
+      clearDiaryCache(userName);
 
       // Return success for closed game withdrawal
       return NextResponse.json({

@@ -1,5 +1,5 @@
 // src/components/competitions/MatchCard.tsx
-// Individual match box in the bracket
+// Individual match box in the bracket.
 
 'use client';
 
@@ -21,6 +21,8 @@ interface MatchCardProps {
   isOnDate?: boolean;       // true when the match's playByDate is a fixed "play ON" day
   showFullNames?: boolean; // show all names for pairs/triples instead of "+N"
   onScoreSheetView?: (matchId: string, url: string) => void;
+  // Whether this is a singles competition — controls marker display (markers are singles-only)
+  isSingles?: boolean;
 }
 
 export function MatchCard({
@@ -37,6 +39,7 @@ export function MatchCard({
   isOnDate = false,
   showFullNames = false,
   onScoreSheetView,
+  isSingles = false,
 }: MatchCardProps) {
   const side1 = match.side1Usernames;
   const side2 = match.side2Usernames;
@@ -164,6 +167,20 @@ export function MatchCard({
           : renderSide([], match.score2, false, 2)}
       </div>
 
+      {/* Arranged date label — visible to all viewers when a planned date is set */}
+      {match.playedDate && isPending && (
+        <div className="px-2 pb-1 text-[10px] text-green-700 font-medium leading-none print:hidden">
+          Arranged: {formatDate(match.playedDate)}
+        </div>
+      )}
+
+      {/* Marker label — only shown for singles comps when a marker has been assigned */}
+      {isSingles && match.marker && (
+        <div className="px-2 pb-1 text-[10px] text-gray-700 leading-none print:hidden">
+          Marker: {getInfo(match.marker).fullName}
+        </div>
+      )}
+
       {/* Score sheet indicator — only shown when callback is provided */}
       {isComplete && match.scoreSheetUrl && onScoreSheetView && (
         <button
@@ -184,6 +201,7 @@ export function MatchCard({
   );
 }
 
+// Format a YYYY-MM-DD date string for display (e.g. "15 Jun")
 function formatDate(dateStr: string): string {
   try {
     return new Date(dateStr).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });

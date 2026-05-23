@@ -129,10 +129,33 @@ export default withAuth(
       }
     }
 
-    // Protect /admin/stats routes - committee members (Admin, Captain, Treasurer, GMC)
-    // isCommitteeMember() matches the same roles the navbar uses for the admin menu
+    // Protect /admin/stats routes - Admin, Captain, GMC (Treasurer excluded)
     if (pathname.startsWith('/admin/stats')) {
-      if (!token || !isCommitteeMember(token.role as string)) {
+      if (!token || !hasRole(token.role as string, 'Admin', 'Captain', 'GMC')) {
+        return NextResponse.redirect(new URL('/', req.url));
+      }
+    }
+
+    // Protect /admin/announcements routes - Admin, Captain, or GMC only
+    // These routes allow creating and managing home page announcements
+    if (pathname.startsWith('/admin/announcements')) {
+      if (!token || !hasRole(token.role as string, 'Admin', 'Captain', 'GMC')) {
+        return NextResponse.redirect(new URL('/', req.url));
+      }
+    }
+
+    // Restrict /availability to Admin or Testing roles during testing phase
+    // Guest sub-paths (/availability/guest/) remain public (handled by isPublicRoute above)
+    if (pathname.startsWith('/availability') && !pathname.startsWith('/availability/guest/')) {
+      if (!token || !hasRole(token.role as string, 'Admin', 'Testing')) {
+        return NextResponse.redirect(new URL('/', req.url));
+      }
+    }
+
+    // Restrict /api/availability to Admin or Testing roles during testing phase
+    // Guest sub-paths (/api/availability/guest/) remain public (handled by isPublicRoute above)
+    if (pathname.startsWith('/api/availability') && !pathname.startsWith('/api/availability/guest/')) {
+      if (!token || !hasRole(token.role as string, 'Admin', 'Testing')) {
         return NextResponse.redirect(new URL('/', req.url));
       }
     }

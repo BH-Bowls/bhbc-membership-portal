@@ -5,12 +5,13 @@
 
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
 import { COMP_ROUND_LABELS } from '@/types/competitions';
 import type { MyCompEntry, CompPosition, JourneyStep, ContactInfo } from '../../api/competitions/my/route';
+import { getButtonClasses, getInputClasses } from '@/config/theme-helpers';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -76,15 +77,136 @@ const STATUS_CONFIG = {
   'knocked-out':{ label: 'Knocked out',   className: 'bg-gray-200 text-gray-700' },
 } as const;
 
+// ── Planned date + marker input ───────────────────────────────────────────────
+// Inline editor for a pending match — saves the arranged date and optional marker.
+// For singles competitions a marker dropdown is shown below the date picker.
+
+function PlannedDateInput({
+  initialDate,
+  initialMarker,
+  isSingles,
+  playingMembers,
+  onSave,
+}: {
+  initialDate: string;
+  initialMarker: string;
+  isSingles: boolean;
+  playingMembers: { username: string; fullName: string }[];
+  onSave: (date: string, marker: string) => Promise<void>;
+}) {
+  // Pre-fill date from the match's existing arranged date
+  const [dateValue, setDateValue] = useState(initialDate);
+  // Pre-fill marker from the match's existing marker value
+  const [markerValue, setMarkerValue] = useState(initialMarker);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  // Sync inputs when the parent receives fresh data (e.g. after a refetch)
+  useEffect(() => {
+    setDateValue(initialDate);
+  }, [initialDate]);
+
+  useEffect(() => {
+    setMarkerValue(initialMarker);
+  }, [initialMarker]);
+
+  // Auto-dismiss the "Saved" confirmation after 4 seconds
+  useEffect(() => {
+    if (!saved) return;
+    const t = setTimeout(() => setSaved(false), 4000);
+    return () => clearTimeout(t);
+  }, [saved]);
+
+  async function handleSave() {
+    // A date is required before saving
+    if (!dateValue) {
+      setError('Please select a date');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+    try {
+      // Pass both date and marker so they are written in the same PATCH call
+      await onSave(dateValue, markerValue);
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mt-1.5 space-y-1.5">
+      {/* Date input — full width so it's visually separate from the Save button */}
+      <input
+        type="date"
+        value={dateValue}
+        onChange={(e) => {
+          setDateValue(e.target.value);
+          setError(null);
+          setSaved(false);
+        }}
+        className={getInputClasses(!!error)}
+        aria-label="Planned match date"
+      />
+
+      {/* Marker dropdown — only shown for singles competitions */}
+      {isSingles && playingMembers.length > 0 && (
+        <select
+          value={markerValue}
+          onChange={(e) => {
+            setMarkerValue(e.target.value);
+            setSaved(false);
+          }}
+          className={getInputClasses(false)}
+          aria-label="Marker"
+        >
+          <option value="">— No marker assigned —</option>
+          {/* Loop through the sorted playing members list */}
+          {playingMembers.map((m) => (
+            <option key={m.username} value={m.username}>{m.fullName}</option>
+          ))}
+        </select>
+      )}
+
+      {/* Save button sits below all inputs so it is clear it saves both date and marker */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={handleSave}
+          disabled={saving || !dateValue}
+          className={getButtonClasses('primary', 'sm')}
+        >
+          {saving ? '…' : 'Save'}
+        </button>
+        {error && <p className="text-[10px] text-red-600">{error}</p>}
+        {saved && <p className="text-[10px] text-green-700">Saved</p>}
+      </div>
+    </div>
+  );
+}
+
 // ── Journey step row ──────────────────────────────────────────────────────────
 
-function JourneyRow({ step }: { step: JourneyStep }) {
+function JourneyRow({
+  step,
+  isSingles,
+  playingMembers,
+  onSavePlannedDate,
+}: {
+  step: JourneyStep;
+  isSingles: boolean;
+  playingMembers: { username: string; fullName: string }[];
+  onSavePlannedDate?: (matchId: string, date: string, marker: string) => Promise<void>;
+}) {
   const { matchStatus, round, opponents, myScore, oppScore,
-          playByDate, playedDate, myHandicap, myStartScore, oppStartScore } = step;
+          playByDate, playedDate, myHandicap, myStartScore, oppStartScore, marker } = step;
 
   const oppNames = opponents && opponents.length > 0 ? nameList(opponents) : null;
 
-  // Row accent colour
+  // Determine the row state for conditional rendering
   const isBye     = matchStatus === 'Bye';
   const isWon     = matchStatus === 'Won' || matchStatus === 'WalkoverWon';
   const isLost    = matchStatus === 'Lost' || matchStatus === 'WalkoverLost';
@@ -96,20 +218,35 @@ function JourneyRow({ step }: { step: JourneyStep }) {
     </span>
   );
 
-  // Handicap info line
-  const showHcp = myHandicap != null && opponents && opponents[0]?.handicap != null;
-  const oppHcp  = opponents?.[0]?.handicap ?? null;
+  // Handicap context line (handicap comp only — both players must have a handicap)
+  const showHcp = myHandicap != null && opponents && opponents[0] != null && opponents[0].handicap != null;
+  const oppHcp  = (opponents && opponents[0]) ? opponents[0].handicap : null;
 
   const hcpLine = showHcp ? (
-    <span className="text-xs text-gray-400">
+    <span className="text-xs text-gray-700">
       Hcp: you {myHandicap} / opp {oppHcp}
       {myStartScore != null && oppStartScore != null && (
-        <span className="ml-1 text-gray-500">
+        <span className="ml-1 text-gray-700">
           · {isPending ? 'starts' : 'started'} {myStartScore}–{oppStartScore}
         </span>
       )}
     </span>
   ) : null;
+
+  // Resolve the marker's full name for display — look up from the playing members list
+  let markerFullName = '';
+  if (marker) {
+    for (let i = 0; i < playingMembers.length; i++) {
+      if (playingMembers[i].username.toLowerCase() === marker.toLowerCase()) {
+        markerFullName = playingMembers[i].fullName;
+        break;
+      }
+    }
+    // Fall back to the username if the member is not in the playing list (e.g. non-playing marker)
+    if (!markerFullName) {
+      markerFullName = marker;
+    }
+  }
 
   if (isBye) {
     return (
@@ -125,16 +262,32 @@ function JourneyRow({ step }: { step: JourneyStep }) {
       <div className="py-1.5 space-y-0.5">
         <div className="flex items-start gap-2">
           {roundPill}
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
               <span className="text-sm font-medium text-blue-700">
-                vs {oppNames ?? 'TBD'}
+                vs {oppNames ? oppNames : 'TBD'}
               </span>
             </div>
             {playByDate && (
-              <p className="text-xs text-gray-500">Play by {formatDate(playByDate)}</p>
+              <p className="text-xs text-gray-700">Play by {formatDate(playByDate)}</p>
             )}
             {hcpLine && <p>{hcpLine}</p>}
+            {playedDate && (
+              <p className="text-xs text-green-700 font-medium">Arranged: {formatDate(playedDate)}</p>
+            )}
+            {/* Show the assigned marker name for singles comps */}
+            {isSingles && markerFullName && (
+              <p className="text-xs text-gray-700">Marker: {markerFullName}</p>
+            )}
+            {onSavePlannedDate && (
+              <PlannedDateInput
+                initialDate={playedDate || ''}
+                initialMarker={marker || ''}
+                isSingles={isSingles}
+                playingMembers={playingMembers}
+                onSave={(date, m) => onSavePlannedDate(step.matchId, date, m)}
+              />
+            )}
           </div>
         </div>
       </div>
@@ -190,7 +343,19 @@ function buildTeamLine(
   return members.map((m) => `${m.position ?? ''}: ${m.name}`).join(' · ');
 }
 
-function EntryCard({ entry, userName, onClick }: { entry: MyCompEntry; userName: string; onClick: () => void }) {
+function EntryCard({
+  entry,
+  userName,
+  onClick,
+  playingMembers,
+  onSavePlannedDate,
+}: {
+  entry: MyCompEntry;
+  userName: string;
+  onClick: () => void;
+  playingMembers: { username: string; fullName: string }[];
+  onSavePlannedDate?: (matchId: string, date: string, marker: string) => Promise<void>;
+}) {
   const { label, className } = STATUS_CONFIG[entry.entryStatus];
   const isActive     = entry.entryStatus === 'active';
   const isKnockedOut = entry.entryStatus === 'knocked-out';
@@ -301,8 +466,15 @@ function EntryCard({ entry, userName, onClick }: { entry: MyCompEntry; userName:
       {/* Journey timeline */}
       {entry.journey.length > 0 && (
         <div className="divide-y divide-gray-100">
+          {/* Loop through each match in the user's journey through this competition */}
           {entry.journey.map((step) => (
-            <JourneyRow key={step.matchId} step={step} />
+            <JourneyRow
+              key={step.matchId}
+              step={step}
+              isSingles={entry.compType === 'singles'}
+              playingMembers={playingMembers}
+              onSavePlannedDate={onSavePlannedDate}
+            />
           ))}
         </div>
       )}
@@ -325,21 +497,46 @@ export default function MyCompetitionsPage() {
   const { data: session } = useSession();
   const router = useRouter();
   const [entries, setEntries] = useState<MyCompEntry[]>([]);
+  // Playing members list from the API — used to populate the marker dropdown
+  const [playingMembers, setPlayingMembers] = useState<{ username: string; fullName: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const role = session?.user?.role ?? '';
+  const role = session?.user?.role || '';
 
-  useEffect(() => {
+  // Fetch the user's competition entries and the playing members list together
+  const fetchEntries = useCallback(() => {
+    setLoading(true);
     fetch('/api/competitions/my')
       .then((r) => r.json())
       .then((data) => {
         if (data.error) throw new Error(data.error);
-        setEntries(data.entries ?? []);
+        setEntries(data.entries || []);
+        // Store the playing members list returned by the API for the marker dropdown
+        setPlayingMembers(data.playingMembers || []);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => { fetchEntries(); }, [fetchEntries]);
+
+  // Save both the arranged date and the marker for a pending match.
+  // marker is the username of the selected marker ('' = clear / no marker).
+  async function handleSavePlannedDate(compId: string, matchId: string, date: string, marker: string) {
+    const res = await fetch(`/api/competitions/${compId}/matches/${matchId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      // Send both fields in one request — marker may be '' to clear, which is fine
+      body: JSON.stringify({ playedDate: date, marker }),
+    });
+    if (!res.ok) {
+      const d = await res.json();
+      throw new Error(d.error || 'Failed to save');
+    }
+    fetchEntries();
+    // TODO: call clearDiaryCache(session.user.userName) here when home-cache.ts is implemented
+  }
 
   const active     = entries.filter((e) => e.entryStatus === 'active');
   const awaiting   = entries.filter((e) => e.entryStatus === 'awaiting');
@@ -396,8 +593,16 @@ export default function MyCompetitionsPage() {
                   Active — matches to play
                 </h2>
                 <div className="space-y-3">
+                  {/* Loop through active competitions and render a card for each */}
                   {active.map((e) => (
-                    <EntryCard key={e.compId} entry={e} userName={session?.user?.name ?? ''} onClick={() => router.push(`/competitions/${e.compId}`)} />
+                    <EntryCard
+                      key={e.compId}
+                      entry={e}
+                      userName={session?.user?.name || ''}
+                      onClick={() => router.push(`/competitions/${e.compId}`)}
+                      playingMembers={playingMembers}
+                      onSavePlannedDate={(matchId, date, marker) => handleSavePlannedDate(e.compId, matchId, date, marker)}
+                    />
                   ))}
                 </div>
               </section>
@@ -409,8 +614,16 @@ export default function MyCompetitionsPage() {
                   Awaiting next round
                 </h2>
                 <div className="space-y-3">
+                  {/* Loop through competitions where the user is waiting for the next round draw */}
                   {awaiting.map((e) => (
-                    <EntryCard key={e.compId} entry={e} userName={session?.user?.name ?? ''} onClick={() => router.push(`/competitions/${e.compId}`)} />
+                    <EntryCard
+                      key={e.compId}
+                      entry={e}
+                      userName={session?.user?.name || ''}
+                      onClick={() => router.push(`/competitions/${e.compId}`)}
+                      playingMembers={playingMembers}
+                      onSavePlannedDate={(matchId, date, marker) => handleSavePlannedDate(e.compId, matchId, date, marker)}
+                    />
                   ))}
                 </div>
               </section>
@@ -422,8 +635,16 @@ export default function MyCompetitionsPage() {
                   Winner
                 </h2>
                 <div className="space-y-3">
+                  {/* Loop through competitions where the user is the winner */}
                   {winner.map((e) => (
-                    <EntryCard key={e.compId} entry={e} userName={session?.user?.name ?? ''} onClick={() => router.push(`/competitions/${e.compId}`)} />
+                    <EntryCard
+                      key={e.compId}
+                      entry={e}
+                      userName={session?.user?.name || ''}
+                      onClick={() => router.push(`/competitions/${e.compId}`)}
+                      playingMembers={playingMembers}
+                      onSavePlannedDate={(matchId, date, marker) => handleSavePlannedDate(e.compId, matchId, date, marker)}
+                    />
                   ))}
                 </div>
               </section>
@@ -435,8 +656,16 @@ export default function MyCompetitionsPage() {
                   Knocked out
                 </h2>
                 <div className="space-y-3">
+                  {/* Loop through competitions where the user has been eliminated */}
                   {knockedOut.map((e) => (
-                    <EntryCard key={e.compId} entry={e} userName={session?.user?.name ?? ''} onClick={() => router.push(`/competitions/${e.compId}`)} />
+                    <EntryCard
+                      key={e.compId}
+                      entry={e}
+                      userName={session?.user?.name || ''}
+                      onClick={() => router.push(`/competitions/${e.compId}`)}
+                      playingMembers={playingMembers}
+                      onSavePlannedDate={(matchId, date, marker) => handleSavePlannedDate(e.compId, matchId, date, marker)}
+                    />
                   ))}
                 </div>
               </section>

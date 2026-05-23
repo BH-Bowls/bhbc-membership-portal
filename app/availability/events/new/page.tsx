@@ -9,11 +9,7 @@ import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
 import { RouterBackLink } from '@/components/RouterBackLink';
 import { getButtonClasses, getInputClasses, getAlertClasses } from '@/config/theme-helpers';
-import { saveDraft, restoreDraft, clearDraft } from '@/lib/form-draft-utils';
 import type { AvailabilityEventType } from '@/types/availability';
-
-// Draft key for this form — single shared draft per user
-const DRAFT_KEY = 'AvailabilityNewPublicEvent';
 
 // Shape of a slot entry in the form
 interface SlotEntry {
@@ -21,17 +17,6 @@ interface SlotEntry {
   slotLabel: string;    // optional label override
   displayDate: string;  // "YYYY-MM-DD" for the date input field
   displayTime: string;  // "HH:MM" for the time input field
-}
-
-// Shape of the form draft saved to sessionStorage
-interface EventDraft {
-  title: string;
-  description: string;
-  type: AvailabilityEventType;
-  expiresAt: string;
-  showResponsesToRespondents: boolean;
-  notifyCreatorOnResponse: boolean;
-  slots: SlotEntry[];
 }
 
 // Build an ISO datetime string from separate date and time inputs
@@ -66,37 +51,14 @@ export default function NewPublicEventPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const userName = session && session.user ? session.user.userName : '';
-
-  // Restore draft on mount once session is resolved
+  // Scroll to top whenever a submit error appears so the user sees it
   useEffect(() => {
-    if (!userName) return;
-    const draft = restoreDraft<EventDraft>(DRAFT_KEY, userName);
-    if (draft) {
-      setTitle(draft.title);
-      setDescription(draft.description);
-      setType(draft.type);
-      setExpiresAt(draft.expiresAt);
-      setShowResponsesToRespondents(draft.showResponsesToRespondents);
-      setNotifyCreatorOnResponse(draft.notifyCreatorOnResponse);
-      setSlots(draft.slots);
+    if (submitError) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
-  }, [userName]);
+  }, [submitError]);
 
-  // Save draft whenever any form field changes
-  useEffect(() => {
-    if (!userName) return;
-    const draft: EventDraft = {
-      title,
-      description,
-      type,
-      expiresAt,
-      showResponsesToRespondents,
-      notifyCreatorOnResponse,
-      slots,
-    };
-    saveDraft(DRAFT_KEY, userName, draft);
-  }, [title, description, type, expiresAt, showResponsesToRespondents, notifyCreatorOnResponse, slots, userName]);
+  const userName = session && session.user ? session.user.userName : '';
 
   // Add a slot to the list
   function addSlot() {
@@ -196,8 +158,6 @@ export default function NewPublicEventPage() {
         return;
       }
 
-      // Clear draft on success
-      clearDraft(DRAFT_KEY, userName);
       // Navigate to manage page for the new event
       router.push(`/availability/events/${data.eventId}/manage`);
     } catch (err) {
@@ -267,28 +227,6 @@ export default function NewPublicEventPage() {
               />
             </div>
 
-            {/* Event type */}
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Event Type</label>
-              <div className="flex gap-2">
-                {(['general', 'fixture', 'signup'] as AvailabilityEventType[]).map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setType(t)}
-                    className={type === t
-                      ? getButtonClasses('primary', 'sm')
-                      : getButtonClasses('secondary', 'sm')}
-                  >
-                    {t.charAt(0).toUpperCase() + t.slice(1)}
-                  </button>
-                ))}
-              </div>
-              <p className="text-xs text-gray-700 mt-1">
-                General = scheduling poll · Fixture = match-related · Signup = sign-up poll
-              </p>
-            </div>
-
             {/* Expiry */}
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -316,8 +254,8 @@ export default function NewPublicEventPage() {
                   type="button"
                   onClick={() => setShowResponsesToRespondents(true)}
                   className={showResponsesToRespondents
-                    ? getButtonClasses('primary', 'sm')
-                    : getButtonClasses('secondary', 'sm')}
+                    ? getButtonClasses('success', 'sm')
+                    : 'inline-flex items-center justify-center font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 rounded-md px-3 py-1.5 text-sm border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 shadow-sm'}
                 >
                   Yes
                 </button>
@@ -325,8 +263,8 @@ export default function NewPublicEventPage() {
                   type="button"
                   onClick={() => setShowResponsesToRespondents(false)}
                   className={!showResponsesToRespondents
-                    ? getButtonClasses('primary', 'sm')
-                    : getButtonClasses('secondary', 'sm')}
+                    ? getButtonClasses('danger', 'sm')
+                    : 'inline-flex items-center justify-center font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 rounded-md px-3 py-1.5 text-sm border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 shadow-sm'}
                 >
                   No
                 </button>
@@ -343,8 +281,8 @@ export default function NewPublicEventPage() {
                   type="button"
                   onClick={() => setNotifyCreatorOnResponse(true)}
                   className={notifyCreatorOnResponse
-                    ? getButtonClasses('primary', 'sm')
-                    : getButtonClasses('secondary', 'sm')}
+                    ? getButtonClasses('success', 'sm')
+                    : 'inline-flex items-center justify-center font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 rounded-md px-3 py-1.5 text-sm border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 shadow-sm'}
                 >
                   Yes
                 </button>
@@ -352,8 +290,8 @@ export default function NewPublicEventPage() {
                   type="button"
                   onClick={() => setNotifyCreatorOnResponse(false)}
                   className={!notifyCreatorOnResponse
-                    ? getButtonClasses('primary', 'sm')
-                    : getButtonClasses('secondary', 'sm')}
+                    ? getButtonClasses('danger', 'sm')
+                    : 'inline-flex items-center justify-center font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 rounded-md px-3 py-1.5 text-sm border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 shadow-sm'}
                 >
                   No
                 </button>

@@ -3794,7 +3794,7 @@ export async function getClubContacts(clubName: string): Promise<ClubContact[]> 
  * Returns games sorted by date (upcoming first)
  * Used for the tea rota list page
  */
-export async function getTeaRotaList(): Promise<TeaRotaEntry[]> {
+export async function getTeaRotaList(options?: { includeCancelled?: boolean }): Promise<TeaRotaEntry[]> {
   // Get Friendlies spreadsheet ID from environment
   const spreadsheetId = getFriendliesSpreadsheetId();
 
@@ -3835,9 +3835,9 @@ export async function getTeaRotaList(): Promise<TeaRotaEntry[]> {
     const homeAwayValue = get(row, 'home_away') || get(row, 'h_a') || 'H';
     if (homeAwayValue.trim().toUpperCase() !== 'H') continue;
 
-    // Get game status - skip cancelled games
+    // Get game status - skip cancelled games unless caller explicitly wants them
     const status = get(row, 'status') || '';
-    if (status === 'C') continue;
+    if (status === 'C' && !options?.includeCancelled) continue;
 
     // Only include Friendly games (tea rota doesn't apply to league/events)
     // Rows with no type set are treated as friendlies for backward compatibility.
@@ -3881,6 +3881,7 @@ export async function getTeaRotaList(): Promise<TeaRotaEntry[]> {
       teaLead,
       teaFirst,
       teaSecond,
+      status,
     });
   }
 
@@ -4187,6 +4188,7 @@ export async function swapTeaAssignment(
     teaLead: get('tea_lead') || '',
     teaFirst: get('tea_first') || '',
     teaSecond: get('tea_second') || '',
+    status: get('status') || '',
   };
 }
 
@@ -4248,6 +4250,7 @@ export async function getTeaRotaEntry(rowNumber: number): Promise<TeaRotaEntry |
     teaLead: get('tea_lead') || '',
     teaFirst: get('tea_first') || '',
     teaSecond: get('tea_second') || '',
+    status: get('status') || '',
   };
 }
 

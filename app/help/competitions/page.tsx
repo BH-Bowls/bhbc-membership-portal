@@ -85,6 +85,31 @@ export default function HelpCompetitionsPage() {
             </Body>
           </HelpSection>
 
+          <HelpSection title="Recording the agreed date to play">
+            <Body>
+              Once you and your opponent have agreed when you will play, you can record the date on
+              the portal so both of you have a reminder on your home page.
+            </Body>
+            <Step n={1}>
+              Open the competition draw and find your match (highlighted in blue).
+            </Step>
+            <Step n={2}>
+              Tap your match card to open the <strong>Arrange Match Date</strong> dialog.
+            </Step>
+            <Step n={3}>
+              Select the agreed date and tap <strong>Save</strong>.
+            </Step>
+            <Body>
+              Once saved, the match will appear in the <strong>Upcoming Events</strong> panel on
+              the home page for both you and your opponent as a reminder.
+            </Body>
+            <Note>
+              For singles competitions, the dialog also has an optional <strong>Marker</strong>{' '}
+              field — use this to record which member has agreed to mark the match, so the Captain
+              can see it has been arranged.
+            </Note>
+          </HelpSection>
+
         </div>
       </div>
     </div>

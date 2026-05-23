@@ -109,6 +109,7 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
   const isRowlandPlayer = roles.includes('RowlandPlayer'); // BHBC member who plays in Rowland Cup
   const isLeagueCaptain = roles.includes('LeagueOrganiser');
   const isGMC = roles.includes('GMC');
+  const isTesting = roles.includes('Testing'); // Testing role — access to features under evaluation
   const canAccessBanking = isAdmin || isTreasurer;
   const canAccessCaptainTools = isAdmin || isCaptain;
   // Committee = has at least one committee role (Rowland roles are specialist only, not general committee)
@@ -156,14 +157,24 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
       items.push({ name: 'Handicaps', href: '/competitions/handicaps' });
     }
 
-    // Admin and Committee members get Membership Statistics
-    if (isCommittee) {
+    // Admin, Captain, and GMC can manage home page announcements
+    if (isAdmin || isCaptain || isGMC) {
+      items.push({ name: 'Announcements', href: '/admin/announcements' });
+    }
+
+    // Admin, Captain, and GMC get Membership Statistics (Treasurer excluded)
+    if (isAdmin || isCaptain || isGMC) {
       items.push({ name: 'Membership Statistics', href: '/admin/stats' });
     }
 
     // Admin only — Print Labels
     if (isAdmin) {
       items.push({ name: 'Print Labels', href: '/labels' });
+    }
+
+    // Admin and Testing roles — Availability (restricted during testing phase)
+    if (isAdmin || isTesting) {
+      items.push({ name: 'Availability', href: '/availability' });
     }
 
     // Admin and RowlandOrganiser get Rowland Admin
@@ -317,16 +328,6 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
       icon: (
         <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-        </svg>
-      ),
-    },
-    // Availability Planner — visible to all authenticated members
-    {
-      name: 'Availability',
-      href: '/availability',
-      icon: (
-        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
         </svg>
       ),
     },
@@ -821,7 +822,10 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
                             )}
                             {hasDrafts && (
                               <div className="text-xs text-amber-600 font-normal mt-1">
-                                Unsaved changes
+                                Unsaved changes:
+                                {getUnsavedChangesSummary().split(', ').map((item, i) => (
+                                  <span key={i} className="block ml-2">• {item}</span>
+                                ))}
                               </div>
                             )}
                           </div>

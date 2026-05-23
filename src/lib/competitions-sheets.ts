@@ -196,6 +196,7 @@ function parseMatchRow(
     return isNaN(n) ? null : n;
   };
 
+  // Build and return the parsed match object, including the marker column (singles comps)
   return {
     matchId: get('match_id') || '',
     round: (get('round') || 'R1') as CompRound,
@@ -208,6 +209,8 @@ function parseMatchRow(
     status: (get('status') || 'Pending') as CompMatch['status'],
     playByDate: normalizeDate(get('play_by_date')),
     playedDate: normalizeDate(get('played_date')),
+    // marker is the username of the member scoring the match (empty string if not set)
+    marker: get('marker') || '',
   };
 }
 
@@ -379,9 +382,10 @@ export async function getCompetitionMatches(compId: string): Promise<CompMatch[]
   const colMap = await getColumnMap(cfg.sheetName, getCompetitionsSpreadsheetId());
   const sheets = getGoogleSheetsClient();
 
+  // Fetch all match rows — range extended to Z to cover the Marker column and any future columns
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId: getCompetitionsSpreadsheetId(),
-    range: `${cfg.sheetName}!A2:M`,
+    range: `${cfg.sheetName}!A2:Z`,
     valueRenderOption: 'FORMATTED_VALUE',
   });
 
@@ -563,6 +567,8 @@ export async function saveCompetitionSetup(
     set('status', m.status);
     set('play_by_date', m.playByDate || '');
     set('played_date', m.playedDate || '');
+    // Marker column — always write empty string on fresh setup rows
+    set('marker', '');
     return row;
   });
 
@@ -643,6 +649,8 @@ export async function updateMatch(
     side1Usernames?: string[];
     side2Usernames?: string[] | null;
     playByDate?: string | null;
+    // Username of the member acting as marker — empty string clears the field, absent = no change
+    marker?: string;
   }
 ): Promise<void> {
   const cfg = COMP_SHEET_CONFIG[compId];
@@ -680,6 +688,8 @@ export async function updateMatch(
   if (updates.playByDate !== undefined) addUpdate('play_by_date', updates.playByDate || '');
   if (updates.side1Usernames !== undefined) addUpdate('side1', encodeSide(updates.side1Usernames));
   if (updates.side2Usernames !== undefined) addUpdate('side2', encodeSide(updates.side2Usernames));
+  // Write the marker username; empty string clears the cell (absent = no change, handled by the !== undefined check)
+  if (updates.marker !== undefined) addUpdate('marker', updates.marker);
 
   if (data.length === 0) return;
 

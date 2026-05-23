@@ -161,15 +161,17 @@ export function clearAllDrafts(): void {
  * Used in unsaved-changes warnings to tell the user exactly where their drafts are.
  */
 const DRAFT_DISPLAY_NAMES: Record<string, string> = {
-  Profile:          'Your profile',
-  Renewals:         'Renewals',
-  FriendliesGame:   'Friendlies game',
-  InternalGame:     'Internal game',
-  CleaningRota:     'Cleaning rota',
-  TeaRota:          'Tea rota',
-  MemberSuggestion: 'Member suggestion',
-  Club:             'Club details',
-  NewClub:          'New club',
+  Profile:                    'Your profile',
+  Renewals:                   'Renewals',
+  FriendliesGame:             'Friendlies game',
+  InternalGame:               'Internal game',
+  CleaningRota:               'Cleaning rota',
+  TeaRota:                    'Tea rota',
+  MemberSuggestion:           'Member suggestion',
+  Club:                       'Club details',
+  NewClub:                    'New club',
+  AvailabilityNewGroupEvent:  'New availability event (group)',
+  AvailabilityNewPublicEvent: 'New availability event (public)',
 };
 
 /**

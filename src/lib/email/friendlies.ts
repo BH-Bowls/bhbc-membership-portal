@@ -378,6 +378,7 @@ export async function sendGamePublishedEmail(
       const gameUrl = player.userName
         ? `${gameBaseUrl}?me=${encodeURIComponent(player.userName)}`
         : gameBaseUrl;
+      const messageCaptainsUrl = `${gameUrl}&action=message-captains`;
 
       const { statusLabel, color, textLines, htmlLines } = buildStatusDetails(player);
       const isCaptain = player.captain === 'Y';
@@ -400,6 +401,9 @@ Your status: ${statusLabel}${textDetailBlock}
 
 You can view the full team selection and sign off your name either by clicking the link below or visiting the clubhouse:
 ${gameUrl}
+
+Please do not reply to this email. To contact the captains, use the Message Captains button on the game page:
+${messageCaptainsUrl}
 
 ---
 Burgess Hill Bowls Club
@@ -447,7 +451,9 @@ Friendlies Management System
         ${htmlLines.join('\n        ')}
       </div>
       <p>You can view the full team selection and sign off your name either by clicking the button below or visiting the clubhouse.</p>
+      <p style="font-size:13px;color:#cc0000;">Please do not reply to this email. Use the buttons below to view the game or contact the captains.</p>
       <a href="${gameUrl}" style="${BUTTON_STYLE}">View Game Details</a>
+      <a href="${messageCaptainsUrl}" style="${SECONDARY_BUTTON_STYLE}">Message Captains</a>
     </div>
     <div class="footer">
       <p>Burgess Hill Bowls Club - Friendlies Management System</p>
@@ -904,6 +910,11 @@ const PLAYER_BUTTON_STYLE =
   'text-decoration:none;border-radius:5px;margin-top:15px;font-family:Arial,sans-serif;' +
   'font-size:14px;font-weight:bold;';
 
+const SECONDARY_BUTTON_STYLE =
+  'display:inline-block;background-color:#ffffff;color:#0066cc;padding:11px 20px;' +
+  'text-decoration:none;border-radius:5px;margin-top:8px;margin-left:8px;' +
+  'font-family:Arial,sans-serif;font-size:14px;font-weight:bold;border:2px solid #0066cc;';
+
 function buildFriendlyPlayerHtml(opts: {
   heading: string;
   headerColor: string;
@@ -913,8 +924,12 @@ function buildFriendlyPlayerHtml(opts: {
   noteHtml?: string;
   gameUrl: string;
   buttonText: string;
+  messageCaptainsUrl?: string;
 }): string {
   const venue = opts.game.homeAway === 'H' ? 'Home' : `Away at ${opts.game.clubName}`;
+  const messageCaptainsBtn = opts.messageCaptainsUrl
+    ? `<a href="${opts.messageCaptainsUrl}" style="${SECONDARY_BUTTON_STYLE}">Message Captains</a>`
+    : '';
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -941,7 +956,7 @@ function buildFriendlyPlayerHtml(opts: {
         <p><strong>Format:</strong> ${opts.game.format}</p>
       </div>
       ${opts.noteHtml ?? ''}
-      <a href="${opts.gameUrl}" style="${PLAYER_BUTTON_STYLE}">${opts.buttonText}</a>
+      <a href="${opts.gameUrl}" style="${PLAYER_BUTTON_STYLE}">${opts.buttonText}</a>${messageCaptainsBtn}
     </div>
     <div class="footer"><p>Burgess Hill Bowls Club - Friendlies Management System</p></div>
   </div>
@@ -970,6 +985,7 @@ export async function sendEntryConfirmedEmail(
   addedByAdmin = false,
 ): Promise<void> {
   const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}?me=${encodeURIComponent(userName)}`;
+  const messageCaptainsUrl = `${gameUrl}&action=message-captains`;
   const venue = game.homeAway === 'H' ? 'Home' : `Away at ${game.clubName}`;
   const subject = `Friendly Entry Confirmed — ${game.clubName} ${game.date}`;
   const introText = addedByAdmin
@@ -1008,6 +1024,9 @@ export async function sendEntryConfirmedEmail(
     '',
     `View game: ${gameUrl}`,
     '',
+    'Please do not reply to this email. To contact the captains, use the Message Captains',
+    `button on the game page: ${messageCaptainsUrl}`,
+    '',
     '---',
     'Burgess Hill Bowls Club',
   ].join('\n');
@@ -1018,9 +1037,11 @@ export async function sendEntryConfirmedEmail(
     fullName,
     introHtml,
     game,
-    noteHtml: '<p>The event is marked as tentative until the team is published. A calendar attachment is included.</p>',
+    noteHtml: `<p>The event is marked as tentative until the team is published. A calendar attachment is included.</p>
+      <p style="font-size:13px;color:#cc0000;margin-top:16px;">Please do not reply to this email. Use the buttons below to view the game or contact the captains.</p>`,
     gameUrl,
     buttonText: 'View Game Details',
+    messageCaptainsUrl,
   });
 
   await sendEmail(emailAddress, subject, text, html, [ics]);

@@ -577,8 +577,8 @@ export default function GroupPage({
                       type="button"
                       onClick={() => setEditAllowManagement(true)}
                       className={editAllowManagement
-                        ? getButtonClasses('primary', 'sm')
-                        : getButtonClasses('secondary', 'sm')}
+                        ? getButtonClasses('success', 'sm')
+                        : 'inline-flex items-center justify-center font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 rounded-md px-3 py-1.5 text-sm border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 shadow-sm'}
                     >
                       Yes
                     </button>
@@ -586,8 +586,8 @@ export default function GroupPage({
                       type="button"
                       onClick={() => setEditAllowManagement(false)}
                       className={!editAllowManagement
-                        ? getButtonClasses('primary', 'sm')
-                        : getButtonClasses('secondary', 'sm')}
+                        ? getButtonClasses('danger', 'sm')
+                        : 'inline-flex items-center justify-center font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 rounded-md px-3 py-1.5 text-sm border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 shadow-sm'}
                     >
                       No
                     </button>

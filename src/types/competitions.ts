@@ -43,6 +43,8 @@ export interface CompMatch {
   playByDate?: string | null;
   playedDate?: string | null;
   scoreSheetUrl?: string | null;
+  // Username of the member acting as marker for this match (singles only, may be empty)
+  marker?: string;
 }
 
 /**

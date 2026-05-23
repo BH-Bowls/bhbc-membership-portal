@@ -9,6 +9,7 @@ import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
 import { BracketView } from '@/components/competitions/BracketView';
 import { ScoreDialog } from '@/components/competitions/ScoreDialog';
+import { PlannedDateDialog } from '@/components/competitions/PlannedDateDialog';
 import type { CompMatch, Competition, CompMemberInfo } from '@/types/competitions';
 
 // ============================================================================
@@ -58,6 +59,7 @@ export default function CompetitionBracketPage({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeMatch, setActiveMatch] = useState<CompMatch | null>(null);
+  const [pendingDateMatch, setPendingDateMatch] = useState<CompMatch | null>(null);
   const [saving, setSaving] = useState(false);
   const [printOrientation, setPrintOrientation] = useState<'landscape' | 'portrait'>('landscape');
 
@@ -114,13 +116,17 @@ export default function CompetitionBracketPage({
   }
 
   // ── Score/walkover submit ──────────────────────────────────────────────────
-  async function handleScoreSubmit(matchId: string, score1: number, score2: number) {
+  // marker is the selected marker username ('' = no marker / clear existing).
+  // Sent to the API alongside scores so both are recorded in the same request.
+  async function handleScoreSubmit(matchId: string, score1: number, score2: number, marker: string) {
     setSaving(true);
     try {
+      // Include the marker with scores so both are written in a single PATCH.
+      // For non-singles comps the marker will be '' (the dropdown is not shown), which is harmless.
       const res = await fetch(`/api/competitions/${compId}/matches/${matchId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'Complete', score1, score2 }),
+        body: JSON.stringify({ status: 'Complete', score1, score2, marker }),
       });
       if (!res.ok) {
         const d = await res.json();
@@ -156,9 +162,65 @@ export default function CompetitionBracketPage({
     }
   }
 
+  // ── Planned date / marker save ─────────────────────────────────────────────
+  // Used by both PlannedDateDialog (members) and ScoreDialog date-only path (committee).
+  // marker is optional — only passed for singles comps.
+  async function handleSavePlannedDate(matchId: string, date: string, marker?: string) {
+    // Build the request body — always include date; include marker when provided
+    const patchBody: Record<string, string> = { playedDate: date };
+    if (marker !== undefined) {
+      patchBody.marker = marker;
+    }
+
+    const res = await fetch(`/api/competitions/${compId}/matches/${matchId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patchBody),
+    });
+    if (!res.ok) {
+      const d = await res.json();
+      throw new Error(d.error || 'Failed to save date');
+    }
+    loadData();
+    // TODO: call clearDiaryCache(currentUsername) here when home-cache.ts is implemented
+  }
+
+  // Called from ScoreDialog onSaveDateOnly — sync wrapper (dialog handles its own close)
+  function handleSaveDateOnly(matchId: string, date: string, marker: string) {
+    handleSavePlannedDate(matchId, date, marker)
+      .then(() => setActiveMatch(null))
+      .catch(() => {
+        // Error is surfaced by ScoreDialog internally via its error state
+      });
+  }
+
+  // Routes bracket card clicks to the right dialog
+  function handleMatchClick(match: CompMatch) {
+    if (canEnterScores) {
+      setActiveMatch(match);
+    } else {
+      setPendingDateMatch(match);
+    }
+  }
+
   // ── Derived values ─────────────────────────────────────────────────────────
   const isHandicapComp = compId === 'handicap';
+  const isSinglesComp = competition ? competition.compType === 'singles' : false;
   const firstRoundCount = inferFirstRoundCount(matches);
+
+  // Build the playing members list for the marker dropdown (singles comps only).
+  // Derived from the existing memberMap — no additional API call required.
+  const playingMembers: { username: string; fullName: string }[] = [];
+  if (isSinglesComp) {
+    // Loop through all members in the map and keep only playing members
+    for (const [, info] of memberMap.entries()) {
+      if (info.memberType === 'Playing Man' || info.memberType === 'Playing Lady') {
+        playingMembers.push({ username: info.username, fullName: info.fullName });
+      }
+    }
+    // Sort alphabetically for the dropdown
+    playingMembers.sort((a, b) => a.fullName.localeCompare(b.fullName));
+  }
 
   // Map from bracket round key → play-by date (passed to BracketView for column headers)
   const roundPlayByDates: Record<string, string> = {};
@@ -327,7 +389,7 @@ export default function CompetitionBracketPage({
               getInfo={getInfo}
               currentUsername={currentUsername}
               showHandicap={isHandicapComp}
-              onMatchClick={setActiveMatch}
+              onMatchClick={handleMatchClick}
               canEnterScores={canEnterScores}
               roundPlayByDates={roundPlayByDates}
               roundOnDates={roundOnDates}
@@ -337,7 +399,7 @@ export default function CompetitionBracketPage({
         )}
       </div>
 
-      {/* Score entry dialog */}
+      {/* Score entry dialog (committee) — includes marker dropdown for singles */}
       {activeMatch && (
         <ScoreDialog
           match={activeMatch}
@@ -347,6 +409,21 @@ export default function CompetitionBracketPage({
           onWalkover={handleWalkover}
           onClose={() => setActiveMatch(null)}
           saving={saving}
+          onSaveDateOnly={handleSaveDateOnly}
+          isSingles={isSinglesComp}
+          playingMembers={playingMembers}
+        />
+      )}
+
+      {/* Date arrangement dialog (members) — includes marker dropdown for singles */}
+      {pendingDateMatch && (
+        <PlannedDateDialog
+          match={pendingDateMatch}
+          getInfo={getInfo}
+          onSave={handleSavePlannedDate}
+          onClose={() => setPendingDateMatch(null)}
+          isSingles={isSinglesComp}
+          playingMembers={playingMembers}
         />
       )}
     </div>

@@ -191,6 +191,25 @@ export default function HelpFriendliesPage() {
             </Body>
           </HelpSection>
 
+          <HelpSection title="Contacting the captains">
+            <Body>
+              On any published game detail page, tap the <strong>Message Captains</strong> button.
+              Type your message and tap <strong>Send</strong> — an email is sent immediately to all
+              members with a Captain or Admin role, with your name and email address included so
+              they can reply directly to you.
+            </Body>
+            <Body>
+              Use this for anything you would normally say to a captain in person: letting them know
+              you are running late, asking about travel arrangements, or anything else related to
+              the game.
+            </Body>
+            <Note>
+              The confirmation emails sent out when you enter a game or when the team is published
+              come from a no-reply address — please do not reply to those emails, as replies will
+              not reach the captains. Use the Message Captains button on the game page instead.
+            </Note>
+          </HelpSection>
+
           <HelpSection title="Tea rota">
             <Body>
               The tea rota for each home game is shown on the game detail page. It lists the members

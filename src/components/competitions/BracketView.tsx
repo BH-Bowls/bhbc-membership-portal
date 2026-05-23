@@ -240,10 +240,17 @@ export function BracketView({
   function canInteract(match: CompMatch): boolean {
     if (match.side1Usernames.length === 0) return false;
     if (canEnterScores) return match.status !== 'Bye';
-    // Participant interaction — only when explicitly enabled (e.g. clubs in Rowland)
-    if (!allowCompleteInteraction) return false;
     if (!currentUsername) return false;
-    const allUsernames = [...match.side1Usernames, ...(match.side2Usernames ?? [])];
+    // Members can click their own pending matches to record the agreed date
+    if (match.status === 'Pending') {
+      const side2 = match.side2Usernames || [];
+      const allUsernames = [...match.side1Usernames, ...side2];
+      if (allUsernames.includes(currentUsername)) return true;
+    }
+    // Participant interaction for completed matches (e.g. clubs in Rowland)
+    if (!allowCompleteInteraction) return false;
+    const side2 = match.side2Usernames || [];
+    const allUsernames = [...match.side1Usernames, ...side2];
     if (!allUsernames.includes(currentUsername)) return false;
     return true;
   }
@@ -434,6 +441,7 @@ export function BracketView({
                   isOnDate={geo.match.playByDate ? onDateValues.has(geo.match.playByDate) : false}
                   showFullNames={true}
                   onScoreSheetView={onScoreSheetView}
+                  isSingles={compType === 'singles'}
                 />
               ))}
           </div>

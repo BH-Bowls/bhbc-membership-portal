@@ -35,6 +35,8 @@ export interface JourneyStep {
   myHandicap: number | null;
   myStartScore: number | null;   // score the user starts on (0 if opponent has lesser hcp)
   oppStartScore: number | null;  // score the opponent starts on (0 if user has lesser hcp)
+  // Username of the member acting as marker for this match (empty string if not set; singles only)
+  marker: string;
 }
 
 export interface ContactInfo {
@@ -247,6 +249,8 @@ export async function GET() {
           myHandicap,
           myStartScore:  myStart,
           oppStartScore: oppStart,
+          // Pass the marker username through for display and editing on the my-competitions page
+          marker: m.marker || '',
         };
       });
 
@@ -363,7 +367,20 @@ export async function GET() {
     const ORDER: MyCompEntryStatus[] = ['active', 'awaiting', 'winner', 'knocked-out'];
     entries.sort((a, b) => ORDER.indexOf(a.entryStatus) - ORDER.indexOf(b.entryStatus));
 
-    return NextResponse.json({ entries });
+    // Build the playing members list for the marker dropdown.
+    // Only Playing Men and Playing Ladies are eligible to act as markers.
+    // We reuse the memberMap already loaded above — no additional API call needed.
+    const playingMembers: { username: string; fullName: string }[] = [];
+    for (const [, info] of memberMap.entries()) {
+      // Include only active playing members (PL = Playing Lady, PM = Playing Man in member type)
+      if (info.memberType === 'Playing Man' || info.memberType === 'Playing Lady') {
+        playingMembers.push({ username: info.username, fullName: info.fullName });
+      }
+    }
+    // Sort alphabetically by full name for the dropdown
+    playingMembers.sort((a, b) => a.fullName.localeCompare(b.fullName));
+
+    return NextResponse.json({ entries, playingMembers });
   } catch (error) {
     console.error('[competitions/my] GET error:', error);
     return NextResponse.json({ error: 'Failed to load your competitions' }, { status: 500 });

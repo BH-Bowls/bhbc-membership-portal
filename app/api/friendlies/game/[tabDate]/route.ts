@@ -55,7 +55,7 @@ export async function GET(
     const [allPlayers, clubDetailsResult, teaRotaList] = await Promise.all([
       getGameSheet(game.tabName),
       game.homeAway === 'A' ? getClubDetails(game.clubName).catch(() => null) : Promise.resolve(null),
-      game.homeAway === 'H' ? getTeaRotaList().catch(() => null) : Promise.resolve(null),
+      game.homeAway === 'H' ? getTeaRotaList({ includeCancelled: true }).catch(() => null) : Promise.resolve(null),
     ]);
 
     // Collect withdrawn players (status='W') and opposition players (selected='O')

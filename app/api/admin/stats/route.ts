@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getAllUsers } from '@/lib/sheets';
-import { hasRole, isCommitteeMember } from '@/lib/role-utils';
+import { hasRole } from '@/lib/role-utils';
 
 /**
  * GET /api/admin/stats
@@ -22,9 +22,8 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Verify user has a committee role (Admin, Captain, Treasurer, or GMC)
-    // isCommitteeMember() is the canonical check for committee-level access in this codebase
-    if (!isCommitteeMember(session.user.role)) {
+    // Verify user has Admin, Captain, or GMC role (Treasurer excluded)
+    if (!hasRole(session.user.role, 'Admin', 'Captain', 'GMC')) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 

@@ -223,6 +223,7 @@ export interface TeaRotaEntry {
   teaLead: string;        // Tea Lead username
   teaFirst: string;       // Tea First username
   teaSecond: string;      // Tea Second username
+  status: string;         // Game status code (e.g., "O", "P", "C")
 }
 
 /**

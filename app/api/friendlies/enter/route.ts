@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getGames, updatePlayerEntry, batchUpdateGameCounts, addPlayerToGameSheet } from '@/lib/friendlies-sheets';
+import { clearDiaryCache } from '@/lib/home-cache';
 import { EnterGamesRequest, EnterGamesResponse } from '@/lib/types/friendlies';
 import { canEnterGame } from '@/lib/game-management/capacity';
 import { getUserByUsername } from '@/lib/sheets';
@@ -144,6 +145,9 @@ export async function POST(request: NextRequest) {
         console.error('Error sending entry confirmation emails:', emailError);
       }
     }
+
+    // Invalidate the diary cache so the home page reflects the new entry
+    clearDiaryCache(userName);
 
     // Return success response with results for each game
     return NextResponse.json({ success: true, results });

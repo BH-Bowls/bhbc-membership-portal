@@ -58,6 +58,12 @@ export default function HelpIndexPage() {
 
   const generalCards: HelpCard[] = [
     {
+      title: 'Home page',
+      description:
+        'Announcements from the committee and your personalised upcoming events — friendly games you are selected for and competition matches you have arranged.',
+      href: '/help/home',
+    },
+    {
       title: 'Getting around',
       description:
         'The navigation bar at the top gives access to all areas of the portal. On a phone or tablet, tap the menu icon (☰) to open it.',
@@ -129,6 +135,20 @@ export default function HelpIndexPage() {
   type AdminCard = HelpCard & { show: boolean; badge: string };
 
   const adminCards: AdminCard[] = [
+    {
+      title: 'Membership Statistics',
+      description: 'A live snapshot of member counts by type, age profile, and operational indicators such as missing email addresses.',
+      href: '/help/member-stats',
+      show: isCaptain || isGMC || isAdmin,
+      badge: 'Captain',
+    },
+    {
+      title: 'Announcements',
+      description: 'Post short-lived notices to the home page for all members — create, edit, and delete announcements with an automatic expiry.',
+      href: '/help/announcements-admin',
+      show: isCaptain || isGMC || isAdmin,
+      badge: 'Captain',
+    },
     {
       title: 'Member Suggestions',
       description: 'Review, manage, and respond to improvement suggestions submitted by members.',

@@ -4,6 +4,8 @@ import { useSession } from 'next-auth/react';
 import { Navbar } from '@/components/Navbar';
 import { getBadgeClasses } from '@/config/theme-helpers';
 import { useSessionRefresh } from '@/hooks/useSessionRefresh';
+import { AnnouncementsPanel } from '@/components/AnnouncementsPanel';
+import { DiaryPanel } from '@/components/DiaryPanel';
 
 export default function HomePage() {
   const { data: session, status } = useSession();
@@ -37,6 +39,14 @@ export default function HomePage() {
       {/* Main Content */}
       <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         <div className="px-4 py-6 sm:px-0">
+          {/* Announcements panel — shown only when active announcements exist */}
+          <AnnouncementsPanel />
+
+          {/* Diary panel — personalised upcoming items for the logged-in member */}
+          <div className="mb-6">
+            <DiaryPanel />
+          </div>
+
           {/* Welcome Card */}
           <div className="bg-white overflow-hidden shadow rounded-lg">
             <div className="px-4 py-5 sm:p-6">

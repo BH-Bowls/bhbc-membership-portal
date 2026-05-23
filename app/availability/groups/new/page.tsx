@@ -4,16 +4,12 @@
 
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
 import { RouterBackLink } from '@/components/RouterBackLink';
 import { getButtonClasses, getInputClasses, getAlertClasses } from '@/config/theme-helpers';
-import { saveDraft, restoreDraft, clearDraft } from '@/lib/form-draft-utils';
-
-// Draft key for unsaved-changes protection
-const DRAFT_KEY = 'AvailabilityNewGroup';
 
 // Shape of a portal member returned by the lookup endpoint
 interface MemberOption {
@@ -26,16 +22,6 @@ interface MemberOption {
 interface VisitorEntry {
   visitorName: string;
   visitorEmail: string;
-}
-
-// Shape of draft data saved to sessionStorage
-interface GroupDraft {
-  name: string;
-  description: string;
-  allowMemberManagement: boolean;
-  selectedMemberUserNames: string[];
-  selectedMemberNames: Record<string, string>; // userName → displayName
-  visitors: VisitorEntry[];
 }
 
 export default function NewGroupPage() {
@@ -75,37 +61,6 @@ export default function NewGroupPage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const userName = session && session.user ? session.user.userName : '';
-
-  // Restore draft on mount (only once session and userName are available)
-  useEffect(() => {
-    // Wait until session is resolved
-    if (!userName) return;
-    const draft = restoreDraft<GroupDraft>(DRAFT_KEY, userName);
-    if (draft) {
-      // Restore all form fields from the saved draft
-      setName(draft.name);
-      setDescription(draft.description);
-      setAllowMemberManagement(draft.allowMemberManagement);
-      setSelectedMemberUserNames(draft.selectedMemberUserNames);
-      setSelectedMemberNames(draft.selectedMemberNames);
-      setVisitors(draft.visitors);
-    }
-  }, [userName]);
-
-  // Save draft whenever any form field changes
-  useEffect(() => {
-    // Don't save if userName is not yet resolved
-    if (!userName) return;
-    const draft: GroupDraft = {
-      name,
-      description,
-      allowMemberManagement,
-      selectedMemberUserNames,
-      selectedMemberNames,
-      visitors,
-    };
-    saveDraft(DRAFT_KEY, userName, draft);
-  }, [name, description, allowMemberManagement, selectedMemberUserNames, selectedMemberNames, visitors, userName]);
 
   // Load all portal members for the member search dropdown
   useEffect(() => {
@@ -235,8 +190,6 @@ export default function NewGroupPage() {
         return;
       }
 
-      // Clear draft on success
-      clearDraft(DRAFT_KEY, userName);
       // Navigate to the new group page
       router.push(`/availability/groups/${data.groupId}`);
     } catch (err) {

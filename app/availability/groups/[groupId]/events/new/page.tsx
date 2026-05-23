@@ -9,11 +9,7 @@ import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
 import { RouterBackLink } from '@/components/RouterBackLink';
 import { getButtonClasses, getInputClasses, getAlertClasses } from '@/config/theme-helpers';
-import { saveDraft, restoreDraft, clearDraft } from '@/lib/form-draft-utils';
 import type { AvailabilityEventType } from '@/types/availability';
-
-// Draft key prefix — appended with groupId for uniqueness per group
-const DRAFT_KEY_PREFIX = 'AvailabilityNewGroupEvent-';
 
 // Shape of a slot entry in the form
 interface SlotEntry {
@@ -21,17 +17,6 @@ interface SlotEntry {
   slotLabel: string;    // optional user-supplied label
   displayDate: string;  // "YYYY-MM-DD" for the date input
   displayTime: string;  // "HH:MM" for the time input
-}
-
-// Shape of form draft saved to sessionStorage
-interface EventDraft {
-  title: string;
-  description: string;
-  type: AvailabilityEventType;
-  expiresAt: string;
-  showResponsesToRespondents: boolean;
-  notifyCreatorOnResponse: boolean;
-  slots: SlotEntry[];
 }
 
 // Build an ISO datetime string from separate date and time strings
@@ -81,43 +66,20 @@ export default function NewGroupEventPage({
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  // Scroll to top whenever a submit error appears so the user sees it
+  useEffect(() => {
+    if (submitError) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [submitError]);
+
   const userName = session && session.user ? session.user.userName : '';
 
-  // Load group name and draft once groupId is resolved
+  // Load group name once groupId is resolved
   useEffect(() => {
     if (!groupId) return;
     loadGroupName(groupId);
-    // Restore draft if available
-    if (userName) {
-      const draftKey = DRAFT_KEY_PREFIX + groupId;
-      const draft = restoreDraft<EventDraft>(draftKey, userName);
-      if (draft) {
-        setTitle(draft.title);
-        setDescription(draft.description);
-        setType(draft.type);
-        setExpiresAt(draft.expiresAt);
-        setShowResponsesToRespondents(draft.showResponsesToRespondents);
-        setNotifyCreatorOnResponse(draft.notifyCreatorOnResponse);
-        setSlots(draft.slots);
-      }
-    }
-  }, [groupId, userName]);
-
-  // Save draft whenever form fields change
-  useEffect(() => {
-    if (!groupId || !userName) return;
-    const draftKey = DRAFT_KEY_PREFIX + groupId;
-    const draft: EventDraft = {
-      title,
-      description,
-      type,
-      expiresAt,
-      showResponsesToRespondents,
-      notifyCreatorOnResponse,
-      slots,
-    };
-    saveDraft(draftKey, userName, draft);
-  }, [title, description, type, expiresAt, showResponsesToRespondents, notifyCreatorOnResponse, slots, groupId, userName]);
+  }, [groupId]);
 
   // Fetch the group name from the API for display
   async function loadGroupName(gid: string) {
@@ -231,10 +193,6 @@ export default function NewGroupEventPage({
         return;
       }
 
-      // Clear draft on success
-      const draftKey = DRAFT_KEY_PREFIX + groupId;
-      clearDraft(draftKey, userName);
-
       // Navigate to the manage page for the new event
       router.push(`/availability/events/${data.eventId}/manage`);
     } catch (err) {
@@ -306,30 +264,6 @@ export default function NewGroupEventPage({
               />
             </div>
 
-            {/* Event type toggle */}
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Event Type
-              </label>
-              <div className="flex gap-2">
-                {(['general', 'fixture', 'signup'] as AvailabilityEventType[]).map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setType(t)}
-                    className={type === t
-                      ? getButtonClasses('primary', 'sm')
-                      : getButtonClasses('secondary', 'sm')}
-                  >
-                    {t.charAt(0).toUpperCase() + t.slice(1)}
-                  </button>
-                ))}
-              </div>
-              <p className="text-xs text-gray-700 mt-1">
-                General = scheduling poll · Fixture = match-related · Signup = sign-up poll
-              </p>
-            </div>
-
             {/* Expires on */}
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -357,8 +291,8 @@ export default function NewGroupEventPage({
                   type="button"
                   onClick={() => setShowResponsesToRespondents(true)}
                   className={showResponsesToRespondents
-                    ? getButtonClasses('primary', 'sm')
-                    : getButtonClasses('secondary', 'sm')}
+                    ? getButtonClasses('success', 'sm')
+                    : 'inline-flex items-center justify-center font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 rounded-md px-3 py-1.5 text-sm border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 shadow-sm'}
                 >
                   Yes
                 </button>
@@ -366,8 +300,8 @@ export default function NewGroupEventPage({
                   type="button"
                   onClick={() => setShowResponsesToRespondents(false)}
                   className={!showResponsesToRespondents
-                    ? getButtonClasses('primary', 'sm')
-                    : getButtonClasses('secondary', 'sm')}
+                    ? getButtonClasses('danger', 'sm')
+                    : 'inline-flex items-center justify-center font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 rounded-md px-3 py-1.5 text-sm border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 shadow-sm'}
                 >
                   No
                 </button>
@@ -384,8 +318,8 @@ export default function NewGroupEventPage({
                   type="button"
                   onClick={() => setNotifyCreatorOnResponse(true)}
                   className={notifyCreatorOnResponse
-                    ? getButtonClasses('primary', 'sm')
-                    : getButtonClasses('secondary', 'sm')}
+                    ? getButtonClasses('success', 'sm')
+                    : 'inline-flex items-center justify-center font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 rounded-md px-3 py-1.5 text-sm border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 shadow-sm'}
                 >
                   Yes
                 </button>
@@ -393,8 +327,8 @@ export default function NewGroupEventPage({
                   type="button"
                   onClick={() => setNotifyCreatorOnResponse(false)}
                   className={!notifyCreatorOnResponse
-                    ? getButtonClasses('primary', 'sm')
-                    : getButtonClasses('secondary', 'sm')}
+                    ? getButtonClasses('danger', 'sm')
+                    : 'inline-flex items-center justify-center font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 rounded-md px-3 py-1.5 text-sm border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 shadow-sm'}
                 >
                   No
                 </button>

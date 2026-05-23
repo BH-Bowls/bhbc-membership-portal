@@ -150,13 +150,14 @@ export default function TeaRotaPage() {
     }
   }, [session?.user?.userName, entries.length, fetchMembers]);
 
-  // Start editing
+  // Start editing — played and cancelled games are excluded from edit mode
   async function startEditing() {
     // Fetch members for the searchable select
     await fetchMembers();
 
     const initial: EditedAssignments = {};
     entries.forEach(entry => {
+      if (entry.status === 'C' || entry.status === 'P') return;
       initial[entry.rowNumber] = {
         teaLead: entry.teaLead,
         teaFirst: entry.teaFirst,
@@ -518,13 +519,31 @@ export default function TeaRotaPage() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {entries.map((entry) => (
+                  {entries.map((entry) => {
+                    const isLocked = entry.status === 'C' || entry.status === 'P';
+                    const statusBadge = entry.status === 'C'
+                      ? { label: 'Cancelled', cls: 'text-red-600 bg-red-50 border-red-200' }
+                      : entry.status === 'P'
+                      ? { label: 'Played', cls: 'text-green-700 bg-green-50 border-green-200' }
+                      : null;
+                    return (
                     <tr
                       key={entry.rowNumber}
-                      className={hasUserAssignment(entry) ? 'bg-yellow-50' : 'hover:bg-gray-50'}
+                      className={
+                        isLocked
+                          ? 'bg-gray-50 opacity-60'
+                          : hasUserAssignment(entry) ? 'bg-yellow-50' : 'hover:bg-gray-50'
+                      }
                     >
                       <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
-                        {entry.displayDate}
+                        <div className="flex items-center gap-2">
+                          {entry.displayDate}
+                          {statusBadge && (
+                            <span className={`text-xs font-medium border px-1.5 py-0.5 rounded ${statusBadge.cls}`}>
+                              {statusBadge.label}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                         {entry.time}
@@ -539,10 +558,10 @@ export default function TeaRotaPage() {
                         <td
                           key={position}
                           className={`px-4 py-3 text-sm ${
-                            isCurrentUserAssigned(entry, position) ? 'bg-yellow-100 font-medium' : ''
+                            !isLocked && isCurrentUserAssigned(entry, position) ? 'bg-yellow-100 font-medium' : ''
                           }`}
                         >
-                          {isEditing ? (
+                          {isEditing && !isLocked ? (
                             <>
                               <SearchableSelect
                                 options={members}
@@ -558,7 +577,7 @@ export default function TeaRotaPage() {
                           ) : (
                             <div className="flex items-center gap-1 whitespace-nowrap">
                               <span>{getMemberDisplayName(entry[position]) || '-'}</span>
-                              {isCurrentUserAssigned(entry, position) && !isEditing && !isKiosk && (
+                              {!isLocked && isCurrentUserAssigned(entry, position) && !isEditing && !isKiosk && (
                                 <button
                                   onClick={() => openSwapModal(entry, position)}
                                   className="ml-2 text-blue-600 hover:text-blue-800 text-xs underline print:hidden"
@@ -572,23 +591,40 @@ export default function TeaRotaPage() {
                         </td>
                       ))}
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
 
             {/* Mobile card view */}
             <div className="md:hidden space-y-4 print:hidden">
-              {entries.map((entry) => (
+              {entries.map((entry) => {
+                const isLocked = entry.status === 'C' || entry.status === 'P';
+                const statusBadge = entry.status === 'C'
+                  ? { label: 'Cancelled', cls: 'text-red-600 bg-red-50 border-red-200' }
+                  : entry.status === 'P'
+                  ? { label: 'Played', cls: 'text-green-700 bg-green-50 border-green-200' }
+                  : null;
+                return (
                 <div
                   key={entry.rowNumber}
                   className={`bg-white rounded-lg shadow p-4 ${
-                    hasUserAssignment(entry) ? 'border-2 border-yellow-300' : 'border border-gray-200'
+                    isLocked
+                      ? 'border border-gray-200 opacity-60'
+                      : hasUserAssignment(entry) ? 'border-2 border-yellow-300' : 'border border-gray-200'
                   }`}
                 >
                   <div className="flex justify-between items-start mb-3">
                     <div>
-                      <div className="font-bold text-lg text-gray-900">{entry.displayDate}</div>
+                      <div className="flex items-center gap-2">
+                        <div className="font-bold text-lg text-gray-900">{entry.displayDate}</div>
+                        {statusBadge && (
+                          <span className={`text-xs font-medium border px-1.5 py-0.5 rounded ${statusBadge.cls}`}>
+                            {statusBadge.label}
+                          </span>
+                        )}
+                      </div>
                       <div className="text-sm text-gray-900">{entry.time}</div>
                     </div>
                     <div className="text-right">
@@ -602,11 +638,11 @@ export default function TeaRotaPage() {
                       <div
                         key={position}
                         className={`flex justify-between items-center ${
-                          isCurrentUserAssigned(entry, position) ? 'bg-yellow-100 -mx-2 px-2 py-1 rounded' : ''
+                          !isLocked && isCurrentUserAssigned(entry, position) ? 'bg-yellow-100 -mx-2 px-2 py-1 rounded' : ''
                         }`}
                       >
                         <span className="text-gray-500 text-sm">{positionNames[position]}:</span>
-                        {isEditing ? (
+                        {isEditing && !isLocked ? (
                           <SearchableSelect
                             options={members}
                             value={getDisplayValue(entry, position)}
@@ -617,7 +653,7 @@ export default function TeaRotaPage() {
                         ) : (
                           <div className="flex items-center gap-2">
                             <span className="text-gray-900 font-medium">{getMemberDisplayName(entry[position]) || '-'}</span>
-                            {isCurrentUserAssigned(entry, position) && !isKiosk && (
+                            {!isLocked && isCurrentUserAssigned(entry, position) && !isKiosk && (
                               <button
                                 onClick={() => openSwapModal(entry, position)}
                                 className="text-blue-600 hover:text-blue-800 text-xs underline"
@@ -631,7 +667,8 @@ export default function TeaRotaPage() {
                     ))}
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </>
         )}

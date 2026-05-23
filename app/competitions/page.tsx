@@ -219,6 +219,9 @@ export default function CompetitionsPage() {
                         <div>
                           <p className="font-semibold text-gray-900">{comp.displayName}</p>
                           <p className="text-xs text-gray-500 mt-0.5">{TYPE_LABELS[comp.compType]}</p>
+                          {comp.compDescription && (
+                            <p className="text-xs text-gray-700 mt-1">{comp.compDescription}</p>
+                          )}
                         </div>
                         <span className={`text-xs font-medium px-2 py-1 rounded-full ${badge}`}>
                           {label}

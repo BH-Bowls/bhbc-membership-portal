@@ -26,6 +26,24 @@ export default function HelpFriendlyManagementPage() {
             </Body>
           </HelpSection>
 
+          <HelpSection title="Manage list tabs">
+            <Body>
+              The game list is split into four tabs to help focus on what matters at different
+              points in the season:
+            </Body>
+            <div className="mt-2 space-y-1.5 text-sm text-gray-700 mb-2">
+              <div className="flex gap-2"><span className="font-medium w-24 shrink-0">All</span><span>Every game in the season, regardless of status.</span></div>
+              <div className="flex gap-2"><span className="font-medium w-24 shrink-0">Upcoming</span><span>Games that are Upcoming or Open — not yet closed for selection.</span></div>
+              <div className="flex gap-2"><span className="font-medium w-24 shrink-0">Selecting</span><span>Games currently being selected or already published (Selecting and Selected). These are the games you are actively working on.</span></div>
+              <div className="flex gap-2"><span className="font-medium w-24 shrink-0">Played</span><span>Completed games — includes Played, Cancelled, and Abandoned. Scores are shown directly on the row.</span></div>
+            </div>
+            <Note>
+              As the season progresses and the Played tab fills up, the Selecting tab becomes the
+              natural daily-use view — it shows every game that needs attention without the noise
+              of past results.
+            </Note>
+          </HelpSection>
+
           <HelpSection title="Overview — game statuses">
             <Body>
               Every game moves through a series of statuses. The Manage page shows all games in a
@@ -222,14 +240,20 @@ export default function HelpFriendlyManagementPage() {
               swap when only one or two people need to know about the change).
             </Step>
             <Step n={4}>
+              Optionally edit the <strong>message</strong> that appears in the email body. The
+              default wording is pre-filled — leave it as-is for a standard publish, or edit it to
+              add context (for example, special travel notes or a reminder about dress code).
+              This message replaces the default intro paragraph in every player&apos;s email.
+            </Step>
+            <Step n={5}>
               For home games, tick <strong>Email tea rota</strong> to notify the members assigned
               to tea duty.
             </Step>
-            <Step n={5}>
+            <Step n={6}>
               Before sending to everyone, click <strong>Send Test Email</strong> to receive a
               preview of the email at your own address. You can do this as many times as you like.
             </Step>
-            <Step n={6}>Click <strong>Publish</strong> to confirm.</Step>
+            <Step n={7}>Click <strong>Publish</strong> to confirm.</Step>
             <Body>
               Once published, members can see the full team on the Friendlies page. The selection
               page toolbar shows an orange <strong>Republish</strong> button — use this if you
@@ -274,12 +298,14 @@ export default function HelpFriendlyManagementPage() {
           <HelpSection title="Reverting a game to a previous status">
             <Body>
               If you need to step a game back — for example to reopen entries after closing early
-              by mistake — use the dropdown options prefixed with a left arrow:
+              by mistake, or to correct a result — use the dropdown options prefixed with a left
+              arrow:
             </Body>
             <div className="mt-1 space-y-1 text-sm text-gray-700 mb-2">
               <p><strong>← Upcoming</strong> (available when Open) — reverts to Upcoming, closing entries without creating a selection sheet.</p>
               <p><strong>← Open</strong> (available when Selecting) — reopens entries so members can enter or withdraw again.</p>
               <p><strong>← Selecting</strong> (available when Selected/Published) — unpublishes the selection. Members can no longer see the team sheet. Use Publish again when ready.</p>
+              <p><strong>← Selected</strong> (available when Played) — sets a played game back to Selected, allowing you to correct the score or outcome. Record the result again once corrections are made.</p>
             </div>
             <Note>
               Reverting does not delete any data — player entries and selection choices are

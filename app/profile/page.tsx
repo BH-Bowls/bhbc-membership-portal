@@ -525,7 +525,7 @@ export default function ProfilePage() {
                       const currentRole = isEditing ? (editedProfile.role ?? '') : (profile.role ?? '');
                       const isKiosk = currentRole === 'Kiosk';
                       const activeRoles = isKiosk ? [] : currentRole.split(',').map(r => r.trim()).filter(Boolean);
-                      const availableRoles = ['Captain', 'LeagueOrganiser', 'Treasurer', 'GMC', 'RowlandOrganiser', 'RowlandPlayer', 'SweepingAdmin', 'Admin'];
+                      const availableRoles = ['Captain', 'LeagueOrganiser', 'Treasurer', 'GMC', 'RowlandOrganiser', 'RowlandPlayer', 'SweepingAdmin', 'Testing', 'Admin'];
 
                       if (isKiosk) {
                         return <p className="mt-1 text-sm text-gray-500 italic">Kiosk (managed in sheet)</p>;

@@ -10,6 +10,7 @@ import {
   getSlotsForEvent,
   upsertMemberResponse,
 } from '@/lib/availability-events-sheets';
+import { clearDiaryCache } from '@/lib/home-cache';
 import { isGroupMember } from '@/lib/availability-groups-sheets';
 import type { MemberRespondPayload, AvailabilityResponse } from '@/types/availability';
 
@@ -127,6 +128,9 @@ export async function POST(
         );
       }
     }
+
+    // Invalidate the diary cache — responding may change nudge/confirmed items on the home page
+    clearDiaryCache(userName);
 
     return NextResponse.json({ success: true });
   } catch (error) {

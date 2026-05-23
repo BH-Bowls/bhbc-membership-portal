@@ -14,7 +14,7 @@ import { getTeaRotaList } from '@/lib/friendlies-sheets';
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
-    const entries = await getTeaRotaList();
+    const entries = await getTeaRotaList({ includeCancelled: true });
 
     return NextResponse.json({
       entries,
