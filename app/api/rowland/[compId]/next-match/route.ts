@@ -1,7 +1,11 @@
 // app/api/rowland/[compId]/next-match/route.ts
-// GET ?clubId=xxx — returns the club's next pending match + opponent contacts
+// GET ?clubId=xxx[&contactName=xxx] — returns the club's next pending match + opponent contacts
+// For unauthenticated guests, contactName is verified against the requesting club's own contacts
+// before opponent contact details are returned.
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
 import { getRowlandMatches } from '@/lib/rowland-sheets';
 import { getContactsForClub } from '@/lib/clubs-sheets';
 import type { RowlandCompId } from '@/types/rowland';
@@ -23,7 +27,11 @@ export async function GET(
   try {
     const { compId } = await params;
     const clubId = req.nextUrl.searchParams.get('clubId');
+    const contactName = req.nextUrl.searchParams.get('contactName');
     if (!clubId) return NextResponse.json({ error: 'clubId required' }, { status: 400 });
+
+    const session = await getServerSession(authOptions);
+    const isAuthenticated = !!session?.user;
 
     const matches = await getRowlandMatches(compId as RowlandCompId);
 
@@ -44,12 +52,37 @@ export async function GET(
     }
 
     const next = pending[0];
-    const myClubId = clubId;
     const opponentTeam =
-      next.homeTeam?.clubId === myClubId ? next.awayTeam : next.homeTeam;
+      next.homeTeam?.clubId === clubId ? next.awayTeam : next.homeTeam;
 
     if (!opponentTeam) {
       return NextResponse.json({ match: next, opponentContacts: [] });
+    }
+
+    // For unauthenticated guests, verify contactName against the requesting club's own contacts.
+    // Authenticated sessions (Club, Member, Captain, etc.) skip verification.
+    if (!isAuthenticated) {
+      if (!contactName?.trim()) {
+        return NextResponse.json({ match: next, opponentContacts: [] });
+      }
+      // Find the requesting club's name from match data
+      const requestingTeam = clubMatches[0].homeTeam?.clubId === clubId
+        ? clubMatches[0].homeTeam
+        : clubMatches[0].awayTeam;
+
+      if (requestingTeam?.clubName) {
+        const requestingContacts = await getContactsForClub(requestingTeam.clubName);
+        const normalised = contactName.trim().toLowerCase();
+        const nameMatches = requestingContacts.some((c) => {
+          const full = (c.name || `${c.firstName ?? ''} ${c.lastName ?? ''}`).trim().toLowerCase();
+          return full === normalised;
+        });
+        if (!nameMatches) {
+          return NextResponse.json({ match: next, opponentContacts: [] });
+        }
+      } else {
+        return NextResponse.json({ match: next, opponentContacts: [] });
+      }
     }
 
     // Fetch contacts for the opponent club, filter to Rowland-specific roles.
@@ -65,7 +98,6 @@ export async function GET(
       : [];
 
     if (rowlandContacts.length === 0 && rolePrefix) {
-      // Step 2: strip the bracket letter suffix (e.g. "ERowland A" → "ERowland")
       const basePrefix = rolePrefix.replace(/ [AB]$/, '');
       if (basePrefix !== rolePrefix) {
         rowlandContacts = allContacts.filter((c) => c.role.startsWith(basePrefix));
@@ -73,7 +105,6 @@ export async function GET(
     }
 
     if (rowlandContacts.length === 0) {
-      // Step 3: any contact with "Rowland" in the role
       rowlandContacts = allContacts.filter((c) => c.role.includes('Rowland'));
     }
 

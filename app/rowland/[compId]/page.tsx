@@ -151,6 +151,7 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
 
     let lookupClubId: string | null = null;
     let lookupClubName: string | null = null;
+    let lookupContactName: string | null = null;
 
     if ((isClub || isRowlandPlayer || isCaptain) && clubId) {
       lookupClubId = clubId;
@@ -161,6 +162,7 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
           const parsed = JSON.parse(stored);
           lookupClubId = parsed.clubId ?? null;
           lookupClubName = parsed.clubName ?? null;
+          lookupContactName = parsed.contactName ?? null;
         }
       } catch {}
     }
@@ -169,7 +171,9 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
 
     setNextMatchClubName(lookupClubName);
     if (!isClub && !isRowlandPlayer) setGuestClubId(lookupClubId);
-    fetch(`/api/rowland/${compId}/next-match?clubId=${encodeURIComponent(lookupClubId)}`)
+    const qs = new URLSearchParams({ clubId: lookupClubId });
+    if (isGuest && lookupContactName) qs.set('contactName', lookupContactName);
+    fetch(`/api/rowland/${compId}/next-match?${qs.toString()}`)
       .then((r) => r.json())
       .then((data) => {
         if (data.match) setNextMatchData({ match: data.match, opponentContacts: data.opponentContacts ?? [] });

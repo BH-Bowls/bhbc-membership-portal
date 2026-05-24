@@ -49,6 +49,8 @@ export default function RowlandPage() {
   const isClubSession = role === 'Club' || role.split(',').map(r => r.trim()).includes('RowlandPlayer');
   const [clubs, setClubs] = useState<{ clubId: string; clubName: string }[]>([]);
   const [selectedClub, setSelectedClub] = useState<{ clubId: string; clubName: string } | null>(null);
+  const [guestContactName, setGuestContactName] = useState('');
+  const [contactNameInput, setContactNameInput] = useState('');
 
   // Message panel
   const [message, setMessage] = useState('');
@@ -82,10 +84,24 @@ export default function RowlandPage() {
       // Restore previous selection from localStorage
       try {
         const stored = localStorage.getItem(LS_KEY);
-        if (stored) setSelectedClub(JSON.parse(stored));
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          setSelectedClub({ clubId: parsed.clubId, clubName: parsed.clubName });
+          if (parsed.contactName) {
+            setGuestContactName(parsed.contactName);
+            setContactNameInput(parsed.contactName);
+          }
+        }
       } catch {}
     }
   }, [isClubSession]);
+
+  function saveName() {
+    const name = contactNameInput.trim();
+    if (!name || !selectedClub) return;
+    setGuestContactName(name);
+    try { localStorage.setItem(LS_KEY, JSON.stringify({ ...selectedClub, contactName: name })); } catch {}
+  }
 
   function startEditMessage() {
     setEditDraft(message);
@@ -179,17 +195,42 @@ export default function RowlandPage() {
               Which club are you from? Select yours to see your next match on each draw.
             </p>
             {selectedClub ? (
-              <div className="flex items-center gap-3">
-                <span className="text-sm text-gray-900 font-medium">{selectedClub.clubName}</span>
-                <button
-                  onClick={() => {
-                    setSelectedClub(null);
-                    try { localStorage.removeItem(LS_KEY); } catch {}
-                  }}
-                  className="text-xs text-blue-600 hover:text-blue-800"
-                >
-                  Change
-                </button>
+              <div className="space-y-2">
+                <div className="flex items-center gap-3">
+                  <span className="text-sm text-gray-900 font-medium">
+                    {selectedClub.clubName}{guestContactName ? ` · ${guestContactName}` : ''}
+                  </span>
+                  <button
+                    onClick={() => {
+                      setSelectedClub(null);
+                      setGuestContactName('');
+                      setContactNameInput('');
+                      try { localStorage.removeItem(LS_KEY); } catch {}
+                    }}
+                    className="text-xs text-blue-600 hover:text-blue-800"
+                  >
+                    Change
+                  </button>
+                </div>
+                {isGuest && !guestContactName && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={contactNameInput}
+                      onChange={(e) => setContactNameInput(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') saveName(); }}
+                      placeholder="Your name…"
+                      className="border border-gray-300 rounded-md px-3 py-1.5 text-sm max-w-xs"
+                    />
+                    <button
+                      onClick={saveName}
+                      disabled={!contactNameInput.trim()}
+                      className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-40"
+                    >
+                      Save
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
               <select
@@ -197,6 +238,8 @@ export default function RowlandPage() {
                 onChange={(e) => {
                   const club = clubs.find((c) => c.clubId === e.target.value) ?? null;
                   setSelectedClub(club);
+                  setGuestContactName('');
+                  setContactNameInput('');
                   try {
                     if (club) localStorage.setItem(LS_KEY, JSON.stringify(club));
                   } catch {}
