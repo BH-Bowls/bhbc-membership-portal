@@ -79,9 +79,7 @@ Burgess Hill Bowls Club`;
     return NextResponse.json({ error: 'No captain contacts found. Please contact the club directly.' }, { status: 500 });
   }
 
-  for (const email of captainEmails) {
-    await sendEmail(email, subject, text, html);
-  }
+  await sendEmail(captainEmails.join(', '), subject, text, html);
 
   console.log(`[message-captains] Message from ${senderName} sent to ${captainEmails.length} captain(s) regarding ${gameName}`);
   return NextResponse.json({ ok: true });

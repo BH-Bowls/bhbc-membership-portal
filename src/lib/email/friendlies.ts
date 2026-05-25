@@ -105,9 +105,11 @@ export async function sendWithdrawalEmail(
       subjectStatusLabel = 'Reserve Team';
     }
 
-    // Build email subject line with game details
-    const statusPart = subjectStatusLabel ? ` - ${subjectStatusLabel}` : '';
-    const subject = `Friendly Match Withdrawal${statusPart} - ${game.clubName} ${game.tabName}`;
+    // Build email subject line with game details.
+    // Including the player name ensures each withdrawal has a unique subject so
+    // Gmail does not thread multiple withdrawals from the same game into one conversation.
+    const statusPart = subjectStatusLabel ? ` (${subjectStatusLabel})` : '';
+    const subject = `${userFullName} has withdrawn${statusPart} - ${game.clubName} ${game.tabName}`;
 
     // Convert selection status code to human-readable text
     // Y = Playing (Regular team), R = Reserve, T = Reserve Team
@@ -235,13 +237,10 @@ Friendlies Management System
 </html>
     `.trim();
 
-    // Send email to all captain/admin email addresses
-    // Loop through each captain and send individual emails
-    for (const email of captainEmails) {
-      await sendEmail(email, subject, text, html);
-    }
+    // Send one email to all captains/admins combined so there is a single Sent item
+    // and captains can Reply All to coordinate.
+    await sendEmail(captainEmails.join(', '), subject, text, html);
 
-    // Log successful send
     console.log(`Withdrawal notification sent to ${captainEmails.length} captain(s)`);
   } catch (error) {
     // Log error but don't throw

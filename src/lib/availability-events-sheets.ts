@@ -1571,6 +1571,7 @@ export async function validateVisitorToken(
 
   const rows = response.data.values;
   if (!rows) {
+    console.warn('[validateVisitorToken] No rows returned from AvailabilityInvitees sheet');
     return null;
   }
 
@@ -1579,10 +1580,18 @@ export async function validateVisitorToken(
   const tokenExpiresAtCol = colMap['token_expires_at'];
 
   if (eventIdCol === undefined || tokenCol === undefined) {
+    console.error('[validateVisitorToken] Column map missing event_id or token column. colMap keys:', Object.keys(colMap));
     return null;
   }
 
   const now = new Date();
+  // Only reject tokens with a clearly valid expiry date that is genuinely in the past.
+  // Google Sheets may return dates as formatted strings (e.g. "30/05/2026") or, if the
+  // cell has number formatting, as a raw date-serial string (e.g. "46188" ≈ epoch time
+  // when parsed by JS). Treating an unparseable or epoch-era date as "expired" would
+  // silently break all visitor links, so we only expire when the parsed date is both
+  // valid and after the year 2000.
+  const MIN_EXPIRY_YEAR = 2000;
 
   // Search for a matching token
   for (let i = 0; i < rows.length; i++) {
@@ -1595,12 +1604,17 @@ export async function validateVisitorToken(
       continue;
     }
 
-    // Check token expiry
+    // Check token expiry (robustly)
     if (tokenExpiresAtCol !== undefined) {
       const expiresAt = row[tokenExpiresAtCol];
-      if (expiresAt && new Date(expiresAt) < now) {
-        // Token has expired
-        return null;
+      if (expiresAt) {
+        const expiresDate = new Date(expiresAt);
+        const isValidDate = !isNaN(expiresDate.getTime());
+        const isReasonablyRecent = isValidDate && expiresDate.getFullYear() >= MIN_EXPIRY_YEAR;
+        if (isReasonablyRecent && expiresDate < now) {
+          console.warn('[validateVisitorToken] Token expired. expiresAt raw value:', expiresAt);
+          return null;
+        }
       }
     }
 
@@ -1608,6 +1622,14 @@ export async function validateVisitorToken(
     return parseInviteeRow(row, colMap);
   }
 
+  // No matching row found — log diagnostic info to help trace the cause
+  console.warn(
+    '[validateVisitorToken] No matching row for eventId=%s token=%s…  Rows checked: %d. Event IDs in sheet: %s',
+    eventId,
+    token.substring(0, 8),
+    rows.length,
+    rows.map((r) => r[eventIdCol] ?? '(empty)').join(', ')
+  );
   return null;
 }
 

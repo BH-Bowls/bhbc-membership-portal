@@ -1,6 +1,5 @@
 // app/availability/guest/[eventId]/page.tsx
 // Visitor response page — no auth required. Token from URL query param.
-// Allows visitors (non-members) to respond to availability polls via a unique link.
 
 'use client';
 
@@ -16,7 +15,6 @@ import type {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-// Format ISO datetime date line for slot header
 function fmtSlotDate(iso: string): string {
   if (!iso) return '';
   const d = new Date(iso);
@@ -24,7 +22,6 @@ function fmtSlotDate(iso: string): string {
   return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
-// Format ISO datetime time line for slot header (returns empty if no meaningful time)
 function fmtSlotTime(iso: string): string {
   if (!iso) return '';
   const d = new Date(iso);
@@ -36,7 +33,6 @@ function fmtSlotTime(iso: string): string {
   return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
 }
 
-// Format ISO timestamp as display date
 function fmtDate(iso: string): string {
   if (!iso) return '';
   const d = new Date(iso);
@@ -44,25 +40,29 @@ function fmtDate(iso: string): string {
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-// Badge variant for event type
 function typeBadgeVariant(type: string): 'primary' | 'secondary' | 'warning' {
   if (type === 'fixture') return 'warning';
   if (type === 'signup') return 'secondary';
   return 'primary';
 }
 
-// Capitalise first letter
 function cap(s: string): string {
   if (!s) return '';
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-// CSS classes for read-only response badges
+function getSlotLabel(slot: AvailabilitySlot): string {
+  if (slot.slotLabel) return slot.slotLabel;
+  const date = fmtSlotDate(slot.slotDatetime);
+  const time = fmtSlotTime(slot.slotDatetime);
+  return time ? `${date} · ${time}` : date;
+}
+
 function responseBadgeClass(response: AvailabilityResponse | undefined): string {
   if (response === 'yes') return 'bg-green-100 text-green-800 px-2 py-0.5 rounded text-xs font-medium';
   if (response === 'maybe') return 'bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded text-xs font-medium';
   if (response === 'no') return 'bg-red-100 text-red-800 px-2 py-0.5 rounded text-xs font-medium';
-  return 'bg-gray-100 text-gray-700 px-2 py-0.5 rounded text-xs';
+  return 'bg-gray-100 text-gray-500 px-2 py-0.5 rounded text-xs';
 }
 
 function responseLabel(response: AvailabilityResponse | undefined): string {
@@ -72,8 +72,28 @@ function responseLabel(response: AvailabilityResponse | undefined): string {
   return '—';
 }
 
+function slotCounts(
+  slotId: string,
+  allResponses: AvailabilityParticipantResponses[],
+  myResponses: Record<string, AvailabilityResponse>
+): { yes: number; maybe: number; no: number } {
+  let yes = 0;
+  let maybe = 0;
+  let no = 0;
+  for (let i = 0; i < allResponses.length; i++) {
+    const r = allResponses[i].responses[slotId];
+    if (r === 'yes') yes = yes + 1;
+    else if (r === 'maybe') maybe = maybe + 1;
+    else if (r === 'no') no = no + 1;
+  }
+  const myR = myResponses[slotId];
+  if (myR === 'yes') yes = yes + 1;
+  else if (myR === 'maybe') maybe = maybe + 1;
+  else if (myR === 'no') no = no + 1;
+  return { yes, maybe, no };
+}
+
 // ── GuestPageInner ─────────────────────────────────────────────────────────────
-// Inner component that reads useSearchParams — must be inside Suspense boundary
 
 interface GuestPageInnerProps {
   eventId: string;
@@ -81,68 +101,49 @@ interface GuestPageInnerProps {
 
 function GuestPageInner({ eventId }: GuestPageInnerProps) {
   const searchParams = useSearchParams();
-  // Read the visitor token from the URL query string
   const token = searchParams.get('token') || '';
 
-  // Event data returned by the guest endpoint
   const [event, setEvent] = useState<AvailabilityEvent | null>(null);
   const [slots, setSlots] = useState<AvailabilitySlot[]>([]);
   const [visitorName, setVisitorName] = useState('');
-  const [myResponses, setMyResponses] = useState<Record<string, AvailabilityResponse>>({});
   const [allResponses, setAllResponses] = useState<AvailabilityParticipantResponses[]>([]);
   const [concludedSlot, setConcludedSlot] = useState<AvailabilitySlot | null>(null);
 
-  // Loading and error state
   const [loading, setLoading] = useState(true);
   const [tokenInvalid, setTokenInvalid] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
-  // Visitor's pending response selections
   const [pendingResponses, setPendingResponses] = useState<Record<string, AvailabilityResponse>>({});
 
-  // Save state
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Honeypot field value — should always be empty for real visitors
   const [honeypot, setHoneypot] = useState('');
 
-  // Load event data when eventId and token are available
+  // Slot ID currently shown in the responses modal (null = closed)
+  const [modalSlotId, setModalSlotId] = useState<string | null>(null);
+
   useEffect(() => {
     if (!eventId) return;
-    // If no token, show an error immediately without fetching
-    if (!token) {
-      setLoading(false);
-      return;
-    }
+    if (!token) { setLoading(false); return; }
     fetchGuestData(eventId, token);
   }, [eventId, token]);
 
-  // Fetch event data using the visitor token
   async function fetchGuestData(eid: string, tok: string) {
     setLoading(true);
     setFetchError(null);
     setTokenInvalid(false);
     try {
-      const res = await fetch(
-        `/api/availability/guest/${eid}?token=${encodeURIComponent(tok)}`
-      );
-      if (res.status === 401 || res.status === 404) {
-        setTokenInvalid(true);
-        return;
-      }
-      if (!res.ok) {
-        throw new Error('Failed to load event');
-      }
+      const res = await fetch(`/api/availability/guest/${eid}?token=${encodeURIComponent(tok)}`);
+      if (res.status === 401 || res.status === 404) { setTokenInvalid(true); return; }
+      if (!res.ok) throw new Error('Failed to load event');
       const data = await res.json();
       setEvent(data.event);
       setSlots(data.slots);
       setVisitorName(data.invitee ? data.invitee.visitorName : '');
-      setMyResponses(data.myResponses || {});
       setAllResponses(data.allResponses || []);
       setConcludedSlot(data.concludedSlot || null);
-      // Seed pending responses from existing ones
       setPendingResponses(data.myResponses || {});
     } catch (err) {
       setFetchError('Failed to load event. Please try again or check the link from your email.');
@@ -152,7 +153,6 @@ function GuestPageInner({ eventId }: GuestPageInnerProps) {
     }
   }
 
-  // Toggle the visitor's response for a slot
   function setResponse(slotId: string, response: AvailabilityResponse) {
     setPendingResponses(prev => {
       const next = { ...prev };
@@ -161,7 +161,6 @@ function GuestPageInner({ eventId }: GuestPageInnerProps) {
     });
   }
 
-  // Whether the event is currently accepting responses
   function isAcceptingResponses(): boolean {
     if (!event) return false;
     if (event.status !== 'open') return false;
@@ -169,49 +168,26 @@ function GuestPageInner({ eventId }: GuestPageInnerProps) {
     return true;
   }
 
-  // Save the visitor's responses
   async function handleSave() {
     if (!eventId || !token) return;
-
-    // Honeypot check: if the hidden field is filled, do nothing (bot detected)
-    // Return silently so bots don't know they were rejected
-    if (honeypot) {
-      setSaveSuccess(true);
-      return;
-    }
-
+    if (honeypot) { setSaveSuccess(true); return; }
     setSaving(true);
     setSaveError(null);
     setSaveSuccess(false);
-
     try {
-      // Build responses array
       const responsesPayload = [];
       const slotIds = Object.keys(pendingResponses);
       for (let i = 0; i < slotIds.length; i++) {
-        responsesPayload.push({
-          slotId: slotIds[i],
-          response: pendingResponses[slotIds[i]],
-        });
+        responsesPayload.push({ slotId: slotIds[i], response: pendingResponses[slotIds[i]] });
       }
-
       const res = await fetch(`/api/availability/guest/${eventId}/respond`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token,
-          responses: responsesPayload,
-        }),
+        body: JSON.stringify({ token, responses: responsesPayload }),
       });
       const data = await res.json();
-
-      if (!res.ok) {
-        setSaveError(data.error || 'Failed to save responses.');
-        return;
-      }
-
+      if (!res.ok) { setSaveError(data.error || 'Failed to save responses.'); return; }
       setSaveSuccess(true);
-      // Re-fetch to get fresh response data
       await fetchGuestData(eventId, token);
     } catch (err) {
       console.error('[GuestPage] handleSave error:', err);
@@ -223,7 +199,6 @@ function GuestPageInner({ eventId }: GuestPageInnerProps) {
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
-  // No token in the URL
   if (!token) {
     return (
       <div className={getAlertClasses('danger') + ' mt-6 mx-auto max-w-md'}>
@@ -232,7 +207,6 @@ function GuestPageInner({ eventId }: GuestPageInnerProps) {
     );
   }
 
-  // Token was rejected or event not found
   if (tokenInvalid) {
     return (
       <div className={getAlertClasses('warning') + ' mt-6 mx-auto max-w-md'}>
@@ -241,7 +215,6 @@ function GuestPageInner({ eventId }: GuestPageInnerProps) {
     );
   }
 
-  // General fetch error
   if (fetchError) {
     return (
       <div className={getAlertClasses('danger') + ' mt-6 mx-auto max-w-md'}>
@@ -250,7 +223,6 @@ function GuestPageInner({ eventId }: GuestPageInnerProps) {
     );
   }
 
-  // Loading spinner
   if (loading) {
     return (
       <div className="text-center py-16">
@@ -264,16 +236,18 @@ function GuestPageInner({ eventId }: GuestPageInnerProps) {
 
   const isExpired = new Date(event.expiresAt) <= new Date();
   const readOnly = !isAcceptingResponses();
+  const modalSlot = modalSlotId ? (slots.find(s => s.slotId === modalSlotId) ?? null) : null;
+  const myDisplayName = visitorName || 'You';
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8 text-gray-900">
+    <div className="max-w-2xl mx-auto px-4 py-8 text-gray-900">
 
       {/* Visitor greeting */}
       {visitorName && (
         <p className="text-lg text-gray-700 mb-4">Hello, <strong>{visitorName}</strong></p>
       )}
 
-      {/* Event title and badges */}
+      {/* Event title and type badge */}
       <div className="flex flex-wrap items-center gap-2 mb-2">
         <h1 className="text-2xl font-bold text-gray-900">{event.title}</h1>
         <span className={getBadgeClasses(typeBadgeVariant(event.type))}>
@@ -281,12 +255,10 @@ function GuestPageInner({ eventId }: GuestPageInnerProps) {
         </span>
       </div>
 
-      {/* Description */}
       {event.description && (
         <p className="text-sm text-gray-700 mb-2">{event.description}</p>
       )}
 
-      {/* Expiry date */}
       <p className="text-xs text-gray-700 mb-4">Expires {fmtDate(event.expiresAt)}</p>
 
       {/* Concluded banner */}
@@ -309,198 +281,117 @@ function GuestPageInner({ eventId }: GuestPageInnerProps) {
         </div>
       )}
 
-      {/* Save success message */}
       {saveSuccess && (
         <div className={getAlertClasses('success') + ' mb-4'}>
           Your responses have been saved. You can update them any time using this link.
         </div>
       )}
 
-      {/* Save error */}
       {saveError && (
         <div className={getAlertClasses('danger') + ' mb-4'}>
           {saveError}
         </div>
       )}
 
-      {/* ── Response grid ───────────────────────────────────────── */}
+      {/* ── Slot poll list ────────────────────────────────────── */}
       {slots.length === 0 ? (
         <div className={getAlertClasses('info')}>
           No date slots have been added to this event yet.
         </div>
       ) : (
-        <div className="overflow-x-auto mb-4">
-          <table className="min-w-full border-separate border-spacing-0">
-            <thead>
-              <tr>
-                <th className="sticky left-0 bg-gray-50 px-3 py-2 text-left text-xs font-medium text-gray-700 border-b border-gray-200 min-w-[120px]">
-                  Name
-                </th>
-                {slots.map((slot) => (
-                  <th
-                    key={slot.slotId}
-                    className={
-                      'px-3 py-2 text-center text-xs font-medium text-gray-700 border-b border-gray-200 min-w-[100px] ' +
-                      (event.status === 'concluded' &&
-                        concludedSlot &&
-                        concludedSlot.slotId === slot.slotId
-                        ? 'bg-green-50'
-                        : 'bg-gray-50')
-                    }
-                  >
-                    {slot.slotLabel ? (
-                      <span>{slot.slotLabel}</span>
-                    ) : (
-                      <span>
-                        <span className="block">{fmtSlotDate(slot.slotDatetime)}</span>
-                        {fmtSlotTime(slot.slotDatetime) && (
-                          <span className="block text-gray-700 font-normal">
-                            {fmtSlotTime(slot.slotDatetime)}
-                          </span>
-                        )}
-                      </span>
-                    )}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="bg-white text-gray-900">
-              {/* Visitor's own row — editable if accepting responses */}
-              <tr className="bg-blue-50">
-                <td className="sticky left-0 bg-blue-50 px-3 py-2 text-sm font-medium text-gray-900 border-b border-gray-100">
-                  {visitorName || 'You'}
-                </td>
-                {slots.map((slot) => (
-                  <td
-                    key={slot.slotId}
-                    className={
-                      'px-2 py-2 text-center border-b border-gray-100 ' +
-                      (event.status === 'concluded' &&
-                        concludedSlot &&
-                        concludedSlot.slotId === slot.slotId
-                        ? 'bg-green-50'
-                        : '')
-                    }
-                  >
-                    {!readOnly ? (
-                      // Editable three-button row
-                      <div className="flex gap-1 justify-center">
-                        {/* Yes */}
-                        <button
-                          onClick={() => setResponse(slot.slotId, 'yes')}
-                          className={
-                            'px-2 py-1 text-xs rounded font-medium border transition-colors ' +
-                            (pendingResponses[slot.slotId] === 'yes'
-                              ? 'bg-green-500 text-white border-green-500'
-                              : 'bg-white text-gray-700 border-gray-300 hover:bg-green-50')
-                          }
-                          title="Yes"
-                        >
-                          ✓
-                        </button>
-                        {/* Maybe */}
-                        <button
-                          onClick={() => setResponse(slot.slotId, 'maybe')}
-                          className={
-                            'px-2 py-1 text-xs rounded font-medium border transition-colors ' +
-                            (pendingResponses[slot.slotId] === 'maybe'
-                              ? 'bg-yellow-400 text-white border-yellow-400'
-                              : 'bg-white text-gray-700 border-gray-300 hover:bg-yellow-50')
-                          }
-                          title="Maybe"
-                        >
-                          ?
-                        </button>
-                        {/* No */}
-                        <button
-                          onClick={() => setResponse(slot.slotId, 'no')}
-                          className={
-                            'px-2 py-1 text-xs rounded font-medium border transition-colors ' +
-                            (pendingResponses[slot.slotId] === 'no'
-                              ? 'bg-red-500 text-white border-red-500'
-                              : 'bg-white text-gray-700 border-gray-300 hover:bg-red-50')
-                          }
-                          title="No"
-                        >
-                          ✗
-                        </button>
-                      </div>
-                    ) : (
-                      // Read-only badge
-                      <span className={responseBadgeClass(pendingResponses[slot.slotId] as AvailabilityResponse | undefined)}>
-                        {responseLabel(pendingResponses[slot.slotId] as AvailabilityResponse | undefined)}
-                      </span>
-                    )}
-                  </td>
-                ))}
-              </tr>
+        <div className="space-y-3 mb-6">
+          {slots.map((slot) => {
+            const isChosen =
+              event.status === 'concluded' &&
+              concludedSlot != null &&
+              concludedSlot.slotId === slot.slotId;
+            const counts = slotCounts(slot.slotId, allResponses, pendingResponses);
+            const totalResponded = counts.yes + counts.maybe + counts.no;
+            const myR = pendingResponses[slot.slotId] as AvailabilityResponse | undefined;
 
-              {/* Other respondents — shown only if show_responses_to_respondents is true */}
-              {allResponses.map((participant) => (
-                <tr key={participant.displayName} className="hover:bg-gray-50">
-                  <td className="sticky left-0 bg-white px-3 py-2 text-sm text-gray-900 border-b border-gray-100">
-                    {participant.displayName}
-                  </td>
-                  {slots.map((slot) => (
-                    <td
-                      key={slot.slotId}
+            return (
+              <div
+                key={slot.slotId}
+                className={
+                  'bg-white rounded-lg border p-4 ' +
+                  (isChosen ? 'border-green-400' : 'border-gray-200')
+                }
+              >
+                {/* Slot label */}
+                <div className="flex items-center justify-between mb-3">
+                  <span className="font-medium text-gray-900">{getSlotLabel(slot)}</span>
+                  {isChosen && (
+                    <span className={getBadgeClasses('success', 'sm')}>Chosen</span>
+                  )}
+                </div>
+
+                {/* Response buttons (if open) or read-only badge */}
+                {!readOnly ? (
+                  <div className="flex gap-2 mb-3">
+                    <button
+                      onClick={() => setResponse(slot.slotId, 'yes')}
                       className={
-                        'px-2 py-2 text-center border-b border-gray-100 ' +
-                        (event.status === 'concluded' &&
-                          concludedSlot &&
-                          concludedSlot.slotId === slot.slotId
-                          ? 'bg-green-50'
-                          : '')
+                        'flex-1 py-2 text-sm rounded-md font-medium border transition-colors ' +
+                        (myR === 'yes'
+                          ? 'bg-green-500 text-white border-green-500'
+                          : 'bg-white text-gray-700 border-gray-300 hover:bg-green-50')
                       }
                     >
-                      <span className={responseBadgeClass(participant.responses[slot.slotId])}>
-                        {responseLabel(participant.responses[slot.slotId])}
-                      </span>
-                    </td>
-                  ))}
-                </tr>
-              ))}
+                      ✓ Yes
+                    </button>
+                    <button
+                      onClick={() => setResponse(slot.slotId, 'maybe')}
+                      className={
+                        'flex-1 py-2 text-sm rounded-md font-medium border transition-colors ' +
+                        (myR === 'maybe'
+                          ? 'bg-yellow-400 text-white border-yellow-400'
+                          : 'bg-white text-gray-700 border-gray-300 hover:bg-yellow-50')
+                      }
+                    >
+                      ? Maybe
+                    </button>
+                    <button
+                      onClick={() => setResponse(slot.slotId, 'no')}
+                      className={
+                        'flex-1 py-2 text-sm rounded-md font-medium border transition-colors ' +
+                        (myR === 'no'
+                          ? 'bg-red-500 text-white border-red-500'
+                          : 'bg-white text-gray-700 border-gray-300 hover:bg-red-50')
+                      }
+                    >
+                      ✗ No
+                    </button>
+                  </div>
+                ) : myR ? (
+                  <div className="mb-3 text-sm text-gray-700">
+                    Your response:{' '}
+                    <span className={responseBadgeClass(myR)}>{responseLabel(myR)}</span>
+                  </div>
+                ) : null}
 
-              {/* Summary row */}
-              <tr className="bg-gray-50">
-                <td className="sticky left-0 bg-gray-50 px-3 py-2 text-xs font-medium text-gray-700 border-t border-gray-200">
-                  Summary
-                </td>
-                {slots.map((slot) => {
-                  // Count Yes/Maybe/No across all respondents + visitor's pending response
-                  let yes = 0;
-                  let maybe = 0;
-                  let no = 0;
-                  for (let i = 0; i < allResponses.length; i++) {
-                    const r = allResponses[i].responses[slot.slotId];
-                    if (r === 'yes') yes = yes + 1;
-                    else if (r === 'maybe') maybe = maybe + 1;
-                    else if (r === 'no') no = no + 1;
-                  }
-                  const myR = pendingResponses[slot.slotId];
-                  if (myR === 'yes') yes = yes + 1;
-                  else if (myR === 'maybe') maybe = maybe + 1;
-                  else if (myR === 'no') no = no + 1;
-                  return (
-                    <td key={slot.slotId} className="px-2 py-2 text-center border-t border-gray-200">
-                      <div className="flex flex-col gap-0.5 items-center text-xs">
-                        {yes > 0 && <span className="text-green-700 font-medium">{yes}✓</span>}
-                        {maybe > 0 && <span className="text-yellow-700 font-medium">{maybe}?</span>}
-                        {no > 0 && <span className="text-red-700 font-medium">{no}✗</span>}
-                        {yes === 0 && maybe === 0 && no === 0 && (
-                          <span className="text-gray-500">—</span>
-                        )}
-                      </div>
-                    </td>
-                  );
-                })}
-              </tr>
-            </tbody>
-          </table>
+                {/* Summary counts + view responses link */}
+                <div className="flex items-center justify-between text-sm">
+                  <div className="flex gap-4">
+                    <span className="text-green-700 font-medium">✓ {counts.yes}</span>
+                    <span className="text-yellow-700 font-medium">? {counts.maybe}</span>
+                    <span className="text-red-700 font-medium">✗ {counts.no}</span>
+                  </div>
+                  {totalResponded > 0 && (
+                    <button
+                      onClick={() => setModalSlotId(slot.slotId)}
+                      className="text-blue-600 hover:text-blue-800 hover:underline"
+                    >
+                      View responses
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
-      {/* Save button — only shown when accepting responses */}
+      {/* Save button */}
       {!readOnly && (
         <button
           onClick={handleSave}
@@ -522,20 +413,59 @@ function GuestPageInner({ eventId }: GuestPageInnerProps) {
         autoComplete="off"
         aria-hidden="true"
       />
+
+      {/* ── Responses modal ───────────────────────────────────────── */}
+      {modalSlotId && modalSlot && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-4"
+          onClick={() => setModalSlotId(null)}
+        >
+          <div
+            className="bg-white rounded-t-xl sm:rounded-xl shadow-xl w-full max-w-sm max-h-[80vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+              <h3 className="font-semibold text-gray-900">{getSlotLabel(modalSlot)}</h3>
+              <button
+                onClick={() => setModalSlotId(null)}
+                className="text-gray-400 hover:text-gray-600 text-2xl leading-none px-1"
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <div className="overflow-y-auto flex-1 divide-y divide-gray-100">
+              {/* Visitor's own row */}
+              <div className="flex items-center justify-between px-4 py-3">
+                <span className="text-sm font-medium text-gray-900">{myDisplayName}</span>
+                <span className={responseBadgeClass(pendingResponses[modalSlotId] as AvailabilityResponse | undefined)}>
+                  {responseLabel(pendingResponses[modalSlotId] as AvailabilityResponse | undefined)}
+                </span>
+              </div>
+              {/* Other respondents */}
+              {allResponses.map((p) => (
+                <div key={p.displayName} className="flex items-center justify-between px-4 py-3">
+                  <span className="text-sm text-gray-900">{p.displayName}</span>
+                  <span className={responseBadgeClass(p.responses[modalSlotId])}>
+                    {responseLabel(p.responses[modalSlotId])}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 // ── GuestPageWrapper ───────────────────────────────────────────────────────────
-// Resolves params and wraps GuestPageInner in a Suspense boundary (required for
-// useSearchParams in Next.js App Router)
 
 export default function GuestEventPage({
   params,
 }: {
   params: Promise<{ eventId: string }>;
 }) {
-  // Resolve eventId from async params
   const [eventId, setEventId] = React.useState('');
   React.useEffect(() => {
     params.then((p) => setEventId(p.eventId));
@@ -543,9 +473,8 @@ export default function GuestEventPage({
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Branded header — no nav (public page, no session) */}
       <header className="bg-white border-b border-gray-200">
-        <div className="container mx-auto px-4 py-4 max-w-4xl">
+        <div className="container mx-auto px-4 py-4 max-w-2xl">
           <div className="flex items-center gap-3">
             <div>
               <p className="text-lg font-bold text-gray-900">Burgess Hill Bowls Club</p>
@@ -555,7 +484,6 @@ export default function GuestEventPage({
         </div>
       </header>
 
-      {/* Main content — Suspense wraps useSearchParams */}
       <Suspense fallback={
         <div className="text-center py-16">
           <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>

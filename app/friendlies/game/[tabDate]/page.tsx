@@ -5,7 +5,7 @@
 
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
@@ -155,6 +155,10 @@ export default function GameDetailsPage() {
     type: 'success' | 'error';
     text: string;
   } | null>(null);
+
+  // Ref guards: prevent double-submission on rapid double-click/tap
+  const isWithdrawingRef = useRef(false);
+  const isMessageSendingRef = useRef(false);
 
   // State: Message Captains dialog
   const [messageCaptainsOpen, setMessageCaptainsOpen] = useState(false);
@@ -314,6 +318,8 @@ export default function GameDetailsPage() {
    * Perform the actual withdraw operation
    */
   async function performWithdraw() {
+    if (isWithdrawingRef.current) return;
+    isWithdrawingRef.current = true;
     // Show action loading indicator
     setActionLoading(true);
     setFlashMessage(null);
@@ -349,8 +355,8 @@ export default function GameDetailsPage() {
       console.error('Error withdrawing:', error);
       setFlashMessage({ type: 'error', text: 'Failed to withdraw' });
     } finally {
-      // Hide action loading indicator
       setActionLoading(false);
+      isWithdrawingRef.current = false;
     }
   }
 
@@ -362,6 +368,8 @@ export default function GameDetailsPage() {
       setMessageError('Please enter a message.');
       return;
     }
+    if (isMessageSendingRef.current) return;
+    isMessageSendingRef.current = true;
     setMessageSending(true);
     setMessageError(null);
     try {
@@ -386,6 +394,7 @@ export default function GameDetailsPage() {
       setMessageError('An error occurred. Please try again.');
     } finally {
       setMessageSending(false);
+      isMessageSendingRef.current = false;
     }
   }
 

@@ -289,63 +289,59 @@ export default function AvailabilityHubPage() {
             </section>
 
             {/* ── Public Events section ─────────────────────────────────── */}
-            <section>
-              <h2 className="text-lg font-semibold text-gray-900 mb-3">Public Events</h2>
+            {publicEvents.length > 0 && (
+              <section>
+                <h2 className="text-lg font-semibold text-gray-900 mb-3">Public Events</h2>
 
-              {/* Sub-section: awaiting response */}
-              <div className="mb-4">
-                <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide mb-2">
-                  Awaiting your response
-                </h3>
-                {awaitingResponse.length === 0 ? (
-                  <p className="text-sm text-gray-700 py-2">No open events awaiting your response.</p>
-                ) : (
-                  <div className="space-y-3">
-                    {awaitingResponse.map((ev) => (
-                      <EventCard key={ev.eventId} event={ev} />
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Sub-section: already responded */}
-              <div className="mb-4">
-                <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide mb-2">
-                  You&apos;ve responded
-                </h3>
-                {responded.length === 0 ? (
-                  <p className="text-sm text-gray-700 py-2">No events where you have responded.</p>
-                ) : (
-                  <div className="space-y-3">
-                    {responded.map((ev) => (
-                      <EventCard key={ev.eventId} event={ev} />
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Sub-section: concluded or closed (collapsible) */}
-              <div>
-                <button
-                  onClick={() => setShowConcluded(!showConcluded)}
-                  className="flex items-center gap-2 text-sm font-medium text-gray-700 uppercase tracking-wide mb-2 hover:text-gray-900"
-                >
-                  <span>Concluded or Closed ({concludedOrClosed.length})</span>
-                  <span className="text-gray-500">{showConcluded ? '▲' : '▼'}</span>
-                </button>
-                {showConcluded && (
-                  concludedOrClosed.length === 0 ? (
-                    <p className="text-sm text-gray-700 py-2">No concluded or closed events.</p>
-                  ) : (
+                {/* Sub-section: awaiting response */}
+                {awaitingResponse.length > 0 && (
+                  <div className="mb-4">
+                    <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide mb-2">
+                      Awaiting your response
+                    </h3>
                     <div className="space-y-3">
-                      {concludedOrClosed.map((ev) => (
+                      {awaitingResponse.map((ev) => (
                         <EventCard key={ev.eventId} event={ev} />
                       ))}
                     </div>
-                  )
+                  </div>
                 )}
-              </div>
-            </section>
+
+                {/* Sub-section: already responded */}
+                {responded.length > 0 && (
+                  <div className="mb-4">
+                    <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide mb-2">
+                      You&apos;ve responded
+                    </h3>
+                    <div className="space-y-3">
+                      {responded.map((ev) => (
+                        <EventCard key={ev.eventId} event={ev} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Sub-section: concluded or closed (collapsible) */}
+                {concludedOrClosed.length > 0 && (
+                  <div>
+                    <button
+                      onClick={() => setShowConcluded(!showConcluded)}
+                      className="flex items-center gap-2 text-sm font-medium text-gray-700 uppercase tracking-wide mb-2 hover:text-gray-900"
+                    >
+                      <span>Concluded or Closed ({concludedOrClosed.length})</span>
+                      <span className="text-gray-500">{showConcluded ? '▲' : '▼'}</span>
+                    </button>
+                    {showConcluded && (
+                      <div className="space-y-3">
+                        {concludedOrClosed.map((ev) => (
+                          <EventCard key={ev.eventId} event={ev} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </section>
+            )}
           </>
         )}
       </div>

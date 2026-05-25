@@ -48,6 +48,10 @@ interface GameData {
 
   // List of players with stats and selection info
   players: GameSheetPlayer[];
+
+  // Players who have 'E' in the Players sheet but are absent from the game sheet
+  // (race-condition entries — captain can repair these with one click)
+  orphanedEntries?: { userName: string; fullName: string }[];
 }
 
 // ============================================================================
@@ -209,6 +213,9 @@ export default function TeamSelectionPage() {
 
   // State: Instructions / Publish dialog (shared GameInstructionsDialog)
   const [instructionsDialogMode, setInstructionsDialogMode] = useState<'instructions' | 'publish' | null>(null);
+
+  // State: whether the orphan-repair call is in progress
+  const [fixingOrphans, setFixingOrphans] = useState(false);
 
   // Ref to track if initial setup has been done for this tabDate
   const setupDoneRef = useRef<string | null>(null);
@@ -470,6 +477,37 @@ export default function TeamSelectionPage() {
       }
     } catch (error) {
       console.error('Error refreshing game data:', error);
+    }
+  }
+
+  /**
+   * Repair orphaned entries — adds players who have 'E' in Players sheet but are
+   * missing from the game sheet (race-condition fix). Does not alter their Players sheet status.
+   */
+  async function fixOrphanedEntries() {
+    if (!gameData?.orphanedEntries?.length) return;
+    setFixingOrphans(true);
+    try {
+      const res = await fetch('/api/friendlies/manage/repair-entries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tab_name: gameData.game.tabName,
+          user_names: gameData.orphanedEntries.map(e => e.userName),
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        alert(data.error || 'Failed to repair entries');
+        return;
+      }
+      // Refresh game data so orphanedEntries clears and new players appear
+      await refreshGameData();
+    } catch (err) {
+      console.error('Error fixing orphaned entries:', err);
+      alert('Failed to repair entries. Please try again.');
+    } finally {
+      setFixingOrphans(false);
     }
   }
 
@@ -933,6 +971,32 @@ export default function TeamSelectionPage() {
             </div>
           )}
         </div>
+
+        {/* Orphaned-entry warning — shown when a race condition left a player with 'E'
+            in the Players sheet but absent from the game sheet */}
+        {(gameData?.orphanedEntries?.length ?? 0) > 0 && (
+          <div className="mb-4 bg-amber-50 border border-amber-300 rounded-lg p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="flex-1">
+              <p className="font-semibold text-amber-900">
+                ⚠️ Entry mismatch detected
+              </p>
+              <p className="text-sm text-amber-800 mt-1">
+                {gameData!.orphanedEntries!.length === 1
+                  ? `${gameData!.orphanedEntries![0].fullName} entered the game but is missing from the selection sheet.`
+                  : `${gameData!.orphanedEntries!.length} players entered the game but are missing from the selection sheet: ${gameData!.orphanedEntries!.map(e => e.fullName).join(', ')}.`
+                }
+                {' '}This is usually caused by two players entering at exactly the same moment.
+              </p>
+            </div>
+            <button
+              onClick={fixOrphanedEntries}
+              disabled={fixingOrphans}
+              className="shrink-0 bg-amber-600 text-white px-4 py-2 rounded hover:bg-amber-700 disabled:opacity-50 transition-colors text-sm font-medium"
+            >
+              {fixingOrphans ? 'Fixing…' : 'Add to Sheet'}
+            </button>
+          </div>
+        )}
 
         {/* Action buttons panel */}
         <div className="bg-white rounded-lg shadow p-4 mb-6 flex flex-wrap gap-3 items-center">

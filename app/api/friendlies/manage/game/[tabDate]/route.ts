@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, getGameSheet } from '@/lib/friendlies-sheets';
+import { getGames, getGameSheet, getEnteredPlayers } from '@/lib/friendlies-sheets';
 import { hasRole } from '@/lib/role-utils';
 
 export async function GET(
@@ -53,6 +53,20 @@ export async function GET(
     // Get all players from game sheet
     const players = await getGameSheet(game.tabName);
 
+    // Cross-check: players with 'E' in Players sheet who are missing from the game sheet.
+    // This detects race-condition entries where updatePlayerEntry succeeded but
+    // addPlayerToGameSheet was overwritten by a concurrent entry at the same instant.
+    let orphanedEntries: { userName: string; fullName: string }[] = [];
+    try {
+      const playersSheetEntries = await getEnteredPlayers(game.tabName);
+      const gameSheetNames = new Set(players.map(p => p.name.toLowerCase()));
+      orphanedEntries = playersSheetEntries
+        .filter(p => p.status === 'E' && !gameSheetNames.has(p.userName.toLowerCase()))
+        .map(p => ({ userName: p.userName, fullName: p.fullName }));
+    } catch {
+      // Non-critical — proceed without orphan detection if this fails
+    }
+
     // Mark captain from Games sheet (game.captain = userName).
     // If the Games sheet has no captain yet, fall back to game sheet captain field (legacy data).
     if (game.captain) {
@@ -89,6 +103,7 @@ export async function GET(
     });
 
     return NextResponse.json({
+      orphanedEntries,
       game: {
         tabDate: game.tabDate,
         date: game.date,
