@@ -170,8 +170,7 @@ function parseCompetitionRow(
     r2PlayBy: normalizeDate(get('r2_play_by')),
     qfPlayBy: normalizeDate(get('qf_play_by')),
     sfPlayBy: normalizeDate(get('sf_play_by')),
-    triplesFixedDay: getBool('triples_fixed_day'),
-    triplesFixedDate: normalizeDate(get('triples_fixed_date')),
+    compFixedDates: getBool('comp_fixed_dates'),
     drawSideCount: get('draw_side_count') ? parseInt(get('draw_side_count')!, 10) : null,
     compStartDate: normalizeDate(get('comp_start')),
     compDescription: get('comp_description'),
@@ -289,8 +288,7 @@ export async function updateCompetition(comp: Competition): Promise<void> {
   setCol('r2_play_by', comp.r2PlayBy || '');
   setCol('qf_play_by', comp.qfPlayBy || '');
   setCol('sf_play_by', comp.sfPlayBy || '');
-  setCol('triples_fixed_day', comp.triplesFixedDay ? 'Y' : '');
-  setCol('triples_fixed_date', comp.triplesFixedDate || '');
+  setCol('comp_fixed_dates', comp.compFixedDates ? 'Y' : '');
   setCol('draw_side_count', comp.drawSideCount != null ? String(comp.drawSideCount) : '');
   setCol('comp_start', comp.compStartDate || '');
   setCol('comp_description', comp.compDescription || '');
@@ -498,33 +496,61 @@ export async function saveCompetitionSetup(
   const firstCount = matches.length;
   const structure = buildBracketStructure(firstRound, firstCount);
 
-  // Fetch competition so we can fill play-by dates on placeholder matches
-  const comp = await getCompetitionById(compId);
+  // Fetch competition and existing matches in parallel.
+  // Existing matches are used to preserve non-draw fields (played dates, scores, status,
+  // marker) on first-round matches, and custom play-by dates on subsequent rounds.
+  // Without this, re-saving the draw to fix a player name would blank played dates etc.
+  const [comp, existingMatches] = await Promise.all([
+    getCompetitionById(compId),
+    getCompetitionMatches(compId),
+  ]);
+  const existingByMatchId = new Map(existingMatches.map((m) => [m.matchId, m]));
 
-  // Generate empty placeholder matches for every round after the first
+  // Merge incoming first-round matches with existing non-draw data so that
+  // played dates, scores, status, and marker survive a draw re-save.
+  const mergedFirstRound: CompMatch[] = matches.map((m) => {
+    const ex = existingByMatchId.get(m.matchId);
+    if (!ex) return m;
+    return {
+      ...m,
+      playedDate: ex.playedDate ?? m.playedDate,
+      score1: ex.score1 ?? m.score1,
+      score2: ex.score2 ?? m.score2,
+      winnerSide: ex.winnerSide ?? m.winnerSide,
+      // Preserve a non-Pending status (Complete, Bye, Walkover) from existing data
+      status: (ex.status && ex.status !== 'Pending') ? ex.status : m.status,
+      marker: ex.marker || m.marker,
+    };
+  });
+
+  // Generate empty placeholder matches for every round after the first,
+  // preserving any custom per-match play-by dates already set on those rounds.
   const subsequentMatches: CompMatch[] = [];
   for (const { round, count } of structure.slice(1)) {
-    const playByDate = comp ? playByDateForRound(comp, round) : '';
+    const defaultPlayByDate = comp ? playByDateForRound(comp, round) : '';
     for (let pos = 1; pos <= count; pos++) {
+      const matchId = `${compId}-${round.toLowerCase()}-${pos}`;
+      const existing = existingByMatchId.get(matchId);
       subsequentMatches.push({
-        matchId: `${compId}-${round.toLowerCase()}-${pos}`,
+        matchId,
         round,
         position: pos,
         side1Usernames: [],
         side2Usernames: null,
         status: 'Pending',
-        playByDate: playByDate || null,
+        playByDate: existing?.playByDate || defaultPlayByDate || null,
+        playedDate: existing?.playedDate || null,
       });
     }
   }
 
-  const allMatches = [...matches, ...subsequentMatches];
+  const allMatches = [...mergedFirstRound, ...subsequentMatches];
 
   // Auto-propagate bye matches (side2 === null) into the next round immediately.
   // Mark them as 'Bye' status so they don't appear as walkover or pending.
   if (structure.length > 1) {
     const nextRoundName = structure[1].round;
-    for (const m of matches) {
+    for (const m of mergedFirstRound) {
       const isByeMatch = (m.side2Usernames === null || m.side2Usernames.length === 0) && m.side1Usernames.length > 0;
     if (isByeMatch) {
         m.status = 'Bye';
@@ -540,6 +566,16 @@ export async function saveCompetitionSetup(
             nextMatch.side2Usernames = [...m.side1Usernames];
           }
         }
+      }
+    }
+  }
+
+  // For fixed-date comps, pre-fill playedDate = playByDate on every Pending match
+  // that doesn't already have a played date, so they appear in home-page Coming Up.
+  if (comp?.compFixedDates) {
+    for (const m of allMatches) {
+      if (m.status === 'Pending' && !m.playedDate && m.playByDate) {
+        m.playedDate = m.playByDate;
       }
     }
   }

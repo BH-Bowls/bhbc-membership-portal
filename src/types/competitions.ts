@@ -65,9 +65,8 @@ export interface Competition {
   qfPlayBy?: string | null;
   sfPlayBy?: string | null;
 
-  // Triples day (fixed date for first games)
-  triplesFixedDay?: boolean;
-  triplesFixedDate?: string | null;
+  // When true, all rounds are displayed as "play on" (fixed day) rather than "play by" (deadline)
+  compFixedDates?: boolean;
 
   // Side count recorded when the bracket was last created/rebuilt
   drawSideCount?: number | null;

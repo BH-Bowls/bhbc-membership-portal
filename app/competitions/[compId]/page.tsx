@@ -11,6 +11,7 @@ import { BracketView } from '@/components/competitions/BracketView';
 import { ScoreDialog } from '@/components/competitions/ScoreDialog';
 import { PlannedDateDialog } from '@/components/competitions/PlannedDateDialog';
 import type { CompMatch, Competition, CompMemberInfo } from '@/types/competitions';
+import { ROUND_ORDER } from '@/types/competitions';
 
 // ============================================================================
 // HELPERS
@@ -225,22 +226,17 @@ export default function CompetitionBracketPage({
   // Map from bracket round key → play-by date (passed to BracketView for column headers)
   const roundPlayByDates: Record<string, string> = {};
   if (competition?.prelimPlayBy) roundPlayByDates['Prelim'] = competition.prelimPlayBy;
-  // For triples comps with no prelim, triplesFixedDate overrides r1PlayBy for the fixed first round
-  if (!competition?.prelimPlayBy && competition?.triplesFixedDay && competition?.triplesFixedDate) {
-    roundPlayByDates['R1'] = competition.triplesFixedDate;
-  } else if (competition?.r1PlayBy) {
-    roundPlayByDates['R1'] = competition.r1PlayBy;
-  }
+  if (competition?.r1PlayBy)     roundPlayByDates['R1']     = competition.r1PlayBy;
   if (competition?.r2PlayBy)     roundPlayByDates['R2']     = competition.r2PlayBy;
   if (competition?.qfPlayBy)     roundPlayByDates['QF']     = competition.qfPlayBy;
   if (competition?.sfPlayBy)     roundPlayByDates['SF']     = competition.sfPlayBy;
   if (competition?.finalsDate)   roundPlayByDates['F']      = competition.finalsDate;
 
-  // Rounds where the date is a fixed "play ON" day rather than a deadline.
-  // If the comp has a Prelim round, the fixed day is the Prelim; otherwise it's R1.
+  // Rounds where the date is a fixed "play ON" day rather than a "play BY" deadline.
+  // When compFixedDates is set, every round uses "play on" labelling.
   const roundOnDates = new Set<string>();
-  if (competition?.triplesFixedDay) {
-    roundOnDates.add(competition.prelimPlayBy ? 'Prelim' : 'R1');
+  if (competition?.compFixedDates) {
+    ROUND_ORDER.forEach((r) => roundOnDates.add(r));
   }
 
   // My pending match (for "Your next match" callout)
@@ -277,6 +273,9 @@ export default function CompetitionBracketPage({
               <>
                 <h1 className="text-2xl font-bold text-gray-900">{competition?.displayName ?? compId}</h1>
                 <p className="text-gray-500 text-sm mt-0.5 capitalize">{competition?.compType}</p>
+                {competition?.compDescription && (
+                  <p className="text-gray-600 text-sm mt-1">{competition.compDescription}</p>
+                )}
               </>
             )}
           </div>

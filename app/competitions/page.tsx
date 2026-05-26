@@ -234,11 +234,6 @@ export default function CompetitionsPage() {
                         </p>
                       )}
 
-                      {comp.triplesFixedDay && comp.triplesFixedDate && (
-                        <p className="text-xs text-blue-600 mt-1">
-                          First games day: {formatDate(comp.triplesFixedDate)}
-                        </p>
-                      )}
                     </button>
                   );
                 })}

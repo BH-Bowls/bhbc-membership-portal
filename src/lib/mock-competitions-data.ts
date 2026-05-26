@@ -114,8 +114,7 @@ export const MOCK_COMPETITIONS: Competition[] = [
     status: 'Draw Done',
     year: 2026,
     finalsDate: '2026-05-10',
-    triplesFixedDay: true,
-    triplesFixedDate: '2026-02-08',
+    compFixedDates: true,
     r1PlayBy: '2026-03-01',
   },
   {
