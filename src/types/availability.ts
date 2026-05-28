@@ -86,6 +86,7 @@ export interface AddGroupMembersPayload {
 export type AvailabilityEventType = 'general' | 'fixture' | 'signup';
 export type AvailabilityEventStatus = 'open' | 'closed' | 'concluded' | 'archived';
 export type AvailabilityInviteeType = 'member' | 'visitor';
+export type AvailabilitySlotType = 'datetime' | 'text';
 
 // Full event record as stored in the sheet
 export interface AvailabilityEvent {
@@ -95,6 +96,7 @@ export interface AvailabilityEvent {
   createdByUsername: string;
   groupId: string;              // blank for public events
   type: AvailabilityEventType;
+  slotType: AvailabilitySlotType; // 'datetime' (default) or 'text'
   status: AvailabilityEventStatus;
   showResponsesToRespondents: boolean;
   notifyCreatorOnResponse: boolean;
@@ -125,11 +127,11 @@ export interface AvailabilityEventSummary {
   concludedSlotDatetime: string;
 }
 
-// A single candidate date/time slot
+// A single candidate slot (datetime or text option)
 export interface AvailabilitySlot {
   slotId: string;
   eventId: string;
-  slotDatetime: string;         // ISO timestamp
+  slotDatetime: string | null;  // ISO timestamp; null for text-type slots
   slotLabel: string;
   displayOrder: number;
   createdAt: string;
@@ -202,11 +204,12 @@ export interface CreateEventPayload {
   title: string;
   description: string;
   type: AvailabilityEventType;
+  slotType: AvailabilitySlotType;
   showResponsesToRespondents: boolean;
   notifyCreatorOnResponse: boolean;
   expiresAt: string;            // ISO timestamp
   slots: Array<{
-    slotDatetime: string;
+    slotDatetime?: string | null;
     slotLabel: string;
   }>;
 }
@@ -226,6 +229,18 @@ export interface GuestRespondPayload {
     slotId: string;
     response: AvailabilityResponse;
   }>;
+}
+
+// Lightweight summary used for the home-page Open Polls panel
+export interface OpenPollSummary {
+  eventId: string;
+  title: string;
+  slotType: AvailabilitySlotType;
+  hasResponded: boolean;
+  optionCount: number;
+  responseCount: number;
+  groupName: string | null; // null = public poll
+  expiresAt: string;
 }
 
 // Body for conclude endpoint

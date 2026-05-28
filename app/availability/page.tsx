@@ -191,13 +191,13 @@ export default function AvailabilityHubPage() {
         {/* Page header with action buttons */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Availability</h1>
-            <p className="text-sm text-gray-700 mt-1">Schedule events and coordinate with your groups</p>
+            <h1 className="text-2xl font-bold text-gray-900">Groups</h1>
+            <p className="text-sm text-gray-700 mt-1">Coordinate dates and decisions with your groups</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            {/* Create a public event (visible to all members) */}
+            {/* Create a public poll (visible to all members) */}
             <Link href="/availability/events/new" className={getButtonClasses('secondary', 'md')}>
-              Create Public Event
+              Create Public Poll
             </Link>
             {/* Create a new group */}
             <Link href="/availability/groups/new" className={getButtonClasses('primary', 'md')}>
@@ -217,7 +217,7 @@ export default function AvailabilityHubPage() {
         {loading ? (
           <div className="text-center py-16">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-            <p className="mt-3 text-gray-700">Loading availability data…</p>
+            <p className="mt-3 text-gray-700">Loading polls…</p>
           </div>
         ) : (
           <>
@@ -238,10 +238,14 @@ export default function AvailabilityHubPage() {
                 // Two-column grid on desktop, single column on mobile
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {groups.map((group) => (
-                    <div key={group.groupId} className="bg-white rounded-lg border border-gray-200 p-4 text-gray-900">
+                    <Link
+                      key={group.groupId}
+                      href={`/availability/groups/${group.groupId}`}
+                      className="block bg-white rounded-lg border border-gray-200 p-4 text-gray-900 hover:bg-gray-50 transition-colors"
+                    >
                       {/* Group name and archived indicator */}
                       <div className="flex items-start justify-between gap-2 mb-2">
-                        <h3 className="font-semibold text-gray-900 text-base">{group.name}</h3>
+                        <h3 className="font-semibold text-blue-600 text-base">{group.name}</h3>
                         {group.status === 'archived' && (
                           <span className={getBadgeClasses('secondary', 'sm')}>Archived</span>
                         )}
@@ -253,36 +257,17 @@ export default function AvailabilityHubPage() {
                       )}
 
                       {/* Member count and open event count badges */}
-                      <div className="flex flex-wrap gap-2 mb-3">
+                      <div className="flex flex-wrap gap-2">
                         <span className={getBadgeClasses('primary', 'sm')}>
                           {group.memberCount} {group.memberCount === 1 ? 'member' : 'members'}
                         </span>
                         {group.openEventCount > 0 && (
                           <span className={getBadgeClasses('success', 'sm')}>
-                            {group.openEventCount} open {group.openEventCount === 1 ? 'event' : 'events'}
+                            {group.openEventCount} open {group.openEventCount === 1 ? 'poll' : 'polls'}
                           </span>
                         )}
                       </div>
-
-                      {/* Actions */}
-                      <div className="flex items-center gap-3">
-                        <Link
-                          href={`/availability/groups/${group.groupId}`}
-                          className={getButtonClasses('primary', 'sm')}
-                        >
-                          View Group
-                        </Link>
-                        {/* Manage link shown only to the group creator */}
-                        {group.isCreator && (
-                          <Link
-                            href={`/availability/groups/${group.groupId}`}
-                            className="text-sm text-blue-500 hover:text-blue-700 font-medium"
-                          >
-                            Manage
-                          </Link>
-                        )}
-                      </div>
-                    </div>
+                    </Link>
                   ))}
                 </div>
               )}
@@ -291,7 +276,7 @@ export default function AvailabilityHubPage() {
             {/* ── Public Events section ─────────────────────────────────── */}
             {publicEvents.length > 0 && (
               <section>
-                <h2 className="text-lg font-semibold text-gray-900 mb-3">Public Events</h2>
+                <h2 className="text-lg font-semibold text-gray-900 mb-3">Public Polls</h2>
 
                 {/* Sub-section: awaiting response */}
                 {awaitingResponse.length > 0 && (
@@ -382,7 +367,7 @@ function EventCard({ event }: EventCardProps) {
       <div className="text-xs text-gray-700 space-y-0.5">
         <p>Created by {event.createdByName}</p>
         <p>
-          {event.slotCount} {event.slotCount === 1 ? 'slot' : 'slots'} ·{' '}
+          {event.slotCount} {event.slotCount === 1 ? 'option' : 'options'} ·{' '}
           {event.responseCount} {event.responseCount === 1 ? 'response' : 'responses'} ·{' '}
           Expires {formatExpiry(event.expiresAt)}
         </p>

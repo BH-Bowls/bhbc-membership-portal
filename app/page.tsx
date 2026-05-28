@@ -6,6 +6,7 @@ import { getBadgeClasses } from '@/config/theme-helpers';
 import { useSessionRefresh } from '@/hooks/useSessionRefresh';
 import { AnnouncementsPanel } from '@/components/AnnouncementsPanel';
 import { DiaryPanel } from '@/components/DiaryPanel';
+import { OpenPollsPanel } from '@/components/OpenPollsPanel';
 
 export default function HomePage() {
   const { data: session, status } = useSession();
@@ -41,6 +42,9 @@ export default function HomePage() {
         <div className="px-4 py-6 sm:px-0">
           {/* Announcements panel — shown only when active announcements exist */}
           <AnnouncementsPanel />
+
+          {/* Open Polls panel — open polls the member is invited to */}
+          <OpenPollsPanel />
 
           {/* Diary panel — personalised upcoming items for the logged-in member */}
           <div className="mb-6">

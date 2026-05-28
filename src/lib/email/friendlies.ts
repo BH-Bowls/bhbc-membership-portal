@@ -7,7 +7,7 @@ import { sendEmail } from './mailer';
 import { getUserByUsername, getAllUsers } from '../sheets';
 import { Game, GameSheetPlayer } from '../types/friendlies';
 import { hasRole } from '../role-utils';
-import { buildFriendlyICSAttachment, isGmailAddress, icsUpdatesEnabled } from '../ics-utils';
+import { buildFriendlyICSAttachment, buildLinkedFriendlyICSAttachment, isGmailAddress, icsUpdatesEnabled } from '../ics-utils';
 
 /**
  * Get email addresses for all captains and admins
@@ -1042,6 +1042,108 @@ export async function sendEntryConfirmedEmail(
     buttonText: 'View Game Details',
     messageCaptainsUrl,
   });
+
+  await sendEmail(emailAddress, subject, text, html, [ics]);
+}
+
+/**
+ * Send a single combined entry confirmation for a linked game pair.
+ * The player has entered both games and will be allocated to one by the captain.
+ */
+export async function sendLinkedEntryConfirmedEmail(
+  emailAddress: string,
+  userName: string,
+  fullName: string,
+  gameA: Game,
+  gameB: Game,
+  appUrl: string,
+): Promise<void> {
+  const urlA = `${appUrl}/friendlies/game/${encodeURIComponent(gameA.tabName)}?me=${encodeURIComponent(userName)}`;
+  const urlB = `${appUrl}/friendlies/game/${encodeURIComponent(gameB.tabName)}?me=${encodeURIComponent(userName)}`;
+  const venueA = gameA.homeAway === 'H' ? 'Home' : `Away at ${gameA.clubName}`;
+  const venueB = gameB.homeAway === 'H' ? 'Home' : `Away at ${gameB.clubName}`;
+  const subject = `Friendly Entry Confirmed — ${gameA.date}`;
+
+  const allocationNote = 'These games are linked. You have been added to both and will be allocated to one by the captain.';
+
+  // Use the earlier of the two game times for the calendar entry start
+  const earlierTime = gameA.time <= gameB.time ? gameA.time : gameB.time;
+  const ics = buildLinkedFriendlyICSAttachment({
+    userName,
+    dateStr: gameA.date,
+    timeStr: earlierTime,
+    gameAClubName: gameA.clubName,
+    gameAHomeAway: gameA.homeAway,
+    gameBClubName: gameB.clubName,
+    gameBHomeAway: gameB.homeAway,
+  });
+
+  const text = [
+    `Hi ${fullName},`,
+    '',
+    allocationNote,
+    '',
+    `Game 1: ${venueA}`,
+    `Date: ${gameA.date}`,
+    `Time: ${gameA.time}`,
+    `Format: ${gameA.format}`,
+    `View: ${urlA}`,
+    '',
+    `Game 2: ${venueB}`,
+    `Date: ${gameB.date}`,
+    `Time: ${gameB.time}`,
+    `Format: ${gameB.format}`,
+    `View: ${urlB}`,
+    '',
+    'A calendar attachment is included (tentative until you are allocated to a game).',
+    '',
+    '---',
+    'Burgess Hill Bowls Club',
+  ].join('\n');
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background-color: #0066cc; color: #ffffff; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+    .header h2 { margin: 0; color: #ffffff; }
+    .content { background-color: #f9f9f9; padding: 20px; border: 1px solid #ddd; }
+    .details { background-color: #ffffff; padding: 15px; margin: 15px 0; border-left: 4px solid #0066cc; }
+    .allocation-note { background-color: #e8f0fe; border-left: 4px solid #0066cc; padding: 12px 15px; margin: 15px 0; font-size: 14px; }
+    .footer { text-align: center; padding: 15px; color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header"><h2>Friendly Entry Confirmed</h2></div>
+    <div class="content">
+      <p>Hi <strong>${fullName}</strong>,</p>
+      <div class="allocation-note">${allocationNote}</div>
+      <p><strong>Game 1</strong></p>
+      <div class="details">
+        <p><strong>Date:</strong> ${gameA.date}</p>
+        <p><strong>Time:</strong> ${gameA.time}</p>
+        <p><strong>Venue:</strong> ${venueA}</p>
+        <p><strong>Format:</strong> ${gameA.format}</p>
+      </div>
+      <a href="${urlA}" style="${PLAYER_BUTTON_STYLE}">View Game 1</a>
+      <p style="margin-top:20px"><strong>Game 2</strong></p>
+      <div class="details">
+        <p><strong>Date:</strong> ${gameB.date}</p>
+        <p><strong>Time:</strong> ${gameB.time}</p>
+        <p><strong>Venue:</strong> ${venueB}</p>
+        <p><strong>Format:</strong> ${gameB.format}</p>
+      </div>
+      <a href="${urlB}" style="${PLAYER_BUTTON_STYLE}">View Game 2</a>
+      <p style="font-size:13px;margin-top:16px;">A calendar attachment is included (tentative until you are allocated to a game).</p>
+      <p style="font-size:13px;color:#cc0000;">Please do not reply to this email.</p>
+    </div>
+    <div class="footer"><p>Burgess Hill Bowls Club - Friendlies Management System</p></div>
+  </div>
+</body>
+</html>`.trim();
 
   await sendEmail(emailAddress, subject, text, html, [ics]);
 }

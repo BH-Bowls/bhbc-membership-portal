@@ -21,14 +21,14 @@ import type {
   AvailabilityParticipantResponses,
 } from '@/types/availability';
 
-function formatSlotDate(iso: string): string {
+function formatSlotDate(iso: string | null | undefined): string {
   if (!iso) return '';
   const d = new Date(iso);
   if (isNaN(d.getTime())) return iso;
   return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
-function formatSlotTime(iso: string): string {
+function formatSlotTime(iso: string | null | undefined): string {
   if (!iso) return '';
   const d = new Date(iso);
   if (isNaN(d.getTime())) return '';
@@ -212,7 +212,7 @@ export default function EventResponsePage({
   const displayName = session && session.user && session.user.name ? session.user.name : undefined;
   const role = session && session.user ? session.user.role : '';
   const backHref = detail && detail.event.groupId ? `/availability/groups/${detail.event.groupId}` : '/availability';
-  const backLabel = detail && detail.event.groupId ? 'Group' : 'Availability';
+  const backLabel = detail && detail.event.groupId ? 'Group' : 'Polls';
 
   const modalSlot = modalSlotId ? (detail?.slots.find(s => s.slotId === modalSlotId) ?? null) : null;
 
@@ -237,7 +237,7 @@ export default function EventResponsePage({
         {loading && !forbidden && (
           <div className="text-center py-16">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-            <p className="mt-3 text-gray-700">Loading event…</p>
+            <p className="mt-3 text-gray-700">Loading poll…</p>
           </div>
         )}
 
@@ -262,7 +262,7 @@ export default function EventResponsePage({
               {(detail.event.createdByUsername === currentUserName ||
                 currentUserRole.indexOf('Admin') !== -1) && (
                 <Link href={`/availability/events/${eventId}/manage`} className={getButtonClasses('secondary', 'sm')}>
-                  Manage Event
+                  Manage Poll
                 </Link>
               )}
             </div>
@@ -271,8 +271,8 @@ export default function EventResponsePage({
             {detail.event.status === 'concluded' && detail.concludedSlot && (
               <div className={getAlertClasses('success') + ' mb-4'}>
                 <p className="font-medium text-green-900">
-                  Event concluded — chosen date:{' '}
-                  {detail.concludedSlot.slotLabel || formatSlotDate(detail.concludedSlot.slotDatetime)}
+                  Poll concluded — chosen option:{' '}
+                  {detail.concludedSlot.slotLabel || (detail.concludedSlot.slotDatetime ? formatSlotDate(detail.concludedSlot.slotDatetime) : '')}
                 </p>
                 {detail.event.conclusionNote && (
                   <p className="text-sm mt-1 text-green-800">{detail.event.conclusionNote}</p>
@@ -300,7 +300,7 @@ export default function EventResponsePage({
             {/* ── Slot poll list ────────────────────────────────────── */}
             {detail.slots.length === 0 ? (
               <div className={getAlertClasses('info')}>
-                No date slots have been added to this event yet.
+                No options have been added to this poll yet.
               </div>
             ) : (
               <div className="space-y-3">

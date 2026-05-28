@@ -8,7 +8,6 @@ import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
-import { RouterBackLink } from '@/components/RouterBackLink';
 import { useSessionRefresh } from '@/hooks/useSessionRefresh';
 import {
   getButtonClasses,
@@ -446,7 +445,7 @@ export default function GroupPage({
           <>
             {/* ── Group header ─────────────────────────────────────── */}
             <div className="mb-6">
-              <RouterBackLink fallbackHref="/availability" label="Availability" />
+              <a href="/availability" className="text-blue-600 hover:text-blue-800 mb-2 inline-block">← Groups</a>
 
               {/* Title row with status badge */}
               <div className="flex flex-wrap items-center gap-2 mb-1">
@@ -490,13 +489,13 @@ export default function GroupPage({
                   </button>
                 )}
 
-                {/* Create event — primary action */}
+                {/* Create poll — primary action */}
                 {detail.group.status === 'active' && (
                   <Link
                     href={`/availability/groups/${groupId}/events/new`}
                     className={getButtonClasses('primary', 'sm')}
                   >
-                    Create Event
+                    Create Poll
                   </Link>
                 )}
 
@@ -786,18 +785,18 @@ export default function GroupPage({
 
             {/* ── Event feed ───────────────────────────────────────── */}
             <section>
-              <h2 className="text-lg font-semibold text-gray-900 mb-3">Events</h2>
+              <h2 className="text-lg font-semibold text-gray-900 mb-3">Polls</h2>
 
               {detail.events.length === 0 ? (
                 <div className="bg-white rounded-lg border border-gray-200 p-8 text-center">
-                  <p className="text-gray-700">No events yet. Create the first one.</p>
+                  <p className="text-gray-700">No polls yet. Create the first one.</p>
                   {detail.group.status === 'active' && (
                     <div className="mt-4">
                       <Link
                         href={`/availability/groups/${groupId}/events/new`}
                         className={getButtonClasses('primary', 'sm')}
                       >
-                        Create Event
+                        Create Poll
                       </Link>
                     </div>
                   )}
@@ -842,7 +841,7 @@ export default function GroupPage({
                           By {ev.createdByName}
                         </p>
                         <p>
-                          {ev.slotCount} {ev.slotCount === 1 ? 'slot' : 'slots'} ·{' '}
+                          {ev.slotCount} {ev.slotCount === 1 ? 'option' : 'options'} ·{' '}
                           {ev.responseCount} {ev.responseCount === 1 ? 'response' : 'responses'} ·{' '}
                           Expires {formatDate(ev.expiresAt)}
                         </p>
@@ -854,18 +853,6 @@ export default function GroupPage({
                         )}
                       </div>
 
-                      {/* Manage link for event creator */}
-                      {(ev.createdByUsername === currentUserName ||
-                        currentUserRole.indexOf('Admin') !== -1) && (
-                        <div className="mt-2">
-                          <Link
-                            href={`/availability/events/${ev.eventId}/manage`}
-                            className="text-xs text-blue-600 hover:text-blue-800 font-medium"
-                          >
-                            Manage →
-                          </Link>
-                        </div>
-                      )}
                     </div>
                   ))}
                 </div>

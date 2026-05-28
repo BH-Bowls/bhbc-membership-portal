@@ -10,7 +10,7 @@ import { clearDiaryCache } from '@/lib/home-cache';
 import { EnterGamesRequest, EnterGamesResponse } from '@/lib/types/friendlies';
 import { canEnterGame } from '@/lib/game-management/capacity';
 import { getUserByUsername } from '@/lib/sheets';
-import { sendEntryConfirmedEmail } from '@/lib/email/friendlies';
+import { sendEntryConfirmedEmail, sendLinkedEntryConfirmedEmail } from '@/lib/email/friendlies';
 
 // POST handler - Enters user into one or more games
 export async function POST(request: NextRequest) {
@@ -135,10 +135,31 @@ export async function POST(request: NextRequest) {
         if (user?.emailAddress) {
           const fullName = user.fullName || (user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : userName);
           const appUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
-          for (const result of successfulEntries) {
-            const game = allGames.find(g => g.tabName === result.game_id);
-            if (!game) continue;
+
+          // Group entries: paired games on the same date → one combined email; others individual
+          const successfulGames = successfulEntries
+            .map(r => allGames.find(g => g.tabName === r.game_id))
+            .filter((g): g is typeof allGames[0] => !!g);
+
+          const emailed = new Set<string>();
+          for (const game of successfulGames) {
+            if (emailed.has(game.tabName)) continue;
+            if (game.paired === 'Y') {
+              const partner = successfulGames.find(g =>
+                !emailed.has(g.tabName) &&
+                g.tabName !== game.tabName &&
+                g.paired === 'Y' &&
+                g.date === game.date
+              );
+              if (partner) {
+                await sendLinkedEntryConfirmedEmail(user.emailAddress, userName, fullName, game, partner, appUrl);
+                emailed.add(game.tabName);
+                emailed.add(partner.tabName);
+                continue;
+              }
+            }
             await sendEntryConfirmedEmail(user.emailAddress, userName, fullName, game, appUrl);
+            emailed.add(game.tabName);
           }
         }
       } catch (emailError) {

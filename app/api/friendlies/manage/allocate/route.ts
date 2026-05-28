@@ -1,8 +1,8 @@
 // app/api/friendlies/manage/allocate/route.ts
 // API endpoint for captains to allocate players between two paired games
-// NEW FLOW: Games are in status 'L' (Allocating) — game sheets do NOT exist yet.
+// FLOW: Games are in status 'L' (Allocating) — game sheets EXIST (created at open time).
 // GET: reads entered players from the Players sheet (both game columns)
-// POST: creates game sheets with only allocated players, clears unallocated entries,
+// POST: removes unallocated players from game sheets, clears their Players sheet entries,
 //   and transitions both games from L → X
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -13,6 +13,7 @@ import {
   updatePlayerEntry,
   createGameSheet,
   updateGameStatus,
+  removePlayerFromGameSheet,
 } from '@/lib/friendlies-sheets';
 import { hasRole } from '@/lib/role-utils';
 
@@ -104,20 +105,22 @@ export async function POST(request: NextRequest) {
     const gameAPlayerSet = new Set(game_a_players.map(p => p.toLowerCase()));
     const gameBPlayerSet = new Set(game_b_players.map(p => p.toLowerCase()));
 
-    // Clear Players sheet entries for players NOT allocated to each game
-    // Run sequentially to avoid quota limits (each call makes multiple Sheets API reads)
+    // Remove unallocated players from game sheets and clear their Players sheet entries
+    // Run sequentially to avoid Google Sheets API quota limits
     for (const p of allPlayersA) {
       if (!gameAPlayerSet.has(p.userName.toLowerCase())) {
+        await removePlayerFromGameSheet(game_a_tab_name, p.userName);
         await updatePlayerEntry(p.userName, game_a_tab_name, '');
       }
     }
     for (const p of allPlayersB) {
       if (!gameBPlayerSet.has(p.userName.toLowerCase())) {
+        await removePlayerFromGameSheet(game_b_tab_name, p.userName);
         await updatePlayerEntry(p.userName, game_b_tab_name, '');
       }
     }
 
-    // Create game sheets with only the allocated players (sequentially)
+    // Ensure all allocated players are in the game sheets (adds any missing entries)
     const resultA = await createGameSheet(game_a_tab_name, game_a_players);
     const resultB = await createGameSheet(game_b_tab_name, game_b_players);
 

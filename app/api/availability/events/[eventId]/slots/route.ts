@@ -10,6 +10,7 @@ import {
   addSlot,
   getSlotsForEvent,
 } from '@/lib/availability-events-sheets';
+import type { AvailabilitySlotType } from '@/types/availability';
 
 // POST /api/availability/events/[eventId]/slots
 // Add a new date/time slot to an event
@@ -54,13 +55,24 @@ export async function POST(
     // Parse the request body
     const body = await request.json();
 
-    // Validate slotDatetime
-    if (!body.slotDatetime) {
-      return NextResponse.json({ error: 'Slot datetime is required' }, { status: 400 });
-    }
-    const slotDate = new Date(body.slotDatetime);
-    if (isNaN(slotDate.getTime())) {
-      return NextResponse.json({ error: 'Invalid slot datetime format' }, { status: 400 });
+    const pollSlotType: AvailabilitySlotType = event.slotType || 'datetime';
+    let slotDatetime: string | null = null;
+
+    if (pollSlotType === 'datetime') {
+      // Date/time poll: slotDatetime is required
+      if (!body.slotDatetime) {
+        return NextResponse.json({ error: 'Slot datetime is required' }, { status: 400 });
+      }
+      const slotDate = new Date(body.slotDatetime);
+      if (isNaN(slotDate.getTime())) {
+        return NextResponse.json({ error: 'Invalid slot datetime format' }, { status: 400 });
+      }
+      slotDatetime = body.slotDatetime;
+    } else {
+      // Text poll: slotLabel is required
+      if (!body.slotLabel || !body.slotLabel.trim()) {
+        return NextResponse.json({ error: 'Option text is required' }, { status: 400 });
+      }
     }
 
     // Fetch existing slots to determine the next display order
@@ -76,7 +88,7 @@ export async function POST(
     const nextOrder = maxOrder + 1;
 
     // Add the new slot with the calculated display order
-    const slotId = await addSlot(eventId, body.slotDatetime, body.slotLabel || '', nextOrder);
+    const slotId = await addSlot(eventId, slotDatetime, body.slotLabel || '', nextOrder);
 
     return NextResponse.json({ success: true, slotId });
   } catch (error) {

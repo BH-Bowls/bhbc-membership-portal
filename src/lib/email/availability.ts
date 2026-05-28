@@ -355,8 +355,8 @@ export async function sendConclusionEmails(eventId: string): Promise<void> {
       // Use the slot label if set, otherwise format the datetime
       if (slots[i].slotLabel) {
         chosenSlotLabel = slots[i].slotLabel;
-      } else {
-        const slotDate = new Date(slots[i].slotDatetime);
+      } else if (slots[i].slotDatetime) {
+        const slotDate = new Date(slots[i].slotDatetime as string);
         chosenSlotLabel = slotDate.toLocaleDateString('en-GB', {
           weekday: 'long',
           day: 'numeric',
@@ -411,7 +411,7 @@ export async function sendConclusionEmails(eventId: string): Promise<void> {
       const toList = memberEmails.join(', ');
       const emailResult = await sendTemplateEmail(
         toList,
-        `Event update — ${event.title}`,
+        `Poll update — ${event.title}`,
         'availability-conclusion',
         {
           respondentName: 'there',   // Generic greeting for BCC batch
@@ -465,7 +465,7 @@ export async function sendConclusionEmails(eventId: string): Promise<void> {
         await pooledTransporter.sendMail({
           from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
           to: v.email,
-          subject: `Event update — ${event.title}`,
+          subject: `Poll update — ${event.title}`,
           html: htmlContent,
         });
       } catch (err) {

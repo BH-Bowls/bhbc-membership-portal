@@ -64,26 +64,37 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Event type must be general, fixture, or signup' }, { status: 400 });
     }
 
+    const pollSlotType = body.slotType === 'text' ? 'text' : 'datetime';
+
     // Validate slots — at least one slot is required
     if (!body.slots || body.slots.length === 0) {
-      return NextResponse.json({ error: 'At least one slot is required' }, { status: 400 });
+      return NextResponse.json({ error: 'At least one option is required' }, { status: 400 });
     }
 
-    // Validate each slot has a valid slotDatetime
+    // Validate each slot per its type
     for (let i = 0; i < body.slots.length; i++) {
       const slot = body.slots[i];
-      if (!slot.slotDatetime) {
-        return NextResponse.json(
-          { error: `Slot at index ${i} is missing a datetime` },
-          { status: 400 }
-        );
-      }
-      const slotDate = new Date(slot.slotDatetime);
-      if (isNaN(slotDate.getTime())) {
-        return NextResponse.json(
-          { error: `Slot at index ${i} has an invalid datetime format` },
-          { status: 400 }
-        );
+      if (pollSlotType === 'datetime') {
+        if (!slot.slotDatetime) {
+          return NextResponse.json(
+            { error: `Option at index ${i} is missing a datetime` },
+            { status: 400 }
+          );
+        }
+        const slotDate = new Date(slot.slotDatetime);
+        if (isNaN(slotDate.getTime())) {
+          return NextResponse.json(
+            { error: `Option at index ${i} has an invalid datetime format` },
+            { status: 400 }
+          );
+        }
+      } else {
+        if (!slot.slotLabel || !slot.slotLabel.trim()) {
+          return NextResponse.json(
+            { error: `Option at index ${i} is missing text` },
+            { status: 400 }
+          );
+        }
       }
     }
 
@@ -94,6 +105,7 @@ export async function POST(request: NextRequest) {
       createdByUsername: session.user.userName,
       groupId: '',
       type: body.type,
+      slotType: pollSlotType,
       showResponsesToRespondents: body.showResponsesToRespondents === true,
       notifyCreatorOnResponse: body.notifyCreatorOnResponse === true,
       expiresAt: body.expiresAt,
@@ -102,7 +114,7 @@ export async function POST(request: NextRequest) {
     // Step 2: Add all slots with 1-based display order
     for (let i = 0; i < body.slots.length; i++) {
       const slot = body.slots[i];
-      await addSlot(eventId, slot.slotDatetime, slot.slotLabel || '', i + 1);
+      await addSlot(eventId, slot.slotDatetime || null, slot.slotLabel || '', i + 1);
     }
 
     // No invitees or emails for public events — all members see it automatically

@@ -22,7 +22,9 @@ import type {
   AvailabilityParticipantResponses,
   AvailabilityResponse,
   AvailabilityEventType,
+  AvailabilitySlotType,
   AvailabilityGroupMember,
+  OpenPollSummary,
 } from '@/types/availability';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -32,7 +34,7 @@ const SLOTS_SHEET = 'AvailabilitySlots';
 const RESPONSES_SHEET = 'AvailabilityResponses';
 const INVITEES_SHEET = 'AvailabilityInvitees';
 
-const EVENTS_RANGE = `${EVENTS_SHEET}!A2:P`;
+const EVENTS_RANGE = `${EVENTS_SHEET}!A2:Q`;
 const SLOTS_RANGE = `${SLOTS_SHEET}!A2:F`;
 const RESPONSES_RANGE = `${RESPONSES_SHEET}!A2:K`;
 const INVITEES_RANGE = `${INVITEES_SHEET}!A2:K`;
@@ -191,6 +193,7 @@ function parseEventRow(row: string[], colMap: Record<string, number>): Availabil
     createdByUsername: get('created_by_username'),
     groupId: get('group_id'),
     type: (get('type') || 'general') as AvailabilityEventType,
+    slotType: (get('slot_type') || 'datetime') as AvailabilitySlotType,
     status: (get('status') || 'open') as 'open' | 'closed' | 'concluded' | 'archived',
     showResponsesToRespondents: get('show_responses_to_respondents') === 'Y',
     notifyCreatorOnResponse: get('notify_creator_on_response') === 'Y',
@@ -215,10 +218,11 @@ function parseSlotRow(row: string[], colMap: Record<string, number>): Availabili
   };
 
   const displayOrderStr = get('display_order');
+  const rawDatetime = get('slot_datetime');
   return {
     slotId: get('slot_id'),
     eventId: get('event_id'),
-    slotDatetime: get('slot_datetime'),
+    slotDatetime: rawDatetime || null,
     slotLabel: get('slot_label'),
     displayOrder: displayOrderStr ? parseInt(displayOrderStr, 10) : 0,
     createdAt: get('created_at'),
@@ -661,6 +665,7 @@ export async function createEvent(data: {
   createdByUsername: string;
   groupId: string;
   type: AvailabilityEventType;
+  slotType: AvailabilitySlotType;
   showResponsesToRespondents: boolean;
   notifyCreatorOnResponse: boolean;
   expiresAt: string;
@@ -690,6 +695,7 @@ export async function createEvent(data: {
   setCol('created_by_username', data.createdByUsername);
   setCol('group_id', data.groupId);
   setCol('type', data.type);
+  setCol('slot_type', data.slotType || 'datetime');
   setCol('status', 'open');
   setCol('show_responses_to_respondents', data.showResponsesToRespondents ? 'Y' : 'N');
   setCol('notify_creator_on_response', data.notifyCreatorOnResponse ? 'Y' : 'N');
@@ -704,7 +710,7 @@ export async function createEvent(data: {
   // Append the new event row
   await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range: `${EVENTS_SHEET}!A:P`,
+    range: `${EVENTS_SHEET}!A:Q`,
     valueInputOption: 'USER_ENTERED',
     requestBody: { values: [newRow] },
   });
@@ -995,9 +1001,10 @@ export async function getSlotsForEvent(eventId: string): Promise<AvailabilitySlo
 }
 
 // Append one slot. Returns generated slotId.
+// slotDatetime may be null for text-type poll options.
 export async function addSlot(
   eventId: string,
-  slotDatetime: string,
+  slotDatetime: string | null,
   slotLabel: string,
   displayOrder: number
 ): Promise<string> {
@@ -1022,7 +1029,7 @@ export async function addSlot(
 
   setCol('slot_id', slotId);
   setCol('event_id', eventId);
-  setCol('slot_datetime', slotDatetime);
+  setCol('slot_datetime', slotDatetime || '');
   setCol('slot_label', slotLabel);
   setCol('display_order', String(displayOrder));
   setCol('created_at', now);
@@ -1036,6 +1043,61 @@ export async function addSlot(
   });
 
   return slotId;
+}
+
+// Update an existing slot's datetime and/or label. Sets no updated_at (slots sheet has none).
+export async function updateSlot(
+  slotId: string,
+  slotDatetime: string | null,
+  slotLabel: string
+): Promise<void> {
+  const sheets = getGoogleSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+  const colMap = await getColumnMap(SLOTS_SHEET, spreadsheetId);
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: SLOTS_RANGE,
+  });
+
+  const rows = response.data.values;
+  if (!rows) throw new Error(`Slot not found: ${slotId}`);
+
+  const slotIdCol = colMap['slot_id'];
+  if (slotIdCol === undefined) throw new Error('slot_id column not found');
+
+  let rowNumber = -1;
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i][slotIdCol] === slotId) {
+      rowNumber = i + 2;
+      break;
+    }
+  }
+  if (rowNumber === -1) throw new Error(`Slot not found: ${slotId}`);
+
+  const updateData: Array<{ range: string; values: string[][] }> = [];
+
+  const datetimeCol = colMap['slot_datetime'];
+  if (datetimeCol !== undefined) {
+    updateData.push({
+      range: `${SLOTS_SHEET}!${getColumnLetter(datetimeCol)}${rowNumber}`,
+      values: [[slotDatetime || '']],
+    });
+  }
+  const labelCol = colMap['slot_label'];
+  if (labelCol !== undefined) {
+    updateData.push({
+      range: `${SLOTS_SHEET}!${getColumnLetter(labelCol)}${rowNumber}`,
+      values: [[slotLabel]],
+    });
+  }
+
+  if (updateData.length > 0) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: { data: updateData, valueInputOption: 'USER_ENTERED' },
+    });
+  }
 }
 
 // Delete a slot. Also cascades: deletes all responses with matching slot_id.
@@ -2055,4 +2117,124 @@ export async function getEventDetailForVisitor(
     allResponses,
     concludedSlot,
   };
+}
+
+// Return all open polls (public + group) that the given member is invited to.
+// Used by the home-page Open Polls panel. Single batchGet for efficiency.
+export async function getOpenPollsForMember(
+  callerUserName: string
+): Promise<OpenPollSummary[]> {
+  const sheets = getGoogleSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+
+  const batchResp = await sheets.spreadsheets.values.batchGet({
+    spreadsheetId,
+    ranges: [
+      EVENTS_RANGE,               // 0
+      `${SLOTS_SHEET}!A2:F`,      // 1
+      `${RESPONSES_SHEET}!A2:K`,  // 2
+      `${INVITEES_SHEET}!A2:K`,   // 3
+      'AvailabilityGroups!A2:I',  // 4
+    ],
+  });
+
+  const vr = batchResp.data.valueRanges;
+  if (!vr || vr.length < 5) return [];
+
+  const eventRows  = (vr[0].values || []) as string[][];
+  const slotRows   = (vr[1].values || []) as string[][];
+  const respRows   = (vr[2].values || []) as string[][];
+  const invRows    = (vr[3].values || []) as string[][];
+  const groupRows  = (vr[4].values || []) as string[][];
+
+  const [eventsColMap, slotsColMap, respColMap, invColMap, groupsColMap] = await Promise.all([
+    getColumnMap(EVENTS_SHEET, spreadsheetId),
+    getColumnMap(SLOTS_SHEET, spreadsheetId),
+    getColumnMap(RESPONSES_SHEET, spreadsheetId),
+    getColumnMap(INVITEES_SHEET, spreadsheetId),
+    getColumnMap('AvailabilityGroups', spreadsheetId),
+  ]);
+
+  function makeGet(colMap: Record<string, number>) {
+    return (row: string[], field: string): string => {
+      const idx = colMap[field];
+      if (idx === undefined) return '';
+      return row[idx] ? String(row[idx]).trim() : '';
+    };
+  }
+  const getEv  = makeGet(eventsColMap);
+  const getSl  = makeGet(slotsColMap);
+  const getRe  = makeGet(respColMap);
+  const getInv = makeGet(invColMap);
+  const getGr  = makeGet(groupsColMap);
+
+  // Group name lookup: groupId → name
+  const groupNames: Record<string, string> = {};
+  for (let i = 0; i < groupRows.length; i++) {
+    const gid  = getGr(groupRows[i], 'group_id');
+    const name = getGr(groupRows[i], 'name');
+    if (gid) groupNames[gid] = name;
+  }
+
+  // Option count per event
+  const optionCountMap: Record<string, number> = {};
+  for (let i = 0; i < slotRows.length; i++) {
+    const eid = getSl(slotRows[i], 'event_id');
+    if (eid) optionCountMap[eid] = (optionCountMap[eid] || 0) + 1;
+  }
+
+  // Response count and hasResponded per event
+  const respCountMap: Record<string, Set<string>> = {};
+  const hasRespondedSet = new Set<string>(); // eventIds where caller responded
+  for (let i = 0; i < respRows.length; i++) {
+    const eid  = getRe(respRows[i], 'event_id');
+    if (!eid) continue;
+    if (!respCountMap[eid]) respCountMap[eid] = new Set();
+    const rType = getRe(respRows[i], 'respondent_type') || 'member';
+    const uname = getRe(respRows[i], 'user_name');
+    const vemail = getRe(respRows[i], 'visitor_email');
+    const key = rType === 'member' && uname ? `m:${uname}` : vemail ? `v:${vemail}` : '';
+    if (key) respCountMap[eid].add(key);
+    if (rType === 'member' && uname === callerUserName) hasRespondedSet.add(eid);
+  }
+
+  // EventIds where caller is an explicit invitee (group events)
+  const invitedEventIds = new Set<string>();
+  for (let i = 0; i < invRows.length; i++) {
+    const uname = getInv(invRows[i], 'user_name');
+    if (uname.toLowerCase() === callerUserName.toLowerCase()) {
+      const eid = getInv(invRows[i], 'event_id');
+      if (eid) invitedEventIds.add(eid);
+    }
+  }
+
+  const results: OpenPollSummary[] = [];
+  for (let i = 0; i < eventRows.length; i++) {
+    const row = eventRows[i];
+    if (getEv(row, 'status') !== 'open') continue;
+
+    const eventId = getEv(row, 'event_id');
+    if (!eventId) continue;
+
+    const groupId = getEv(row, 'group_id');
+    const isPublic = !groupId;
+    const isInvited = isPublic || invitedEventIds.has(eventId);
+    if (!isInvited) continue;
+
+    results.push({
+      eventId,
+      title: getEv(row, 'title') || 'Poll',
+      slotType: (getEv(row, 'slot_type') || 'datetime') as AvailabilitySlotType,
+      hasResponded: hasRespondedSet.has(eventId),
+      optionCount: optionCountMap[eventId] || 0,
+      responseCount: respCountMap[eventId] ? respCountMap[eventId].size : 0,
+      groupName: groupId ? (groupNames[groupId] || null) : null,
+      expiresAt: getEv(row, 'expires_at'),
+    });
+  }
+
+  // Most recently created first (event_id is chronological)
+  results.reverse();
+
+  return results;
 }

@@ -959,7 +959,7 @@ async function fetchAvailabilityItems(
                 displayDate: formatDiaryDate(slotDate),
                 label: title || 'Availability Event',
                 subLabel: 'Confirmed — you said Yes',
-                linkUrl: `/availability/${eventId}`,
+                linkUrl: `/availability/events/${eventId}`,
               });
             }
           }
@@ -1028,11 +1028,9 @@ export async function getDiaryItems(userName: string): Promise<DiaryItem[]> {
     }
   }
 
-  // Collect items from AVAILABILITY (nudges + confirmed events)
+  // Collect items from AVAILABILITY (confirmed concluded events only — open polls
+  // are shown in the separate OpenPollsPanel on the home page, not in "Coming Up")
   if (availabilityResult.status === 'fulfilled') {
-    for (let i = 0; i < availabilityResult.value.nudgeItems.length; i++) {
-      items.push(availabilityResult.value.nudgeItems[i]);
-    }
     for (let i = 0; i < availabilityResult.value.confirmedItems.length; i++) {
       items.push(availabilityResult.value.confirmedItems[i]);
     }

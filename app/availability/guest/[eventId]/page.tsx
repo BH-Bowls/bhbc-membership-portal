@@ -15,14 +15,14 @@ import type {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function fmtSlotDate(iso: string): string {
+function fmtSlotDate(iso: string | null | undefined): string {
   if (!iso) return '';
   const d = new Date(iso);
   if (isNaN(d.getTime())) return iso;
   return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
-function fmtSlotTime(iso: string): string {
+function fmtSlotTime(iso: string | null | undefined): string {
   if (!iso) return '';
   const d = new Date(iso);
   if (isNaN(d.getTime())) return '';

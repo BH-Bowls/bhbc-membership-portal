@@ -193,3 +193,56 @@ export function buildFriendlyICSAttachment(params: FriendlyICSParams): ICSAttach
         : 'text/calendar; method=REQUEST',
   };
 }
+
+// Build a single combined ICS attachment for a linked game pair.
+// Uses the earlier game time; UID is stable per player+date so the entry
+// can be updated later if needed.
+export function buildLinkedFriendlyICSAttachment(params: {
+  userName: string;
+  dateStr: string;
+  timeStr: string;        // earlier of the two game times
+  gameAClubName: string;
+  gameAHomeAway: 'H' | 'A';
+  gameBClubName: string;
+  gameBHomeAway: 'H' | 'A';
+}): ICSAttachment {
+  const { userName, dateStr, timeStr, gameAClubName, gameAHomeAway, gameBClubName, gameBHomeAway } = params;
+
+  const dtStart = londonDateToUTC(dateStr, timeStr);
+  if (isNaN(dtStart.getTime())) {
+    throw new Error(`[ics-utils] Invalid linked game date/time: "${dateStr}" / "${timeStr}"`);
+  }
+  const dtEnd = new Date(dtStart.getTime() + 3 * 60 * 60 * 1000);
+  const dtstamp = formatICSDate(new Date());
+
+  const safeDate = dateStr.replace(/\//g, '-').replace(/\s+/g, '_');
+  const uid = `BHBC-FRIENDLY-LINKED-${safeDate}-${userName}@bhbc.org.uk`;
+
+  const labelA = gameAHomeAway === 'H' ? `Home vs ${gameAClubName}` : `Away at ${gameAClubName}`;
+  const labelB = gameBHomeAway === 'H' ? `Home vs ${gameBClubName}` : `Away at ${gameBClubName}`;
+
+  const lines = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//BHBC Membership Portal//EN',
+    'METHOD:PUBLISH',
+    'BEGIN:VEVENT',
+    `UID:${uid}`,
+    'SEQUENCE:0',
+    `DTSTAMP:${dtstamp}`,
+    `DTSTART:${formatICSDate(dtStart)}`,
+    `DTEND:${formatICSDate(dtEnd)}`,
+    `SUMMARY:Entered: Linked Friendly ${dateStr}`,
+    `DESCRIPTION:Linked games — you will be allocated to one by the captain.\\n${labelA}\\n${labelB}`,
+    'LOCATION:Burgess Hill Bowls Club, Leylands Road, Burgess Hill',
+    'STATUS:TENTATIVE',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ];
+
+  return {
+    filename: `BHBC-Linked-${safeDate}.ics`,
+    content: lines.join('\r\n'),
+    contentType: 'text/calendar; method=PUBLISH',
+  };
+}

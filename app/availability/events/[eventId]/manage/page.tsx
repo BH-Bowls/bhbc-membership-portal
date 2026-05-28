@@ -3,7 +3,7 @@
 
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -26,7 +26,7 @@ import type {
 } from '@/types/availability';
 
 // Format ISO datetime for slot header display (date line)
-function fmtSlotDate(iso: string): string {
+function fmtSlotDate(iso: string | null | undefined): string {
   if (!iso) return '';
   const d = new Date(iso);
   if (isNaN(d.getTime())) return iso;
@@ -34,7 +34,7 @@ function fmtSlotDate(iso: string): string {
 }
 
 // Format ISO datetime for slot header display (time line)
-function fmtSlotTime(iso: string): string {
+function fmtSlotTime(iso: string | null | undefined): string {
   if (!iso) return '';
   const d = new Date(iso);
   if (isNaN(d.getTime())) return '';
@@ -164,16 +164,28 @@ export default function ManageEventPage({
   const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
   const [archiving, setArchiving] = useState(false);
 
-  // Add slot form state
-  const [showAddSlot, setShowAddSlot] = useState(false);
-  const [newSlotDate, setNewSlotDate] = useState('');
-  const [newSlotTime, setNewSlotTime] = useState('');
-  const [newSlotLabel, setNewSlotLabel] = useState('');
-  const [addSlotError, setAddSlotError] = useState<string | null>(null);
-  const [addSlotSaving, setAddSlotSaving] = useState(false);
+  // ── Editable slot drafts ──────────────────────────────────────────────────
+  // Each draft is either an existing slot (slotId set) or a new ghost row (slotId null)
+  interface SlotDraft {
+    key: string;
+    slotId: string | null;
+    slotDatetime: string;   // ISO or ''
+    slotLabel: string;
+    displayDate: string;
+    displayTime: string;
+    isDirty: boolean;
+  }
 
+  const [slotDrafts, setSlotDrafts] = useState<SlotDraft[]>([]);
+  const [slotsEdited, setSlotsEdited] = useState(false); // any change vs saved state
+  const [savingSlots, setSavingSlots] = useState(false);
+  const [slotSaveError, setSlotSaveError] = useState<string | null>(null);
   // Which slot is being deleted (to show spinner on that button)
   const [deletingSlotId, setDeletingSlotId] = useState<string | null>(null);
+
+  // Nudge state
+  const [nudging, setNudging] = useState(false);
+  const [nudgeResult, setNudgeResult] = useState<string | null>(null);
 
   const currentUserName = session && session.user ? session.user.userName : '';
   const currentUserRole = session && session.user ? session.user.role : '';
@@ -183,6 +195,34 @@ export default function ManageEventPage({
     if (!eventId) return;
     fetchDetail(eventId);
   }, [eventId]);
+
+  const draftKeyRef = useRef(0);
+  function newDraftKey() { return String(++draftKeyRef.current); }
+  function emptySlotDraft(): SlotDraft {
+    return { key: newDraftKey(), slotId: null, slotDatetime: '', slotLabel: '', displayDate: '', displayTime: '', isDirty: false };
+  }
+
+  function slotsToSlotDrafts(slots: AvailabilitySlot[]): SlotDraft[] {
+    const drafts: SlotDraft[] = slots.map((s) => {
+      const dt = s.slotDatetime || '';
+      let displayDate = '';
+      let displayTime = '';
+      if (dt) {
+        const d = new Date(dt);
+        if (!isNaN(d.getTime())) {
+          displayDate = d.toISOString().substring(0, 10);
+          const h = d.getUTCHours();
+          const m = d.getUTCMinutes();
+          if (!(h === 0 && m === 0) && !(h === 12 && m === 0)) {
+            displayTime = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+          }
+        }
+      }
+      return { key: newDraftKey(), slotId: s.slotId, slotDatetime: dt, slotLabel: s.slotLabel, displayDate, displayTime, isDirty: false };
+    });
+    drafts.push(emptySlotDraft());
+    return drafts;
+  }
 
   // Fetch the manage detail from the API
   async function fetchDetail(eid: string) {
@@ -204,6 +244,8 @@ export default function ManageEventPage({
       }
       const data: AvailabilityManageDetail = await res.json();
       setDetail(data);
+      setSlotDrafts(slotsToSlotDrafts(data.slots));
+      setSlotsEdited(false);
     } catch (err) {
       setError('Failed to load event. Please refresh.');
       console.error('[ManageEventPage] fetchDetail error:', err);
@@ -253,7 +295,7 @@ export default function ManageEventPage({
         return;
       }
       setShowEditPanel(false);
-      setToast('Event updated.');
+      setToast('Poll updated.');
       await fetchDetail(eventId);
     } catch (err) {
       console.error('[ManageEventPage] handleSaveEdit error:', err);
@@ -287,7 +329,7 @@ export default function ManageEventPage({
         setError(d.error || 'Failed to update event status.');
         return;
       }
-      setToast(`Event ${newStatus === 'open' ? 're-opened' : 'closed'}.`);
+      setToast(`Poll ${newStatus === 'open' ? 're-opened' : 'closed'}.`);
       await fetchDetail(eventId);
     } catch (err) {
       console.error('[ManageEventPage] handleStatusChange error:', err);
@@ -322,7 +364,7 @@ export default function ManageEventPage({
         return;
       }
       setShowConcludePanel(false);
-      setToast('Event concluded.');
+      setToast('Poll concluded.');
       await fetchDetail(eventId);
     } catch (err) {
       console.error('[ManageEventPage] handleConclude error:', err);
@@ -360,49 +402,98 @@ export default function ManageEventPage({
     }
   }
 
-  // Add a new slot to the event
-  async function handleAddSlot() {
-    if (!eventId) return;
-    setAddSlotError(null);
-    if (!newSlotDate) {
-      setAddSlotError('Please select a date.');
-      return;
-    }
-    setAddSlotSaving(true);
-    try {
-      const slotDatetime = buildSlotDatetime(newSlotDate, newSlotTime);
-      const res = await fetch(`/api/availability/events/${eventId}/slots`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          slotDatetime,
-          slotLabel: newSlotLabel.trim(),
-        }),
+  const pollSlotType = detail?.event?.slotType || 'datetime';
+
+  function isDraftFilled(d: SlotDraft): boolean {
+    if (pollSlotType === 'text') return d.slotLabel.trim().length > 0;
+    return d.displayDate.length > 0;
+  }
+
+  function updateSlotDraft(key: string, patch: Partial<SlotDraft>) {
+    setSlotDrafts((prev) => {
+      const updated = prev.map((d) => d.key === key ? { ...d, ...patch, isDirty: true } : d);
+      const last = updated[updated.length - 1];
+      if (isDraftFilled(last)) return [...updated, emptySlotDraft()];
+      return updated;
+    });
+    setSlotsEdited(true);
+  }
+
+  function handleDraftDateChange(key: string, displayDate: string) {
+    setSlotDrafts((prev) => {
+      const updated = prev.map((d) => {
+        if (d.key !== key) return d;
+        const dt = buildSlotDatetime(displayDate, d.displayTime);
+        return { ...d, displayDate, slotDatetime: dt, isDirty: true };
       });
-      if (!res.ok) {
-        const d = await res.json();
-        setAddSlotError(d.error || 'Failed to add slot.');
-        return;
+      const last = updated[updated.length - 1];
+      if (isDraftFilled(last)) return [...updated, emptySlotDraft()];
+      return updated;
+    });
+    setSlotsEdited(true);
+  }
+
+  function handleDraftTimeChange(key: string, displayTime: string) {
+    setSlotDrafts((prev) => prev.map((d) => {
+      if (d.key !== key) return d;
+      return { ...d, displayTime, slotDatetime: buildSlotDatetime(d.displayDate, displayTime), isDirty: true };
+    }));
+    setSlotsEdited(true);
+  }
+
+  // Save all dirty drafts (new and edited)
+  async function handleUpdateSlots() {
+    if (!eventId || !detail) return;
+    setSlotSaveError(null);
+    setSavingSlots(true);
+    try {
+      const filledDrafts = slotDrafts.filter((d) => isDraftFilled(d));
+      for (const d of filledDrafts) {
+        if (!d.isDirty) continue;
+        const body = {
+          slotDatetime: pollSlotType === 'datetime' ? d.slotDatetime || null : null,
+          slotLabel: d.slotLabel.trim(),
+        };
+        if (d.slotId) {
+          // Update existing slot
+          const res = await fetch(`/api/availability/events/${eventId}/slots/${d.slotId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          if (!res.ok) {
+            const err = await res.json();
+            setSlotSaveError(err.error || 'Failed to update option.');
+            return;
+          }
+        } else {
+          // New slot
+          const res = await fetch(`/api/availability/events/${eventId}/slots`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          if (!res.ok) {
+            const err = await res.json();
+            setSlotSaveError(err.error || 'Failed to add option.');
+            return;
+          }
+        }
       }
-      setNewSlotDate('');
-      setNewSlotTime('');
-      setNewSlotLabel('');
-      setShowAddSlot(false);
-      setToast('Slot added.');
+      setToast('Options updated.');
       await fetchDetail(eventId);
     } catch (err) {
-      console.error('[ManageEventPage] handleAddSlot error:', err);
-      setAddSlotError('An unexpected error occurred.');
+      console.error('[ManageEventPage] handleUpdateSlots error:', err);
+      setSlotSaveError('An unexpected error occurred.');
     } finally {
-      setAddSlotSaving(false);
+      setSavingSlots(false);
     }
   }
 
   // Delete a slot (cascades to its responses)
   async function handleDeleteSlot(slotId: string) {
     if (!eventId) return;
-    // Confirm before deleting because responses will be lost
-    if (!window.confirm('Removing this slot will also permanently delete all responses to it. Continue?')) return;
+    if (!window.confirm('Removing this option will also permanently delete all responses to it. Continue?')) return;
     setDeletingSlotId(slotId);
     try {
       const res = await fetch(`/api/availability/events/${eventId}/slots/${slotId}`, {
@@ -410,16 +501,38 @@ export default function ManageEventPage({
       });
       if (!res.ok) {
         const d = await res.json();
-        setError(d.error || 'Failed to delete slot.');
+        setError(d.error || 'Failed to remove option.');
         return;
       }
-      setToast('Slot removed.');
+      setToast('Option removed.');
       await fetchDetail(eventId);
     } catch (err) {
       console.error('[ManageEventPage] handleDeleteSlot error:', err);
-      setError('Failed to delete slot.');
+      setError('Failed to remove option.');
     } finally {
       setDeletingSlotId(null);
+    }
+  }
+
+  // Nudge non-responders
+  async function handleNudge() {
+    if (!eventId) return;
+    setNudging(true);
+    setNudgeResult(null);
+    try {
+      const res = await fetch(`/api/availability/events/${eventId}/nudge`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) {
+        setNudgeResult(data.error || 'Failed to send reminders.');
+      } else if (data.nudgedCount === 0) {
+        setNudgeResult('Everyone has already responded — no reminders sent.');
+      } else {
+        setNudgeResult(`Reminder sent to ${data.nudgedCount} non-responder${data.nudgedCount === 1 ? '' : 's'}.`);
+      }
+    } catch {
+      setNudgeResult('An unexpected error occurred.');
+    } finally {
+      setNudging(false);
     }
   }
 
@@ -430,7 +543,7 @@ export default function ManageEventPage({
   const backHref = detail && detail.event.groupId
     ? `/availability/groups/${detail.event.groupId}`
     : '/availability';
-  const backLabel = detail && detail.event.groupId ? 'Group' : 'Availability';
+  const backLabel = detail && detail.event.groupId ? 'Group' : 'Polls';
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
@@ -463,7 +576,7 @@ export default function ManageEventPage({
         {loading && !forbidden && (
           <div className="text-center py-16">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-            <p className="mt-3 text-gray-700">Loading event…</p>
+            <p className="mt-3 text-gray-700">Loading poll…</p>
           </div>
         )}
 
@@ -472,7 +585,9 @@ export default function ManageEventPage({
           <>
             {/* ── Header ────────────────────────────────────────────── */}
             <div className="mb-4">
-              <RouterBackLink fallbackHref={backHref} label={backLabel} />
+              <a href={backHref} className="text-blue-600 hover:text-blue-800 mb-2 inline-block">
+                ← {backLabel}
+              </a>
 
               {/* Title and badges */}
               <div className="flex flex-wrap items-center gap-2 mb-1">
@@ -496,7 +611,7 @@ export default function ManageEventPage({
                   onClick={openEditPanel}
                   className={getButtonClasses('secondary', 'sm')}
                 >
-                  Edit Event
+                  Edit Poll
                 </button>
                 <Link
                   href={`/availability/events/${eventId}`}
@@ -510,7 +625,7 @@ export default function ManageEventPage({
             {/* ── Edit event panel ────────────────────────────────── */}
             {showEditPanel && (
               <div className="bg-white rounded-lg border border-gray-200 p-4 mb-4">
-                <h2 className="text-base font-semibold text-gray-900 mb-3">Edit Event</h2>
+                <h2 className="text-base font-semibold text-gray-900 mb-3">Edit Poll</h2>
                 {editError && (
                   <div className={getAlertClasses('danger') + ' mb-3 text-sm'}>{editError}</div>
                 )}
@@ -523,7 +638,7 @@ export default function ManageEventPage({
                   <textarea value={editDescription} onChange={(e) => setEditDescription(e.target.value)} className={getInputClasses(false)} rows={2} maxLength={500} />
                 </div>
                 <div className="mb-3">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Event Type</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Poll Type</label>
                   <div className="flex gap-2">
                     {(['general', 'fixture', 'signup'] as AvailabilityEventType[]).map((t) => (
                       <button key={t} type="button" onClick={() => setEditType(t)}
@@ -562,7 +677,7 @@ export default function ManageEventPage({
 
             {/* ── Status controls ──────────────────────────────────── */}
             <div className="bg-white rounded-lg border border-gray-200 p-4 mb-4">
-              <h2 className="text-sm font-medium text-gray-700 mb-2">Event Status</h2>
+              <h2 className="text-sm font-medium text-gray-700 mb-2">Poll Status</h2>
               <div className="flex flex-wrap gap-2">
                 {/* Open: allow closing */}
                 {detail.event.status === 'open' && (
@@ -571,7 +686,7 @@ export default function ManageEventPage({
                     disabled={statusActioning}
                     className={getButtonClasses('secondary', 'sm')}
                   >
-                    {statusActioning ? 'Updating…' : 'Close Event'}
+                    {statusActioning ? 'Updating…' : 'Close Poll'}
                   </button>
                 )}
 
@@ -589,7 +704,7 @@ export default function ManageEventPage({
                       onClick={() => { setConcludeSlotId(''); setConcludeNote(''); setConcludeNotify(false); setConcludeError(null); setShowConcludePanel(true); }}
                       className={getButtonClasses('primary', 'sm')}
                     >
-                      Conclude Event
+                      Conclude Poll
                     </button>
                   </>
                 )}
@@ -611,7 +726,7 @@ export default function ManageEventPage({
                     onClick={() => setShowArchiveConfirm(true)}
                     className={getButtonClasses('danger', 'sm')}
                   >
-                    Archive Event
+                    Archive Poll
                   </button>
                 )}
               </div>
@@ -620,8 +735,8 @@ export default function ManageEventPage({
             {/* ── Archive confirmation ──────────────────────────────── */}
             {showArchiveConfirm && (
               <div className={getAlertClasses('warning') + ' mb-4'}>
-                <p className="font-medium text-gray-900 mb-1">Archive this event?</p>
-                <p className="text-sm text-gray-700 mb-3">Archiving removes the event from all views.</p>
+                <p className="font-medium text-gray-900 mb-1">Archive this poll?</p>
+                <p className="text-sm text-gray-700 mb-3">Archiving removes the poll from all views.</p>
                 <div className="flex gap-2">
                   <button onClick={handleArchive} disabled={archiving} className={getButtonClasses('danger', 'sm')}>
                     {archiving ? 'Archiving…' : 'Confirm Archive'}
@@ -634,7 +749,7 @@ export default function ManageEventPage({
             {/* ── Conclude panel ────────────────────────────────────── */}
             {showConcludePanel && (
               <div className="bg-white rounded-lg border border-gray-200 p-4 mb-4">
-                <h2 className="text-base font-semibold text-gray-900 mb-3">Conclude Event</h2>
+                <h2 className="text-base font-semibold text-gray-900 mb-3">Conclude Poll</h2>
                 {concludeError && (
                   <div className={getAlertClasses('danger') + ' mb-3 text-sm'}>{concludeError}</div>
                 )}
@@ -647,10 +762,10 @@ export default function ManageEventPage({
                     onChange={(e) => setConcludeSlotId(e.target.value)}
                     className={getInputClasses(false)}
                   >
-                    <option value="">— Select a slot —</option>
+                    <option value="">— Select an option —</option>
                     {detail.slots.map((slot: AvailabilitySlot) => (
                       <option key={slot.slotId} value={slot.slotId}>
-                        {slot.slotLabel || fmtSlotDate(slot.slotDatetime) + (fmtSlotTime(slot.slotDatetime) ? ' ' + fmtSlotTime(slot.slotDatetime) : '')}
+                        {slot.slotLabel || (slot.slotDatetime ? fmtSlotDate(slot.slotDatetime) + (fmtSlotTime(slot.slotDatetime) ? ' ' + fmtSlotTime(slot.slotDatetime) : '') : '')}
                       </option>
                     ))}
                   </select>
@@ -712,7 +827,7 @@ export default function ManageEventPage({
                                 : 'bg-gray-50')
                             }
                           >
-                            {slot.slotLabel || (
+                            {slot.slotLabel || (slot.slotDatetime ? (
                               <span>
                                 <span className="block">{fmtSlotDate(slot.slotDatetime)}</span>
                                 {fmtSlotTime(slot.slotDatetime) && (
@@ -721,7 +836,7 @@ export default function ManageEventPage({
                                   </span>
                                 )}
                               </span>
-                            )}
+                            ) : '')}
                           </th>
                         ))}
                       </tr>
@@ -799,75 +914,112 @@ export default function ManageEventPage({
               )}
             </div>
 
-            {/* ── Slots section ─────────────────────────────────────── */}
+            {/* ── Options section ────────────────────────────────────── */}
             <div className="bg-white rounded-lg border border-gray-200 p-4 mb-4">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-base font-semibold text-gray-900">Slots</h2>
-                {/* Only allow adding slots when event is open */}
-                {detail.event.status === 'open' && (
-                  <button
-                    onClick={() => { setAddSlotError(null); setShowAddSlot(!showAddSlot); }}
-                    className={getButtonClasses('secondary', 'sm')}
-                  >
-                    + Add Slot
-                  </button>
-                )}
-              </div>
+              <h2 className="text-base font-semibold text-gray-900 mb-3">
+                {pollSlotType === 'text' ? 'Options' : 'Date / Time Options'}
+              </h2>
 
-              {/* Add slot form */}
-              {showAddSlot && (
-                <div className="mb-4 border border-gray-100 rounded p-3 bg-gray-50">
-                  {addSlotError && (
-                    <p className="text-xs text-red-600 mb-2">{addSlotError}</p>
-                  )}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-2">
-                    <div>
-                      <label className="block text-xs font-medium text-gray-700 mb-1">Date *</label>
-                      <input type="date" value={newSlotDate} onChange={(e) => setNewSlotDate(e.target.value)} className={getInputClasses(false)} />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-700 mb-1">Time (optional)</label>
-                      <input type="time" value={newSlotTime} onChange={(e) => setNewSlotTime(e.target.value)} className={getInputClasses(false)} />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-700 mb-1">Label (optional)</label>
-                      <input type="text" value={newSlotLabel} onChange={(e) => setNewSlotLabel(e.target.value)} className={getInputClasses(false)} placeholder="Label override" maxLength={100} />
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <button onClick={handleAddSlot} disabled={addSlotSaving} className={getButtonClasses('primary', 'sm')}>
-                      {addSlotSaving ? 'Adding…' : 'Add Slot'}
-                    </button>
-                    <button onClick={() => setShowAddSlot(false)} className={getButtonClasses('secondary', 'sm')}>Cancel</button>
-                  </div>
-                </div>
+              {slotSaveError && (
+                <p className="text-xs text-red-600 mb-2">{slotSaveError}</p>
               )}
 
-              {/* Current slots list */}
-              {detail.slots.length === 0 ? (
-                <p className="text-sm text-gray-700">No slots yet.</p>
+              {detail.event.status === 'open' ? (
+                <>
+                  <div className="space-y-2 mb-3">
+                    {slotDrafts.map((draft) => {
+                      const isGhost = !isDraftFilled(draft);
+                      return (
+                        <div key={draft.key} className="flex items-start gap-2">
+                          {pollSlotType === 'text' ? (
+                            <input
+                              type="text"
+                              value={draft.slotLabel}
+                              onChange={(e) => updateSlotDraft(draft.key, { slotLabel: e.target.value })}
+                              className={getInputClasses(false) + ' flex-1'}
+                              placeholder={isGhost ? 'Add an option…' : ''}
+                              maxLength={200}
+                            />
+                          ) : (
+                            <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              <input
+                                type="date"
+                                value={draft.displayDate}
+                                onChange={(e) => handleDraftDateChange(draft.key, e.target.value)}
+                                className={getInputClasses(false)}
+                              />
+                              <input
+                                type="time"
+                                value={draft.displayTime}
+                                onChange={(e) => handleDraftTimeChange(draft.key, e.target.value)}
+                                className={getInputClasses(false)}
+                              />
+                            </div>
+                          )}
+                          {!isGhost && (
+                            <button
+                              onClick={() => draft.slotId ? handleDeleteSlot(draft.slotId) : setSlotDrafts((prev) => {
+                                const f = prev.filter((d) => d.key !== draft.key);
+                                const last = f[f.length - 1];
+                                if (!last || isDraftFilled(last)) f.push(emptySlotDraft());
+                                setSlotsEdited(true);
+                                return f;
+                              })}
+                              disabled={!!deletingSlotId && deletingSlotId === draft.slotId}
+                              className="mt-1 text-xs text-red-600 hover:text-red-800 font-medium shrink-0"
+                            >
+                              {deletingSlotId && deletingSlotId === draft.slotId ? 'Removing…' : '✕ Remove'}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {slotsEdited && (
+                    <button
+                      onClick={handleUpdateSlots}
+                      disabled={savingSlots}
+                      className={getButtonClasses('primary', 'sm')}
+                    >
+                      {savingSlots ? 'Saving…' : 'Update Options'}
+                    </button>
+                  )}
+                </>
               ) : (
-                <ul className="space-y-2">
-                  {detail.slots.map((slot: AvailabilitySlot) => (
-                    <li key={slot.slotId} className="flex items-center justify-between bg-gray-50 rounded px-3 py-2">
-                      <span className="text-sm text-gray-900">
+                // Read-only slot list when event is not open
+                detail.slots.length === 0 ? (
+                  <p className="text-sm text-gray-700">No options yet.</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {detail.slots.map((slot: AvailabilitySlot) => (
+                      <li key={slot.slotId} className="bg-gray-50 rounded px-3 py-2 text-sm text-gray-900">
                         {slot.slotLabel || (fmtSlotDate(slot.slotDatetime) + (fmtSlotTime(slot.slotDatetime) ? ' ' + fmtSlotTime(slot.slotDatetime) : ''))}
-                      </span>
-                      {/* Remove slot — only when event is open */}
-                      {detail.event.status === 'open' && (
-                        <button
-                          onClick={() => handleDeleteSlot(slot.slotId)}
-                          disabled={deletingSlotId === slot.slotId}
-                          className="text-xs text-red-600 hover:text-red-800 font-medium ml-3"
-                        >
-                          {deletingSlotId === slot.slotId ? 'Removing…' : '✕ Remove'}
-                        </button>
-                      )}
-                    </li>
-                  ))}
-                </ul>
+                      </li>
+                    ))}
+                  </ul>
+                )
               )}
             </div>
+
+            {/* ── Nudge non-responders ──────────────────────────────── */}
+            {detail.event.groupId && detail.event.status === 'open' && (
+              <div className="bg-white rounded-lg border border-gray-200 p-4 mb-4">
+                <h2 className="text-base font-semibold text-gray-900 mb-1">Remind non-responders</h2>
+                <p className="text-xs text-gray-700 mb-3">
+                  Send a reminder email to everyone who has not yet responded.
+                </p>
+                {nudgeResult && (
+                  <p className="text-sm text-gray-700 mb-2">{nudgeResult}</p>
+                )}
+                <button
+                  onClick={handleNudge}
+                  disabled={nudging}
+                  className={getButtonClasses('secondary', 'sm')}
+                >
+                  {nudging ? 'Sending…' : 'Nudge non-responders'}
+                </button>
+              </div>
+            )}
 
             {/* ── Invitees section (group events only) ─────────────── */}
             {detail.event.groupId && detail.invitees.length > 0 && (

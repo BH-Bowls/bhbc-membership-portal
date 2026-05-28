@@ -1,5 +1,5 @@
 // app/availability/groups/[groupId]/events/new/page.tsx
-// Create a new event within a group — form for title, type, slots, settings
+// Create a new poll within a group
 
 'use client';
 
@@ -9,23 +9,30 @@ import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
 import { RouterBackLink } from '@/components/RouterBackLink';
 import { getButtonClasses, getInputClasses, getAlertClasses } from '@/config/theme-helpers';
-import type { AvailabilityEventType } from '@/types/availability';
+import type { AvailabilityEventType, AvailabilitySlotType } from '@/types/availability';
 
-// Shape of a slot entry in the form
-interface SlotEntry {
-  slotDatetime: string; // ISO datetime string built from date + time fields
-  slotLabel: string;    // optional user-supplied label
-  displayDate: string;  // "YYYY-MM-DD" for the date input
-  displayTime: string;  // "HH:MM" for the time input
+interface SlotDraft {
+  key: string;
+  slotDatetime: string;
+  slotLabel: string;
+  displayDate: string;
+  displayTime: string;
 }
 
-// Build an ISO datetime string from separate date and time strings
-// Returns empty string if the date is missing
 function buildSlotDatetime(date: string, time: string): string {
   if (!date) return '';
-  // Use noon UTC as default if no time provided
-  const timeStr = time ? time : '12:00';
-  return new Date(`${date}T${timeStr}:00`).toISOString();
+  return new Date(`${date}T${time || '12:00'}:00`).toISOString();
+}
+
+function isDraftFilled(draft: SlotDraft, slotType: AvailabilitySlotType): boolean {
+  if (slotType === 'text') return draft.slotLabel.trim().length > 0;
+  return draft.displayDate.length > 0;
+}
+
+let keyCounter = 0;
+function nextKey() { return String(++keyCounter); }
+function emptyDraft(): SlotDraft {
+  return { key: nextKey(), slotDatetime: '', slotLabel: '', displayDate: '', displayTime: '' };
 }
 
 export default function NewGroupEventPage({
@@ -36,143 +43,103 @@ export default function NewGroupEventPage({
   const { data: session } = useSession();
   const router = useRouter();
 
-  // Resolve groupId from the async params
   const [groupId, setGroupId] = useState('');
-  React.useEffect(() => {
-    params.then((p) => setGroupId(p.groupId));
-  }, [params]);
+  React.useEffect(() => { params.then((p) => setGroupId(p.groupId)); }, [params]);
 
-  // Group name loaded for display in heading and invitee note
   const [groupName, setGroupName] = useState('');
   const [groupMemberCount, setGroupMemberCount] = useState(0);
 
-  // Form fields
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [type, setType] = useState<AvailabilityEventType>('general');
+  const [slotType, setSlotType] = useState<AvailabilitySlotType>('datetime');
   const [expiresAt, setExpiresAt] = useState('');
   const [showResponsesToRespondents, setShowResponsesToRespondents] = useState(true);
   const [notifyCreatorOnResponse, setNotifyCreatorOnResponse] = useState(false);
 
-  // Slot list
-  const [slots, setSlots] = useState<SlotEntry[]>([]);
-  // Fields for the add-slot inline form
-  const [newSlotDate, setNewSlotDate] = useState('');
-  const [newSlotTime, setNewSlotTime] = useState('');
-  const [newSlotLabel, setNewSlotLabel] = useState('');
-  const [slotError, setSlotError] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState<SlotDraft[]>([emptyDraft()]);
 
-  // Submission state
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  // Scroll to top whenever a submit error appears so the user sees it
   useEffect(() => {
-    if (submitError) {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    }
+    if (submitError) window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [submitError]);
 
-  const userName = session && session.user ? session.user.userName : '';
-
-  // Load group name once groupId is resolved
   useEffect(() => {
     if (!groupId) return;
-    loadGroupName(groupId);
+    fetch(`/api/availability/groups/${groupId}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (data?.group) setGroupName(data.group.name);
+        if (data?.members) setGroupMemberCount(data.members.length);
+      })
+      .catch(() => {});
   }, [groupId]);
 
-  // Fetch the group name from the API for display
-  async function loadGroupName(gid: string) {
-    try {
-      const res = await fetch(`/api/availability/groups/${gid}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.group) {
-          setGroupName(data.group.name);
-        }
-        if (data.members) {
-          setGroupMemberCount(data.members.length);
-        }
+  function handleSlotTypeChange(t: AvailabilitySlotType) {
+    setSlotType(t);
+    setDrafts([emptyDraft()]);
+  }
+
+  function updateDraft(key: string, patch: Partial<SlotDraft>) {
+    setDrafts((prev) => {
+      const updated = prev.map((d) => d.key === key ? { ...d, ...patch } : d);
+      const last = updated[updated.length - 1];
+      if (isDraftFilled(last, slotType)) return [...updated, emptyDraft()];
+      return updated;
+    });
+  }
+
+  function removeDraft(key: string) {
+    setDrafts((prev) => {
+      const filtered = prev.filter((d) => d.key !== key);
+      if (filtered.length === 0 || isDraftFilled(filtered[filtered.length - 1], slotType)) {
+        filtered.push(emptyDraft());
       }
-    } catch (err) {
-      console.error('[NewGroupEventPage] loadGroupName error:', err);
-    }
+      return filtered;
+    });
   }
 
-  // Add a slot to the list
-  function addSlot() {
-    setSlotError(null);
-    if (!newSlotDate) {
-      setSlotError('Please select a date for the slot.');
-      return;
-    }
-    const slotDatetime = buildSlotDatetime(newSlotDate, newSlotTime);
-    setSlots(prev => [...prev, {
-      slotDatetime,
-      slotLabel: newSlotLabel.trim(),
-      displayDate: newSlotDate,
-      displayTime: newSlotTime,
-    }]);
-    // Clear slot input fields
-    setNewSlotDate('');
-    setNewSlotTime('');
-    setNewSlotLabel('');
+  function handleDateChange(key: string, displayDate: string) {
+    setDrafts((prev) => {
+      const updated = prev.map((d) => {
+        if (d.key !== key) return d;
+        const dt = buildSlotDatetime(displayDate, d.displayTime);
+        return { ...d, displayDate, slotDatetime: dt };
+      });
+      const last = updated[updated.length - 1];
+      if (isDraftFilled(last, slotType)) return [...updated, emptyDraft()];
+      return updated;
+    });
   }
 
-  // Remove a slot from the list by index
-  function removeSlot(index: number) {
-    setSlots(prev => prev.filter((_, i) => i !== index));
+  function handleTimeChange(key: string, displayTime: string) {
+    setDrafts((prev) => prev.map((d) => {
+      if (d.key !== key) return d;
+      return { ...d, displayTime, slotDatetime: buildSlotDatetime(d.displayDate, displayTime) };
+    }));
   }
 
-  // Format a slot for display in the list (date + time or label)
-  function formatSlotDisplay(slot: SlotEntry): string {
-    if (slot.slotLabel) return slot.slotLabel;
-    if (!slot.slotDatetime) return 'Unknown date';
-    const d = new Date(slot.slotDatetime);
-    if (isNaN(d.getTime())) return slot.displayDate;
-    const dateStr = d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
-    if (slot.displayTime) {
-      return `${dateStr} at ${slot.displayTime}`;
-    }
-    return dateStr;
-  }
+  const filledDrafts = drafts.filter((d) => isDraftFilled(d, slotType));
+  const hasUnsavedOptions = filledDrafts.length > 0;
 
-  // Submit the create-event form
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSubmitError(null);
-
-    // Validate required fields
-    if (!title.trim()) {
-      setSubmitError('Event title is required.');
+    if (!title.trim()) { setSubmitError('Poll title is required.'); return; }
+    if (!expiresAt) { setSubmitError('Please set an expiry date.'); return; }
+    if (new Date(expiresAt) <= new Date()) { setSubmitError('Expiry date must be in the future.'); return; }
+    if (filledDrafts.length === 0) {
+      setSubmitError(slotType === 'text' ? 'Please add at least one option.' : 'Please add at least one date/time option.');
       return;
     }
-    if (!expiresAt) {
-      setSubmitError('Please set an expiry date.');
-      return;
-    }
-    // Expiry must be in the future
-    if (new Date(expiresAt) <= new Date()) {
-      setSubmitError('Expiry date must be in the future.');
-      return;
-    }
-    if (slots.length === 0) {
-      setSubmitError('Please add at least one date/time slot.');
-      return;
-    }
-
     setSubmitting(true);
     try {
-      // Build the payload — convert slot entries to the API shape
-      const slotPayload = [];
-      for (let i = 0; i < slots.length; i++) {
-        slotPayload.push({
-          slotDatetime: slots[i].slotDatetime,
-          slotLabel: slots[i].slotLabel,
-        });
-      }
-
-      // POST to the group events API endpoint
+      const slotPayload = filledDrafts.map((d) => ({
+        slotDatetime: slotType === 'datetime' ? d.slotDatetime : null,
+        slotLabel: d.slotLabel.trim(),
+      }));
       const res = await fetch(`/api/availability/groups/${groupId}/events`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -180,6 +147,7 @@ export default function NewGroupEventPage({
           title: title.trim(),
           description: description.trim(),
           type,
+          slotType,
           showResponsesToRespondents,
           notifyCreatorOnResponse,
           expiresAt: new Date(expiresAt).toISOString(),
@@ -187,55 +155,44 @@ export default function NewGroupEventPage({
         }),
       });
       const data = await res.json();
-
-      if (!res.ok) {
-        setSubmitError(data.error || 'Failed to create event.');
-        return;
-      }
-
-      // Navigate to the manage page for the new event
+      if (!res.ok) { setSubmitError(data.error || 'Failed to create poll.'); return; }
       router.push(`/availability/events/${data.eventId}/manage`);
-    } catch (err) {
-      console.error('[NewGroupEventPage] handleSubmit error:', err);
+    } catch {
       setSubmitError('An unexpected error occurred. Please try again.');
     } finally {
       setSubmitting(false);
     }
   }
 
-  const displayName = session && session.user && session.user.name ? session.user.name : undefined;
-  const role = session && session.user ? session.user.role : '';
+  const displayName = session?.user?.name ?? undefined;
+  const role = session?.user?.role ?? '';
+  const inactiveBtn = 'inline-flex items-center justify-center font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 rounded-md px-3 py-1.5 text-sm border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 shadow-sm';
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
       <Navbar userName={displayName} userRole={role} />
 
       <div className="container mx-auto px-4 py-8 max-w-2xl">
-        {/* Page header */}
         <div className="mb-6">
           <RouterBackLink
             fallbackHref={groupId ? `/availability/groups/${groupId}` : '/availability'}
             label={groupName || 'Group'}
           />
           <h1 className="text-2xl font-bold text-gray-900">
-            New Event{groupName ? ` — ${groupName}` : ''}
+            New Poll{groupName ? ` — ${groupName}` : ''}
           </h1>
         </div>
 
-        {/* Submission error */}
         {submitError && (
-          <div className={getAlertClasses('danger') + ' mb-4'}>
-            {submitError}
-          </div>
+          <div className={getAlertClasses('danger') + ' mb-4'}>{submitError}</div>
         )}
 
         <form onSubmit={handleSubmit} className="space-y-6">
 
-          {/* ── Section 1: Event Details ──────────────────────────── */}
+          {/* ── Poll Details ─────────────────────────────────────── */}
           <div className="bg-white rounded-lg border border-gray-200 p-6">
-            <h2 className="text-base font-semibold text-gray-900 mb-4">Event Details</h2>
+            <h2 className="text-base font-semibold text-gray-900 mb-4">Poll Details</h2>
 
-            {/* Title */}
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Title <span className="text-red-600">*</span>
@@ -250,7 +207,6 @@ export default function NewGroupEventPage({
               />
             </div>
 
-            {/* Description */}
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Description <span className="text-gray-500">(optional)</span>
@@ -264,7 +220,27 @@ export default function NewGroupEventPage({
               />
             </div>
 
-            {/* Expires on */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Poll type <span className="text-red-600">*</span>
+              </label>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => handleSlotTypeChange('datetime')}
+                  className={slotType === 'datetime' ? getButtonClasses('primary', 'sm') : inactiveBtn}>
+                  Date / Time
+                </button>
+                <button type="button" onClick={() => handleSlotTypeChange('text')}
+                  className={slotType === 'text' ? getButtonClasses('primary', 'sm') : inactiveBtn}>
+                  Text options
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">
+                {slotType === 'datetime'
+                  ? 'People vote on candidate dates and times.'
+                  : 'People vote on free-text options (e.g. "Option A", "Option B").'}
+              </p>
+            </div>
+
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Expires On <span className="text-red-600">*</span>
@@ -276,153 +252,97 @@ export default function NewGroupEventPage({
                 className={getInputClasses(false)}
                 min={new Date().toISOString().substring(0, 10)}
               />
-              <p className="text-xs text-gray-700 mt-1">
-                Responses will no longer be accepted after this date.
-              </p>
+              <p className="text-xs text-gray-700 mt-1">Responses will no longer be accepted after this date.</p>
             </div>
 
-            {/* Show responses to respondents */}
             <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Show responses to all respondents
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Show responses to all respondents</label>
               <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowResponsesToRespondents(true)}
-                  className={showResponsesToRespondents
-                    ? getButtonClasses('success', 'sm')
-                    : 'inline-flex items-center justify-center font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 rounded-md px-3 py-1.5 text-sm border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 shadow-sm'}
-                >
-                  Yes
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowResponsesToRespondents(false)}
-                  className={!showResponsesToRespondents
-                    ? getButtonClasses('danger', 'sm')
-                    : 'inline-flex items-center justify-center font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 rounded-md px-3 py-1.5 text-sm border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 shadow-sm'}
-                >
-                  No
-                </button>
+                <button type="button" onClick={() => setShowResponsesToRespondents(true)}
+                  className={showResponsesToRespondents ? getButtonClasses('success', 'sm') : inactiveBtn}>Yes</button>
+                <button type="button" onClick={() => setShowResponsesToRespondents(false)}
+                  className={!showResponsesToRespondents ? getButtonClasses('danger', 'sm') : inactiveBtn}>No</button>
               </div>
             </div>
 
-            {/* Notify on response */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Notify me when someone responds
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Notify me when someone responds</label>
               <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setNotifyCreatorOnResponse(true)}
-                  className={notifyCreatorOnResponse
-                    ? getButtonClasses('success', 'sm')
-                    : 'inline-flex items-center justify-center font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 rounded-md px-3 py-1.5 text-sm border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 shadow-sm'}
-                >
-                  Yes
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setNotifyCreatorOnResponse(false)}
-                  className={!notifyCreatorOnResponse
-                    ? getButtonClasses('danger', 'sm')
-                    : 'inline-flex items-center justify-center font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 rounded-md px-3 py-1.5 text-sm border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 shadow-sm'}
-                >
-                  No
-                </button>
+                <button type="button" onClick={() => setNotifyCreatorOnResponse(true)}
+                  className={notifyCreatorOnResponse ? getButtonClasses('success', 'sm') : inactiveBtn}>Yes</button>
+                <button type="button" onClick={() => setNotifyCreatorOnResponse(false)}
+                  className={!notifyCreatorOnResponse ? getButtonClasses('danger', 'sm') : inactiveBtn}>No</button>
               </div>
-              <p className="text-xs text-gray-700 mt-1">
-                Useful for one-on-one polls where an immediate reply matters. Off by default.
-              </p>
             </div>
           </div>
 
-          {/* ── Section 2: Date/Time Slots ────────────────────────── */}
+          {/* ── Options ──────────────────────────────────────────── */}
           <div className="bg-white rounded-lg border border-gray-200 p-6">
-            <h2 className="text-base font-semibold text-gray-900 mb-4">Date / Time Slots</h2>
-            <p className="text-xs text-gray-700 mb-3">Add the candidate dates people will vote on. At least one is required.</p>
+            <h2 className="text-base font-semibold text-gray-900 mb-1">
+              {slotType === 'text' ? 'Options' : 'Date / Time Options'}
+            </h2>
+            <p className="text-xs text-gray-500 mb-4">
+              {slotType === 'text'
+                ? 'Add the options people will vote on. At least one is required.'
+                : 'Add the candidate dates people will vote on. At least one is required.'}
+            </p>
 
-            {/* Existing slots */}
-            {slots.length > 0 && (
-              <ul className="mb-4 space-y-2">
-                {slots.map((slot, i) => (
-                  <li key={i} className="flex items-center justify-between bg-gray-50 rounded px-3 py-2">
-                    <span className="text-sm text-gray-900">{formatSlotDisplay(slot)}</span>
-                    <button
-                      type="button"
-                      onClick={() => removeSlot(i)}
-                      className="text-xs text-red-600 hover:text-red-800 ml-2 font-medium"
-                    >
-                      Remove
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-
-            {/* Add slot inline form */}
-            {slotError && (
-              <p className="text-xs text-red-600 mb-2">{slotError}</p>
-            )}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-2">
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">Date <span className="text-red-600">*</span></label>
-                <input
-                  type="date"
-                  value={newSlotDate}
-                  onChange={(e) => setNewSlotDate(e.target.value)}
-                  className={getInputClasses(false)}
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">Time (optional)</label>
-                <input
-                  type="time"
-                  value={newSlotTime}
-                  onChange={(e) => setNewSlotTime(e.target.value)}
-                  className={getInputClasses(false)}
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">Label override (optional)</label>
-                <input
-                  type="text"
-                  value={newSlotLabel}
-                  onChange={(e) => setNewSlotLabel(e.target.value)}
-                  className={getInputClasses(false)}
-                  placeholder="e.g. Weekend morning"
-                  maxLength={100}
-                />
-              </div>
+            <div className="space-y-2">
+              {drafts.map((draft) => {
+                const isGhost = !isDraftFilled(draft, slotType);
+                return (
+                  <div key={draft.key} className="flex items-start gap-2">
+                    {slotType === 'text' ? (
+                      <input
+                        type="text"
+                        value={draft.slotLabel}
+                        onChange={(e) => updateDraft(draft.key, { slotLabel: e.target.value })}
+                        className={getInputClasses(false) + ' flex-1'}
+                        placeholder={isGhost ? 'Add an option…' : ''}
+                        maxLength={200}
+                      />
+                    ) : (
+                      <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <input
+                          type="date"
+                          value={draft.displayDate}
+                          onChange={(e) => handleDateChange(draft.key, e.target.value)}
+                          className={getInputClasses(false)}
+                        />
+                        <input
+                          type="time"
+                          value={draft.displayTime}
+                          onChange={(e) => handleTimeChange(draft.key, e.target.value)}
+                          className={getInputClasses(false)}
+                        />
+                      </div>
+                    )}
+                    {!isGhost && (
+                      <button type="button" onClick={() => removeDraft(draft.key)}
+                        className="mt-1 text-xs text-red-600 hover:text-red-800 font-medium shrink-0">
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-            <button
-              type="button"
-              onClick={addSlot}
-              className={getButtonClasses('secondary', 'sm')}
-            >
-              + Add Slot
-            </button>
 
-            {/* Invitee note: who will receive this event */}
             <div className={getAlertClasses('info') + ' mt-4 text-sm'}>
-              This event will be sent to all{' '}
-              <strong>{groupMemberCount}</strong>{' '}
+              This poll will be sent to all <strong>{groupMemberCount}</strong>{' '}
               {groupMemberCount === 1 ? 'member' : 'members'} of{' '}
               <strong>{groupName || 'this group'}</strong>.{' '}
               To invite additional people, add them to the group first.
             </div>
           </div>
 
-          {/* Submit button */}
           <div className="flex justify-end">
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || !hasUnsavedOptions}
               className={getButtonClasses('primary', 'md')}
             >
-              {submitting ? 'Creating…' : 'Create Event'}
+              {submitting ? 'Creating…' : 'Create Poll'}
             </button>
           </div>
 

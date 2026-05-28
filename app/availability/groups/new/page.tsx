@@ -210,10 +210,10 @@ export default function NewGroupPage() {
       <div className="container mx-auto px-4 py-8 max-w-2xl">
         {/* Page header with back link */}
         <div className="mb-6">
-          <RouterBackLink fallbackHref="/availability" label="Availability" />
+          <RouterBackLink fallbackHref="/availability" label="Polls" />
           <h1 className="text-2xl font-bold text-gray-900">Create Group</h1>
           <p className="text-sm text-gray-700 mt-1">
-            A group is a saved list of people you can run multiple events against.
+            A group is a saved list of people you can send multiple polls to.
           </p>
         </div>
 

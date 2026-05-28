@@ -72,19 +72,21 @@ export async function POST(request: NextRequest) {
       allowMemberManagement: body.allowMemberManagement === true,
     });
 
-    // Step 2: Add initial members if any were provided
-    const memberUserNames = body.memberUserNames || [];
+    // Step 2: Add initial members — always include the creator, dedup if already listed
+    const creatorUserName = session.user.userName;
+    const requestedMembers: string[] = body.memberUserNames || [];
+    const otherMembers = requestedMembers.filter((u) => u !== creatorUserName);
+    const memberUserNames = [creatorUserName, ...otherMembers];
     const visitorMembers = body.visitorMembers || [];
 
-    if (memberUserNames.length > 0 || visitorMembers.length > 0) {
-      // Add all initial members to the new group
-      await addGroupMembers(groupId, session.user.userName, memberUserNames, visitorMembers);
+    // Add all members (creator first, so they always appear in the group)
+    await addGroupMembers(groupId, creatorUserName, memberUserNames, visitorMembers);
 
-      // Step 3: Send group-added notification to new portal members
-      // Import the email send function here to avoid circular dependencies
+    // Step 3: Send group-added notification to the OTHER new portal members (not the creator)
+    if (otherMembers.length > 0) {
       try {
         const { sendGroupAddedEmail } = await import('@/lib/email/availability');
-        await sendGroupAddedEmail(groupId, memberUserNames, session.user.userName);
+        await sendGroupAddedEmail(groupId, otherMembers, creatorUserName);
       } catch (emailError) {
         // Email failure should not block the group creation — log and continue
         console.error('[POST /api/availability/groups] Email send failed:', emailError);
