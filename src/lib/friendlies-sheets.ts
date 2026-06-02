@@ -2674,6 +2674,11 @@ export async function getGameSheet(tabName: string): Promise<GameSheetPlayer[]> 
     // Extract player basic information
     // Try 'user_name' first (if column renamed), then 'name' as fallback
     const name = get(row, 'user_name') || get(row, 'name') || '';  // Player userName (for referential integrity)
+
+    // Skip blank rows (no username) — they can appear as trailing rows in the sheet
+    // and must not be included as players or written back to during selection saves.
+    if (!name) continue;
+
     // Look up full name and surname from Members sheet for UI display / sorting
     const fullName = name ? (fullNameLookup[name.toLowerCase()] || name) : '';
     const lastName = name ? (lastNameLookup[name.toLowerCase()] || '') : '';
@@ -4456,4 +4461,95 @@ export async function deleteFixtureRow(rowNumber: number): Promise<void> {
 
   // Clear the column map cache for Games sheet since row positions have changed
   clearColumnMapCacheForSheet(spreadsheetId, 'Games');
+}
+
+// =============================================================================
+// Selection Helper cache — stores snapshots in a hidden _SelectionCache tab
+// so captains always see stats from the moment they first opened "Edit Selection",
+// not stats inflated by games played after that point.
+// =============================================================================
+
+const SEL_CACHE_TAB = '_SelectionCache';
+
+export async function getSelectionHelperCache(
+  tabName: string
+): Promise<{ cachedAt: string; data: unknown } | null> {
+  const spreadsheetId = getFriendliesSpreadsheetId();
+  const sheets = getSheetsClient();
+  try {
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${SEL_CACHE_TAB}!A:C`,
+    });
+    const rows = response.data.values || [];
+    // Collect all matching rows (duplicates can occur from concurrent requests)
+    const matches = rows.slice(1).filter(r => r[0] === tabName && r[2]);
+    if (matches.length === 0) return null;
+    // Return the most recently cached entry
+    matches.sort((a, b) => new Date(b[1]).getTime() - new Date(a[1]).getTime());
+    return { cachedAt: matches[0][1], data: JSON.parse(matches[0][2]) };
+  } catch {
+    return null;
+  }
+}
+
+export async function setSelectionHelperCache(
+  tabName: string,
+  data: unknown
+): Promise<void> {
+  const spreadsheetId = getFriendliesSpreadsheetId();
+  const sheets = getSheetsClient();
+  const cachedAt = new Date().toISOString();
+  const json = JSON.stringify(data);
+
+  // Try to read the existing cache sheet
+  let rows: string[][] = [];
+  try {
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${SEL_CACHE_TAB}!A:C`,
+    });
+    rows = (response.data.values as string[][]) || [];
+  } catch {
+    // Sheet doesn't exist yet — create it with a header row
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{ addSheet: { properties: { title: SEL_CACHE_TAB, hidden: true } } }],
+      },
+    });
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${SEL_CACHE_TAB}!A1:C1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [['tab_name', 'cached_at', 'json_data']] },
+    });
+    rows = [['tab_name', 'cached_at', 'json_data']];
+  }
+
+  // Find existing row for this game
+  let existingRowNumber = -1;
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][0] === tabName) {
+      existingRowNumber = i + 1; // 1-based sheet row
+      break;
+    }
+  }
+
+  if (existingRowNumber !== -1) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${SEL_CACHE_TAB}!A${existingRowNumber}:C${existingRowNumber}`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [[tabName, cachedAt, json]] },
+    });
+  } else {
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${SEL_CACHE_TAB}!A:C`,
+      valueInputOption: 'RAW',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: { values: [[tabName, cachedAt, json]] },
+    });
+  }
 }

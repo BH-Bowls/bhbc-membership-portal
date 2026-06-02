@@ -7,6 +7,7 @@ import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
+import { hasRole } from '@/lib/role-utils';
 import { getMemberTypeDisplay, getMemberTypeOptions, isPlayer } from '@/lib/member-type-utils';
 import { saveDraft, restoreDraft, clearDraft } from '@/lib/form-draft-utils';
 
@@ -401,7 +402,7 @@ export default function RenewalsPage() {
 
   // Check if payment has been received (form should be read-only)
   // Admins can edit even after payment is received
-  const isAdmin = session?.user?.role === 'Admin' || session?.user?.role === 'Super Admin';
+  const isAdmin = hasRole(session?.user?.role, 'Admin', 'Super Admin');
   const isImpersonating = session?.user?.isImpersonating || false;
   const paymentReceived = (renewal.banking !== null && renewal.banking !== undefined) && !isAdmin;
 

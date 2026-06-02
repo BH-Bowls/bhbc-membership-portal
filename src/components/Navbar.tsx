@@ -342,6 +342,7 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
         { name: 'Members', href: '/members' },
         { name: 'Clubs', href: '/clubs' },
         { name: 'Fixtures', href: '/fixtures' },
+        { name: 'Markers', href: '/markers' },
         { name: 'Tea Rota', href: '/tea-rota' },
         { name: 'Cleaning Rota', href: '/cleaning-rota' },
         { name: 'Sweeping Rota', href: '/sweeping-rota' },

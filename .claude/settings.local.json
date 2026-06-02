@@ -74,7 +74,8 @@
       "Bash(mkdir -p \"C:\\\\Users\\\\liam\\\\Documents\\\\bhbc-membership-portal\\\\app\\\\api\\\\availability\\\\events\\\\[eventId]\\\\conclude\")",
       "Bash(mkdir -p \"C:\\\\Users\\\\liam\\\\Documents\\\\bhbc-membership-portal\\\\app\\\\api\\\\availability\\\\events\\\\[eventId]\\\\reopen\")",
       "Bash(Remove-Item -Recurse -Force \"C:\\\\Users\\\\liam\\\\Documents\\\\bhbc-membership-portal\\\\.next\" -ErrorAction SilentlyContinue)",
-      "Bash(Write-Host \"Done\")"
+      "Bash(Write-Host \"Done\")",
+      "Bash(Remove-Item *)"
     ]
   }
 }

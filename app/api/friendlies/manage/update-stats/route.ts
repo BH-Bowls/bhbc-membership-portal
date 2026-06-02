@@ -120,9 +120,16 @@ export async function POST(request: NextRequest) {
           newStatus = 'D';
       }
 
-      // Append W if player has withdrawn
+      // Append W if player has withdrawn — but preserve the existing Players sheet
+      // value (PW/RW/TW/EW) if it was already set correctly by the withdraw route,
+      // so we don't overwrite e.g. RW with DW just because selected is now blank.
       if (player.status === 'W') {
-        newStatus = newStatus + 'W';
+        const existingStatus = ((playersRows[rowNumber - 1] || [])[gameColumnIndex] || '').toString().toUpperCase();
+        if (existingStatus.endsWith('W')) {
+          newStatus = existingStatus;
+        } else {
+          newStatus = newStatus + 'W';
+        }
       }
 
       // Add update for game column

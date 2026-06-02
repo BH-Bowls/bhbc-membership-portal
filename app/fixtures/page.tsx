@@ -10,6 +10,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Navbar } from '@/components/Navbar';
 import { Game, GameType, ALL_GAME_TYPES } from '@/lib/types/friendlies';
+import { hasRole } from '@/lib/role-utils';
 
 // Map URL-friendly slugs to GameType values and back
 const SLUG_TO_TAB: Record<string, 'All' | GameType> = {
@@ -100,8 +101,8 @@ function FixturesPageInner() {
   }, [router]);
 
   const userRole = (session?.user as any)?.role || '';
-  const isAdmin = userRole === 'Admin' || userRole === 'superadmin';
-  const isCaptain = userRole === 'Captain';
+  const isAdmin = hasRole(userRole, 'Admin');
+  const isCaptain = hasRole(userRole, 'Captain');
   const canManage = isAdmin || isCaptain;
 
   useEffect(() => {

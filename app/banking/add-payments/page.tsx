@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
+import { hasRole } from '@/lib/role-utils';
 
 interface PaymentRow {
   id: string;
@@ -21,7 +22,7 @@ export default function AddPaymentsPage() {
   const router = useRouter();
 
   // Check authorization
-  const canAccess = session?.user?.role === 'Admin' || session?.user?.role === 'T';
+  const canAccess = hasRole(session?.user?.role, 'Admin', 'T');
 
   const [payments, setPayments] = useState<PaymentRow[]>([
     {

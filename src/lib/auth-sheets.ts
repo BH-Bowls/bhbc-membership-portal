@@ -3,6 +3,7 @@
 // Supports both legacy XOR hashes and bcrypt for gradual migration
 
 import bcrypt from 'bcryptjs';
+import { parseRoles } from './role-utils';
 import {
   getUserByUsername,
   getUsersByEmail,
@@ -520,7 +521,7 @@ export async function changePassword(
  * @returns true if user is Admin, false otherwise
  */
 export function isAdmin(user: User): boolean {
-  return user.role === 'Admin';
+  return parseRoles(user.role).includes('Admin');
 }
 
 /**
@@ -532,7 +533,7 @@ export function isAdmin(user: User): boolean {
  */
 export function isCaptain(user: User): boolean {
   // Check if user is Captain
-  if (user.role === 'Captain') {
+  if (parseRoles(user.role).includes('Captain')) {
     return true;
   }
 
@@ -553,7 +554,7 @@ export function isCaptain(user: User): boolean {
  */
 export function isTreasurer(user: User): boolean {
   // Check if user is Treasurer
-  if (user.role === 'Treasurer') {
+  if (parseRoles(user.role).includes('Treasurer')) {
     return true;
   }
 
@@ -574,16 +575,8 @@ export function isTreasurer(user: User): boolean {
  * @returns true if user has one of the allowed roles or is Admin, false otherwise
  */
 export function hasRole(user: User, allowedRoles: string[]): boolean {
-  // Check if user's role is in the allowed list
-  let hasAllowedRole = false;
-  for (const role of allowedRoles) {
-    if (user.role === role) {
-      hasAllowedRole = true;
-      break;
-    }
-  }
-
-  if (hasAllowedRole) {
+  const userRoles = parseRoles(user.role);
+  if (allowedRoles.some(r => userRoles.includes(r))) {
     return true;
   }
 

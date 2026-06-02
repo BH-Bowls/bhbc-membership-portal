@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, getGameSheet, getFriendliesSpreadsheetId } from '@/lib/friendlies-sheets';
+import { getGames, getGameSheet, getFriendliesSpreadsheetId, getSelectionHelperCache, setSelectionHelperCache } from '@/lib/friendlies-sheets';
 import { getAllUsers } from '@/lib/sheets';
 import { hasRole } from '@/lib/role-utils';
 
@@ -71,6 +71,16 @@ export async function GET(request: NextRequest) {
     const tabName = request.nextUrl.searchParams.get('tab_name');
     if (!tabName) {
       return NextResponse.json({ error: 'tab_name required' }, { status: 400 });
+    }
+
+    const forceRefresh = request.nextUrl.searchParams.get('refresh') === 'true';
+
+    // Return cached snapshot if available and not a forced refresh
+    if (!forceRefresh) {
+      const cached = await getSelectionHelperCache(tabName);
+      if (cached) {
+        return NextResponse.json({ ...(cached.data as object), cachedAt: cached.cachedAt, fromCache: true });
+      }
     }
 
     // Load game metadata + game-sheet players in parallel with Members data
@@ -242,7 +252,14 @@ export async function GET(request: NextRequest) {
       hasPercentData,
     };
 
-    return NextResponse.json(result);
+    const cachedAt = new Date().toISOString();
+    try {
+      await setSelectionHelperCache(tabName, result);
+    } catch (cacheErr) {
+      console.warn('[selection-helper] Failed to write cache:', cacheErr);
+    }
+
+    return NextResponse.json({ ...result, cachedAt, fromCache: false });
   } catch (error) {
     console.error('Error building selection helper:', error);
     return NextResponse.json({ error: 'Failed to build selection helper' }, { status: 500 });

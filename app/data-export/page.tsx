@@ -7,6 +7,7 @@ import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
+import { hasRole } from '@/lib/role-utils';
 import {
   SheetSchema,
   ReportDefinition,
@@ -56,7 +57,7 @@ export default function DataExportPage() {
   const [saving, setSaving] = useState(false);
   const [loadedDefinitionId, setLoadedDefinitionId] = useState<string | null>(null);
 
-  const isAdmin = session?.user?.role === 'Admin';
+  const isAdmin = hasRole(session?.user?.role, 'Admin');
 
   // Auth check
   useEffect(() => {

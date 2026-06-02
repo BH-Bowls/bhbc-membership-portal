@@ -58,7 +58,7 @@ export default function HelpDiaryPage() {
               or Tea Helper.
             </Body>
             <Body>
-              🎳 <strong>Friendlies</strong> — games you have entered (entered, selected, or
+              🟢 <strong>Friendlies</strong> — games you have entered (entered, selected, or
               reserve status).
             </Body>
             <Body>

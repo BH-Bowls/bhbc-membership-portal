@@ -4,7 +4,7 @@
 
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 interface HelperPlayer {
   userName: string;
@@ -39,6 +39,8 @@ interface HelperData {
   percentOutliers: PercentOutlier[];
   avgPercentPlayed: number;
   hasPercentData: boolean;
+  cachedAt?: string;
+  fromCache?: boolean;
 }
 
 
@@ -68,29 +70,42 @@ export function SelectionHelperPanel({ tabName, active }: Props) {
   const [error, setError] = useState('');
   const [fetchKey, setFetchKey] = useState(0);
   const [showHelp, setShowHelp] = useState(false);
+  const forceRefreshRef = useRef(false);
 
   useEffect(() => {
     if (!active || !tabName) return;
+    const controller = new AbortController();
     setLoading(true);
     setError('');
-    fetch(`/api/friendlies/manage/selection-helper?tab_name=${encodeURIComponent(tabName)}`)
+    const refresh = forceRefreshRef.current;
+    forceRefreshRef.current = false;
+    const url = `/api/friendlies/manage/selection-helper?tab_name=${encodeURIComponent(tabName)}${refresh ? '&refresh=true' : ''}`;
+    fetch(url, { signal: controller.signal })
       .then(r => r.json())
       .then(d => {
         if (d.error) setError(d.error);
         else setData(d);
       })
-      .catch(() => setError('Failed to load selection helper'))
+      .catch(e => { if (e.name !== 'AbortError') setError('Failed to load selection helper'); })
       .finally(() => setLoading(false));
+    return () => controller.abort();
   }, [active, tabName, fetchKey]);
 
   return (
     <div className="space-y-3">
       {/* Toolbar */}
       <div className="flex items-center justify-between">
-        {data && (
-          <p className="text-xs text-gray-500">{data.totalEntered} entered · {data.format}</p>
-        )}
-        <div className="flex items-center gap-2 ml-auto">
+        <div className="min-w-0">
+          {data && (
+            <p className="text-xs text-gray-500">{data.totalEntered} entered · {data.format}</p>
+          )}
+          {data?.cachedAt && (
+            <p className="text-xs text-gray-400">
+              Calculated {new Date(data.cachedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+            </p>
+          )}
+        </div>
+        <div className="flex items-center gap-2 ml-auto flex-shrink-0">
           <button
             onClick={() => setShowHelp(h => !h)}
             className={`w-6 h-6 rounded-full border-2 flex items-center justify-center text-xs font-bold transition-colors ${
@@ -101,10 +116,10 @@ export function SelectionHelperPanel({ tabName, active }: Props) {
             ?
           </button>
           <button
-            onClick={() => setFetchKey(k => k + 1)}
+            onClick={() => { forceRefreshRef.current = true; setFetchKey(k => k + 1); }}
             disabled={loading}
             className="text-xs text-blue-600 hover:text-blue-800 disabled:text-gray-400 transition-colors"
-            title="Reload selection helper"
+            title="Recalculate selection helper and update cache"
           >
             ↻ Refresh
           </button>
@@ -117,7 +132,7 @@ export function SelectionHelperPanel({ tabName, active }: Props) {
           <p><strong>🌟 First Timers</strong> — players who have never been picked to play.</p>
           <p><strong>💑 Buddies</strong> — buddy pairs where both players have entered. Worth putting on the same rink.</p>
           <p><strong>📊 % Played</strong> — group average, plus anyone more than 10% above or below it.</p>
-          <p className="text-blue-700">Click Refresh to reload after making changes.</p>
+          <p className="text-blue-700">Stats are snapshotted the first time you open this helper, so future games don't skew the figures. Click Refresh to recalculate (e.g. after a withdrawal).</p>
         </div>
       )}
 

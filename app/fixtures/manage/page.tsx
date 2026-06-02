@@ -10,6 +10,7 @@ import Link from 'next/link';
 import { Navbar } from '@/components/Navbar';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Game, GameType, ALL_GAME_TYPES } from '@/lib/types/friendlies';
+import { hasRole } from '@/lib/role-utils';
 import { getButtonClasses } from '@/config/theme-helpers';
 
 // ============================================================================
@@ -397,8 +398,8 @@ export default function FixturesManagePage() {
   const [clubNames, setClubNames] = useState<string[]>([]);
 
   const userRole = (session?.user as any)?.role || '';
-  const isAdmin = userRole === 'Admin' || userRole === 'superadmin';
-  const isCaptain = userRole === 'Captain';
+  const isAdmin = hasRole(userRole, 'Admin');
+  const isCaptain = hasRole(userRole, 'Captain');
   const canAccess = isAdmin || isCaptain;
 
   useEffect(() => {

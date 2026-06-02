@@ -175,6 +175,15 @@ export default function ManageGamesPage() {
       friendliesDraftKeys.forEach(k => sessionStorage.removeItem(k));
       window.dispatchEvent(new CustomEvent('drafts-changed'));
     }
+
+    // Restore saved view and filter tab
+    const savedView = sessionStorage.getItem('friendlies_manage_view');
+    if (savedView === 'games' || savedView === 'stats') setManageView(savedView);
+
+    const savedFilter = sessionStorage.getItem('friendlies_manage_filter');
+    if (savedFilter === 'all' || savedFilter === 'upcoming' || savedFilter === 'open' || savedFilter === 'selecting' || savedFilter === 'played') {
+      setFilter(savedFilter);
+    }
   }, []);
 
   useEffect(() => {
@@ -844,7 +853,7 @@ export default function ManageGamesPage() {
         {/* View switcher: Games | Player Stats */}
         <div className="flex gap-2 mb-4">
           <button
-            onClick={() => setManageView('games')}
+            onClick={() => { setManageView('games'); sessionStorage.setItem('friendlies_manage_view', 'games'); }}
             className={`px-4 py-2 rounded font-medium text-sm transition-colors ${
               manageView === 'games'
                 ? 'bg-blue-600 text-white'
@@ -856,6 +865,7 @@ export default function ManageGamesPage() {
           <button
             onClick={() => {
               setManageView('stats');
+              sessionStorage.setItem('friendlies_manage_view', 'stats');
               if (!playerStats) fetchPlayerStats();
             }}
             className={`px-4 py-2 rounded font-medium text-sm transition-colors ${
@@ -880,7 +890,7 @@ export default function ManageGamesPage() {
           ] as const).map(({ value, label }) => (
             <button
               key={value}
-              onClick={() => setFilter(value)}
+              onClick={() => { setFilter(value); sessionStorage.setItem('friendlies_manage_filter', value); }}
               className={`px-4 py-2 font-medium border-b-2 whitespace-nowrap ${
                 filter === value
                   ? 'border-blue-500 text-blue-600'

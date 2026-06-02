@@ -9,6 +9,7 @@ import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
 import { ExportSheetDialog } from '@/components/competitions/ExportSheetDialog';
 import type { Competition, CompStatus, CompType } from '@/types/competitions';
+import { hasRole } from '@/lib/role-utils';
 
 const STATUS_STYLES: Record<CompStatus, string> = {
   'Not Started': 'bg-gray-100 text-gray-600',
@@ -33,7 +34,7 @@ export default function CompetitionsAdminPage() {
   const sessionLoading = !session && loading;
   const role = session?.user?.role ?? '';
   const isCommittee = role !== 'Member' && role !== '';
-  const isAdmin = role === 'Admin';
+  const isAdmin = hasRole(role, 'Admin');
 
   const [exportComp, setExportComp] = useState<Competition | null>(null);
 

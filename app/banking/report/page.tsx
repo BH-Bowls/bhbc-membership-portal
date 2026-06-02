@@ -7,6 +7,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
+import { hasRole } from '@/lib/role-utils';
 
 interface RenewalReportRow {
   userName: string;
@@ -108,7 +109,7 @@ export default function BankingReportPage() {
   });
 
   // Check authorization
-  const canAccess = session?.user?.role === 'Admin' || session?.user?.role === 'T';
+  const canAccess = hasRole(session?.user?.role, 'Admin', 'T');
 
   useEffect(() => {
     if (status === 'authenticated') {

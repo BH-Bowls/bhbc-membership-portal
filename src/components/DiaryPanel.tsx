@@ -19,7 +19,7 @@ function getIcon(type: DiaryItemType): string {
   if (type === 'cleaning') return '🧹';
   if (type === 'sweeping') return '🌿';
   if (type === 'tea') return '🫖';
-  if (type === 'friendly') return '🎳';
+  if (type === 'friendly') return '🟢';
   if (type === 'competition') return '🏆';
   if (type === 'marker') return '📋';
   if (type === 'availability_nudge') return '❓';
