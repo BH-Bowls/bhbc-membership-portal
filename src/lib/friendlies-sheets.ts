@@ -429,6 +429,10 @@ export async function getGames(statusFilter?: GameStatus, typeFilter?: GameType[
     const lockedBy = get(row, 'locked_by') || '';
     const lockedAt = get(row, 'locked_at') || '';
 
+    // Extract needs-players flag (Y = flagged by captain)
+    const needsPlayersRaw = get(row, 'needs_players');
+    const needsPlayers = needsPlayersRaw?.trim().toUpperCase() === 'Y';
+
     // Build complete Game object
     const game: Game = {
       rowNumber,
@@ -462,6 +466,7 @@ export async function getGames(statusFilter?: GameStatus, typeFilter?: GameType[
       captain,
       lockedBy,
       lockedAt,
+      needsPlayers,
     };
 
     // Add game to array
@@ -818,6 +823,79 @@ export async function updateGameMessage(tabName: string, message: string, rowNum
     requestBody: { values: [[message]] },
   });
 
+}
+
+/**
+ * Set or clear the "Needs Players" flag for a game in the Games sheet.
+ * Writes 'Y' when flag=true, '' when flag=false.
+ */
+export async function setNeedsPlayersFlag(tabName: string, flag: boolean): Promise<void> {
+  const spreadsheetId = getFriendliesSpreadsheetId();
+  const colMap = await getColumnMap(spreadsheetId, 'Games');
+
+  if (colMap['needs_players'] === undefined) {
+    // Column doesn't exist yet — silently skip rather than throw
+    return;
+  }
+
+  const sheets = getSheetsClient();
+  const games = await getGames();
+  const game = games.find(g => g.tabName === tabName);
+  if (!game) {
+    throw new Error(`Game not found: ${tabName}`);
+  }
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `Games!${getColumnLetter(colMap['needs_players'])}${game.rowNumber}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[flag ? 'Y' : '']] },
+  });
+}
+
+/**
+ * Writes the given outcome status ('C' or 'A') to every player's entry in the
+ * Players sheet for the specified game column.  Called on cancel/abandon so that
+ * stale P/R/T values don't inflate percent_played the next time update-stats runs.
+ */
+export async function markGamePlayerEntriesAs(tabName: string, outcomeStatus: 'C' | 'A'): Promise<void> {
+  const spreadsheetId = getFriendliesSpreadsheetId();
+  const sheets = getSheetsClient();
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: 'Players!A:ZZ',
+  });
+
+  const rows = response.data.values || [];
+  const headers = rows[0] || [];
+  const gameColIndex = headers.findIndex((h: any) => h === tabName);
+
+  // Column may not exist if the game was cancelled before entries were opened
+  if (gameColIndex === -1) return;
+
+  const gameColLetter = getColumnLetter(gameColIndex);
+  const updates: { range: string; values: string[][] }[] = [];
+
+  for (let i = 1; i < rows.length; i++) {
+    const cell = (rows[i][gameColIndex] || '').toString();
+    if (cell && cell !== 'C' && cell !== 'A') {
+      updates.push({
+        range: `Players!${gameColLetter}${i + 1}`,
+        values: [[outcomeStatus]],
+      });
+    }
+  }
+
+  if (updates.length === 0) return;
+
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      valueInputOption: 'USER_ENTERED',
+      data: updates,
+    },
+  });
 }
 
 /**
@@ -2711,6 +2789,7 @@ export async function getGameSheet(tabName: string): Promise<GameSheetPlayer[]> 
     // Extract status and captain designation
     const status = (get(row, 'status') || '') as '' | 'Y' | 'W'; // Y = Confirmed, W = Withdrawn
     const captain = get(row, 'captain') || '';        // Y = Captain of the day, '' = Not captain
+    const acknowledgedCancellation = get(row, 'acknowledged_cancellation') || '';
 
     // Get last 6 games history and futureEntered for this player from Players sheet
     // GameSheetPlayer uses last8Games property name for compatibility, but holds 6 games
@@ -2747,6 +2826,7 @@ export async function getGameSheet(tabName: string): Promise<GameSheetPlayer[]> 
       status,
       captain,
       last8Games,  // Property name in GameSheetPlayer is last8Games
+      acknowledgedCancellation,
     };
 
     // Add player to array
@@ -3699,7 +3779,7 @@ export async function getClubContacts(clubName: string): Promise<ClubContact[]> 
   const spreadsheetId = getMatchDayContactsSpreadsheetId();
 
   // Get column mappings for Contacts sheet (cached)
-  const colMap = await getColumnMap(spreadsheetId, 'Contacts');
+  const colMap = await getColumnMap(spreadsheetId, 'Club Contacts');
 
   // Initialize Google Sheets API client
   const sheets = getSheetsClient();
@@ -3707,7 +3787,7 @@ export async function getClubContacts(clubName: string): Promise<ClubContact[]> 
   // Fetch all contacts from Contacts sheet
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: 'Contacts!A:ZZ',
+    range: "'Club Contacts'!A:ZZ",
   });
 
   // Extract rows from response
@@ -4552,4 +4632,328 @@ export async function setSelectionHelperCache(
       requestBody: { values: [[tabName, cachedAt, json]] },
     });
   }
+}
+
+// ============================================================================
+// TOKEN AUTHENTICATION
+// ============================================================================
+
+/**
+ * Ensures a 64-char hex token exists for the given player on the given game tab.
+ * If the Token column does not exist, creates it first (lazy creation).
+ * If the player's token cell is blank, generates a token and writes it.
+ * If the player already has a token, returns it unchanged.
+ */
+export async function ensurePlayerToken(
+  tabName: string,
+  userName: string
+): Promise<string> {
+  const { randomBytes } = await import('crypto');
+  const spreadsheetId = getFriendliesSpreadsheetId();
+  const sheets = getSheetsClient();
+
+  let colMap = await getColumnMap(spreadsheetId, tabName);
+
+  if (colMap['token'] === undefined) {
+    // Read the raw header row to find the true last column (Object.keys(colMap) undercounts
+    // when any header cells are blank, which would overwrite an existing column header).
+    const headerResp = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${tabName}'!1:1`,
+    });
+    const headerRow = (headerResp.data.values && headerResp.data.values[0]) || [];
+    const newColLetter = getColumnLetter(headerRow.length);
+
+    // The template game sheet has a fixed grid size. Append a column so the new
+    // header cell falls within the grid bounds before writing to it.
+    const spreadsheetMeta = await sheets.spreadsheets.get({ spreadsheetId });
+    let sheetId: number | null = null;
+    if (spreadsheetMeta.data.sheets) {
+      for (const sheet of spreadsheetMeta.data.sheets) {
+        if (sheet.properties && sheet.properties.title === tabName) {
+          sheetId = sheet.properties.sheetId !== undefined ? sheet.properties.sheetId : null;
+          break;
+        }
+      }
+    }
+    if (sheetId === null) {
+      throw new Error(`ensurePlayerToken: sheet "${tabName}" not found in spreadsheet`);
+    }
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{ appendDimension: { sheetId, dimension: 'COLUMNS', length: 1 } }],
+      },
+    });
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${tabName}'!${newColLetter}1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [['Token']] },
+    });
+    clearColumnMapCacheForSheet(spreadsheetId, tabName);
+    colMap = await getColumnMap(spreadsheetId, tabName);
+    if (colMap['token'] === undefined) {
+      throw new Error(`ensurePlayerToken: Token column was not created in "${tabName}"`);
+    }
+  }
+
+  const tokenCol = colMap['token'];
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${tabName}'!A2:ZZ`,
+  });
+  const rows = response.data.values || [];
+
+  let playerRow = -1;
+  let existingToken = '';
+  const userNameCol = colMap['user_name'] !== undefined ? colMap['user_name'] : colMap['name'];
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (userNameCol !== undefined && row[userNameCol] === userName) {
+      playerRow = i + 2;
+      existingToken = (row[tokenCol] || '');
+      break;
+    }
+  }
+
+  if (playerRow === -1) {
+    throw new Error(`ensurePlayerToken: player "${userName}" not found in game tab "${tabName}" (userNameCol=${userNameCol}, rows=${rows.length})`);
+  }
+
+  if (existingToken) {
+    return existingToken;
+  }
+
+  const token = randomBytes(32).toString('hex');
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `'${tabName}'!${getColumnLetter(tokenCol)}${playerRow}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[token]] },
+  });
+
+  return token;
+}
+
+/**
+ * Validates a token against the per-game tab.
+ * Returns player row data if valid, null if invalid or expired (game date in the past).
+ */
+export async function validateGameToken(
+  tabName: string,
+  token: string
+): Promise<{
+  userName: string;
+  rowNumber: number;
+  playerSelected: string;
+  playerConfirmation: string;
+  playerTeam: number | null;
+  playerPosition: string;
+  acknowledgedCancellation: string;
+  gameStatus: string;
+  gameDate: string;
+} | null> {
+  const spreadsheetId = getFriendliesSpreadsheetId();
+  const sheets = getSheetsClient();
+
+  const colMap = await getColumnMap(spreadsheetId, tabName);
+  const tokenCol = colMap['token'];
+
+  if (tokenCol === undefined) {
+    return null;
+  }
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${tabName}'!A2:ZZ`,
+  });
+  const rows = response.data.values || [];
+
+  const userNameCol = colMap['user_name'] !== undefined ? colMap['user_name'] : colMap['name'];
+  const selectedCol = colMap['selected'];
+  const statusCol = colMap['status'];
+  const teamCol = colMap['team'];
+  const positionCol = colMap['position'];
+  const ackCol = colMap['acknowledged_cancellation'];
+
+  let matchedRow: {
+    userName: string;
+    rowNumber: number;
+    playerSelected: string;
+    playerConfirmation: string;
+    playerTeam: number | null;
+    playerPosition: string;
+    acknowledgedCancellation: string;
+  } | null = null;
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const cellToken = tokenCol !== undefined ? (row[tokenCol] || '') : '';
+    if (cellToken === token) {
+      const userName = userNameCol !== undefined ? (row[userNameCol] || '') : '';
+      const rawTeam = teamCol !== undefined ? row[teamCol] : '';
+      matchedRow = {
+        userName,
+        rowNumber: i + 2,
+        playerSelected: selectedCol !== undefined ? (row[selectedCol] || '') : '',
+        playerConfirmation: statusCol !== undefined ? (row[statusCol] || '') : '',
+        playerTeam: rawTeam ? parseInt(rawTeam) : null,
+        playerPosition: positionCol !== undefined ? (row[positionCol] || '') : '',
+        acknowledgedCancellation: ackCol !== undefined ? (row[ackCol] || '') : '',
+      };
+      break;
+    }
+  }
+
+  if (!matchedRow) {
+    return null;
+  }
+
+  const games = await getGames();
+  let game = null;
+  for (const g of games) {
+    if (g.tabName === tabName) {
+      game = g;
+      break;
+    }
+  }
+
+  if (!game) {
+    return null;
+  }
+
+  const gameDate = parseNormalizedDate(game.date);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  if (gameDate < today) {
+    return null;
+  }
+
+  return {
+    ...matchedRow,
+    gameStatus: game.status,
+    gameDate: game.date,
+  };
+}
+
+/**
+ * Sets acknowledged_cancellation = 'Y' for the given player on the given game tab.
+ * Creates the column if it does not yet exist (lazy creation).
+ */
+export async function acknowledgeGameCancellation(
+  tabName: string,
+  userName: string
+): Promise<void> {
+  const spreadsheetId = getFriendliesSpreadsheetId();
+  const sheets = getSheetsClient();
+
+  let colMap = await getColumnMap(spreadsheetId, tabName);
+
+  if (colMap['acknowledged_cancellation'] === undefined) {
+    const headerResp = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${tabName}'!1:1`,
+    });
+    const headerRow = (headerResp.data.values && headerResp.data.values[0]) || [];
+    const newColLetter = getColumnLetter(headerRow.length);
+
+    const spreadsheetMeta = await sheets.spreadsheets.get({ spreadsheetId });
+    let sheetId: number | null = null;
+    if (spreadsheetMeta.data.sheets) {
+      for (const sheet of spreadsheetMeta.data.sheets) {
+        if (sheet.properties && sheet.properties.title === tabName) {
+          sheetId = sheet.properties.sheetId !== undefined ? sheet.properties.sheetId : null;
+          break;
+        }
+      }
+    }
+    if (sheetId === null) {
+      throw new Error(`acknowledgeGameCancellation: sheet "${tabName}" not found in spreadsheet`);
+    }
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{ appendDimension: { sheetId, dimension: 'COLUMNS', length: 1 } }],
+      },
+    });
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${tabName}'!${newColLetter}1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [['Acknowledged Cancellation']] },
+    });
+    clearColumnMapCacheForSheet(spreadsheetId, tabName);
+    colMap = await getColumnMap(spreadsheetId, tabName);
+  }
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${tabName}'!A2:ZZ`,
+  });
+  const rows = response.data.values || [];
+
+  const userNameCol = colMap['user_name'] !== undefined ? colMap['user_name'] : colMap['name'];
+  const ackCol = colMap['acknowledged_cancellation'];
+
+  let playerRow = -1;
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (userNameCol !== undefined && row[userNameCol] === userName) {
+      playerRow = i + 2;
+      break;
+    }
+  }
+
+  if (playerRow === -1) {
+    throw new Error(`Player "${userName}" not found in game tab "${tabName}"`);
+  }
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `'${tabName}'!${getColumnLetter(ackCol)}${playerRow}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [['Y']] },
+  });
+}
+
+/**
+ * Returns confirmation and acknowledgement status for all players on a game tab.
+ * Returns empty strings for missing columns rather than throwing.
+ */
+export async function getGameConfirmationStatus(
+  tabName: string
+): Promise<Record<string, { playerConfirmation: string; acknowledgedCancellation: string }>> {
+  const spreadsheetId = getFriendliesSpreadsheetId();
+  const sheets = getSheetsClient();
+
+  const colMap = await getColumnMap(spreadsheetId, tabName);
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${tabName}'!A2:ZZ`,
+  });
+  const rows = response.data.values || [];
+
+  const userNameCol = colMap['user_name'] !== undefined ? colMap['user_name'] : colMap['name'];
+  const statusCol = colMap['status'];
+  const ackCol = colMap['acknowledged_cancellation'];
+
+  const result: Record<string, { playerConfirmation: string; acknowledgedCancellation: string }> = {};
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const userName = userNameCol !== undefined ? (row[userNameCol] || '') : '';
+    if (!userName) continue;
+    result[userName] = {
+      playerConfirmation: statusCol !== undefined ? (row[statusCol] || '') : '',
+      acknowledgedCancellation: ackCol !== undefined ? (row[ackCol] || '') : '',
+    };
+  }
+
+  return result;
 }

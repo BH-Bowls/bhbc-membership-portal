@@ -41,6 +41,7 @@ interface NavbarProps {
   userRole?: string;
   hasUnsavedChanges?: boolean;
   showLogoOnly?: boolean;
+  isTokenMode?: boolean;
   guestButtons?: React.ReactNode;
   actionButtons?: {
     primary?: ActionButton;
@@ -48,7 +49,7 @@ interface NavbarProps {
   };
 }
 
-export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogoOnly = false, guestButtons, actionButtons }: NavbarProps) {
+export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogoOnly = false, isTokenMode = false, guestButtons, actionButtons }: NavbarProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
@@ -665,8 +666,20 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
             </a>
           </div>
 
+          {/* Token-restricted mode — no session but token param present */}
+          {isTokenMode && (
+            <div className="flex items-center">
+              <a
+                href={`/login?callbackUrl=${encodeURIComponent(pathname)}`}
+                className="px-4 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors"
+              >
+                Log in
+              </a>
+            </div>
+          )}
+
           {/* Guest login button(s) */}
-          {showLogoOnly && (
+          {showLogoOnly && !isTokenMode && (
             <div className="flex items-center gap-2">
               {guestButtons ?? (
                 <a
@@ -679,8 +692,8 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
             </div>
           )}
 
-          {/* Desktop Navigation — hidden for guest/logo-only mode */}
-          {!showLogoOnly && <div className="hidden md:flex md:items-center md:space-x-4">
+          {/* Desktop Navigation — hidden for guest/logo-only mode or token mode */}
+          {!showLogoOnly && !isTokenMode && <div className="hidden md:flex md:items-center md:space-x-4">
             {/* Show action buttons if provided, otherwise show normal navigation */}
             {actionButtons ? (
               <div className="flex items-center space-x-3">
@@ -916,8 +929,8 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
             </div>
           </div>}
 
-          {/* Mobile Action Buttons or Menu Button — hidden for guest/logo-only mode */}
-          {!showLogoOnly && <div className="flex items-center md:hidden">
+          {/* Mobile Action Buttons or Menu Button — hidden for guest/logo-only or token mode */}
+          {!showLogoOnly && !isTokenMode && <div className="flex items-center md:hidden">
             {/* Show action buttons in center space if provided */}
             {actionButtons && (
               <div className="flex items-center space-x-2 mr-4">
@@ -957,7 +970,7 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
       </div>
 
       {/* Navigation menu overlay (used on mobile always, and on desktop when editing) */}
-      {!showLogoOnly && mobileMenuOpen && (
+      {!showLogoOnly && !isTokenMode && mobileMenuOpen && (
         <>
           {/* Backdrop */}
           <div

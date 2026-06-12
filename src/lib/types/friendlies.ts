@@ -129,6 +129,7 @@ export interface Game {
   captain?: string;             // Captain of the day's userName (stored on Games sheet)
   lockedBy: string;             // Username of captain currently editing the selection ('' if unlocked)
   lockedAt: string;             // ISO timestamp when lock was acquired ('' if unlocked)
+  needsPlayers?: boolean;       // true when captain has flagged this game as needing players
 }
 
 /**
@@ -173,9 +174,10 @@ export interface GameSheetPlayer {
   position: Position;           // Position in team: S, 1, 2, 3, or ''
   driving: string;              // Driving assignment: 'D' or 'B' or ''
   carNumber: string;            // Car number if player is driving
-  status: ConfirmationStatus;   // Confirmation status: '', Y, or W
-  captain: string;              // Captain of the day: 'Y' or ''
-  last8Games?: string[];        // Last 8 games history (for backward compatibility - use last6Games in PlayerStats)
+  status: ConfirmationStatus;        // Confirmation status: '', Y, or W
+  captain: string;                   // Captain of the day: 'Y' or ''
+  last8Games?: string[];             // Last 8 games history (for backward compatibility - use last6Games in PlayerStats)
+  acknowledgedCancellation?: string; // 'Y' if player acknowledged cancellation, blank otherwise
 }
 
 /**
@@ -421,7 +423,7 @@ export interface WithdrawRequest {
 export interface ChangeStatusRequest {
   tab_name: string;    // Game tabName to update (may be empty for unopened games)
   row_number?: number; // Row number in Games sheet (used to identify unopened games)
-  action: 'open' | 'close' | 'allocate' | 'publish' | 'republish' | 'played' | 'cancel' | 'abandon' | 'reopen' | 'reopen-entries' | 'unpublish' | 'revert-to-selected'; // Status transition action
+  action: 'open' | 'close' | 'allocate' | 'publish' | 'republish' | 'played' | 'cancel' | 'abandon' | 'reopen' | 'reopen-entries' | 'unpublish' | 'revert-to-selected' | 'flag-needs-players' | 'unflag-needs-players'; // Status transition action
   expected_status?: string; // Client's known current status — server rejects with 409 if it doesn't match
   bhbc_score?: number;      // Burgess Hill score (required for 'played' and 'abandon')
   opponent_score?: number;  // Opponent score (required for 'played' and 'abandon')

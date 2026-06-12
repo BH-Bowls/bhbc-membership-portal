@@ -54,6 +54,11 @@ export function clearDiaryCache(userName: string): void {
   diaryCache.delete(userName);
 }
 
+// Removes ALL per-user diary cache entries (call when a change affects every user's diary)
+export function clearAllDiaryCaches(): void {
+  diaryCache.clear();
+}
+
 // ─── Announcement Cache ───────────────────────────────────────────────────────
 
 // Single shared entry — announcements are the same for all users
@@ -136,4 +141,13 @@ export function setSheetDataCache(key: string, data: string[][]): void {
     data,
     cachedAt: Date.now(),
   });
+}
+
+// Removes all sheet data cache entries whose key starts with the given prefix
+export function clearSheetDataCacheByPrefix(prefix: string): void {
+  for (const key of sheetDataCache.keys()) {
+    if (key.startsWith(prefix)) {
+      sheetDataCache.delete(key);
+    }
+  }
 }

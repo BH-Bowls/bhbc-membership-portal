@@ -68,7 +68,8 @@ export async function sendWithdrawalEmail(
     team: number | null;   // Team number (1-4 typically)
     position: string;      // Position: S=Skip, 1=Lead, 2=Two, 3=Three
   },
-  appUrl: string
+  appUrl: string,
+  viaToken = false
 ): Promise<void> {
   try {
     // Fetch user's profile to get their full display name
@@ -125,10 +126,12 @@ export async function sendWithdrawalEmail(
       statusText = 'Selected';
     }
 
+    const viaTokenNote = viaToken ? '\nThis withdrawal was submitted via their email link.' : '';
+
     // Build plain text version of email
     // Used for email clients that don't support HTML
     const text = `
-${userFullName} has withdrawn from the ${game.clubName} game on ${game.date} at ${game.time}.
+${userFullName} has withdrawn from the ${game.clubName} game on ${game.date} at ${game.time}.${viaTokenNote}
 
 Current status: ${statusText}
 Team: ${selection.team || 'N/A'}
@@ -222,6 +225,7 @@ Friendlies Management System
         <p><strong>Position:</strong> ${selection.position || 'N/A'}</p>
       </div>
 
+      ${viaToken ? '<p><em>This withdrawal was submitted via their email link.</em></p>' : ''}
       <p>Please select a replacement player from the reserves or add an offline player.</p>
 
       <!-- Call-to-action button linking to team selection page -->
@@ -266,7 +270,6 @@ export async function sendGamePublishedEmail(
     selected?: string;   // SelectionStatus: 'Y' | 'R' | 'T' | ''
     team?: number | null;
     position?: string;
-    captain?: string;    // 'Y' if captain of the day
     driving?: string;    // 'Y' if driving (away games)
     carNumber?: string | null;
   }>,
@@ -329,7 +332,7 @@ export async function sendGamePublishedEmail(
       textLines: string[];
       htmlLines: string[];
     } => {
-      const isCaptain = player.captain === 'Y';
+      const isCaptain = !!game.captain && !!player.userName && player.userName === game.captain;
 
       if (player.selected === 'Y') {
         const captainSuffix = isCaptain ? ' ★ Captain of the Day' : '';
@@ -373,16 +376,40 @@ export async function sendGamePublishedEmail(
     let emailsSent = 0;
     const failedPlayers: string[] = [];
 
+    const { ensurePlayerToken } = await import('../friendlies-sheets');
+
     for (const player of playersWithEmail) {
-      const gameUrl = player.userName
-        ? `${gameBaseUrl}?me=${encodeURIComponent(player.userName)}`
-        : gameBaseUrl;
+      let gameUrl = gameBaseUrl;
+      if (player.userName) {
+        try {
+          const token = await ensurePlayerToken(game.tabName, player.userName);
+          gameUrl = `${gameBaseUrl}?token=${token}`;
+        } catch (tokenError) {
+          console.error(`sendGamePublishedEmail: failed to generate token for ${player.userName}:`, tokenError);
+          gameUrl = `${gameBaseUrl}?me=${encodeURIComponent(player.userName)}`;
+        }
+      }
       const messageCaptainsUrl = `${gameUrl}&action=message-captains`;
 
       const { statusLabel, color, textLines, htmlLines } = buildStatusDetails(player);
-      const isCaptain = player.captain === 'Y';
+      const isCaptain = !!game.captain && !!player.userName && player.userName === game.captain;
 
       const textDetailBlock = textLines.length > 0 ? '\n' + textLines.join('\n') : '';
+
+      // Build captain-specific extra content
+      const noEmailPlayers = isCaptain
+        ? players.filter(p => !p.email || p.email.trim() === '').map(p => p.fullName)
+        : [];
+      const captainTextExtra = isCaptain ? `
+
+--- CAPTAIN OF THE DAY ---
+As Captain of the Day, please note the following:
+
+• Use the View Game Details button below to check who has confirmed their attendance. Players who have not confirmed will need to be contacted directly.
+• If the game needs to be cancelled, you can do this from the Manage page in the app. A cancellation email will be sent automatically to all players${game.homeAway === 'H' ? ', and to the tea duty team' : ''}.${noEmailPlayers.length > 0 ? `
+• The following players do not have an email address and will need to be contacted by phone or text:
+  - ${noEmailPlayers.join('\n  - ')}` : ''}
+--------------------------` : '';
 
       const text = `
 ${emailHeading}
@@ -396,7 +423,7 @@ Time: ${game.time}
 Venue: ${venue}
 Format: ${game.format}
 
-Your status: ${statusLabel}${textDetailBlock}
+Your status: ${statusLabel}${textDetailBlock}${captainTextExtra}
 
 You can view the full team selection and sign off your name either by clicking the link below or visiting the clubhouse:
 ${gameUrl}
@@ -412,6 +439,18 @@ Friendlies Management System
       const captainBadgeHtml = isCaptain
         ? ` <span style="background-color:#7c3aed;color:#fff;font-size:11px;padding:2px 7px;border-radius:10px;vertical-align:middle;">★ Captain of the Day</span>`
         : '';
+
+      const captainHtmlExtra = isCaptain ? `
+      <div style="background-color:#fffbeb;border-left:4px solid #d97706;padding:15px;margin:15px 0;border-radius:0 4px 4px 0;">
+        <p style="margin:0 0 10px 0;font-weight:bold;color:#92400e;">★ Captain of the Day — Additional Notes</p>
+        <ul style="margin:0;padding-left:20px;color:#333;font-size:14px;line-height:1.7;">
+          <li>Use the <strong>View Game Details</strong> button below to check who has confirmed their attendance. Players who have not confirmed will need to be contacted directly.</li>
+          <li>If the game needs to be cancelled, you can do this from the <strong>Manage page</strong> in the app. A cancellation email will be sent automatically to all players${game.homeAway === 'H' ? ', and to the tea duty team' : ''}.</li>${noEmailPlayers.length > 0 ? `
+          <li>The following players do not have an email address and will need to be contacted by <strong>phone or text</strong>:
+            <ul style="margin:6px 0 0 0;padding-left:18px;">${noEmailPlayers.map(n => `<li>${n}</li>`).join('')}</ul>
+          </li>` : ''}
+        </ul>
+      </div>` : '';
 
       const html = `
 <!DOCTYPE html>
@@ -449,7 +488,7 @@ Friendlies Management System
         </p>
         ${htmlLines.join('\n        ')}
       </div>
-      <p>You can view the full team selection and sign off your name either by clicking the button below or visiting the clubhouse.</p>
+      <p>You can view the full team selection and sign off your name either by clicking the button below or visiting the clubhouse.</p>${captainHtmlExtra}
       <p style="font-size:13px;color:#cc0000;">Please do not reply to this email. Use the buttons below to view the game or contact the captains.</p>
       <a href="${gameUrl}" style="${BUTTON_STYLE}">View Game Details</a>
       <a href="${messageCaptainsUrl}" style="${SECONDARY_BUTTON_STYLE}">Message Captains</a>
@@ -686,10 +725,20 @@ export async function sendGameCancelledEmail(
     const reasonLine = reason ? `\nReason: ${reason}` : '';
 
     const BUTTON_STYLE = 'display:inline-block;background-color:#0066cc;color:#ffffff;padding:12px 24px;text-decoration:none;border-radius:5px;margin-top:15px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;';
+    const ACK_BUTTON_STYLE = 'display:inline-block;background-color:#16a34a;color:#ffffff;padding:12px 24px;text-decoration:none;border-radius:5px;margin-top:12px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;';
+
+    const { ensurePlayerToken: ensureToken } = await import('../friendlies-sheets');
 
     let emailsSent = 0;
 
     for (const player of playersWithEmail) {
+      let playerGameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}`;
+      try {
+        const token = await ensureToken(game.tabName, player.userName);
+        playerGameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}?token=${token}`;
+      } catch (tokenError) {
+        console.error(`sendGameCancelledEmail: failed to generate token for ${player.userName}:`, tokenError);
+      }
       // ICS on cancel is gated by ICS_UPDATE_EMAILS env flag; Gmail users always skipped
       const ics = (icsUpdatesEnabled() && !isGmailAddress(player.email!))
         ? buildFriendlyICSAttachment({
@@ -721,6 +770,8 @@ export async function sendGameCancelledEmail(
         reasonLine,
         '',
         ...(ics ? ['A calendar cancellation is attached to remove this event from your calendar.', ''] : []),
+        `Let the captain know you have seen this: ${playerGameUrl}`,
+        '',
         '---',
         'Burgess Hill Bowls Club',
       ].filter(l => l !== undefined).join('\n');
@@ -753,6 +804,8 @@ export async function sendGameCancelledEmail(
         ${reason ? `<p><strong>Reason:</strong> ${reason}</p>` : ''}
       </div>
       ${ics ? '<p>A calendar cancellation is attached to remove this event from your calendar.</p>' : ''}
+      <a href="${playerGameUrl}" style="${ACK_BUTTON_STYLE}">I've noted the cancellation</a>
+      <p style="font-size:13px;color:#555555;margin-top:8px;">Clicking this button lets the captain know you've seen this message.</p>
     </div>
     <div class="footer"><p>Burgess Hill Bowls Club - Friendlies Management System</p></div>
   </div>
@@ -983,7 +1036,16 @@ export async function sendEntryConfirmedEmail(
   appUrl: string,
   addedByAdmin = false,
 ): Promise<void> {
-  const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}?me=${encodeURIComponent(userName)}`;
+  // Default to ?me= URL (works even if game tab doesn't exist yet at O status).
+  // Token generation only succeeds once the per-game tab has been created (X/S status).
+  let gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}?me=${encodeURIComponent(userName)}`;
+  try {
+    const { ensurePlayerToken } = await import('../friendlies-sheets');
+    const token = await ensurePlayerToken(game.tabName, userName);
+    gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}?token=${token}`;
+  } catch (tokenError) {
+    console.error('sendEntryConfirmedEmail: token generation failed (falling back to ?me= URL):', tokenError);
+  }
   const messageCaptainsUrl = `${gameUrl}&action=message-captains`;
   const venue = game.homeAway === 'H' ? 'Home' : `Away at ${game.clubName}`;
   const subject = `Friendly Entry Confirmed — ${game.clubName} ${game.date}`;

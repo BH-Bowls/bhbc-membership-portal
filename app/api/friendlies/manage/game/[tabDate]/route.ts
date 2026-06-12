@@ -42,15 +42,14 @@ export async function GET(
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
 
-    // Verify game status is X or S (Selecting or Selected)
-    if (!['X', 'S'].includes(game.status)) {
+    // Verify game status is X, S, or C (Selecting, Selected, or Cancelled)
+    if (!['X', 'S', 'C'].includes(game.status)) {
       return NextResponse.json(
-        { error: 'Game must be in Selecting or Selected status' },
+        { error: 'Game must be in Selecting, Selected, or Cancelled status' },
         { status: 400 }
       );
     }
 
-    // Get all players from game sheet
     const players = await getGameSheet(game.tabName);
 
     // Cross-check: players with 'E' in Players sheet who are missing from the game sheet.

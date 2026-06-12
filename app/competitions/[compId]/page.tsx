@@ -188,11 +188,11 @@ export default function CompetitionBracketPage({
 
   // Called from ScoreDialog onSaveDateOnly — sync wrapper (dialog handles its own close)
   function handleSaveDateOnly(matchId: string, date: string, marker: string) {
+    setSaving(true);
     handleSavePlannedDate(matchId, date, marker)
       .then(() => setActiveMatch(null))
-      .catch(() => {
-        // Error is surfaced by ScoreDialog internally via its error state
-      });
+      .catch(() => {})
+      .finally(() => setSaving(false));
   }
 
   // Routes bracket card clicks to the right dialog

@@ -96,6 +96,15 @@ export default function ManageGamesPage() {
     who: 'Burgess Hill' | 'Opponent' | '';
     sendEmail: boolean;
     sendTeaRotaEmail: boolean;
+    isSubmitting: boolean;
+    result: {
+      emailsSent?: number;
+      playersWithoutEmail?: string[];
+      emailError?: string;
+      teaRotaEmailsSent?: number;
+      teaRotaMembersWithoutEmail?: string[];
+      teaRotaEmailError?: string;
+    } | null;
   }>({
     isOpen: false,
     tabName: '',
@@ -109,6 +118,8 @@ export default function ManageGamesPage() {
     who: '',
     sendEmail: false,
     sendTeaRotaEmail: false,
+    isSubmitting: false,
+    result: null,
   });
 
   // State: Instructions dialog (replaces separate message/pickup/publish dialogs)
@@ -265,7 +276,12 @@ export default function ManageGamesPage() {
    * Generic function for all status changes (open, close, publish, etc.)
    * Automatically includes expected_status for optimistic-locking; returns 409 if stale.
    */
-  async function changeStatus(tabName: string, action: string, additionalData?: any, rowNumber?: number) {
+  async function changeStatus(
+    tabName: string,
+    action: string,
+    additionalData?: any,
+    rowNumber?: number,
+  ): Promise<{ success: boolean; data?: Record<string, unknown> }> {
     setActionLoading(tabName || `row-${rowNumber}`);
 
     // Look up the game's current status so we can send expected_status
@@ -292,17 +308,21 @@ export default function ManageGamesPage() {
         const key = tabName || `row-${rowNumber}`;
         setActionSelections(prev => { const next = { ...prev }; delete next[key]; return next; });
         await fetchGames();
+        return { success: true, data };
       } else if (response.status === 409) {
         // Status has changed since page loaded — clear cache and refresh
         alert("This game's status has changed since you last loaded the page. The page will now refresh.");
         sessionStorage.removeItem('friendlies_manage_games_cache');
         await fetchGames();
+        return { success: false };
       } else {
         alert(data.error || 'Failed to update status');
+        return { success: false };
       }
     } catch (error) {
       console.error('Error changing status:', error);
       alert('Failed to update status');
+      return { success: false };
     } finally {
       setActionLoading(null);
     }
@@ -472,40 +492,59 @@ export default function ManageGamesPage() {
       who: '',
       sendEmail: false,
       sendTeaRotaEmail: false,
+      isSubmitting: false,
+      result: null,
     });
   }
 
   /**
    * Submit game outcome from the dialog
    */
-  function submitOutcome() {
+  async function submitOutcome() {
     const { tabName, status, bhbcScore, opponentScore, reason, who, sendEmail, sendTeaRotaEmail } = outcomeDialog;
 
-    // Close dialog
-    setOutcomeDialog({ ...outcomeDialog, isOpen: false });
+    // Show loading state — keep dialog open while the API call runs
+    setOutcomeDialog(prev => ({ ...prev, isSubmitting: true }));
 
+    let result: { success: boolean; data?: Record<string, unknown> } = { success: false };
     if (status === 'P') {
-      // Mark as Played - just need scores
-      changeStatus(tabName, 'played', {
+      result = await changeStatus(tabName, 'played', {
         bhbc_score: parseInt(bhbcScore),
         opponent_score: parseInt(opponentScore),
       });
     } else if (status === 'C') {
-      // Mark as Cancelled - need reason and who, optionally email players/tea rota
-      changeStatus(tabName, 'cancel', {
+      result = await changeStatus(tabName, 'cancel', {
         reason,
         who,
         send_email: sendEmail,
         send_tea_rota_email: sendTeaRotaEmail,
       });
     } else if (status === 'A') {
-      // Mark as Abandoned - need scores, reason, and who
-      changeStatus(tabName, 'abandon', {
+      result = await changeStatus(tabName, 'abandon', {
         bhbc_score: parseInt(bhbcScore),
         opponent_score: parseInt(opponentScore),
         reason,
         who,
       });
+    }
+
+    if (result.success) {
+      const d = result.data || {};
+      setOutcomeDialog(prev => ({
+        ...prev,
+        isSubmitting: false,
+        result: {
+          emailsSent: d.emails_sent as number | undefined,
+          playersWithoutEmail: d.players_without_email as string[] | undefined,
+          emailError: d.email_error as string | undefined,
+          teaRotaEmailsSent: d.tea_rota_emails_sent as number | undefined,
+          teaRotaMembersWithoutEmail: d.tea_rota_members_without_email as string[] | undefined,
+          teaRotaEmailError: d.tea_rota_email_error as string | undefined,
+        },
+      }));
+    } else {
+      // Error already shown via alert — clear loading state so user can retry or dismiss
+      setOutcomeDialog(prev => ({ ...prev, isSubmitting: false }));
     }
   }
 
@@ -593,14 +632,21 @@ export default function ManageGamesPage() {
           { value: 'open',   label: 'Open' },
           { value: 'cancel', label: 'Cancel Game' },
         ];
-      case 'O':
-        return [
+      case 'O': {
+        const openOptions: { value: string; label: string }[] = [
           { value: 'close-select', label: 'Close & Select' },
           { value: 'close',        label: 'Close' },
           { value: 'players',      label: 'Add Players' },
           { value: 'reopen',       label: '← Upcoming' },
           { value: 'cancel',       label: 'Cancel Game' },
         ];
+        if (game.needsPlayers) {
+          openOptions.push({ value: 'unflag-needs-players', label: '✕ Remove Players Flag' });
+        } else {
+          openOptions.push({ value: 'flag-needs-players', label: '🟠 Flag: Players Needed' });
+        }
+        return openOptions;
+      }
       case 'X':
         return [
           { value: 'select-team', label: isLastManaged ? 'Resume' : 'Select Team' },
@@ -696,6 +742,10 @@ export default function ManageGamesPage() {
         handleRevertGame(game, 'revert-to-selected', fromLabel, 'Selected');
         break;
       }
+      case 'flag-needs-players':
+      case 'unflag-needs-players':
+        await changeStatus(game.tabName, action, undefined, game.rowNumber);
+        break;
     }
   }
 
@@ -1165,7 +1215,10 @@ export default function ManageGamesPage() {
 
                       {/* Club name column */}
                       <td className="px-6 py-4 text-sm font-medium text-gray-900">
-                        <div>{game.clubName}</div>
+                        <div className="flex items-center gap-1.5">
+                          {game.clubName}
+                          {game.needsPlayers && <span title="Players needed">🟠</span>}
+                        </div>
                         {filter === 'played' && game.status === 'P' && game.bhbcScore !== null && game.opponentScore !== null && (
                           <div className="text-xs text-gray-500 font-normal mt-0.5">
                             {game.bhbcScore} – {game.opponentScore}
@@ -1297,177 +1350,258 @@ export default function ManageGamesPage() {
       {/* Game Outcome Dialog for Played/Cancelled/Abandoned */}
       {outcomeDialog.isOpen && (
         <>
-          {/* Backdrop */}
+          {/* Backdrop — not dismissible while submitting or showing result */}
           <div
             className="fixed inset-0 bg-black bg-opacity-50 z-40"
-            onClick={() => setOutcomeDialog({ ...outcomeDialog, isOpen: false })}
+            onClick={() => !outcomeDialog.isSubmitting && !outcomeDialog.result && setOutcomeDialog({ ...outcomeDialog, isOpen: false })}
           />
 
-          {/* Dialog */}
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-              <h2 className="text-xl font-bold mb-4 text-gray-900">
-                {outcomeDialog.gameStatus === 'S' ? 'Record Game Outcome' : 'Cancel Game'}
-              </h2>
 
-              <div className="space-y-4">
-                {/* Status Selection - only show for Selected games (has multiple options) */}
-                {outcomeDialog.gameStatus === 'S' && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      What happened?
-                    </label>
-                    <div className="flex gap-3">
-                      {/* Played */}
-                      <button
-                        type="button"
-                        onClick={() => setOutcomeDialog({ ...outcomeDialog, status: 'P' })}
-                        className={`flex-1 px-4 py-3 rounded-lg font-medium shadow-sm transition-all ${
-                          outcomeDialog.status === 'P'
-                            ? 'bg-green-600 text-white ring-2 ring-green-600 ring-offset-2'
-                            : 'bg-white text-gray-700 border-2 border-gray-200 hover:border-green-400 hover:bg-green-50'
-                        }`}
-                      >
-                        Played
-                      </button>
-                      {/* Cancelled */}
-                      <button
-                        type="button"
-                        onClick={() => setOutcomeDialog({ ...outcomeDialog, status: 'C' })}
-                        className={`flex-1 px-4 py-3 rounded-lg font-medium shadow-sm transition-all ${
-                          outcomeDialog.status === 'C'
-                            ? 'bg-red-600 text-white ring-2 ring-red-600 ring-offset-2'
-                            : 'bg-white text-gray-700 border-2 border-gray-200 hover:border-red-400 hover:bg-red-50'
-                        }`}
-                      >
-                        Cancelled
-                      </button>
-                      {/* Abandoned */}
-                      <button
-                        type="button"
-                        onClick={() => setOutcomeDialog({ ...outcomeDialog, status: 'A' })}
-                        className={`flex-1 px-4 py-3 rounded-lg font-medium shadow-sm transition-all ${
-                          outcomeDialog.status === 'A'
-                            ? 'bg-orange-600 text-white ring-2 ring-orange-600 ring-offset-2'
-                            : 'bg-white text-gray-700 border-2 border-gray-200 hover:border-orange-400 hover:bg-orange-50'
-                        }`}
-                      >
-                        Abandoned
-                      </button>
+              {/* ── Result screen (shown after successful save) ── */}
+              {outcomeDialog.result ? (
+                <>
+                  <h2 className="text-xl font-bold mb-4 text-gray-900">
+                    {outcomeDialog.status === 'P' ? 'Game Recorded as Played' :
+                     outcomeDialog.status === 'C' ? 'Game Cancelled' :
+                     'Game Recorded as Abandoned'}
+                  </h2>
+                  <div className="space-y-3">
+                    {/* Confirmation row */}
+                    <div className="flex items-center gap-2 text-green-700 bg-green-50 p-3 rounded">
+                      <svg className="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      <span>
+                        {outcomeDialog.status === 'P' ? `Score: BHBC ${outcomeDialog.bhbcScore} – ${outcomeDialog.opponentScore}` :
+                         outcomeDialog.status === 'C' ? `Cancelled by ${outcomeDialog.who} — ${outcomeDialog.reason}` :
+                         `Abandoned — ${outcomeDialog.reason}`}
+                      </span>
                     </div>
-                  </div>
-                )}
-
-                {/* Scores - show for Played or Abandoned */}
-                {(outcomeDialog.status === 'P' || outcomeDialog.status === 'A') && (
-                  <>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Burgess Hill Score
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        value={outcomeDialog.bhbcScore}
-                        onChange={(e) => setOutcomeDialog({ ...outcomeDialog, bhbcScore: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Opponent Score
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        value={outcomeDialog.opponentScore}
-                        onChange={(e) => setOutcomeDialog({ ...outcomeDialog, opponentScore: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
-                  </>
-                )}
-
-                {/* Reason and Who - show for Cancelled or Abandoned */}
-                {(outcomeDialog.status === 'C' || outcomeDialog.status === 'A') && (
-                  <>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Reason
-                      </label>
-                      <input
-                        type="text"
-                        value={outcomeDialog.reason}
-                        onChange={(e) => setOutcomeDialog({ ...outcomeDialog, reason: e.target.value })}
-                        placeholder="e.g., Weather, Insufficient players"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Who {outcomeDialog.status === 'C' ? 'Cancelled' : 'Abandoned'}?
-                      </label>
-                      <select
-                        value={outcomeDialog.who}
-                        onChange={(e) => setOutcomeDialog({ ...outcomeDialog, who: e.target.value as 'Burgess Hill' | 'Opponent' | '' })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      >
-                        <option value="">Select...</option>
-                        <option value="Burgess Hill">Burgess Hill</option>
-                        <option value="Opponent">Opponent</option>
-                      </select>
-                    </div>
-
-                    {/* Email options — only for Cancelled games with entered players */}
-                    {outcomeDialog.status === 'C' && outcomeDialog.entered > 0 && (
-                      <div className="border-t border-gray-200 pt-3 space-y-2">
-                        <p className="text-sm font-medium text-gray-700">Notify by email</p>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={outcomeDialog.sendEmail}
-                            onChange={(e) => setOutcomeDialog({ ...outcomeDialog, sendEmail: e.target.checked })}
-                            className="rounded border-gray-300 text-blue-600"
-                          />
-                          <span className="text-sm text-gray-700">
-                            Email all entered players ({outcomeDialog.entered})
-                            <span className="text-gray-500"> — includes calendar cancellation</span>
-                          </span>
-                        </label>
-                        {outcomeDialog.homeAway === 'H' && (
-                          <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={outcomeDialog.sendTeaRotaEmail}
-                              onChange={(e) => setOutcomeDialog({ ...outcomeDialog, sendTeaRotaEmail: e.target.checked })}
-                              className="rounded border-gray-300 text-blue-600"
-                            />
-                            <span className="text-sm text-gray-700">Email tea rota members</span>
-                          </label>
-                        )}
+                    {/* Player emails */}
+                    {outcomeDialog.result.emailsSent !== undefined && outcomeDialog.result.emailsSent > 0 && (
+                      <div className="flex items-center gap-2 text-green-700 bg-green-50 p-3 rounded">
+                        <svg className="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        <span>Cancellation email sent to {outcomeDialog.result.emailsSent} player{outcomeDialog.result.emailsSent !== 1 ? 's' : ''}</span>
                       </div>
                     )}
-                  </>
-                )}
-              </div>
+                    {outcomeDialog.result.playersWithoutEmail && outcomeDialog.result.playersWithoutEmail.length > 0 && (
+                      <div className="bg-yellow-50 p-3 rounded">
+                        <p className="text-yellow-800 font-medium mb-1">
+                          {outcomeDialog.result.playersWithoutEmail.length} player{outcomeDialog.result.playersWithoutEmail.length !== 1 ? 's' : ''} without email address:
+                        </p>
+                        <ul className="text-yellow-700 text-sm list-disc list-inside">
+                          {outcomeDialog.result.playersWithoutEmail.map((name, i) => <li key={i}>{name}</li>)}
+                        </ul>
+                      </div>
+                    )}
+                    {outcomeDialog.result.emailError && (
+                      <div className="bg-red-50 p-3 rounded text-red-700">
+                        <p className="font-medium">Email error:</p>
+                        <p className="text-sm">{outcomeDialog.result.emailError}</p>
+                      </div>
+                    )}
+                    {/* Tea rota emails */}
+                    {outcomeDialog.result.teaRotaEmailsSent !== undefined && outcomeDialog.result.teaRotaEmailsSent > 0 && (
+                      <div className="flex items-center gap-2 text-green-700 bg-green-50 p-3 rounded">
+                        <svg className="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        <span>Tea rota email sent to {outcomeDialog.result.teaRotaEmailsSent} member{outcomeDialog.result.teaRotaEmailsSent !== 1 ? 's' : ''}</span>
+                      </div>
+                    )}
+                    {outcomeDialog.result.teaRotaMembersWithoutEmail && outcomeDialog.result.teaRotaMembersWithoutEmail.length > 0 && (
+                      <div className="bg-yellow-50 p-3 rounded">
+                        <p className="text-yellow-800 font-medium mb-1">
+                          {outcomeDialog.result.teaRotaMembersWithoutEmail.length} tea rota member{outcomeDialog.result.teaRotaMembersWithoutEmail.length !== 1 ? 's' : ''} without email:
+                        </p>
+                        <ul className="text-yellow-700 text-sm list-disc list-inside">
+                          {outcomeDialog.result.teaRotaMembersWithoutEmail.map((name, i) => <li key={i}>{name}</li>)}
+                        </ul>
+                      </div>
+                    )}
+                    {outcomeDialog.result.teaRotaEmailError && (
+                      <div className="bg-red-50 p-3 rounded text-red-700">
+                        <p className="font-medium">Tea rota email error:</p>
+                        <p className="text-sm">{outcomeDialog.result.teaRotaEmailError}</p>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex justify-end mt-6">
+                    <button
+                      onClick={() => setOutcomeDialog({ ...outcomeDialog, isOpen: false, result: null })}
+                      className="px-4 py-2 text-white bg-blue-600 rounded hover:bg-blue-700"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </>
+              ) : (
+                /* ── Entry form ── */
+                <>
+                  <h2 className="text-xl font-bold mb-4 text-gray-900">
+                    {outcomeDialog.gameStatus === 'S' ? 'Record Game Outcome' : 'Cancel Game'}
+                  </h2>
 
-              <div className="flex justify-end gap-3 mt-6">
-                <button
-                  onClick={() => setOutcomeDialog({ ...outcomeDialog, isOpen: false })}
-                  className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={submitOutcome}
-                  disabled={!canSubmitOutcome()}
-                  className="px-4 py-2 text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Save
-                </button>
-              </div>
+                  <div className="space-y-4">
+                    {/* Status Selection - only show for Selected games (has multiple options) */}
+                    {outcomeDialog.gameStatus === 'S' && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          What happened?
+                        </label>
+                        <div className="flex gap-3">
+                          <button
+                            type="button"
+                            onClick={() => setOutcomeDialog({ ...outcomeDialog, status: 'P' })}
+                            className={`flex-1 px-4 py-3 rounded-lg font-medium shadow-sm transition-all ${
+                              outcomeDialog.status === 'P'
+                                ? 'bg-green-600 text-white ring-2 ring-green-600 ring-offset-2'
+                                : 'bg-white text-gray-700 border-2 border-gray-200 hover:border-green-400 hover:bg-green-50'
+                            }`}
+                          >
+                            Played
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setOutcomeDialog({ ...outcomeDialog, status: 'C' })}
+                            className={`flex-1 px-4 py-3 rounded-lg font-medium shadow-sm transition-all ${
+                              outcomeDialog.status === 'C'
+                                ? 'bg-red-600 text-white ring-2 ring-red-600 ring-offset-2'
+                                : 'bg-white text-gray-700 border-2 border-gray-200 hover:border-red-400 hover:bg-red-50'
+                            }`}
+                          >
+                            Cancelled
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setOutcomeDialog({ ...outcomeDialog, status: 'A' })}
+                            className={`flex-1 px-4 py-3 rounded-lg font-medium shadow-sm transition-all ${
+                              outcomeDialog.status === 'A'
+                                ? 'bg-orange-600 text-white ring-2 ring-orange-600 ring-offset-2'
+                                : 'bg-white text-gray-700 border-2 border-gray-200 hover:border-orange-400 hover:bg-orange-50'
+                            }`}
+                          >
+                            Abandoned
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Scores - show for Played or Abandoned */}
+                    {(outcomeDialog.status === 'P' || outcomeDialog.status === 'A') && (
+                      <>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Burgess Hill Score</label>
+                          <input
+                            type="number"
+                            min="0"
+                            value={outcomeDialog.bhbcScore}
+                            onChange={(e) => setOutcomeDialog({ ...outcomeDialog, bhbcScore: e.target.value })}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Opponent Score</label>
+                          <input
+                            type="number"
+                            min="0"
+                            value={outcomeDialog.opponentScore}
+                            onChange={(e) => setOutcomeDialog({ ...outcomeDialog, opponentScore: e.target.value })}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                      </>
+                    )}
+
+                    {/* Reason and Who - show for Cancelled or Abandoned */}
+                    {(outcomeDialog.status === 'C' || outcomeDialog.status === 'A') && (
+                      <>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Reason</label>
+                          <input
+                            type="text"
+                            value={outcomeDialog.reason}
+                            onChange={(e) => setOutcomeDialog({ ...outcomeDialog, reason: e.target.value })}
+                            placeholder="e.g., Weather, Insufficient players"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Who {outcomeDialog.status === 'C' ? 'Cancelled' : 'Abandoned'}?
+                          </label>
+                          <select
+                            value={outcomeDialog.who}
+                            onChange={(e) => setOutcomeDialog({ ...outcomeDialog, who: e.target.value as 'Burgess Hill' | 'Opponent' | '' })}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          >
+                            <option value="">Select...</option>
+                            <option value="Burgess Hill">Burgess Hill</option>
+                            <option value="Opponent">Opponent</option>
+                          </select>
+                        </div>
+
+                        {/* Email options — only for Cancelled games with entered players */}
+                        {outcomeDialog.status === 'C' && outcomeDialog.entered > 0 && (
+                          <div className="border-t border-gray-200 pt-3 space-y-2">
+                            <p className="text-sm font-medium text-gray-700">Notify by email</p>
+                            <label className="flex items-center gap-2 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={outcomeDialog.sendEmail}
+                                onChange={(e) => setOutcomeDialog({ ...outcomeDialog, sendEmail: e.target.checked })}
+                                className="rounded border-gray-300 text-blue-600"
+                              />
+                              <span className="text-sm text-gray-700">
+                                Email all entered players ({outcomeDialog.entered})
+                                <span className="text-gray-500"> — includes calendar cancellation</span>
+                              </span>
+                            </label>
+                            {outcomeDialog.homeAway === 'H' && (
+                              <label className="flex items-center gap-2 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={outcomeDialog.sendTeaRotaEmail}
+                                  onChange={(e) => setOutcomeDialog({ ...outcomeDialog, sendTeaRotaEmail: e.target.checked })}
+                                  className="rounded border-gray-300 text-blue-600"
+                                />
+                                <span className="text-sm text-gray-700">Email tea rota members</span>
+                              </label>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+
+                  <div className="flex justify-end gap-3 mt-6">
+                    <button
+                      onClick={() => setOutcomeDialog({ ...outcomeDialog, isOpen: false })}
+                      disabled={outcomeDialog.isSubmitting}
+                      className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={submitOutcome}
+                      disabled={!canSubmitOutcome() || outcomeDialog.isSubmitting}
+                      className="px-4 py-2 text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    >
+                      {outcomeDialog.isSubmitting && (
+                        <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                      )}
+                      {outcomeDialog.isSubmitting ? 'Saving…' : 'Save'}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </>

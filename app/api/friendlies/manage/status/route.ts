@@ -15,10 +15,13 @@ import {
   createGameSheet,
   getGameSheet,
   getTeaRotaEntry,
+  setNeedsPlayersFlag,
+  markGamePlayerEntriesAs,
 } from '@/lib/friendlies-sheets';
 // addPlayerToGameSheet / removePlayerFromGameSheet imported below in enter/withdraw routes
 import { sendGamePublishedEmail, sendTeaRotaEmail, sendGameCancelledEmail, sendTeaRotaCancelledEmail } from '@/lib/email/friendlies';
 import { getAllUsers } from '@/lib/sheets';
+import { clearAllDiaryCaches, clearSheetDataCacheByPrefix } from '@/lib/home-cache';
 import { ChangeStatusRequest, ChangeStatusResponse, GameStatus } from '@/lib/types/friendlies';
 import { hasRole } from '@/lib/role-utils';
 
@@ -192,6 +195,8 @@ export async function POST(request: NextRequest) {
 
         // Set new status to Allocating (entries closed, no game sheet yet)
         newStatus = 'L';
+        // Clear needs-players flag — entries are now closed
+        await setNeedsPlayersFlag(effectiveTabName, false);
         break;
 
       // CLOSE: Transition from 'O' (Open) to 'X' (Selecting/Closed for entries)
@@ -207,6 +212,8 @@ export async function POST(request: NextRequest) {
         // Set new status to Selecting (closed for new entries)
         newStatus = 'X';
         // Game sheet was already created at Open time — no sheet work needed here
+        // Clear needs-players flag — entries are now closed
+        await setNeedsPlayersFlag(effectiveTabName, false);
         break;
 
       // PUBLISH: Transition from 'X' (Selecting) to 'S' (Selected/Published team)
@@ -244,7 +251,6 @@ export async function POST(request: NextRequest) {
               selected: player.selected,
               team: player.team,
               position: player.position,
-              captain: player.captain,
               driving: player.driving,
               carNumber: player.carNumber,
             }));
@@ -350,7 +356,6 @@ export async function POST(request: NextRequest) {
               selected: player.selected,
               team: player.team,
               position: player.position,
-              captain: player.captain,
               driving: player.driving,
               carNumber: player.carNumber,
             }));
@@ -502,6 +507,16 @@ export async function POST(request: NextRequest) {
           }
         }
 
+        // Mark all player entries as 'C' so stale P/R/T values don't inflate
+        // percent_played the next time update-stats runs
+        try {
+          await markGamePlayerEntriesAs(effectiveTabName, 'C');
+        } catch (e) {
+          console.error('[cancel] Failed to mark player entries as C:', e);
+        }
+
+        // Clear needs-players flag
+        await setNeedsPlayersFlag(effectiveTabName, false);
         break;
 
       // ABANDON: Transition from 'S' (Selected) to 'A' (Abandoned)
@@ -525,6 +540,13 @@ export async function POST(request: NextRequest) {
 
         // Set new status to Abandoned
         newStatus = 'A';
+
+        // Mark all player entries as 'A' so they don't pollute stats
+        try {
+          await markGamePlayerEntriesAs(effectiveTabName, 'A');
+        } catch (e) {
+          console.error('[abandon] Failed to mark player entries as A:', e);
+        }
         break;
 
       // REOPEN: Transition from 'O' (Open) back to '' (Upcoming) — undo an accidental open
@@ -536,6 +558,8 @@ export async function POST(request: NextRequest) {
           );
         }
         newStatus = '';
+        // Clear needs-players flag — game is no longer open
+        await setNeedsPlayersFlag(effectiveTabName, false);
         break;
 
       // REOPEN-ENTRIES: Transition from 'X' (Selecting) back to 'O' (Open) — re-open entries
@@ -571,6 +595,26 @@ export async function POST(request: NextRequest) {
         }
         newStatus = 'S';
         break;
+
+      // FLAG-NEEDS-PLAYERS: Captain marks an Open game as needing players (diary nudge)
+      case 'flag-needs-players':
+        if (currentStatus !== 'O') {
+          return NextResponse.json(
+            { error: 'Can only flag Open games as needing players' },
+            { status: 400 }
+          );
+        }
+        await setNeedsPlayersFlag(effectiveTabName, true);
+        clearSheetDataCacheByPrefix('friendlies-games:');
+        clearAllDiaryCaches();
+        return NextResponse.json({ success: true, new_status: currentStatus });
+
+      // UNFLAG-NEEDS-PLAYERS: Captain removes the needs-players flag
+      case 'unflag-needs-players':
+        await setNeedsPlayersFlag(effectiveTabName, false);
+        clearSheetDataCacheByPrefix('friendlies-games:');
+        clearAllDiaryCaches();
+        return NextResponse.json({ success: true, new_status: currentStatus });
 
       // Reject invalid action names
       default:

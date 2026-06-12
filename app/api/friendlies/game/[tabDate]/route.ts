@@ -2,8 +2,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, getGameSheet, getClubDetails, getTeaRotaList } from '@/lib/friendlies-sheets';
-import { getUserByUsername } from '@/lib/sheets';
+import { getGames, getGameSheet, getClubDetails, getTeaRotaList, validateGameToken } from '@/lib/friendlies-sheets';
+import { getUserByUsername, getAllUsers } from '@/lib/sheets';
 
 export async function GET(
   request: NextRequest,
@@ -16,13 +16,29 @@ export async function GET(
     const isAuthenticated = !!session?.user;
     const userName = session?.user?.userName ?? null;
 
-    // For unauthenticated visitors arriving via an email link, ?me= identifies the viewer
+    // For unauthenticated visitors: ?me= shows their own name in full (entry-email links).
+    // ?token= (published/cancelled emails) gives full names to all players once validated.
     const meParam = !isAuthenticated ? (request.nextUrl.searchParams.get('me') ?? null) : null;
+    const tokenParam = !isAuthenticated ? (request.nextUrl.searchParams.get('token') ?? null) : null;
+
+    let isTokenAuthenticated = false;
+    if (tokenParam) {
+      try {
+        const tokenResult = await validateGameToken(decodeURIComponent(tabDate), tokenParam);
+        if (tokenResult) {
+          isTokenAuthenticated = true;
+        }
+      } catch {
+        // Invalid token — treat as unauthenticated
+      }
+    }
+
     const viewerUserName = userName ?? meParam;
 
-    // Unauthenticated: show first name only, except for the viewer's own entry
+    // Token-authenticated visitors see all full names (same as logged-in members).
+    // Unauthenticated visitors see first name only, except for their own entry via ?me=.
     function displayName(fullName: string, playerUserName: string): string {
-      if (isAuthenticated) return fullName;
+      if (isAuthenticated || isTokenAuthenticated) return fullName;
       if (viewerUserName && playerUserName === viewerUserName) return fullName;
       return fullName.split(' ')[0];
     }
@@ -51,12 +67,21 @@ export async function GET(
       );
     }
 
-    // Read game sheet, club details, and tea rota in parallel
-    const [allPlayers, clubDetailsResult, teaRotaList] = await Promise.all([
+    // Read game sheet, club details, tea rota, and member list in parallel
+    const [allPlayers, clubDetailsResult, teaRotaList, allUsers] = await Promise.all([
       getGameSheet(game.tabName),
       game.homeAway === 'A' ? getClubDetails(game.clubName).catch(() => null) : Promise.resolve(null),
       game.homeAway === 'H' ? getTeaRotaList({ includeCancelled: true }).catch(() => null) : Promise.resolve(null),
+      getAllUsers(),
     ]);
+
+    // Build a set of userNames who have an email address (for no-email indicator)
+    const usersWithEmail = new Set<string>();
+    for (const u of allUsers) {
+      if (u.userName && u.emailAddress && u.emailAddress.trim() !== '') {
+        usersWithEmail.add(u.userName.toLowerCase());
+      }
+    }
 
     // Collect withdrawn players (status='W') and opposition players (selected='O')
     const withdrawnPlayers = allPlayers.filter(p => p.status === 'W');
@@ -116,9 +141,12 @@ export async function GET(
           userName: p.name,
           position: p.position,
           status: p.status,
+          confirmedStatus: p.status,
+          acknowledgedCancellation: p.acknowledgedCancellation || '',
           isCaptain: game.captain ? p.name === game.captain : p.captain === 'Y',
           driving: p.driving,
           carNumber: p.carNumber,
+          hasEmail: usersWithEmail.has(p.name.toLowerCase()),
         })),
       });
     }
@@ -158,6 +186,9 @@ export async function GET(
           userName: p.name,
           position: p.position,
           status: p.status,
+          confirmedStatus: p.status,
+          acknowledgedCancellation: p.acknowledgedCancellation || '',
+          hasEmail: usersWithEmail.has(p.name.toLowerCase()),
         })),
       });
     }
@@ -193,6 +224,10 @@ export async function GET(
       userConfirmed = currentUser.status === 'Y';
     }
 
+    const userAcknowledged = currentUser
+      ? (currentUser.acknowledgedCancellation === 'Y')
+      : false;
+
     // Resolve tea duty for home games
     let teaDuty = null;
     if (teaRotaList) {
@@ -204,9 +239,9 @@ export async function GET(
           teaEntry.teaSecond ? getUserByUsername(teaEntry.teaSecond) : Promise.resolve(null),
         ]);
         teaDuty = {
-          teaLead: teaEntry.teaLead ? { userName: teaEntry.teaLead, name: leadUser ? displayName(leadUser.fullName, teaEntry.teaLead) : teaEntry.teaLead } : null,
-          teaFirst: teaEntry.teaFirst ? { userName: teaEntry.teaFirst, name: firstUser ? displayName(firstUser.fullName, teaEntry.teaFirst) : teaEntry.teaFirst } : null,
-          teaSecond: teaEntry.teaSecond ? { userName: teaEntry.teaSecond, name: secondUser ? displayName(secondUser.fullName, teaEntry.teaSecond) : teaEntry.teaSecond } : null,
+          teaLead: teaEntry.teaLead ? { userName: teaEntry.teaLead, name: leadUser ? displayName(leadUser.fullName, teaEntry.teaLead) : teaEntry.teaLead, hasEmail: usersWithEmail.has(teaEntry.teaLead.toLowerCase()) } : null,
+          teaFirst: teaEntry.teaFirst ? { userName: teaEntry.teaFirst, name: firstUser ? displayName(firstUser.fullName, teaEntry.teaFirst) : teaEntry.teaFirst, hasEmail: usersWithEmail.has(teaEntry.teaFirst.toLowerCase()) } : null,
+          teaSecond: teaEntry.teaSecond ? { userName: teaEntry.teaSecond, name: secondUser ? displayName(secondUser.fullName, teaEntry.teaSecond) : teaEntry.teaSecond, hasEmail: usersWithEmail.has(teaEntry.teaSecond.toLowerCase()) } : null,
         };
       }
     }
@@ -224,6 +259,7 @@ export async function GET(
         userTeam: userTeam,
         userPosition: userPosition,
         userConfirmed: userConfirmed,
+        userAcknowledged: userAcknowledged,
         userName: userName ?? '',  // Current user's userName for highlighting
         pickupInfo: game.pickupInfo || '',
         petrolCost: clubDetailsResult?.petrolCost ?? null,
@@ -237,6 +273,9 @@ export async function GET(
         team: r.team,
         position: r.position,
         status: r.status,
+        confirmedStatus: r.status,
+        acknowledgedCancellation: r.acknowledgedCancellation || '',
+        hasEmail: usersWithEmail.has(r.name.toLowerCase()),
       })),
       reserveTeams: reserveTeamsList,
       opposition: oppositionPlayers.map(p => ({ name: displayName(p.fullName, '') })),

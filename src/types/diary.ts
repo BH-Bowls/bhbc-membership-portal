@@ -7,6 +7,7 @@ export type DiaryItemType =
   | 'sweeping'
   | 'tea'
   | 'friendly'
+  | 'friendly-needs-players'
   | 'competition'
   | 'marker'
   | 'availability_nudge'

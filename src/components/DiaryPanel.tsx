@@ -24,13 +24,15 @@ function getIcon(type: DiaryItemType): string {
   if (type === 'marker') return '📋';
   if (type === 'availability_nudge') return '❓';
   if (type === 'availability_confirmed') return '✅';
+  if (type === 'friendly-needs-players') return '🟠';
   return '•';
 }
 
-// Returns true for item types that need special visual treatment (action required)
-function isActionRequired(type: DiaryItemType): boolean {
-  // Nudge items require the member to respond — make them visually distinct
-  return type === 'availability_nudge';
+// Returns a highlight class for item types that need special visual treatment, or '' for none
+function highlightClass(type: DiaryItemType): string {
+  if (type === 'availability_nudge') return 'bg-blue-50 border border-blue-200 -mx-1 px-2';
+  if (type === 'friendly-needs-players') return 'bg-orange-50 border border-orange-300 -mx-1 px-2';
+  return '';
 }
 
 // Skeleton placeholder row shown while diary data is loading
@@ -54,7 +56,7 @@ function SkeletonRow() {
 function DiaryRow({ item }: { item: DiaryItem }) {
   // Build the inner content shared between the linked and non-linked variants
   const inner = (
-    <div className={`flex items-start gap-3 py-3 rounded-md px-1 text-gray-900 ${isActionRequired(item.type) ? 'bg-blue-50 border border-blue-200 -mx-1 px-2' : ''}`}>
+    <div className={`flex items-start gap-3 py-3 rounded-md px-1 text-gray-900 ${highlightClass(item.type)}`}>
       {/* Fixed-width date column */}
       <span className="text-sm text-gray-700 w-24 flex-shrink-0">{item.displayDate}</span>
       {/* Type icon */}

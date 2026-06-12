@@ -47,6 +47,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Build a set of cancelled/abandoned tabNames so their entries are never counted
+    // as nameDown/picked during stats recalculation (handles any stale P/R/T values
+    // that existed before the cancel/abandon action wrote 'C'/'A' to the Players sheet)
+    const cancelledTabNames = new Set(
+      games
+        .filter(g => g.status === 'C' || g.status === 'A')
+        .map(g => g.tabName)
+        .filter((t): t is string => !!t)
+    );
+
     // Fetch all players from the game sheet
     const gamePlayers = await getGameSheet(game.tabName);
 
@@ -196,9 +206,17 @@ export async function POST(request: NextRequest) {
       let cancelled = 0;
 
       for (const colIdx of gameColIndices) {
+        const header = updatedHeaders[colIdx];
         const status = (row[colIdx] || '').toString().toUpperCase();
 
         if (!status) continue;
+
+        // For cancelled/abandoned games, treat any entry as cancelled regardless of the
+        // stored value — prevents stale P/R/T entries from inflating percent_played
+        if (cancelledTabNames.has(header)) {
+          cancelled++;
+          continue;
+        }
 
         // Name Down: only closed-game selected statuses — P, R, T
         // Withdrawn variants (PW, RW, TW) are excluded — player withdrew so should not count
@@ -223,7 +241,7 @@ export async function POST(request: NextRequest) {
           withdrawn++;
         }
 
-        // Count cancelled: C status
+        // Count cancelled: C status (for games not in cancelledTabNames)
         if (status === 'C') {
           cancelled++;
         }

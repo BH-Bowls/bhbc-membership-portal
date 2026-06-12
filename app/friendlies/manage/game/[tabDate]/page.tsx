@@ -929,6 +929,12 @@ export default function TeamSelectionPage() {
           <div className="flex items-center justify-between mb-2">
             <Link href="/friendlies/manage" className="text-blue-600 hover:text-blue-800">← Back to Manage Games</Link>
             <div className="flex gap-2 items-center">
+              <Link
+                href={`/friendlies/game/${tabDate}`}
+                className="text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded transition-colors"
+              >
+                ← Player View
+              </Link>
               {!isEditing && (
                 <button
                   onClick={startEditing}
@@ -1082,6 +1088,9 @@ export default function TeamSelectionPage() {
 
                     <th className="px-2 py-2 text-left text-xs font-medium text-gray-700 uppercase">Cpt</th>
                     <th className="px-2 py-2 text-left text-xs font-medium text-gray-700 uppercase">Conf</th>
+                    {gameData.game.status === 'C' && (
+                      <th className="px-2 py-2 text-left text-xs font-medium text-gray-700 uppercase">Acked</th>
+                    )}
                   </tr>
                 </thead>
 
@@ -1212,6 +1221,15 @@ export default function TeamSelectionPage() {
                           />
                         )}
                       </td>
+                      {gameData.game.status === 'C' && (
+                        <td className="px-2 py-2 text-sm">
+                          {player.acknowledgedCancellation === 'Y' ? (
+                            <span className="text-xs text-green-700 font-medium">✓ Noted</span>
+                          ) : (
+                            <span className="text-xs text-amber-700">Pending</span>
+                          )}
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>

@@ -14,6 +14,8 @@ import {
 } from './types/clubs';
 import { getGoogleSheetsClient } from './sheets';
 
+const CONTACTS_SHEET = 'Club Contacts';
+
 // ============================================================================
 // ENVIRONMENT VARIABLE GETTERS
 // ============================================================================
@@ -254,12 +256,12 @@ export async function getClubByName(clubName: string): Promise<Club | null> {
  */
 export async function getContactsForClub(clubName: string): Promise<ClubContact[]> {
   const spreadsheetId = getMatchDayContactsSpreadsheetId();
-  const colMap = await getColumnMap(spreadsheetId, 'Contacts');
+  const colMap = await getColumnMap(spreadsheetId, CONTACTS_SHEET);
   const sheets = getGoogleSheetsClient();
 
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: 'Contacts!A:ZZ',
+    range: `'${CONTACTS_SHEET}'!A:ZZ`,
   });
 
   const rows = response.data.values || [];
@@ -296,17 +298,17 @@ export async function getContactsForClub(clubName: string): Promise<ClubContact[
     });
   }
 
-  // Sort contacts by role priority
+  // Sort contacts by highest-priority role in their (possibly comma-separated) role string
   const roleOrder: { [key: string]: number } = {
-    'Captain': 1,
-    'Secretary': 2,
+    'Captain': 1, 'Ladies Captain': 1, 'Mens Captain': 1,
+    'Vice Captain': 2, 'Ladies Vice Captain': 2, 'Mens Vice Captain': 2,
+    'Club Secretary': 3, 'Secretary': 3, 'Match Secretary': 4,
   };
 
-  contacts.sort((a, b) => {
-    const aOrder = roleOrder[a.role] ?? 99;
-    const bOrder = roleOrder[b.role] ?? 99;
-    return aOrder - bOrder;
-  });
+  const bestPriority = (roleStr: string) =>
+    Math.min(...roleStr.split(',').map(r => roleOrder[r.trim()] ?? 99));
+
+  contacts.sort((a, b) => bestPriority(a.role) - bestPriority(b.role));
 
   return contacts;
 }
@@ -547,13 +549,13 @@ export async function addContact(contactData: CreateContactRequest): Promise<Clu
   }
 
   const spreadsheetId = getMatchDayContactsSpreadsheetId();
-  const colMap = await getColumnMap(spreadsheetId, 'Contacts');
+  const colMap = await getColumnMap(spreadsheetId, CONTACTS_SHEET);
   const sheets = getGoogleSheetsClient();
 
   // Get header row to build new row
   const headerResponse = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: 'Contacts!1:1',
+    range: `'${CONTACTS_SHEET}'!1:1`,
   });
   const headers = headerResponse.data.values?.[0] || [];
   const rowData: string[] = new Array(headers.length).fill('');
@@ -581,7 +583,7 @@ export async function addContact(contactData: CreateContactRequest): Promise<Clu
   // Append new row
   const appendResponse = await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range: 'Contacts!A:ZZ',
+    range: `'${CONTACTS_SHEET}'!A:ZZ`,
     valueInputOption: 'USER_ENTERED',
     requestBody: {
       values: [rowData],
@@ -623,13 +625,13 @@ export async function addContact(contactData: CreateContactRequest): Promise<Clu
  */
 export async function updateContact(rowNumber: number, updates: UpdateContactRequest): Promise<ClubContact> {
   const spreadsheetId = getMatchDayContactsSpreadsheetId();
-  const colMap = await getColumnMap(spreadsheetId, 'Contacts');
+  const colMap = await getColumnMap(spreadsheetId, CONTACTS_SHEET);
   const sheets = getGoogleSheetsClient();
 
   // Get current contact data
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `Contacts!A${rowNumber}:ZZ${rowNumber}`,
+    range: `'${CONTACTS_SHEET}'!A${rowNumber}:ZZ${rowNumber}`,
   });
 
   const row = response.data.values?.[0];
@@ -650,7 +652,7 @@ export async function updateContact(rowNumber: number, updates: UpdateContactReq
     if (index !== undefined && value !== undefined) {
       const colLetter = getColumnLetter(index);
       updateData.push({
-        range: `Contacts!${colLetter}${rowNumber}`,
+        range: `'${CONTACTS_SHEET}'!${colLetter}${rowNumber}`,
         values: [[value]],
       });
     }
@@ -689,7 +691,7 @@ export async function updateContact(rowNumber: number, updates: UpdateContactReq
   // Re-fetch the row to get current data
   const updatedResponse = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `Contacts!A${rowNumber}:ZZ${rowNumber}`,
+    range: `'${CONTACTS_SHEET}'!A${rowNumber}:ZZ${rowNumber}`,
   });
 
   const updatedRow = updatedResponse.data.values?.[0];
@@ -730,12 +732,12 @@ async function deleteContactByRowNumber(rowNumber: number): Promise<void> {
   });
 
   const contactsSheet = spreadsheet.data.sheets?.find(s =>
-    s.properties?.title?.trim().toLowerCase() === 'contacts'
+    s.properties?.title?.trim().toLowerCase() === CONTACTS_SHEET.toLowerCase()
   );
 
   const sheetId = contactsSheet?.properties?.sheetId;
   if (sheetId === undefined) {
-    throw new Error(`Contacts sheet not found. Available sheets: ${spreadsheet.data.sheets?.map(s => `"${s.properties?.title}" (id: ${s.properties?.sheetId})`).join(', ')}`);
+    throw new Error(`${CONTACTS_SHEET} sheet not found. Available sheets: ${spreadsheet.data.sheets?.map(s => `"${s.properties?.title}" (id: ${s.properties?.sheetId})`).join(', ')}`);
   }
 
   // Delete the row
@@ -768,13 +770,13 @@ async function deleteContactByRowNumber(rowNumber: number): Promise<void> {
  */
 export async function deleteContact(clubName: string, rowNumber: number): Promise<void> {
   const spreadsheetId = getMatchDayContactsSpreadsheetId();
-  const colMap = await getColumnMap(spreadsheetId, 'Contacts');
+  const colMap = await getColumnMap(spreadsheetId, CONTACTS_SHEET);
   const sheets = getGoogleSheetsClient();
 
   // Get current contact data to verify it belongs to the specified club
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `Contacts!A${rowNumber}:ZZ${rowNumber}`,
+    range: `'${CONTACTS_SHEET}'!A${rowNumber}:ZZ${rowNumber}`,
   });
 
   const row = response.data.values?.[0];
@@ -949,12 +951,12 @@ export async function getClubContactsToEmail(): Promise<ContactWithCredentials[]
   const sheets = getGoogleSheetsClient();
 
   const [contactsColMap, clubsColMap] = await Promise.all([
-    getColumnMap(spreadsheetId, 'Contacts'),
+    getColumnMap(spreadsheetId, CONTACTS_SHEET),
     getColumnMap(spreadsheetId, 'clubs'),
   ]);
 
   const [contactsResponse, clubsResponse] = await Promise.all([
-    sheets.spreadsheets.values.get({ spreadsheetId, range: 'Contacts!A:ZZ' }),
+    sheets.spreadsheets.values.get({ spreadsheetId, range: `'${CONTACTS_SHEET}'!A:ZZ` }),
     sheets.spreadsheets.values.get({ spreadsheetId, range: 'clubs!A:ZZ' }),
   ]);
 
@@ -1018,12 +1020,12 @@ export async function getClubContactsToEmail(): Promise<ContactWithCredentials[]
 /** Get all distinct roles from the Contacts sheet, sorted alphabetically. */
 export async function getDistinctContactRoles(): Promise<string[]> {
   const spreadsheetId = getMatchDayContactsSpreadsheetId();
-  const colMap = await getColumnMap(spreadsheetId, 'Contacts');
+  const colMap = await getColumnMap(spreadsheetId, CONTACTS_SHEET);
   const sheets = getGoogleSheetsClient();
 
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: 'Contacts!A:ZZ',
+    range: `'${CONTACTS_SHEET}'!A:ZZ`,
   });
 
   const rows = response.data.values || [];
@@ -1034,8 +1036,12 @@ export async function getDistinctContactRoles(): Promise<string[]> {
 
   const roles = new Set<string>();
   for (let i = 1; i < rows.length; i++) {
-    const role = rows[i][roleCol]?.toString().trim();
-    if (role) roles.add(role);
+    const cell = rows[i][roleCol]?.toString().trim();
+    if (!cell) continue;
+    for (const part of cell.split(',')) {
+      const role = part.trim();
+      if (role) roles.add(role);
+    }
   }
 
   return Array.from(roles).sort();
@@ -1065,12 +1071,12 @@ export async function getContactsWithCredentialsByRole(role: string): Promise<Co
   const sheets = getGoogleSheetsClient();
 
   const [contactsColMap, clubsColMap] = await Promise.all([
-    getColumnMap(spreadsheetId, 'Contacts'),
+    getColumnMap(spreadsheetId, CONTACTS_SHEET),
     getColumnMap(spreadsheetId, 'clubs'),
   ]);
 
   const [contactsResponse, clubsResponse] = await Promise.all([
-    sheets.spreadsheets.values.get({ spreadsheetId, range: 'Contacts!A:ZZ' }),
+    sheets.spreadsheets.values.get({ spreadsheetId, range: `'${CONTACTS_SHEET}'!A:ZZ` }),
     sheets.spreadsheets.values.get({ spreadsheetId, range: 'clubs!A:ZZ' }),
   ]);
 

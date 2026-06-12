@@ -195,8 +195,9 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
       return;
     }
 
-    // Club / RowlandPlayer / Captain: only allow if their club is in the match
-    if ((isClub || isRowlandPlayer || isCaptain) && clubId) {
+    // Club / RowlandPlayer: only allow if their club is in the match
+    // Captains can open any match (same as committee/admin)
+    if ((isClub || isRowlandPlayer) && clubId) {
       if (rawMatch.homeTeam?.clubId !== clubId && rawMatch.awayTeam?.clubId !== clubId) return;
     }
 
@@ -347,8 +348,9 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
             ? (match.homeTeam?.clubId === viewingAsClubId ? match.awayTeam : match.homeTeam)
             : (match.homeTeam ?? match.awayTeam);
 
-          const organiser = opponentContacts.find((c) => c.role.endsWith('Organiser'));
-          const skip      = opponentContacts.find((c) => c.role.endsWith('Skip'));
+          const rowlandContacts = opponentContacts.filter((c) =>
+            c.role.split(',').some((r) => r.trim().toLowerCase().includes('rowland'))
+          );
 
           return (
             <div className="print:hidden mb-6 bg-green-50 border border-green-200 rounded-lg p-4">
@@ -364,22 +366,22 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
                     <p className="text-xs text-gray-500 mt-0.5">Play by {match.playByDate}</p>
                   )}
 
-                  {(organiser || skip) && (
+                  {rowlandContacts.length > 0 && (
                     <div className="mt-3 space-y-2">
-                      {[organiser, skip].filter(Boolean).map((c) => (
-                        <div key={c!.role} className="text-sm">
+                      {rowlandContacts.map((c) => (
+                        <div key={c.role} className="text-sm">
                           <span className="font-medium text-gray-700">
-                            {c!.role.endsWith('Organiser') ? 'Organiser' : 'Skip'}:
+                            {c.role}:
                           </span>{' '}
-                          <span className="text-gray-900">{c!.name || `${c!.firstName} ${c!.lastName}`.trim()}</span>
-                          {c!.mobileNumber && (
-                            <> · <a href={`tel:${c!.mobileNumber}`} className="text-blue-600 hover:underline">{c!.mobileNumber}</a></>
+                          <span className="text-gray-900">{c.name || `${c.firstName} ${c.lastName}`.trim()}</span>
+                          {c.mobileNumber && (
+                            <> · <a href={`tel:${c.mobileNumber}`} className="text-blue-600 hover:underline">{c.mobileNumber}</a></>
                           )}
-                          {!c!.mobileNumber && c!.phoneNumber && (
-                            <> · <a href={`tel:${c!.phoneNumber}`} className="text-blue-600 hover:underline">{c!.phoneNumber}</a></>
+                          {!c.mobileNumber && c.phoneNumber && (
+                            <> · <a href={`tel:${c.phoneNumber}`} className="text-blue-600 hover:underline">{c.phoneNumber}</a></>
                           )}
-                          {c!.email && (
-                            <> · <a href={`mailto:${c!.email}`} className="text-blue-600 hover:underline">{c!.email}</a></>
+                          {c.email && (
+                            <> · <a href={`mailto:${c.email}`} className="text-blue-600 hover:underline">{c.email}</a></>
                           )}
                         </div>
                       ))}
@@ -434,13 +436,13 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
               compType="singles"
               firstRoundCount={firstRoundCount}
               getInfo={getInfo}
-              canEnterScores={!isGuest && isCommittee}
+              canEnterScores={!isGuest && (isCommittee || isCaptain)}
               currentUsername={myClubDisplayName}
-              allowCompleteInteraction={!isGuest && (isClub || isRowlandPlayer || isCaptain)}
+              allowCompleteInteraction={!isGuest && (isClub || isRowlandPlayer)}
               onMatchClick={handleMatchClick}
               roundPlayByDates={roundPlayByDates}
               printOrientation={printOrientation}
-              onScoreSheetView={!isGuest && isCommittee ? (_matchId, url) => setScoreSheetPopup(url) : undefined}
+              onScoreSheetView={!isGuest && (isCommittee || isCaptain) ? (_matchId, url) => setScoreSheetPopup(url) : undefined}
             />
           </div>
         )}

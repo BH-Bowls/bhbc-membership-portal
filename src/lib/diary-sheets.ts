@@ -413,6 +413,7 @@ async function fetchFriendliesItems(userName: string, todayStr: string): Promise
       const clubName = getGameCol(row, 'club_name');
       const clubSuffix = getGameCol(row, 'club_suffix');
       const homeAway = getGameCol(row, 'h_a') || getGameCol(row, 'home_away');
+      const needsPlayers = getGameCol(row, 'needs_players').toUpperCase() === 'Y';
 
       // Build the display club name (append suffix if present)
       let displayClub = clubName;
@@ -474,6 +475,16 @@ async function fetchFriendliesItems(userName: string, todayStr: string): Promise
               linkUrl: '/friendlies',
             });
           }
+        } else if (needsPlayers && status === 'O') {
+          // Captain has flagged this game as needing players, and this member hasn't entered yet
+          friendlyItems.push({
+            type: 'friendly-needs-players',
+            date: isoDate,
+            displayDate: formatDiaryDate(isoDate),
+            label: gameLabel,
+            subLabel: 'Players needed — please enter if you can!',
+            linkUrl: `/friendlies/game/${encodeURIComponent(tabName)}`,
+          });
         }
       }
     }

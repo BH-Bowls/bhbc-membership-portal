@@ -29,7 +29,7 @@ export const SHEET_REGISTRY: SheetDescriptor[] = [
   { key: 'Players',         label: 'Players',          sheetName: 'Players',         spreadsheetKey: 'FRIENDLIES_SPREADSHEET_ID',           joinKey: 'user_name' },
   { key: 'Games',           label: 'Games',            sheetName: 'Games',           spreadsheetKey: 'FRIENDLIES_SPREADSHEET_ID',           joinKey: 'club_name' },
   { key: 'Clubs',           label: 'Clubs',            sheetName: 'clubs',           spreadsheetKey: 'MATCH_DAY_CONTACTS_SPREADSHEET_ID',   joinKey: 'club_name' },
-  { key: 'Contacts',        label: 'Contacts',         sheetName: 'Contacts',        spreadsheetKey: 'MATCH_DAY_CONTACTS_SPREADSHEET_ID',   joinKey: 'club_name' },
+  { key: 'Contacts',        label: 'Contacts',         sheetName: 'Club Contacts',   spreadsheetKey: 'MATCH_DAY_CONTACTS_SPREADSHEET_ID',   joinKey: 'club_name' },
 ];
 
 // ============================================================================
