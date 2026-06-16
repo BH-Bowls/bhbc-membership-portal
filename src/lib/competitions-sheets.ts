@@ -523,8 +523,10 @@ export async function saveCompetitionSetup(
     };
   });
 
-  // Generate empty placeholder matches for every round after the first,
-  // preserving any custom per-match play-by dates already set on those rounds.
+  // Generate placeholder matches for every round after the first, preserving any
+  // data already recorded on those rounds (propagated winners, scores, status, marker,
+  // played/play-by dates). Without this, re-saving the draw (e.g. to fix a player name)
+  // would wipe out results and bracket progress already recorded beyond round one.
   const subsequentMatches: CompMatch[] = [];
   for (const { round, count } of structure.slice(1)) {
     const defaultPlayByDate = comp ? playByDateForRound(comp, round) : '';
@@ -535,11 +537,15 @@ export async function saveCompetitionSetup(
         matchId,
         round,
         position: pos,
-        side1Usernames: [],
-        side2Usernames: null,
-        status: 'Pending',
+        side1Usernames: existing?.side1Usernames ?? [],
+        side2Usernames: existing?.side2Usernames ?? null,
+        score1: existing?.score1 ?? null,
+        score2: existing?.score2 ?? null,
+        winnerSide: existing?.winnerSide ?? null,
+        status: existing?.status ?? 'Pending',
         playByDate: existing?.playByDate || defaultPlayByDate || null,
         playedDate: existing?.playedDate || null,
+        marker: existing?.marker || '',
       });
     }
   }

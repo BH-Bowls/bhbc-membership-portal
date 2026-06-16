@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, getGameSheet, updateGameSheet, updatePlayerEntry, updateGameCounts, removePlayerFromGameSheet } from '@/lib/friendlies-sheets';
+import { getGames, getGameSheet, updateGameSheet, updatePlayerEntry, updateGameCounts, removePlayerFromGameSheet, getActiveEnteredCount } from '@/lib/friendlies-sheets';
 import { clearDiaryCache } from '@/lib/home-cache';
 import { sendWithdrawalEmail, sendWithdrawalNoticeEmail } from '@/lib/email/friendlies';
 import type { WithdrawRequest, Game } from '@/lib/types/friendlies';
@@ -161,6 +161,14 @@ export async function POST(request: NextRequest) {
       }
 
       await updatePlayerEntry(userName, game.tabName, newStatus as any);
+
+      // Recalculate entered count, excluding the player who just withdrew
+      try {
+        const activeCount = await getActiveEnteredCount(game.tabName);
+        await updateGameCounts(game.tabName, { entered: activeCount });
+      } catch (countError) {
+        console.error('[withdraw] Error updating entered count:', countError);
+      }
 
       // Send email notification to captains if game is Selected or Played
       // (No email for Selecting status as team not finalized yet)

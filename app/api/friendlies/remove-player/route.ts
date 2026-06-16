@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, updatePlayerEntry, getEnteredPlayers, updateGameCounts, removePlayerFromGameSheet, getGameSheet, updateGameSheet } from '@/lib/friendlies-sheets';
+import { getGames, updatePlayerEntry, updateGameCounts, removePlayerFromGameSheet, getGameSheet, updateGameSheet, getActiveEnteredCount } from '@/lib/friendlies-sheets';
 import { hasRole } from '@/lib/role-utils';
 import { getUserByUsername } from '@/lib/sheets';
 import { sendWithdrawnByAdminNoticeEmail, sendRemovedNoticeEmail } from '@/lib/email/friendlies';
@@ -81,6 +81,14 @@ export async function POST(request: NextRequest) {
         await updatePlayerEntry(playerUserName, game.tabName, '');
       }
 
+      // Recalculate entered count, excluding the player who was just withdrawn
+      try {
+        const activeCount = await getActiveEnteredCount(game.tabName);
+        await updateGameCounts(game.tabName, { entered: activeCount });
+      } catch (countError) {
+        console.error('[remove-player] Error updating entered count:', countError);
+      }
+
       // Send withdrawal notice to the player (fire-and-forget)
       try {
         const user = await getUserByUsername(playerUserName);
@@ -95,13 +103,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, withdrawn: true });
     }
 
-    // Open / Selecting — remove the player completely
+    // Open / Selecting, or a forced full removal from a Selected game — remove the player completely
     await updatePlayerEntry(playerUserName, game.tabName, '');
     await removePlayerFromGameSheet(game.tabName, playerUserName);
 
     try {
-      const enteredPlayers = await getEnteredPlayers(game.tabName);
-      await updateGameCounts(game.tabName, { entered: enteredPlayers.length });
+      const activeCount = await getActiveEnteredCount(game.tabName);
+      await updateGameCounts(game.tabName, { entered: activeCount });
     } catch {
       // Don't fail — player was removed successfully
     }

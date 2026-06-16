@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, batchUpdatePlayerEntries, addPlayersToGameSheetDirect, updateGameCounts } from '@/lib/friendlies-sheets';
+import { getGames, batchUpdatePlayerEntries, addPlayersToGameSheetDirect, updateGameCounts, getActiveEnteredCount } from '@/lib/friendlies-sheets';
 import { canEnterGame } from '@/lib/game-management/capacity';
 import { hasRole } from '@/lib/role-utils';
 import { getAllUsers } from '@/lib/sheets';
@@ -95,11 +95,13 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Update entered count using the known delta — avoids re-reading Players + Members sheets
+    // Recalculate entered count from the Players sheet (excludes any withdrawn
+    // entries) rather than adding a delta onto the possibly-stale prior count
     const addedCount = results.filter(r => r.added).length;
     if (addedCount > 0) {
       try {
-        await updateGameCounts(game.tabName, { entered: game.entered + addedCount });
+        const activeCount = await getActiveEnteredCount(game.tabName);
+        await updateGameCounts(game.tabName, { entered: activeCount });
       } catch (countError) {
         console.error('[Friendlies API] Error updating entered count:', countError);
       }

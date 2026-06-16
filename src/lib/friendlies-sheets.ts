@@ -1803,6 +1803,40 @@ export async function batchUpdatePlayerEntries(
 }
 
 /**
+ * Get the count of players actively in a game, excluding anyone withdrawn
+ * (status ending in 'W' — e.g. PW, RW, TW, EW). Used to keep the Games sheet
+ * 'entered' count accurate after a withdrawal on a Closed/Selected/Played
+ * game, where the player stays on the sheet with a withdrawn status rather
+ * than being removed outright.
+ * Reads only the Players sheet (no Members lookup) — cheap enough to call
+ * after every entry/withdrawal change.
+ * @param tabName The game's tab name
+ */
+export async function getActiveEnteredCount(tabName: string): Promise<number> {
+  const spreadsheetId = getFriendliesSpreadsheetId();
+  const sheets = getSheetsClient();
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: 'Players!A:ZZ',
+  });
+
+  const rows = response.data.values || [];
+  const headers = rows[0] || [];
+  const gameColumnIndex = headers.findIndex((h: string) => h === tabName);
+  if (gameColumnIndex === -1) return 0;
+
+  let count = 0;
+  for (let i = 1; i < rows.length; i++) {
+    const status = rows[i][gameColumnIndex];
+    if (status && String(status).trim() !== '' && !String(status).endsWith('W')) {
+      count++;
+    }
+  }
+  return count;
+}
+
+/**
  * Get all players who have entered a specific game
  * Returns list of players with their userName, fullName, and status (E or M)
  * @param tabName The game's tab name

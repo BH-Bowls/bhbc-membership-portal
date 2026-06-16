@@ -268,6 +268,7 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
       subItems: [
         { name: 'Clubs', href: '/clubs' },
         { name: 'Fixtures', href: '/fixtures' },
+        { name: 'Documents', href: '/documents' },
         { name: 'Tea Rota', href: '/tea-rota' },
         { name: 'Cleaning Rota', href: '/cleaning-rota' },
         { name: 'Sweeping Rota', href: '/sweeping-rota' },
@@ -343,6 +344,7 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
         { name: 'Members', href: '/members' },
         { name: 'Clubs', href: '/clubs' },
         { name: 'Fixtures', href: '/fixtures' },
+        { name: 'Documents', href: '/documents' },
         { name: 'Markers', href: '/markers' },
         { name: 'Tea Rota', href: '/tea-rota' },
         { name: 'Cleaning Rota', href: '/cleaning-rota' },

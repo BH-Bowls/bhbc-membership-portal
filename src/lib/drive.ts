@@ -48,6 +48,18 @@ export function getGoogleDriveClient() {
   return google.drive({ version: 'v3', auth: getDriveAuth() as any });
 }
 
+// Service-account-only Drive client — bypasses the OAuth refresh token path.
+// Use for read-only operations like listing documents where the folder is shared
+// with the service account email, not the personal OAuth account.
+function getServiceAccountDriveClient() {
+  const auth = new google.auth.JWT({
+    email: getServiceAccountEmail(),
+    key: getPrivateKey(),
+    scopes: ['https://www.googleapis.com/auth/drive.readonly'],
+  });
+  return google.drive({ version: 'v3', auth });
+}
+
 function getCategoryFolderName(entityId: string): string {
   if (entityId.startsWith('IG-')) return 'Invite Games';
   if (entityId.startsWith('league-')) return 'Leagues';
@@ -199,6 +211,63 @@ export async function uploadFileToDrive(
   const fileId = response.data.id!;
   await setPublicReadPermission(fileId);
   return fileId;
+}
+
+// ── Portal documents listing ─────────────────────────────────────────────────
+
+export interface DocumentFile {
+  name: string
+  webViewLink: string
+  mimeType: string
+}
+
+export interface DocumentFolder {
+  name: string
+  files: DocumentFile[]
+}
+
+/**
+ * List all subfolders and PDF files within the portal documents root folder.
+ * Each subfolder becomes a collapsible section on /documents.
+ * Files sorted by name descending; folders sorted alphabetically.
+ */
+export async function listPortalDocuments(): Promise<DocumentFolder[]> {
+  const rootId = process.env.PORTAL_DOCUMENTS_FOLDER_ID;
+  if (!rootId) throw new Error('PORTAL_DOCUMENTS_FOLDER_ID is not set');
+
+  const drive = getServiceAccountDriveClient();
+
+  const foldersResponse = await drive.files.list({
+    q: `'${rootId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+    fields: 'files(id, name)',
+    includeItemsFromAllDrives: false,
+    supportsAllDrives: false,
+  });
+
+  const folders = foldersResponse.data.files ?? [];
+  const results: DocumentFolder[] = [];
+
+  for (const folder of folders) {
+    if (!folder.id || !folder.name) continue;
+
+    const filesResponse = await drive.files.list({
+      q: `'${folder.id}' in parents and mimeType = 'application/pdf' and trashed = false`,
+      fields: 'files(id, name, webViewLink, mimeType)',
+      includeItemsFromAllDrives: false,
+      supportsAllDrives: false,
+    });
+
+    const files = filesResponse.data.files ?? [];
+    const docFiles: DocumentFile[] = files
+      .filter((f) => f.name && f.webViewLink && f.mimeType)
+      .map((f) => ({ name: f.name!, webViewLink: f.webViewLink!, mimeType: f.mimeType! }));
+
+    docFiles.sort((a, b) => b.name.localeCompare(a.name));
+    results.push({ name: folder.name, files: docFiles });
+  }
+
+  results.sort((a, b) => a.name.localeCompare(b.name));
+  return results;
 }
 
 // ── URL helpers (usable server-side; client has its own copy) ────────────────

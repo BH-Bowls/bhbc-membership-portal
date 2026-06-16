@@ -261,8 +261,7 @@ export const authOptions: NextAuthOptions = {
   // Session configuration
   session: {
     strategy: 'jwt',  // Use JWT tokens (stored client-side) instead of database sessions
-    maxAge: 30 * 24 * 60 * 60,  // Session expires after 30 days of inactivity (in seconds)
-    // Note: Absolute 90-day expiration is enforced in session callback above
+    maxAge: 45 * 24 * 60 * 60,  // Session cookie expires after 45 days of inactivity; 90-day absolute ceiling enforced above
   },
 
   // Secret key for signing JWT tokens (MUST be set in environment variables)

@@ -498,7 +498,7 @@ export function EnteredPlayersModal({
                           }}
                           disabled={removing === player.userName}
                           className="text-red-600 hover:text-red-800 disabled:opacity-50 flex items-center gap-1"
-                          title="Remove player"
+                          title="Remove/Withdraw"
                         >
                           {removing === player.userName ? (
                             <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">

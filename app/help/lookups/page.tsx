@@ -36,6 +36,15 @@ export default function HelpLookupsPage() {
             </Body>
           </HelpSection>
 
+          <HelpSection title="Documents">
+            <Body>
+              Lookups → Documents shows the club&apos;s policy documents, AGM minutes, and other
+              official files. Documents are grouped into folders — click a folder to expand it, then
+              click <strong>View / Download</strong> next to any document to open it in an inline
+              viewer or save it to your device.
+            </Body>
+          </HelpSection>
+
           <HelpSection title="Fixtures">
             <Body>
               Lookups → Fixtures shows the club&apos;s full fixture list for the current season —
