@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Welcome to Burgess Hill Bowls Club</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f4f4;">
+  <table role="presentation" style="width: 100%; border-collapse: collapse;">
+    <tr>
+      <td align="center" style="padding: 40px 0;">
+        <table role="presentation" style="width: 600px; border-collapse: collapse; background-color: #ffffff; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+
+          <!-- Header -->
+          <tr>
+            <td style="background-color: {{HEADER_COLOR}}; padding: 40px 30px; text-align: center;">
+              <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: bold;">
+                {{BRAND_NAME}}
+              </h1>
+              <p style="margin: 10px 0 0 0; color: #E0E7FF; font-size: 16px;">
+                Welcome to the Club
+              </p>
+            </td>
+          </tr>
+
+          <!-- Content -->
+          <tr>
+            <td style="padding: 40px 30px;">
+              <p style="margin: 0 0 20px 0; font-size: 16px; color: #1F2937;">
+                Dear {{firstName}},
+              </p>
+
+              <p style="margin: 0 0 20px 0; font-size: 16px; color: #1F2937;">
+                Welcome to {{BRAND_NAME}}! We are delighted to have you as a member.
+                Your membership is now active and your account for the Members Portal
+                has been created.
+              </p>
+
+              <h2 style="margin: 30px 0 20px 0; font-size: 20px; color: #1F2937; border-bottom: 2px solid {{PRIMARY_COLOR}}; padding-bottom: 10px;">
+                Your Portal Login
+              </h2>
+
+              <div style="background-color: #F3F4F6; padding: 20px; border-radius: 8px; margin: 0 0 20px 0;">
+                <table role="presentation" style="width: 100%; border-collapse: collapse;">
+                  <tr>
+                    <td style="padding: 8px 0; font-size: 15px; color: #4B5563; width: 40%;">
+                      Username:
+                    </td>
+                    <td style="padding: 8px 0; font-size: 15px; color: #1F2937; font-weight: 500;">
+                      {{userName}}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 8px 0; font-size: 15px; color: #4B5563;">
+                      Temporary Password:
+                    </td>
+                    <td style="padding: 8px 0; font-size: 15px; color: #1F2937; font-weight: 500;">
+                      {{tempPassword}}
+                    </td>
+                  </tr>
+                </table>
+              </div>
+
+              <p style="margin: 0 0 20px 0; font-size: 16px; color: #1F2937;">
+                You can log in to the Members Portal here:
+                <a href="{{portalUrl}}" style="color: {{LINK_COLOR}};">{{portalUrl}}</a>
+              </p>
+
+              <p style="margin: 0 0 20px 0; font-size: 16px; color: #1F2937;">
+                For your security, you will be asked to choose a new password the first
+                time you log in.
+              </p>
+
+              <p style="margin: 30px 0 0 0; font-size: 16px; color: #1F2937;">
+                Best regards,<br>
+                <strong>{{BRAND_NAME}}</strong>
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background-color: #F9FAFB; padding: 20px 30px; text-align: center; border-top: 1px solid #E5E7EB;">
+              <p style="margin: 0; font-size: 14px; color: #6B7280;">
+                This is an automated email from the {{BRAND_NAME}} Members Portal.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

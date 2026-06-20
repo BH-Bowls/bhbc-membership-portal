@@ -129,6 +129,26 @@ export default withAuth(
       }
     }
 
+    // Protect /admin/members routes - Admin only
+    // Membership lifecycle: applications workflow and member archiving/reinstatement
+    if (pathname.startsWith('/admin/members')) {
+      if (!token || !hasRole(token.role as string, 'Admin')) {
+        return NextResponse.redirect(new URL('/', req.url));
+      }
+    }
+
+    // Protect membership-management API routes - Admin only
+    // (the route handlers also self-guard; this is defence in depth)
+    if (
+      pathname.startsWith('/api/admin/applications') ||
+      pathname.startsWith('/api/admin/members') ||
+      pathname.startsWith('/api/admin/leavers')
+    ) {
+      if (!token || !hasRole(token.role as string, 'Admin')) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      }
+    }
+
     // Protect /admin/stats routes - Admin, Captain, GMC (Treasurer excluded)
     if (pathname.startsWith('/admin/stats')) {
       if (!token || !hasRole(token.role as string, 'Admin', 'Captain', 'GMC')) {

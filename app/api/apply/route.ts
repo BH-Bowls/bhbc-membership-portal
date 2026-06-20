@@ -2,7 +2,8 @@
 // API endpoint for membership applications (public - no auth required)
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getGoogleSheetsClient, getSpreadsheetId } from '@/lib/sheets';
+import { getGoogleSheetsClient, getSpreadsheetId, getColumnMap } from '@/lib/sheets';
+import { calculateMembershipFee } from '@/lib/renewals-sheets';
 import { sendEmailWithAttachments, isEmailConfigured, getEmailTransporter } from '@/lib/email/mailer';
 import { processEmailTemplate } from '@/lib/email/template-processor';
 import { readFileSync } from 'fs';
@@ -109,34 +110,79 @@ export async function POST(request: NextRequest) {
     const sheets = getGoogleSheetsClient();
     const spreadsheetId = getSpreadsheetId();
 
-    // Prepare row data matching sheet columns:
-    // First Name, Last Name, Known As, Gender, Email Address, Landline, Mobile,
-    // Address 1, Address 2, Address 3, Post Code, Age Demographic, DOB, FT Education,
-    // Member Type, Previous experience, Disabilities, Proposer name, Seconder Name,
-    // Comments, Created At
-    const rowData = [
-      data.firstName?.trim() || '',
-      data.lastName?.trim() || '',
-      data.knownAs?.trim() || '',
-      data.gender || '',
-      data.email?.trim() || '',
-      data.landline?.trim() || '',
-      data.mobile?.trim() || '',
-      data.address1?.trim() || '',
-      data.address2?.trim() || '',
-      data.address3?.trim() || '',
-      data.postCode?.trim() || '',
-      data.ageDemographic || '',
-      data.dob || '',
-      data.ftEducation || '',
-      data.memberType || '',
-      data.previousExperience?.trim() || '',
-      data.disabilities?.trim() || '',
-      data.proposerName?.trim() || '',
-      data.seconderName?.trim() || '',
-      data.comments?.trim() || '',
-      createdAt,
-    ];
+    // Derive the full member type name from gender + Playing/Social so the
+    // membership fee can be calculated. The Members sheet later stores this same
+    // full-name form (e.g. "Playing Man").
+    let fullMemberType = '';
+    if (data.memberType === 'Playing') {
+      fullMemberType = data.gender === 'M' ? 'Playing Man' : 'Playing Lady';
+    } else if (data.memberType === 'Social') {
+      fullMemberType = data.gender === 'M' ? 'Social Man' : 'Social Lady';
+    }
+
+    // Calculate the membership fee owed on submission. This is the full
+    // (non-pro-rata) subscription; any pro-rata reduction is applied manually by
+    // the admin before the payment email is sent. New applicants are never honorary.
+    const isFullTimeEducation = data.ftEducation === 'Y';
+    const feeDue = calculateMembershipFee(
+      data.ageDemographic,
+      fullMemberType,
+      isFullTimeEducation,
+      null
+    );
+
+    // Build the new row by column name so the workflow columns (Status, Fee Due)
+    // land correctly regardless of their physical position in the sheet.
+    const appColMap = await getColumnMap('Applications');
+
+    // Map normalized column name -> value for every field we want to write
+    const fieldValues: { [key: string]: any } = {
+      first_name: data.firstName?.trim() || '',
+      last_name: data.lastName?.trim() || '',
+      known_as: data.knownAs?.trim() || '',
+      gender: data.gender || '',
+      email_address: data.email?.trim() || '',
+      landline: data.landline?.trim() || '',
+      mobile: data.mobile?.trim() || '',
+      address_1: data.address1?.trim() || '',
+      address_2: data.address2?.trim() || '',
+      address_3: data.address3?.trim() || '',
+      post_code: data.postCode?.trim() || '',
+      age_demographic: data.ageDemographic || '',
+      dob: data.dob || '',
+      ft_education: data.ftEducation || '',
+      member_type: data.memberType || '',
+      previous_experience: data.previousExperience?.trim() || '',
+      disabilities: data.disabilities?.trim() || '',
+      proposer_name: data.proposerName?.trim() || '',
+      seconder_name: data.seconderName?.trim() || '',
+      comments: data.comments?.trim() || '',
+      created_at: createdAt,
+      // Workflow columns set at submission time
+      status: 'Submitted',
+      fee_due: feeDue,
+    };
+
+    // Determine how wide the row needs to be (highest mapped column index)
+    let maxIndex = 0;
+    for (const index of Object.values(appColMap)) {
+      if (index > maxIndex) {
+        maxIndex = index;
+      }
+    }
+
+    // Start with a fully blank row so the append has no undefined holes, then
+    // place each value at its mapped column index
+    const rowData: any[] = [];
+    for (let i = 0; i <= maxIndex; i++) {
+      rowData[i] = '';
+    }
+    for (const [columnName, value] of Object.entries(fieldValues)) {
+      const colIndex = appColMap[columnName];
+      if (colIndex !== undefined) {
+        rowData[colIndex] = value;
+      }
+    }
 
     await sheets.spreadsheets.values.append({
       spreadsheetId,

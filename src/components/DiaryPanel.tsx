@@ -25,6 +25,7 @@ function getIcon(type: DiaryItemType): string {
   if (type === 'availability_nudge') return '❓';
   if (type === 'availability_confirmed') return '✅';
   if (type === 'friendly-needs-players') return '🟠';
+  if (type === 'applications_pending') return '📥';
   return '•';
 }
 
@@ -32,6 +33,7 @@ function getIcon(type: DiaryItemType): string {
 function highlightClass(type: DiaryItemType): string {
   if (type === 'availability_nudge') return 'bg-blue-50 border border-blue-200 -mx-1 px-2';
   if (type === 'friendly-needs-players') return 'bg-orange-50 border border-orange-300 -mx-1 px-2';
+  if (type === 'applications_pending') return 'bg-amber-50 border border-amber-300 -mx-1 px-2';
   return '';
 }
 

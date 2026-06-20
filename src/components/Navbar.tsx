@@ -122,6 +122,7 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
 
     // Admins get all admin functions
     if (isAdmin) {
+      items.push({ name: 'Members', href: '/admin/members' });
       items.push({ name: 'Send Member Emails', href: '/admin/emails' });
       items.push({ name: 'Banking', href: '/banking' });
       items.push({ name: 'Friendly Management', href: '/friendlies/manage' });

@@ -163,13 +163,15 @@ function htmlToPlainText(html: string): string {
  * @param subject Email subject line
  * @param templateName Name of template file (without .html extension)
  * @param variables Object containing template variables to substitute
+ * @param options Optional extras — currently a `cc` address to copy in
  * @returns Promise with success status and error message if failed
  */
 export async function sendTemplateEmail(
   to: string,
   subject: string,
   templateName: string,
-  variables: Record<string, string | null | undefined>
+  variables: Record<string, string | null | undefined>,
+  options?: { cc?: string }
 ): Promise<{ success: boolean; error?: string }> {
   try {
     // Verify SMTP credentials are configured before attempting to send
@@ -196,6 +198,12 @@ export async function sendTemplateEmail(
       html: htmlContent,
       // REMOVED custom headers temporarily to test if they're causing Gmail to drop emails
     };
+
+    // Add a CC recipient when requested (e.g. copying the club inbox)
+    if (options && options.cc) {
+      mailOptions.cc = options.cc;
+    }
+
     const info = await transporter.sendMail(mailOptions);
 
     // Log successful send for monitoring

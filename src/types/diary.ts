@@ -11,7 +11,8 @@ export type DiaryItemType =
   | 'competition'
   | 'marker'
   | 'availability_nudge'
-  | 'availability_confirmed';
+  | 'availability_confirmed'
+  | 'applications_pending';
 
 // A single item in the diary panel
 export type DiaryItem = {

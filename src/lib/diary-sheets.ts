@@ -15,6 +15,8 @@ import { getFriendliesSpreadsheetId } from './friendlies-sheets';
 import { COMP_SHEET_CONFIG } from './competitions-sheets';
 import { parseUKDate } from './date-utils';
 import { getSheetDataCache, setSheetDataCache } from './home-cache';
+import { hasRole } from './role-utils';
+import { getPendingApplicationsCount } from './applications-sheets';
 import type { DiaryItem } from '@/types/diary';
 
 // ─── Environment Variable Getter ─────────────────────────────────────────────
@@ -1057,6 +1059,37 @@ export async function getDiaryItems(userName: string): Promise<DiaryItem[]> {
     }
     return 0;
   });
+
+  // Admin-only: surface membership applications awaiting review at the very top
+  // of the diary (added after the sort so it stays pinned above dated items).
+  // Find the current user in the already-fetched member list to read their role.
+  let currentUserRole = '';
+  for (let i = 0; i < allUsers.length; i++) {
+    if (allUsers[i].userName && allUsers[i].userName.toLowerCase() === userName.toLowerCase()) {
+      currentUserRole = allUsers[i].role;
+      break;
+    }
+  }
+
+  if (hasRole(currentUserRole, 'Admin')) {
+    try {
+      const pendingCount = await getPendingApplicationsCount();
+      if (pendingCount > 0) {
+        // Pluralise "application(s)" correctly
+        const noun = pendingCount === 1 ? 'application' : 'applications';
+        items.unshift({
+          type: 'applications_pending',
+          date: todayStr,
+          displayDate: '',
+          label: `${pendingCount} membership ${noun} ready for review`,
+          subLabel: '',
+          linkUrl: '/admin/members/applications',
+        });
+      }
+    } catch (_err) {
+      // Non-fatal: if the Applications sheet can't be read, just omit this item
+    }
+  }
 
   return items;
 }
