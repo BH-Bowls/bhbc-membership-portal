@@ -36,6 +36,8 @@ const LEFT_NOTES_COLUMN = 'left_notes';
 const MEMBERS_COMPUTED_COLUMNS = new Set<string>([
   'full_known_as',
   'full_name',
+  'age',
+  'gmail_labels',
 ]);
 
 /**
