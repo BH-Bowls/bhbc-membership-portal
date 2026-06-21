@@ -67,6 +67,20 @@ function formatFee(amount: number): string {
 }
 
 /**
+ * Build the bank payment reference for an applicant, e.g. "SUBS DASEY SIMON".
+ * Format is SUBS + surname + first name (known-as preferred), all uppercased, so
+ * the treasurer can match the incoming payment to the person.
+ *
+ * @param application The application
+ * @returns The payment reference string
+ */
+function buildPaymentReference(application: Application): string {
+  const surname = application.lastName.toUpperCase();
+  const firstPart = getGreetingName(application).toUpperCase();
+  return `SUBS ${surname} ${firstPart}`.trim();
+}
+
+/**
  * Send the membership payment-request email to an applicant.
  * Copies the club inbox. Bank details are fixed in the template.
  *
@@ -91,6 +105,7 @@ export async function sendApplicationPaymentEmail(
       firstName: getGreetingName(application),
       feeAmount: formatFee(feeAmount),
       memberType: getMemberTypeLabel(application),
+      paymentReference: buildPaymentReference(application),
       contactEmail: CLUB_EMAIL,
     },
     { cc: CLUB_EMAIL }

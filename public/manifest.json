@@ -2,6 +2,7 @@
   "name": "BHBC Members Portal",
   "short_name": "BHBC Portal",
   "description": "Burgess Hill Bowls Club Membership System",
+  "id": "/",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

@@ -62,8 +62,25 @@
               </div>
 
               <p style="margin: 0 0 20px 0; font-size: 16px; color: #1F2937;">
-                You can log in to the Members Portal here:
-                <a href="{{portalUrl}}" style="color: {{LINK_COLOR}};">{{portalUrl}}</a>
+                You can log in to the Members Portal using the button below:
+              </p>
+
+              <!-- Login Button -->
+              <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                <tr>
+                  <td align="center">
+                    <a href="{{portalUrl}}" style="display: inline-block; background-color: {{BUTTON_COLOR}}; color: #ffffff; text-decoration: none; padding: 14px 40px; border-radius: 6px; font-size: 16px; font-weight: bold;">
+                      Log In to the Portal
+                    </a>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin: 0 0 8px 0; font-size: 14px; color: #6B7280;">
+                Or copy and paste this link into your browser:
+              </p>
+              <p style="margin: 0 0 30px 0; font-size: 14px; color: {{PRIMARY_COLOR}}; word-break: break-all;">
+                {{portalUrl}}
               </p>
 
               <p style="margin: 0 0 20px 0; font-size: 16px; color: #1F2937;">

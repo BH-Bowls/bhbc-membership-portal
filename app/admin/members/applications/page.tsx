@@ -100,8 +100,10 @@ export default function ApplicationsPage() {
   // Active modal: which action and which application
   const [modalKind, setModalKind] = useState<ModalKind | null>(null);
   const [modalApp, setModalApp] = useState<Application | null>(null);
-  // True while an action request is in flight
+  // True while a modal action request is in flight
   const [submitting, setSubmitting] = useState(false);
+  // Row number currently resending its payment email (for per-button feedback)
+  const [resendingRow, setResendingRow] = useState<number | null>(null);
 
   // Form field state shared across modals
   const [listedDate, setListedDate] = useState(todayInput());
@@ -246,10 +248,28 @@ export default function ApplicationsPage() {
     });
   };
 
-  const confirmResendPayment = (app: Application) => {
-    performAction(`/api/admin/applications/${app.rowNumber}/resend-payment-email`, 'PATCH', {}, () => {
-      setNotice('Payment email resent.');
-    });
+  // Resend the payment email for an approved application, with per-button feedback
+  const handleResend = async (app: Application) => {
+    setError(null);
+    setNotice(null);
+    setResendingRow(app.rowNumber);
+    try {
+      const res = await fetch(`/api/admin/applications/${app.rowNumber}/resend-payment-email`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setError(json.error || 'Failed to resend payment email.');
+      } else {
+        setNotice(`Payment email resent to ${app.firstName} ${app.lastName}.`);
+      }
+    } catch {
+      setError('Failed to resend payment email.');
+    } finally {
+      setResendingRow(null);
+    }
   };
 
   // Derive Navbar props
@@ -404,8 +424,12 @@ export default function ApplicationsPage() {
                     <button className={getButtonClasses('primary', 'sm')} onClick={() => openModal('paid', app)}>
                       Mark as Paid
                     </button>
-                    <button className={getButtonClasses('secondary', 'sm')} onClick={() => confirmResendPayment(app)}>
-                      Resend Payment Email
+                    <button
+                      className={getButtonClasses('secondary', 'sm')}
+                      disabled={resendingRow === app.rowNumber}
+                      onClick={() => handleResend(app)}
+                    >
+                      {resendingRow === app.rowNumber ? 'Sending…' : 'Resend Payment Email'}
                     </button>
                   </>
                 )))

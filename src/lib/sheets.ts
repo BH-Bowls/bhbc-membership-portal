@@ -357,6 +357,15 @@ export async function getAllUsers(): Promise<User[]> {
       // Parse this row into a User object
       const user = parseUserRow(row, rowNumber, colMap);
 
+      // Skip genuinely empty rows. Open-ended sheet formulas (e.g. an
+      // ARRAYFORMULA filling a column down to row 1000) can cause the API to
+      // return many trailing blank rows; without this guard each would become a
+      // phantom member. Every real member has a name, so a row with neither a
+      // first nor a last name is not a real record.
+      if (!user.firstName && !user.lastName) {
+        continue;
+      }
+
       // Add to users array
       users.push(user);
     }
@@ -665,7 +674,11 @@ function parseUserRow(row: any[], rowNumber: number, colMap: { [key: string]: nu
     lastName: get('last_name') || '',
     knownAs: get('known_as'),
     fullKnownAs: get('known_as') || get('first_name') || '', // Preferred first name
-    fullName: get('full_name') || '', // Full display name from sheet
+    // Full display name computed in code (known-as/first name + last name) rather
+    // than read from the sheet's Full Name column. This means the value is correct
+    // even for rows the app appends (e.g. a converted member), where the sheet
+    // formula has not yet filled the Full Name cell.
+    fullName: ((get('known_as') || get('first_name') || '') + ' ' + (get('last_name') || '')).trim(),
     emailAddress: get('email_address'),
     landline: get('landline'),
     mobile: get('mobile'),

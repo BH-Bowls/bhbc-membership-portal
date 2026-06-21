@@ -543,10 +543,14 @@ export async function convertApplicationToMember(
       }
     }
 
-    // Start with a fully blank row so the append has no undefined holes
+    // Start with a fully blank row using null (not '') for every column we do not
+    // explicitly populate. null leaves the cell genuinely empty, so any computed
+    // columns in the Members sheet (full_name, full_known_as, the calculated age,
+    // Gmail Labels, etc.) are left for their ARRAYFORMULA to fill. Writing '' would
+    // put empty-string content in those cells and break the array formula (#REF!).
     const memberRow: any[] = [];
     for (let i = 0; i <= maxIndex; i++) {
-      memberRow[i] = '';
+      memberRow[i] = null;
     }
     for (const [columnName, value] of Object.entries(memberFields)) {
       const colIndex = membersColMap[columnName];

@@ -26,6 +26,18 @@ const LEFT_DATE_COLUMN = 'left_date';
 const LEFT_REASON_COLUMN = 'left_reason';
 const LEFT_NOTES_COLUMN = 'left_notes';
 
+// Columns in the Members sheet that are produced by a sheet formula (typically an
+// ARRAYFORMULA) and must never be written by the app — writing a value would
+// overwrite the formula and break it (#REF!). Reinstate skips these when writing a
+// leaver back to Members; their ARRAYFORMULA fills them automatically.
+// IMPORTANT: keep this list in sync with the Members sheet. Add the normalized
+// header name (lowercase, spaces -> underscores) of EVERY computed column —
+// including the calculated age and Gmail Labels columns — before using Reinstate.
+const MEMBERS_COMPUTED_COLUMNS = new Set<string>([
+  'full_known_as',
+  'full_name',
+]);
+
 /**
  * Leaver — a lightweight view of one row from the Leavers sheet for list display.
  * The full row is preserved in the sheet; this type only surfaces the fields the
@@ -180,7 +192,8 @@ async function findRawRowByUserName(
 function buildMappedRow(
   sourceRow: any[],
   sourceColMap: { [key: string]: number },
-  destColMap: { [key: string]: number }
+  destColMap: { [key: string]: number },
+  skipColumns?: Set<string>
 ): any[] {
   // Determine how wide the destination row needs to be
   let maxIndex = 0;
@@ -190,25 +203,32 @@ function buildMappedRow(
     }
   }
 
-  // Start with a fully blank row so there are no undefined holes
+  // Start with a fully blank row using null (not '') so unmapped cells are
+  // genuinely empty. This matters when the destination is the Members sheet:
+  // empty cells let ARRAYFORMULA columns spill, whereas '' would break them.
   const destRow: any[] = [];
   for (let i = 0; i <= maxIndex; i++) {
-    destRow[i] = '';
+    destRow[i] = null;
   }
 
   // Copy each destination column from the matching source column by name
   for (const [columnName, destIndex] of Object.entries(destColMap)) {
+    // Skip computed/formula columns (e.g. when writing back to Members) so a
+    // static value never overwrites an ARRAYFORMULA
+    if (skipColumns && skipColumns.has(columnName)) {
+      continue;
+    }
     const sourceIndex = sourceColMap[columnName];
     if (sourceIndex === undefined) {
-      // No matching column in the source (e.g. the left_* columns) — leave blank
+      // No matching column in the source (e.g. the left_* columns) — leave empty
       continue;
     }
     const value = sourceRow[sourceIndex];
-    if (value === undefined || value === null) {
-      destRow[destIndex] = '';
-    } else {
-      destRow[destIndex] = value;
+    if (value === undefined || value === null || value === '') {
+      // Leave empty as null so formula columns are not blocked
+      continue;
     }
+    destRow[destIndex] = value;
   }
 
   return destRow;
@@ -355,8 +375,9 @@ export async function reinstateMember(
 
     // Map the Leavers row into Members column order. Because the mapping is by
     // shared column name, the left_* columns are naturally excluded (Members has
-    // no such columns).
-    const membersRow = buildMappedRow(found.row, leaversColMap, membersColMap);
+    // no such columns). Computed columns are skipped so we never overwrite their
+    // ARRAYFORMULA with the static value that was frozen into the Leavers sheet.
+    const membersRow = buildMappedRow(found.row, leaversColMap, membersColMap, MEMBERS_COMPUTED_COLUMNS);
 
     const sheets = getGoogleSheetsClient();
 
