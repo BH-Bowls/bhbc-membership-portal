@@ -161,6 +161,16 @@ export async function canEditProfileField(
     return false;
   }
 
+  // Administrative fields — admin only (membership status / committee / comps)
+  // honorary (fee exemption), handicap (competitions), include (renewal emails),
+  // gmc, renewStatus (renewal delivery method)
+  if (fieldName === 'honorary' || fieldName === 'handicap' || fieldName === 'include' || fieldName === 'gmc' || fieldName === 'renewStatus') {
+    if (currentUserRole === 'Admin') {
+      return true;
+    }
+    return false;
+  }
+
   // All other fields are allowed
   // This includes: name, address, phone, preferences, etc.
   // Access to edit these was already verified by canManageUser()

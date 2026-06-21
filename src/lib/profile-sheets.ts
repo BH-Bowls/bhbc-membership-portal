@@ -84,6 +84,30 @@ function validateProfileField(field: string, value: any): string | undefined {
     }
   }
 
+  // Validate handicap (admin-only) — integer 0-10, or empty to clear
+  if (field === 'handicap' && value !== undefined && value !== null && value !== '') {
+    const num = typeof value === 'number' ? value : parseInt(value);
+    if (isNaN(num) || num < 0 || num > 10 || !Number.isInteger(num)) {
+      return 'Handicap must be a whole number between 0 and 10';
+    }
+  }
+
+  // Validate Y/N admin flags (honorary, include)
+  const ynFields = ['honorary', 'include'];
+  if (ynFields.includes(field) && value !== undefined && value !== null && value !== '') {
+    if (value !== 'Y' && value !== 'N') {
+      return `${field} must be Y or N`;
+    }
+  }
+
+  // Validate renewal delivery method
+  if (field === 'renewStatus' && value) {
+    const validStatuses = ['Renew-Email', 'Renew-Post'];
+    if (!validStatuses.includes(value)) {
+      return 'renewStatus must be Renew-Email or Renew-Post';
+    }
+  }
+
   // Validate boolean fields (socialEmails, handbookEntry)
   const booleanFields = ['socialEmails', 'handbookEntry'];
   if (booleanFields.includes(field) && value !== undefined && value !== null) {
@@ -181,6 +205,12 @@ export async function updateUserProfile(
       'ageDemographic',
       'memberType',
       'yearStarted',
+      // Admin-only fields (restricted to Admin by canEditProfileField)
+      'honorary',
+      'handicap',
+      'include',
+      'gmc',
+      'renewStatus',
       'socialEmails',
       'handbookEntry',
       'drivingAwayMatches',

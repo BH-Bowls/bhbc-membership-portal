@@ -6,6 +6,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import { Navbar } from '@/components/Navbar';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -355,6 +356,7 @@ export default function ApplicationsPage() {
       <Navbar userName={userName} userRole={userRole} />
 
       <main className="max-w-3xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
+        <Link href="/admin/members" className="text-sm text-gray-700 mb-2 inline-block hover:text-gray-900">← Member Management</Link>
         <h1 className="text-2xl font-bold text-gray-900 mb-1">Applications</h1>
         <p className="text-sm text-gray-700 mb-4">
           Process new membership applications from submission through to full membership.

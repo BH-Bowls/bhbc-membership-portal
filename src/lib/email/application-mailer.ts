@@ -113,9 +113,42 @@ export async function sendApplicationPaymentEmail(
 }
 
 /**
- * Send the welcome / credentials email to a newly converted member.
- * Sent to the applicant only (no CC). Includes the plain-text temporary password —
- * the only time it is sent in plain text.
+ * Send the welcome / credentials email to a new member. Sent to the member only
+ * (no CC). Includes the plain-text temporary password — the only time it is sent
+ * in plain text. Shared by the application Convert flow and manual member Create.
+ *
+ * @param emailAddress The member's email address
+ * @param firstName The member's greeting name (known-as or first name)
+ * @param userName The new portal username
+ * @param tempPassword The plain-text temporary password
+ * @returns Success flag with an error message on failure
+ */
+export async function sendWelcomeEmail(
+  emailAddress: string,
+  firstName: string,
+  userName: string,
+  tempPassword: string
+): Promise<{ success: boolean; error?: string }> {
+  // Cannot send without an email address
+  if (!emailAddress) {
+    return { success: false, error: 'No email address provided' };
+  }
+
+  return sendTemplateEmail(
+    emailAddress,
+    'Welcome to Burgess Hill Bowls Club — Your Portal Login',
+    'application-welcome',
+    {
+      firstName,
+      userName,
+      tempPassword,
+      portalUrl: getPortalUrl(),
+    }
+  );
+}
+
+/**
+ * Send the welcome email for a converted application (wrapper over sendWelcomeEmail).
  *
  * @param application The converted application
  * @param userName The new portal username
@@ -127,20 +160,10 @@ export async function sendApplicationWelcomeEmail(
   userName: string,
   tempPassword: string
 ): Promise<{ success: boolean; error?: string }> {
-  // Cannot send without an email address on the application
-  if (!application.emailAddress) {
-    return { success: false, error: 'No email address on the application' };
-  }
-
-  return sendTemplateEmail(
+  return sendWelcomeEmail(
     application.emailAddress,
-    'Welcome to Burgess Hill Bowls Club — Your Portal Login',
-    'application-welcome',
-    {
-      firstName: getGreetingName(application),
-      userName,
-      tempPassword,
-      portalUrl: getPortalUrl(),
-    }
+    getGreetingName(application),
+    userName,
+    tempPassword
   );
 }

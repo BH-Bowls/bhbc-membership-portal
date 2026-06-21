@@ -9,11 +9,9 @@ import {
   getSpreadsheetId,
   getColumnMap,
   getColumnLetter,
-  getAllUsers,
 } from './sheets';
 import { parseUKDate } from './date-utils';
-import { hashPassword } from './auth-sheets';
-import { getAllLeavers } from './leavers-sheets';
+import { createMember } from './members-admin';
 
 // Sheet tab name and the range used to read all application rows.
 const APPLICATIONS_SHEET = 'Applications';
@@ -362,107 +360,6 @@ export async function getPendingApplicationsCount(): Promise<number> {
 // CONVERSION TO MEMBER
 // ============================================================================
 
-// Character set for generated temporary passwords (no ambiguous characters).
-const TEMP_PASSWORD_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
-const TEMP_PASSWORD_LENGTH = 8;
-
-/**
- * Generate a random 8-character alphanumeric temporary password for a new member.
- * (The forgot-password flow uses a separate 4-digit code; new members get a
- * longer alphanumeric password per the membership lifecycle spec.)
- *
- * @returns An 8-character alphanumeric password
- */
-function generateMemberTempPassword(): string {
-  let password = '';
-  for (let i = 0; i < TEMP_PASSWORD_LENGTH; i++) {
-    const index = Math.floor(Math.random() * TEMP_PASSWORD_CHARS.length);
-    password += TEMP_PASSWORD_CHARS.charAt(index);
-  }
-  return password;
-}
-
-/**
- * Strip a name part down to lowercase alphanumeric characters only.
- * Removes spaces, apostrophes, dots and any other punctuation.
- * Example: "O'Brien" -> "obrien", "A.J." -> "aj".
- *
- * @param part A first or last name
- * @returns The cleaned, lowercased part
- */
-function cleanNamePart(part: string): string {
-  return part.toLowerCase().replace(/[^a-z0-9]/g, '');
-}
-
-/**
- * Derive the full member type name (e.g. "Playing Man") from the gender and the
- * Playing/Social membership type submitted on the application form.
- *
- * @param gender 'M' or 'F'
- * @param memberType 'Playing' or 'Social'
- * @returns The full member type name, or '' if it cannot be determined
- */
-function deriveMemberTypeFullName(gender: string, memberType: string): string {
-  if (memberType === 'Playing') {
-    return gender === 'M' ? 'Playing Man' : 'Playing Lady';
-  }
-  if (memberType === 'Social') {
-    return gender === 'M' ? 'Social Man' : 'Social Lady';
-  }
-  return '';
-}
-
-/**
- * Derive a unique username for a new member, checking against both the Members
- * and Leavers sheets. The base is "<knownAs-or-firstName>.<lastName>" cleaned to
- * lowercase alphanumerics; if it collides, a numeric suffix (2, 3, …) is added.
- *
- * Both sheets are checked because a leaver keeps their original username, and
- * reinstating them later must not collide with a newer member.
- *
- * @param application The application being converted
- * @returns A username not currently in use in either sheet
- */
-async function deriveUniqueUsername(application: Application): Promise<string> {
-  // Prefer the "known as" name when present, otherwise the first name
-  let baseFirst = application.knownAs;
-  if (!baseFirst) {
-    baseFirst = application.firstName;
-  }
-
-  // Build the base username from cleaned name parts
-  const base = `${cleanNamePart(baseFirst)}.${cleanNamePart(application.lastName)}`;
-
-  // Collect every existing username (Members + Leavers), lowercased
-  const taken = new Set<string>();
-
-  const members = await getAllUsers();
-  for (let i = 0; i < members.length; i++) {
-    if (members[i].userName) {
-      taken.add(members[i].userName.toLowerCase());
-    }
-  }
-
-  const leavers = await getAllLeavers();
-  for (let i = 0; i < leavers.length; i++) {
-    if (leavers[i].userName) {
-      taken.add(leavers[i].userName.toLowerCase());
-    }
-  }
-
-  // Use the base if it is free
-  if (!taken.has(base)) {
-    return base;
-  }
-
-  // Otherwise append an increasing numeric suffix until a free name is found
-  let suffix = 2;
-  while (taken.has(`${base}${suffix}`)) {
-    suffix++;
-  }
-  return `${base}${suffix}`;
-}
-
 // Result of a successful conversion — the new username and the plain-text temp
 // password (the only time the password exists in plain text, for the welcome email).
 export interface ConversionResult {
@@ -473,12 +370,9 @@ export interface ConversionResult {
 }
 
 /**
- * Convert a paid application into an active member.
- *  1. Derive a unique username (checked against Members + Leavers)
- *  2. Generate an 8-char temp password and bcrypt-hash it
- *  3. Translate gender + Playing/Social into the full member_type name
- *  4. Append the new member row to the Members sheet
- *  5. Mark the application Converted (status, converted_at, converted_username)
+ * Convert a paid application into an active member. Creates the member via the
+ * shared createMember helper (same path used by manual Create), then marks the
+ * application Converted with the assigned username.
  *
  * The welcome email is sent by the caller using the returned plain-text password.
  *
@@ -489,93 +383,37 @@ export async function convertApplicationToMember(
   application: Application
 ): Promise<ConversionResult> {
   try {
-    // Step 1 — derive a unique username
-    const userName = await deriveUniqueUsername(application);
-
-    // Step 2 — generate and hash a temporary password
-    const tempPassword = generateMemberTempPassword();
-    const passwordHash = await hashPassword(tempPassword);
-
-    // Step 3 — translate the member type to its full-name form
-    const memberTypeFullName = deriveMemberTypeFullName(
-      application.gender,
-      application.memberType
-    );
-
-    // Step 4 — append the new member row to the Members sheet
-    const membersColMap = await getColumnMap('Members');
-    const sheets = getGoogleSheetsClient();
-    const nowIso = new Date().toISOString();
-    const currentYear = new Date().getFullYear();
-
-    // Map normalized Members column name -> value. Columns not listed are left blank.
-    const memberFields: { [key: string]: any } = {
-      first_name: application.firstName,
-      last_name: application.lastName,
-      known_as: application.knownAs,
-      email_address: application.emailAddress,
+    // Create the member from the application's personal details
+    const result = await createMember({
+      firstName: application.firstName,
+      lastName: application.lastName,
+      knownAs: application.knownAs,
+      gender: application.gender,
+      memberType: application.memberType,
+      emailAddress: application.emailAddress,
       landline: application.landline,
       mobile: application.mobile,
-      address_1: application.address1,
-      address_2: application.address2,
-      address_3: application.address3,
-      post_code: application.postCode,
-      age_demographic: application.ageDemographic,
-      birthdate: application.dob,
-      member_type: memberTypeFullName,
-      year_started: currentYear,
-      user_name: userName,
-      password_hash: passwordHash,
-      is_temp_password: 'Y',
-      role: 'Member',
-      include: 'Y',
-      social_emails: 'Y',
-      handbook_entry: 'Y',
-      created_at: nowIso,
-      updated_at: nowIso,
-    };
-
-    // Determine how wide the row needs to be (highest mapped column index)
-    let maxIndex = 0;
-    for (const index of Object.values(membersColMap)) {
-      if (index > maxIndex) {
-        maxIndex = index;
-      }
-    }
-
-    // Start with a fully blank row using null (not '') for every column we do not
-    // explicitly populate. null leaves the cell genuinely empty, so any computed
-    // columns in the Members sheet (full_name, full_known_as, the calculated age,
-    // Gmail Labels, etc.) are left for their ARRAYFORMULA to fill. Writing '' would
-    // put empty-string content in those cells and break the array formula (#REF!).
-    const memberRow: any[] = [];
-    for (let i = 0; i <= maxIndex; i++) {
-      memberRow[i] = null;
-    }
-    for (const [columnName, value] of Object.entries(memberFields)) {
-      const colIndex = membersColMap[columnName];
-      if (colIndex !== undefined) {
-        memberRow[colIndex] = value;
-      }
-    }
-
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: getSpreadsheetId(),
-      range: 'Members!A:ZZ',
-      valueInputOption: 'USER_ENTERED',
-      requestBody: {
-        values: [memberRow],
-      },
+      address1: application.address1,
+      address2: application.address2,
+      address3: application.address3,
+      postCode: application.postCode,
+      ageDemographic: application.ageDemographic,
+      dob: application.dob,
     });
 
-    // Step 5 — mark the application as converted
+    // Pass through a creation failure unchanged
+    if (!result.success || !result.userName) {
+      return result;
+    }
+
+    // Mark the application as converted, recording the assigned username
     await updateApplicationFields(application.rowNumber, {
       status: 'Converted',
-      convertedAt: nowIso,
-      convertedUsername: userName,
+      convertedAt: new Date().toISOString(),
+      convertedUsername: result.userName,
     });
 
-    return { success: true, userName, tempPassword };
+    return result;
   } catch (error) {
     console.error(`[convertApplicationToMember] Failed for row ${application.rowNumber}:`, error);
     return {

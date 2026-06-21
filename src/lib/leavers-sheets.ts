@@ -283,6 +283,72 @@ export async function getAllLeavers(): Promise<Leaver[]> {
 }
 
 /**
+ * Full detail of a single leaver for the read-only view.
+ */
+export interface LeaverDetail {
+  userName: string;
+  firstName: string;
+  lastName: string;
+  knownAs: string;
+  emailAddress: string;
+  landline: string;
+  mobile: string;
+  address1: string;
+  address2: string;
+  address3: string;
+  postCode: string;
+  ageDemographic: string;
+  birthdate: string;
+  memberType: string;
+  yearStarted: string;
+  honorary: string;
+  handicap: string;
+  role: string;
+  leftDate: string;
+  leftReason: string;
+  leftNotes: string;
+}
+
+/**
+ * Read a single leaver's full details by username (for the read-only view).
+ *
+ * @param userName The leaver's username
+ * @returns The leaver detail, or null if not found
+ */
+export async function getLeaverByUserName(userName: string): Promise<LeaverDetail | null> {
+  const colMap = await getColumnMap(LEAVERS_SHEET);
+  const found = await findRawRowByUserName(LEAVERS_RANGE, colMap, userName);
+  if (!found) {
+    return null;
+  }
+
+  const row = found.row;
+  return {
+    userName: getCell(row, colMap, 'user_name'),
+    firstName: getCell(row, colMap, 'first_name'),
+    lastName: getCell(row, colMap, 'last_name'),
+    knownAs: getCell(row, colMap, 'known_as'),
+    emailAddress: getCell(row, colMap, 'email_address'),
+    landline: getCell(row, colMap, 'landline'),
+    mobile: getCell(row, colMap, 'mobile'),
+    address1: getCell(row, colMap, 'address_1'),
+    address2: getCell(row, colMap, 'address_2'),
+    address3: getCell(row, colMap, 'address_3'),
+    postCode: getCell(row, colMap, 'post_code'),
+    ageDemographic: getCell(row, colMap, 'age_demographic'),
+    birthdate: getCell(row, colMap, 'birthdate'),
+    memberType: getCell(row, colMap, 'member_type'),
+    yearStarted: getCell(row, colMap, 'year_started'),
+    honorary: getCell(row, colMap, 'honorary'),
+    handicap: getCell(row, colMap, 'handicap'),
+    role: getCell(row, colMap, 'role'),
+    leftDate: getCell(row, colMap, LEFT_DATE_COLUMN),
+    leftReason: getCell(row, colMap, LEFT_REASON_COLUMN),
+    leftNotes: getCell(row, colMap, LEFT_NOTES_COLUMN),
+  };
+}
+
+/**
  * Archive an active member: copy their full Members row to the Leavers sheet
  * (adding the left_date / left_reason / left_notes metadata), then physically
  * delete the row from Members.
