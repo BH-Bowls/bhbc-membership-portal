@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, getGameSheet, getFriendliesSpreadsheetId, getColumnMap, getColumnLetter, getSheetsClient } from '@/lib/friendlies-sheets';
+import { getGames, getGameSheet, getFriendliesSpreadsheetId, getColumnMap, getColumnLetter, getSheetsClient, getActiveEnteredCount, updateGameCounts } from '@/lib/friendlies-sheets';
 import { UpdateStatsRequest, UpdateStatsResponse } from '@/lib/types/friendlies';
 import { hasRole } from '@/lib/role-utils';
 
@@ -225,8 +225,9 @@ export async function POST(request: NextRequest) {
           nameDown++;
         }
 
-        // Count picked: P (and PW) count as picked to play
-        if (['P', 'PW'].includes(status)) {
+        // Count picked: only P counts — PW means the player was picked but then withdrew
+        // before the game, so they didn't actually play
+        if (status === 'P') {
           picked++;
         }
 
@@ -307,6 +308,15 @@ export async function POST(request: NextRequest) {
           data: statsUpdates,
         },
       });
+    }
+
+    // Recalculate entered count so any stale value (e.g. from before the
+    // withdraw route was fixed) is corrected whenever a captain runs Update Stats.
+    try {
+      const activeCount = await getActiveEnteredCount(tab_name);
+      await updateGameCounts(tab_name, { entered: activeCount });
+    } catch (countError) {
+      console.error('[update-stats] Error recalculating entered count:', countError);
     }
 
     // Build success response

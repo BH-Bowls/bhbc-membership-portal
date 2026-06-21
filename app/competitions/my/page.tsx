@@ -453,10 +453,15 @@ function EntryCard({
           })()}
 
           {isActive && (
-            <div className="text-xs text-blue-700 bg-blue-50 rounded px-2 py-1.5">
-              {entry.isChallenger ? 'You are the Challenger' : 'You are the Opponent'}
-              {entry.isChallenger && entry.offerByDate && (
-                <span className="font-medium"> — offer your opponent 3 dates by {formatDate(entry.offerByDate)}</span>
+            <div className="text-xs text-blue-700 bg-blue-50 rounded px-2 py-1.5 space-y-0.5">
+              <div>
+                {entry.isChallenger ? 'You are the Challenger' : 'You are the Opponent'}
+                {entry.isChallenger && entry.offerByDate && (
+                  <span className="font-medium"> — offer your opponent 3 dates by {formatDate(entry.offerByDate)}</span>
+                )}
+              </div>
+              {entry.match?.playByDate && (
+                <div>Round must be played by <span className="font-medium">{formatDate(entry.match.playByDate)}</span></div>
               )}
             </div>
           )}

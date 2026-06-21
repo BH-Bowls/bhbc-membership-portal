@@ -245,7 +245,7 @@ export async function GET() {
           myScore:    (mySide === 1 ? m.score1 : m.score2) ?? null,
           oppScore:   (mySide === 1 ? m.score2 : m.score1) ?? null,
           playedDate: m.playedDate ?? null,
-          playByDate: m.playByDate ?? null,
+          playByDate: m.playByDate ?? playByForRound(comp, m.round) ?? null,
           myHandicap,
           myStartScore:  myStart,
           oppStartScore: oppStart,
@@ -353,7 +353,7 @@ export async function GET() {
           opponents,
           myScore:    (mySide === 1 ? relevantMatch.score1 : relevantMatch.score2) ?? null,
           oppScore:   (mySide === 1 ? relevantMatch.score2 : relevantMatch.score1) ?? null,
-          playByDate: relevantMatch.playByDate ?? null,
+          playByDate: relevantMatch.playByDate ?? playByForRound(comp, relevantMatch.round) ?? null,
           playedDate: relevantMatch.playedDate ?? null,
           won:
             relevantMatch.status === 'Pending' || relevantMatch.status === 'Bye'

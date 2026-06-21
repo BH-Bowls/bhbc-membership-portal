@@ -105,10 +105,13 @@ export async function POST(request: NextRequest) {
           const gameColIndex = headers.findIndex((h: string) => h === game.tabName);
 
           if (gameColIndex !== -1) {
-            // Count how many players have entered this game
+            // Count active entries only — exclude withdrawn (ending in W) and empty cells.
+            // A game reopened from X/S status may have PW/RW/EW entries in the Players
+            // sheet for players who withdrew before the reopen; they must not inflate the count.
             let enteredCount = 0;
             for (let i = 1; i < rows.length; i++) {
-              if (rows[i][gameColIndex]) {
+              const status = (rows[i][gameColIndex] || '').toString();
+              if (status && !status.endsWith('W')) {
                 enteredCount++;
               }
             }
