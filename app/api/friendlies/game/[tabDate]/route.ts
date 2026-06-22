@@ -59,7 +59,7 @@ export async function GET(
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
 
-    // Verify game is in a viewable state (not Upcoming or Allocating)
+    // Verify game is in a viewable state (not Upcoming)
     if (!['O', 'X', 'S', 'P', 'C', 'A'].includes(game.status)) {
       return NextResponse.json(
         { error: 'Game details not available yet' },

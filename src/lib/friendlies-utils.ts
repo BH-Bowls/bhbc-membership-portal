@@ -18,8 +18,8 @@ export function isPairedGame(item: GameOrPair): item is [Game, Game] {
 
 /**
  * Group games that are paired (same date, both paired='Y') into tuples.
- * Only groups games in Upcoming (''), Open ('O'), or Allocating ('L') status.
- * Games past the Allocating phase render individually even if paired.
+ * Only groups games in Upcoming ('') or Open ('O') status — once closed
+ * (Selecting onward) the two games are managed/selected individually.
  * Preserves date ordering.
  *
  * @param games Array of Game objects
@@ -36,15 +36,15 @@ export function groupPairedGames(games: Game[]): GameOrPair[] {
     if (paired.has(game.rowNumber)) continue;
 
     // Only group if this game is marked as paired and in Upcoming/Open status
-    if (game.paired === 'Y' && (game.status === '' || game.status === 'O' || game.status === 'L')) {
-      // Find its partner: same date, also paired='Y', also Upcoming/Open/Allocating
+    if (game.paired === 'Y' && (game.status === '' || game.status === 'O')) {
+      // Find its partner: same date, also paired='Y', also Upcoming/Open
       const partner = games.find(
         (g, j) =>
           j !== i &&
           !paired.has(g.rowNumber) &&
           g.paired === 'Y' &&
           g.date === game.date &&
-          (g.status === '' || g.status === 'O' || g.status === 'L')
+          (g.status === '' || g.status === 'O')
       );
 
       if (partner) {

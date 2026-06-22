@@ -11,14 +11,13 @@
  * Game status codes - track game lifecycle from creation to completion
  * '' = Blank/Not opened - Initial state, game created but not open for entries
  * 'O' = Open - Entries are open, players can enter the game
- * 'L' = Allocating - Paired games only: entries closed, captain is allocating players between games
  * 'X' = Selecting/Closed - Entries closed, captain is selecting the team
  * 'S' = Selected - Team has been picked and published to players
  * 'P' = Played - Game completed with final scores recorded
  * 'C' = Cancelled - Game cancelled before being played
  * 'A' = Abandoned - Game started but not completed (weather, injury, etc.)
  */
-export type GameStatus = '' | 'O' | 'L' | 'X' | 'S' | 'P' | 'C' | 'A';
+export type GameStatus = '' | 'O' | 'X' | 'S' | 'P' | 'C' | 'A';
 
 /**
  * Player entry status codes - stored in Players sheet columns
@@ -423,7 +422,7 @@ export interface WithdrawRequest {
 export interface ChangeStatusRequest {
   tab_name: string;    // Game tabName to update (may be empty for unopened games)
   row_number?: number; // Row number in Games sheet (used to identify unopened games)
-  action: 'open' | 'close' | 'allocate' | 'publish' | 'republish' | 'played' | 'cancel' | 'abandon' | 'reopen' | 'reopen-entries' | 'unpublish' | 'revert-to-selected' | 'flag-needs-players' | 'unflag-needs-players'; // Status transition action
+  action: 'open' | 'close' | 'publish' | 'republish' | 'played' | 'cancel' | 'abandon' | 'reopen' | 'reopen-entries' | 'unpublish' | 'revert-to-selected' | 'flag-needs-players' | 'unflag-needs-players'; // Status transition action
   expected_status?: string; // Client's known current status — server rejects with 409 if it doesn't match
   bhbc_score?: number;      // Burgess Hill score (required for 'played' and 'abandon')
   opponent_score?: number;  // Opponent score (required for 'played' and 'abandon')

@@ -3268,6 +3268,37 @@ export async function getGameSheet(tabName: string): Promise<GameSheetPlayer[]> 
 }
 
 /**
+ * Default any blank selections in a game sheet to Reserve ('R').
+ * Run at close so every active (non-withdrawn) entrant is at least a Reserve —
+ * the captain then promotes to Playing (Y) or Reserve Team (T). Existing Y/R/T
+ * selections are left untouched. Returns the number of rows updated.
+ */
+export async function markBlankSelectionsAsReserve(tabName: string): Promise<number> {
+  const friendliesId = getFriendliesSpreadsheetId();
+  const players = await getGameSheet(tabName);
+  const colMap = await getColumnMap(friendliesId, tabName);
+  const selectedColIndex = colMap['selected'];
+  if (selectedColIndex === undefined) return 0;
+
+  const selectedCol = getColumnLetter(selectedColIndex);
+  const data: { range: string; values: (string | number)[][] }[] = [];
+  for (const p of players) {
+    // Blank selection + not withdrawn → default to Reserve
+    if ((p.selected ?? '') === '' && p.status !== 'W') {
+      data.push({ range: `'${tabName}'!${selectedCol}${p.rowNumber}`, values: [['R']] });
+    }
+  }
+
+  if (data.length > 0) {
+    await getSheetsClient().spreadsheets.values.batchUpdate({
+      spreadsheetId: friendliesId,
+      requestBody: { data, valueInputOption: 'USER_ENTERED' },
+    });
+  }
+  return data.length;
+}
+
+/**
  * Update player selection data in a game sheet (individual game tab)
  * Used by captains to set team selections, positions, driving assignments, and status
  * Each player update can include any combination of fields - only provided fields are updated

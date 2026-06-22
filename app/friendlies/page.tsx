@@ -454,7 +454,6 @@ export default function FriendliesPage() {
     const badges: { [key: string]: { label: string; color: string } } = {
       '': { label: 'Upcoming', color: 'bg-gray-500' },      // Blank = Not opened yet
       'O': { label: 'Open', color: 'bg-green-500' },        // Open for entries
-      'L': { label: 'Allocating', color: 'bg-amber-500' },  // Paired games: entries closed, allocating players
       'X': { label: 'Selecting', color: 'bg-yellow-500' },  // Captain selecting team
       'S': { label: 'Selected', color: 'bg-blue-500' },     // Team selected/published
       'P': { label: 'Played', color: 'bg-purple-500' },     // Game completed
@@ -764,8 +763,6 @@ export default function FriendliesPage() {
               // Paired game card — combined view for two games on the same date
               if (isPairedGame(item)) {
                 const [gameA, gameB] = item as [GameWithUserStatus, GameWithUserStatus];
-                const bothTabNames = [gameA.tabName, gameB.tabName];
-                const userEnteredBoth = gameA.userEntered && gameB.userEntered;
                 const userEnteredEither = gameA.userEntered || gameB.userEntered;
                 const combinedEntered = Math.max(gameA.entered, gameB.entered);
                 const pairedIsOnTeaDuty = teaDutyDates.has(gameA.date);
@@ -869,23 +866,6 @@ export default function FriendliesPage() {
                         </div>
                       )}
 
-                      {/* For allocating paired games, show closed message */}
-                      {gameA.status === 'L' && (
-                        <div className="mt-2 pt-2 border-t border-gray-100">
-                          <p className="font-medium text-gray-900">
-                            {combinedEntered} Player{combinedEntered !== 1 ? 's' : ''} Entered{(() => {
-                              const reqA = parseNumberRequired(gameA.format);
-                              const reqB = parseNumberRequired(gameB.format);
-                              const combinedReq = reqA != null && reqB != null ? reqA + reqB : null;
-                              return combinedReq != null ? ` / ${combinedReq} Required` : '';
-                            })()}
-                          </p>
-                          <p className="text-sm text-amber-700 mt-1">
-                            Entries closed — players being allocated between games
-                          </p>
-                        </div>
-                      )}
-
                       {/* Special instructions link */}
                       {gameA.specialInstructions && (
                         <div className="mt-3 pt-2 border-t border-gray-100">
@@ -918,22 +898,22 @@ export default function FriendliesPage() {
                         <label className="flex items-center space-x-2 cursor-pointer">
                           <input
                             type="checkbox"
-                            checked={selectedGames.has(gameA.tabName) && selectedGames.has(gameB.tabName)}
+                            // Entry goes into game 1 (the first of the pair) only; the
+                            // captain moves overflow into game 2 during selection.
+                            checked={selectedGames.has(gameA.tabName)}
                             onChange={e => {
                               const newSelected = new Set(selectedGames);
                               if (e.target.checked) {
                                 newSelected.add(gameA.tabName);
-                                newSelected.add(gameB.tabName);
                               } else {
                                 newSelected.delete(gameA.tabName);
-                                newSelected.delete(gameB.tabName);
                               }
                               setSelectedGames(newSelected);
                             }}
                             className="w-4 h-4 text-blue-500 rounded focus:ring-blue-500"
                           />
                           <span className="text-sm font-medium text-blue-500">
-                            {userEnteredBoth ? 'Entered' : 'Enter both games'}
+                            {gameA.userEntered ? 'Entered' : 'Enter'}
                           </span>
                         </label>
                       );

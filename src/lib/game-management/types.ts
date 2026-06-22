@@ -39,14 +39,13 @@ export interface GameSystemConfig {
  * Game/Event status
  * '' = Not opened yet (initial state)
  * O = Open for entry
- * L = Allocating (paired games only: captain assigning players between games)
  * X = Closed (no more entries)
  * S = Selected (teams chosen by captain)
  * P = Postponed
  * C = Cancelled
  * A = Completed/Archived
  */
-export type GameStatus = '' | 'O' | 'L' | 'X' | 'S' | 'P' | 'C' | 'A';
+export type GameStatus = '' | 'O' | 'X' | 'S' | 'P' | 'C' | 'A';
 
 /**
  * Selection status for competitive games (friendlies + internal)

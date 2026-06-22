@@ -398,24 +398,25 @@ export default function ManageGamesPage() {
   }
 
   /**
-   * Handle Close for paired games - transitions O → L (Allocating) and redirects to allocation
-   * Game sheets are NOT created yet — allocation happens first, then sheets are created with only allocated players
+   * Handle Close for paired games — closes both games O → X (Selecting).
+   * Everyone entered into game 1; the captain moves overflow players into game 2
+   * during selection (no allocation step).
    */
   function handleClosePairedGames(gameA: Game, gameB: Game) {
     setConfirmDialog({
       isOpen: true,
-      title: 'Close & Allocate',
-      message: `Close entries for ${gameA.clubName} and ${gameB.clubName} and allocate players between games?`,
+      title: 'Close Games',
+      message: `Close entries for ${gameA.clubName} and ${gameB.clubName}? Everyone is entered into the first game — you can move players across to the second game during selection.`,
       onConfirm: async () => {
         closeConfirmDialog();
         const pairKey = `paired-${gameA.rowNumber}-${gameB.rowNumber}`;
         setActionLoading(pairKey);
         try {
-          // Set game A to Allocating (O → L)
+          // Close game A (O → X)
           const resA = await fetch('/api/friendlies/manage/status', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tab_name: gameA.tabName, row_number: gameA.rowNumber, action: 'allocate' }),
+            body: JSON.stringify({ tab_name: gameA.tabName, row_number: gameA.rowNumber, action: 'close' }),
           });
           if (!resA.ok) {
             const data = await resA.json();
@@ -423,11 +424,11 @@ export default function ManageGamesPage() {
             return;
           }
 
-          // Set game B to Allocating (O → L)
+          // Close game B (O → X)
           const resB = await fetch('/api/friendlies/manage/status', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tab_name: gameB.tabName, row_number: gameB.rowNumber, action: 'allocate' }),
+            body: JSON.stringify({ tab_name: gameB.tabName, row_number: gameB.rowNumber, action: 'close' }),
           });
           if (!resB.ok) {
             const data = await resB.json();
@@ -435,8 +436,8 @@ export default function ManageGamesPage() {
             return;
           }
 
-          // Redirect to allocation page using the shared date
-          router.push(`/friendlies/manage/allocate/${encodeURIComponent(gameA.date)}`);
+          // Both are now Selecting — refresh the list
+          await fetchGames();
         } catch (error) {
           console.error('Error closing paired games:', error);
           alert('Failed to close paired games');
@@ -774,7 +775,7 @@ export default function ManageGamesPage() {
     if (filter === 'all')       return true;
     if (filter === 'upcoming')  return game.status === '';
     if (filter === 'open')      return game.status === 'O';
-    if (filter === 'selecting') return ['L', 'X', 'S'].includes(game.status);
+    if (filter === 'selecting') return ['X', 'S'].includes(game.status);
     if (filter === 'played')    return ['P', 'C', 'A'].includes(game.status);
     return true;
   }).sort((a, b) => {
@@ -842,7 +843,6 @@ export default function ManageGamesPage() {
     const badges: { [key in GameStatus]: { label: string; color: string } } = {
       '': { label: 'Upcoming', color: 'bg-gray-500' },      // Blank = Not opened yet
       'O': { label: 'Open', color: 'bg-green-500' },        // Open for entries
-      'L': { label: 'Allocating', color: 'bg-amber-500' },  // Paired games: allocating players
       'X': { label: 'Selecting', color: 'bg-yellow-500' },  // Captain selecting team
       'S': { label: 'Selected', color: 'bg-blue-500' },     // Team selected
       'P': { label: 'Played', color: 'bg-purple-500' },     // Game completed
@@ -1170,18 +1170,10 @@ export default function ManageGamesPage() {
                               disabled={isPairLoading}
                               className="text-yellow-600 hover:text-yellow-800 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                              Close & Allocate
+                              Close
                             </button>
                           )}
-                          {gameA.status === 'L' && (
-                            <Link
-                              href={`/friendlies/manage/allocate/${encodeURIComponent(gameA.date)}`}
-                              className="text-amber-600 hover:text-amber-800 font-medium"
-                            >
-                              Allocate Players
-                            </Link>
-                          )}
-                          {['', 'O', 'L'].includes(gameA.status) && (
+                          {['', 'O'].includes(gameA.status) && (
                             <button
                               onClick={() => handleGameOutcome(gameA.tabName, gameA.status, gameA.homeAway, gameA.entered)}
                               disabled={isPairLoading}

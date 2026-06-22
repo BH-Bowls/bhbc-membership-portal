@@ -1,6 +1,6 @@
 // app/api/friendlies/manage/status/route.ts
 // API endpoint for captains to change game status through the full lifecycle
-// Status flow: blank → O (Open) → [L (Allocating) →] X (Selecting) → S (Selected) → P (Played)
+// Status flow: blank → O (Open) → X (Selecting) → S (Selected) → P (Played)
 // Paired games use L status for allocation before game sheets are created
 // Alternative endings: C (Cancelled) or A (Abandoned)
 // Each transition creates necessary Google Sheets structures and enforces business rules
@@ -18,6 +18,7 @@ import {
   setNeedsPlayersFlag,
   markGamePlayerEntriesAs,
   updateGameSheetStats,
+  markBlankSelectionsAsReserve,
 } from '@/lib/friendlies-sheets';
 // addPlayerToGameSheet / removePlayerFromGameSheet imported below in enter/withdraw routes
 import { sendGamePublishedEmail, sendTeaRotaEmail, sendGameCancelledEmail, sendTeaRotaCancelledEmail } from '@/lib/email/friendlies';
@@ -67,7 +68,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
 
-    const statusLabel = (s: string) => ({ '': 'Upcoming', O: 'Open', L: 'Allocating', X: 'Selecting', S: 'Selected', P: 'Played', C: 'Cancelled', A: 'Abandoned' }[s] ?? s);
+    const statusLabel = (s: string) => ({ '': 'Upcoming', O: 'Open', X: 'Selecting', S: 'Selected', P: 'Played', C: 'Cancelled', A: 'Abandoned' }[s] ?? s);
 
     // Pre-check: if client sent expected_status, reject if it no longer matches
     if (expected_status !== undefined && game.status !== expected_status) {
@@ -184,27 +185,9 @@ export async function POST(request: NextRequest) {
         gameSheetCreated = true;
         break;
 
-      // ALLOCATE: Transition from 'O' (Open) to 'L' (Allocating) — paired games only
-      // Entries are closed but no game sheets are created yet.
-      // Captain will allocate players between paired games, then close to create sheets.
-      case 'allocate':
-        if (currentStatus !== 'O') {
-          return NextResponse.json(
-            { error: 'Can only allocate games with Open status' },
-            { status: 400 }
-          );
-        }
-
-        // Set new status to Allocating (entries closed, no game sheet yet)
-        newStatus = 'L';
-        // Clear needs-players flag — entries are now closed
-        await setNeedsPlayersFlag(effectiveTabName, false);
-        break;
-
       // CLOSE: Transition from 'O' (Open) to 'X' (Selecting/Closed for entries)
-      // Also handles 'L' → 'X' for paired games after allocation
       case 'close':
-        if (currentStatus !== 'O' && currentStatus !== 'L') {
+        if (currentStatus !== 'O') {
           return NextResponse.json(
             { error: `Can only close Open games — this game is ${statusLabel(currentStatus)}. Refresh the game list.` },
             { status: 400 }
@@ -216,6 +199,9 @@ export async function POST(request: NextRequest) {
         // Game sheet was already created at Open time — no sheet work needed here
         // Clear needs-players flag — entries are now closed
         await setNeedsPlayersFlag(effectiveTabName, false);
+        // Default any blank selections to Reserve so every active entrant is at
+        // least a reserve (captain then promotes); covers manually-added rows.
+        await markBlankSelectionsAsReserve(effectiveTabName);
         // Snapshot every player's display stats + last-6 hover note now, at close.
         // These are frozen from here on (the selection page no longer re-refreshes).
         await updateGameSheetStats(effectiveTabName);

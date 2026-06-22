@@ -78,7 +78,8 @@
       "Bash(Remove-Item *)",
       "Bash(rm scripts/repair-australian-pairs-r1.ts)",
       "Bash(rm -f scripts/repair-friendlies-entered-counts.ts scripts/check-friendlies-entered-counts.ts tmp_games.json tmp_games2.json)",
-      "Bash(rm -f scripts/fix-lancing-count.ts)"
+      "Bash(rm -f scripts/fix-lancing-count.ts)",
+      "Bash(rm -rf app/api/friendlies/manage/allocate app/friendlies/manage/allocate)"
     ]
   }
 }
