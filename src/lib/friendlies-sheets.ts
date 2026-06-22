@@ -2204,7 +2204,7 @@ export async function getAllPlayers(playingMembersOnly: boolean = true): Promise
  * @param playerFilter - Optional list of userNames to include. If provided, only these players
  *   are added to the game sheet (used for paired game allocation). If omitted, all E/M players are included.
  */
-export async function createGameSheet(tabName: string, playerFilter?: string[]): Promise<{ enteredCount: number }> {
+export async function createGameSheet(tabName: string, playerFilter?: string[], skipStats: boolean = false): Promise<{ enteredCount: number }> {
   // Initialize Google Sheets API client
   const sheets = getSheetsClient();
 
@@ -2347,22 +2347,33 @@ export async function createGameSheet(tabName: string, playerFilter?: string[]):
   const playerFilterSet = playerFilter ? new Set(playerFilter.map(p => p.toLowerCase())) : null;
   const enteredPlayers: string[] = [];
 
+  // The entered count is the TOTAL active roster of this game — every player with a
+  // non-empty, non-withdrawn status in this game's column (E, M, Y, R, T, …), not
+  // just the unselected E/M ones (a picked or reserve player still entered). The
+  // enteredPlayers list, used below to decide which rows still need adding to the
+  // sheet, stays limited to E/M (newly entered, not yet on the sheet).
+  let totalEnteredCount = 0;
+
   // Loop through all player rows (skip header at index 0)
   for (let i = 1; i < rows.length; i++) {
-    const status = rows[i][gameColumnIndex];
-    // Check if this player's status for this game is 'E' or 'M'
-    if (status === 'E' || status === 'M') {
-      // Get the player's userName from the Players sheet
-      const userName = rows[i][userNameColumnIndex];
+    const status = (rows[i][gameColumnIndex] || '').toString();
+    const userName = rows[i][userNameColumnIndex];
+    if (!userName) continue;
 
-      // Only add if userName exists (skip empty rows)
-      if (userName) {
-        // If filtering, only include players in the filter list
-        if (playerFilterSet && !playerFilterSet.has(userName.toLowerCase())) {
-          continue;
-        }
-        enteredPlayers.push(userName);
-      }
+    // Respect the player filter (used for paired-game allocation)
+    if (playerFilterSet && !playerFilterSet.has(userName.toLowerCase())) {
+      continue;
+    }
+
+    // Count anyone with a status that isn't blank or withdrawn (a 'W' suffix)
+    const upper = status.toUpperCase();
+    if (status !== '' && !upper.endsWith('W')) {
+      totalEnteredCount++;
+    }
+
+    // Only E/M players still need adding to the game sheet
+    if (status === 'E' || status === 'M') {
+      enteredPlayers.push(userName);
     }
   }
 
@@ -2398,14 +2409,19 @@ export async function createGameSheet(tabName: string, playerFilter?: string[]):
     const driverBarColIndex = gameSheetColMap['driver_bar'];
     const selectedColIndex = gameSheetColMap['selected'];
 
-    // Fetch Members sheet for driver/bar lookups
-    const membersSpreadsheetId = getMembersSpreadsheetId();
-    const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
-    const membersResponse = await sheets.spreadsheets.values.get({
-      spreadsheetId: membersSpreadsheetId,
-      range: 'Members!A:ZZ',
-    });
-    const membersRows = membersResponse.data.values || [];
+    // Fetch Members sheet for driver/bar lookups — only when computing stats.
+    // At open we skip stats (they're snapshotted at close), so this read is avoided.
+    let membersColMap: { [key: string]: number } = {};
+    let membersRows: any[] = [];
+    if (!skipStats) {
+      const membersSpreadsheetId = getMembersSpreadsheetId();
+      membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
+      const membersResponse = await sheets.spreadsheets.values.get({
+        spreadsheetId: membersSpreadsheetId,
+        range: 'Members!A:ZZ',
+      });
+      membersRows = membersResponse.data.values || [];
+    }
 
     // Sort players alphabetically for easier captain selection
     const sortedPlayers = enteredPlayers.sort();
@@ -2416,10 +2432,6 @@ export async function createGameSheet(tabName: string, playerFilter?: string[]):
 
     for (const userName of sortedPlayers) {
       try {
-        // Get player stats from Players sheet
-        const stats = getPlayerStatsFromCache(userName, rows, playersColMap, headers, tabName);
-        const driverBar = getDriverBarInfoFromCache(userName, membersRows, membersColMap);
-
         // Add player name
         const nameCol = getColumnLetter(nameColIndex);
         batchUpdates.push({
@@ -2427,42 +2439,24 @@ export async function createGameSheet(tabName: string, playerFilter?: string[]):
           values: [[userName]],
         });
 
-        // Add stats if columns exist
-        if (nameDownColIndex !== undefined) {
-          const col = getColumnLetter(nameDownColIndex);
-          batchUpdates.push({
-            range: `'${tabName}'!${col}${currentRow}`,
-            values: [[stats.nameDown]],
-          });
-        }
+        // Add stats if columns exist (skipped for open games — filled at close)
+        if (!skipStats) {
+          const stats = getPlayerStatsFromCache(userName, rows, playersColMap, headers, tabName);
+          const driverBar = getDriverBarInfoFromCache(userName, membersRows, membersColMap);
 
-        if (pickedColIndex !== undefined) {
-          const col = getColumnLetter(pickedColIndex);
-          batchUpdates.push({
-            range: `'${tabName}'!${col}${currentRow}`,
-            values: [[stats.picked]],
-          });
-        }
-
-        if (percentPlayedColIndex !== undefined) {
-          const col = getColumnLetter(percentPlayedColIndex);
-          // Write percentPlayed as decimal (0-1) for percentage-formatted cells
-          // Normalize: if value > 1, it's already a percentage (64 -> 0.64)
-          const percentPlayedDecimal = stats.percentPlayed > 1
-            ? stats.percentPlayed / 100
-            : stats.percentPlayed;
-          batchUpdates.push({
-            range: `'${tabName}'!${col}${currentRow}`,
-            values: [[percentPlayedDecimal]],
-          });
-        }
-
-        if (driverBarColIndex !== undefined) {
-          const col = getColumnLetter(driverBarColIndex);
-          batchUpdates.push({
-            range: `'${tabName}'!${col}${currentRow}`,
-            values: [[driverBar.code]],
-          });
+          if (nameDownColIndex !== undefined) {
+            batchUpdates.push({ range: `'${tabName}'!${getColumnLetter(nameDownColIndex)}${currentRow}`, values: [[stats.nameDown]] });
+          }
+          if (pickedColIndex !== undefined) {
+            batchUpdates.push({ range: `'${tabName}'!${getColumnLetter(pickedColIndex)}${currentRow}`, values: [[stats.picked]] });
+          }
+          if (percentPlayedColIndex !== undefined) {
+            const percentPlayedDecimal = stats.percentPlayed > 1 ? stats.percentPlayed / 100 : stats.percentPlayed;
+            batchUpdates.push({ range: `'${tabName}'!${getColumnLetter(percentPlayedColIndex)}${currentRow}`, values: [[percentPlayedDecimal]] });
+          }
+          if (driverBarColIndex !== undefined) {
+            batchUpdates.push({ range: `'${tabName}'!${getColumnLetter(driverBarColIndex)}${currentRow}`, values: [[driverBar.code]] });
+          }
         }
 
         // Set all players to Reserve ('R') by default when game is opened
@@ -2500,11 +2494,12 @@ export async function createGameSheet(tabName: string, playerFilter?: string[]):
     }
   }
 
-  // Update the entered count in Games sheet to reflect how many players entered
-  await updateGameCounts(tabName, { entered: enteredPlayers.length });
+  // Update the entered count in Games sheet to the TOTAL who entered this game
+  // (not just the newly-added rows — at allocation the players are already on the sheet)
+  await updateGameCounts(tabName, { entered: totalEnteredCount });
 
-  // Return count of players added to game sheet
-  return { enteredCount: enteredPlayers.length };
+  // Return the total entered count for this game
+  return { enteredCount: totalEnteredCount };
 }
 
 /**
@@ -2513,16 +2508,16 @@ export async function createGameSheet(tabName: string, playerFilter?: string[]):
  * adds a player via the Add Players button (Selected='R').
  * Skips silently if the game sheet does not exist or the player is already in it.
  */
-export async function addPlayerToGameSheet(tabName: string, userName: string, selected: string = 'R', carNumber?: string): Promise<void> {
+export async function addPlayerToGameSheet(tabName: string, userName: string, selected: string = 'R', carNumber?: string, computeStats: boolean = true): Promise<void> {
   const spreadsheetId = getFriendliesSpreadsheetId();
   const sheets = getSheetsClient();
 
-  // Confirm the game sheet exists
+  // Confirm the game sheet exists and capture its id + current grid row count
   const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
-  const sheetExists = spreadsheet.data.sheets?.some(
-    s => s.properties?.title === tabName
-  );
-  if (!sheetExists) return; // Sheet not created yet — skip
+  const sheetDef = spreadsheet.data.sheets?.find(s => s.properties?.title === tabName);
+  if (!sheetDef) return; // Sheet not created yet — skip
+  const sheetId = sheetDef.properties?.sheetId;
+  const currentRowCount = sheetDef.properties?.gridProperties?.rowCount ?? 0;
 
   // Get column map for the game sheet
   const gameSheetColMap = await getColumnMap(spreadsheetId, tabName);
@@ -2547,26 +2542,6 @@ export async function addPlayerToGameSheet(tabName: string, userName: string, se
   // Next empty row = header (1) + existing players + 1
   const nextRow = 2 + existingRows.length;
 
-  // Read Players and Members sheets for stats
-  const playersColMap = await getColumnMap(spreadsheetId, 'Players');
-  const playersResponse = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: 'Players!A:ZZ',
-  });
-  const playersRows = playersResponse.data.values || [];
-  const playersHeaders = playersRows[0] || [];
-
-  const membersSpreadsheetId = getMembersSpreadsheetId();
-  const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
-  const membersResponse = await sheets.spreadsheets.values.get({
-    spreadsheetId: membersSpreadsheetId,
-    range: 'Members!A:ZZ',
-  });
-  const membersRows = membersResponse.data.values || [];
-
-  const stats = getPlayerStatsFromCache(userName, playersRows, playersColMap, playersHeaders, tabName);
-  const driverBar = getDriverBarInfoFromCache(userName, membersRows, membersColMap);
-
   const batchUpdates: { range: string; values: (string | number)[][] }[] = [];
 
   // Player name
@@ -2575,40 +2550,62 @@ export async function addPlayerToGameSheet(tabName: string, userName: string, se
     values: [[userName]],
   });
 
-  if (nameDownColIndex !== undefined) {
-    batchUpdates.push({
-      range: `'${tabName}'!${getColumnLetter(nameDownColIndex)}${nextRow}`,
-      values: [[stats.nameDown]],
-    });
-  }
-
-  if (pickedColIndex !== undefined) {
-    batchUpdates.push({
-      range: `'${tabName}'!${getColumnLetter(pickedColIndex)}${nextRow}`,
-      values: [[stats.picked]],
-    });
-  }
-
-  if (percentPlayedColIndex !== undefined) {
-    const pct = stats.percentPlayed > 1 ? stats.percentPlayed / 100 : stats.percentPlayed;
-    batchUpdates.push({
-      range: `'${tabName}'!${getColumnLetter(percentPlayedColIndex)}${nextRow}`,
-      values: [[pct]],
-    });
-  }
-
-  if (driverBarColIndex !== undefined) {
-    batchUpdates.push({
-      range: `'${tabName}'!${getColumnLetter(driverBarColIndex)}${nextRow}`,
-      values: [[driverBar.code]],
-    });
-  }
-
+  // Selection status
   if (selectedColIndex !== undefined) {
     batchUpdates.push({
       range: `'${tabName}'!${getColumnLetter(selectedColIndex)}${nextRow}`,
       values: [[selected]],
     });
+  }
+
+  // Stats are only meaningful at close, so for open-game entries we skip the
+  // (expensive) Players + Members reads and leave the stat cells blank — they are
+  // snapshotted for everyone when the game is closed.
+  if (computeStats) {
+    const playersColMap = await getColumnMap(spreadsheetId, 'Players');
+    const playersResponse = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: 'Players!A:ZZ',
+    });
+    const playersRows = playersResponse.data.values || [];
+    const playersHeaders = playersRows[0] || [];
+
+    const membersSpreadsheetId = getMembersSpreadsheetId();
+    const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
+    const membersResponse = await sheets.spreadsheets.values.get({
+      spreadsheetId: membersSpreadsheetId,
+      range: 'Members!A:ZZ',
+    });
+    const membersRows = membersResponse.data.values || [];
+
+    const stats = getPlayerStatsFromCache(userName, playersRows, playersColMap, playersHeaders, tabName);
+    const driverBar = getDriverBarInfoFromCache(userName, membersRows, membersColMap);
+
+    if (nameDownColIndex !== undefined) {
+      batchUpdates.push({
+        range: `'${tabName}'!${getColumnLetter(nameDownColIndex)}${nextRow}`,
+        values: [[stats.nameDown]],
+      });
+    }
+    if (pickedColIndex !== undefined) {
+      batchUpdates.push({
+        range: `'${tabName}'!${getColumnLetter(pickedColIndex)}${nextRow}`,
+        values: [[stats.picked]],
+      });
+    }
+    if (percentPlayedColIndex !== undefined) {
+      const pct = stats.percentPlayed > 1 ? stats.percentPlayed / 100 : stats.percentPlayed;
+      batchUpdates.push({
+        range: `'${tabName}'!${getColumnLetter(percentPlayedColIndex)}${nextRow}`,
+        values: [[pct]],
+      });
+    }
+    if (driverBarColIndex !== undefined) {
+      batchUpdates.push({
+        range: `'${tabName}'!${getColumnLetter(driverBarColIndex)}${nextRow}`,
+        values: [[driverBar.code]],
+      });
+    }
   }
 
   // Set car number if provided (e.g. 'O' for own transport)
@@ -2617,6 +2614,291 @@ export async function addPlayerToGameSheet(tabName: string, userName: string, se
     batchUpdates.push({
       range: `'${tabName}'!${getColumnLetter(carNumberColIndex)}${nextRow}`,
       values: [[carNumber]],
+    });
+  }
+
+  // Grow the grid first if the new row would fall outside it (e.g. a game whose
+  // sheet was shrunk when it was emptied during allocation).
+  if (nextRow > currentRowCount && sheetId !== undefined) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{
+          updateSheetProperties: {
+            properties: { sheetId, gridProperties: { rowCount: nextRow } },
+            fields: 'gridProperties.rowCount',
+          },
+        }],
+      },
+    });
+  }
+
+  if (batchUpdates.length > 0) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: { valueInputOption: 'USER_ENTERED', data: batchUpdates },
+    });
+  }
+}
+
+/**
+ * Move one or more Reserve players from one paired game to the other in a single
+ * batched pass. Only players currently at Reserve status (selected = 'R') are
+ * moved, so a picked team is never disturbed; names that are not reserves are
+ * skipped. All reads/writes are batched to stay within the Sheets read quota.
+ *
+ * @param fromTab The game the reserves are currently in
+ * @param toTab The paired game to move them to
+ * @param userNames The reserve players' usernames
+ * @returns Success flag, the number actually moved, and an error on failure
+ */
+export async function moveReservePlayers(
+  fromTab: string,
+  toTab: string,
+  userNames: string[]
+): Promise<{ success: boolean; moved: number; error?: string }> {
+  try {
+    if (userNames.length === 0) {
+      return { success: true, moved: 0 };
+    }
+
+    // Load games to validate the pairing and read current counts
+    const games = await getGames();
+    let fromGame = null;
+    let toGame = null;
+    for (const g of games) {
+      if (g.tabName === fromTab) fromGame = g;
+      if (g.tabName === toTab) toGame = g;
+    }
+    if (!fromGame || !toGame) {
+      return { success: false, moved: 0, error: 'Game not found' };
+    }
+    if (fromGame.paired !== 'Y' || toGame.paired !== 'Y' || fromGame.date !== toGame.date) {
+      return { success: false, moved: 0, error: 'Games are not a paired pair' };
+    }
+
+    // Verify which requested players are actually reserves in the source game
+    const fromPlayers = await getGameSheet(fromTab);
+    const reserveNames = new Set<string>();
+    for (const p of fromPlayers) {
+      if (p.selected === 'R') {
+        reserveNames.add(p.name.toLowerCase());
+      }
+    }
+    const toMove: string[] = [];
+    for (const u of userNames) {
+      if (reserveNames.has(u.toLowerCase())) {
+        toMove.push(u);
+      }
+    }
+    if (toMove.length === 0) {
+      return { success: true, moved: 0 };
+    }
+
+    // Reuse each moved player's stats from the source-sheet read we already did,
+    // so the destination add doesn't re-read the (large) Players and Members sheets.
+    const moveSet = new Set(toMove.map(u => u.toLowerCase()));
+    const statsByName = new Map<string, { nameDown: number; picked: number; percentPlayed: number; driverBar: string }>();
+    for (const p of fromPlayers) {
+      if (moveSet.has(p.name.toLowerCase())) {
+        statsByName.set(p.name.toLowerCase(), {
+          nameDown: p.nameDown,
+          picked: p.picked,
+          percentPlayed: p.percentPlayed,
+          driverBar: p.driverBar,
+        });
+      }
+    }
+
+    // Remove from the source game sheet, add to the destination as reserves
+    await batchRemovePlayersFromGameSheet(fromTab, toMove);
+    await addPlayersToGameSheet(toTab, toMove, 'R', statsByName);
+
+    // Switch their status columns in the Players sheet (clear source, set dest = R)
+    await batchUpdatePlayerEntries(fromTab, toMove.map(u => ({ userName: u, status: '' as const })));
+    await batchUpdatePlayerEntries(toTab, toMove.map(u => ({ userName: u, status: 'R' as const })));
+
+    // Adjust both games' counts by the number moved. Written directly in a single
+    // batch using the row numbers we already have, so no extra getGames reads.
+    const n = toMove.length;
+    const friendliesId = getFriendliesSpreadsheetId();
+    const gamesColMap = await getColumnMap(friendliesId, 'Games');
+    const enteredCol = gamesColMap['entered'];
+    const reservesCol = gamesColMap['reserves'];
+    const countData: { range: string; values: (string | number)[][] }[] = [];
+    if (fromGame.rowNumber && toGame.rowNumber) {
+      if (enteredCol !== undefined) {
+        const el = getColumnLetter(enteredCol);
+        countData.push({ range: `Games!${el}${fromGame.rowNumber}`, values: [[Math.max(0, (fromGame.entered || 0) - n)]] });
+        countData.push({ range: `Games!${el}${toGame.rowNumber}`, values: [[(toGame.entered || 0) + n]] });
+      }
+      if (reservesCol !== undefined) {
+        const rl = getColumnLetter(reservesCol);
+        countData.push({ range: `Games!${rl}${fromGame.rowNumber}`, values: [[Math.max(0, (fromGame.reserves || 0) - n)]] });
+        countData.push({ range: `Games!${rl}${toGame.rowNumber}`, values: [[(toGame.reserves || 0) + n]] });
+      }
+    }
+    if (countData.length > 0) {
+      await getSheetsClient().spreadsheets.values.batchUpdate({
+        spreadsheetId: friendliesId,
+        requestBody: { data: countData, valueInputOption: 'USER_ENTERED' },
+      });
+    }
+
+    return { success: true, moved: n };
+  } catch (error) {
+    console.error(`[moveReservePlayers] Failed to move reserves from ${fromTab} to ${toTab}:`, error);
+    return {
+      success: false,
+      moved: 0,
+      error: error instanceof Error ? error.message : 'Failed to move reserves',
+    };
+  }
+}
+
+/**
+ * Add several players to a game sheet in one pass (batch version of
+ * addPlayerToGameSheet). Writes every new row in a single batchUpdate; players
+ * already in the sheet are skipped.
+ *
+ * If `statsByName` is supplied (lowercased username -> stats), those stats are
+ * used directly and the Players/Members sheets are NOT read — used by the reserve
+ * move, where the source sheet already gave us each player's stats. Otherwise the
+ * Players and Members sheets are read once to compute stats.
+ *
+ * @param tabName The game's tab name
+ * @param userNames The usernames to add
+ * @param selected Selection status for the new rows (default 'R' = Reserve)
+ * @param statsByName Optional precomputed stats to avoid the Players/Members reads
+ */
+export async function addPlayersToGameSheet(
+  tabName: string,
+  userNames: string[],
+  selected: string = 'R',
+  statsByName?: Map<string, { nameDown: number; picked: number; percentPlayed: number; driverBar: string }>
+): Promise<void> {
+  if (userNames.length === 0) return;
+
+  const spreadsheetId = getFriendliesSpreadsheetId();
+  const sheets = getSheetsClient();
+
+  // Confirm the game sheet exists and capture its id + current grid row count
+  const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
+  const sheetDef = spreadsheet.data.sheets?.find(s => s.properties?.title === tabName);
+  if (!sheetDef) return;
+  const sheetId = sheetDef.properties?.sheetId;
+  const currentRowCount = sheetDef.properties?.gridProperties?.rowCount ?? 0;
+
+  const gameSheetColMap = await getColumnMap(spreadsheetId, tabName);
+  const nameColIndex = gameSheetColMap['name'] ?? gameSheetColMap['user_name'] ?? 0;
+  const nameDownColIndex = gameSheetColMap['name_down'];
+  const pickedColIndex = gameSheetColMap['picked'];
+  const percentPlayedColIndex = gameSheetColMap['percent_played'];
+  const driverBarColIndex = gameSheetColMap['driver_bar'];
+  const selectedColIndex = gameSheetColMap['selected'];
+
+  // Read existing names once to skip duplicates and find the next empty row
+  const existingResponse = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${tabName}'!A2:A`,
+  });
+  const existingRows = existingResponse.data.values || [];
+  const existing = new Set(existingRows.map((r: any[]) => (r[0] || '').toLowerCase()));
+  let nextRow = 2 + existingRows.length;
+
+  // Read Players and Members sheets once for stat lookups — only when stats were
+  // not supplied by the caller (the move flow passes them in).
+  let playersRows: any[] = [];
+  let playersHeaders: any[] = [];
+  let playersColMap: { [key: string]: number } = {};
+  let membersRows: any[] = [];
+  let membersColMap: { [key: string]: number } = {};
+  if (!statsByName) {
+    playersColMap = await getColumnMap(spreadsheetId, 'Players');
+    const playersResponse = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: 'Players!A:ZZ',
+    });
+    playersRows = playersResponse.data.values || [];
+    playersHeaders = playersRows[0] || [];
+
+    const membersSpreadsheetId = getMembersSpreadsheetId();
+    membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
+    const membersResponse = await sheets.spreadsheets.values.get({
+      spreadsheetId: membersSpreadsheetId,
+      range: 'Members!A:ZZ',
+    });
+    membersRows = membersResponse.data.values || [];
+  }
+
+  const batchUpdates: { range: string; values: (string | number)[][] }[] = [];
+
+  for (const userName of userNames) {
+    // Skip anyone already on the sheet
+    if (existing.has(userName.toLowerCase())) continue;
+
+    // Source the player's stats from the supplied map, or compute from the sheets
+    let nameDown = 0;
+    let picked = 0;
+    let percentPlayed = 0;
+    let driverBarCode = '';
+    if (statsByName) {
+      const s = statsByName.get(userName.toLowerCase());
+      if (s) {
+        nameDown = s.nameDown;
+        picked = s.picked;
+        percentPlayed = s.percentPlayed;
+        driverBarCode = s.driverBar;
+      }
+    } else {
+      const stats = getPlayerStatsFromCache(userName, playersRows, playersColMap, playersHeaders, tabName);
+      const driverBar = getDriverBarInfoFromCache(userName, membersRows, membersColMap);
+      nameDown = stats.nameDown;
+      picked = stats.picked;
+      percentPlayed = stats.percentPlayed;
+      driverBarCode = driverBar.code;
+    }
+
+    batchUpdates.push({
+      range: `'${tabName}'!${getColumnLetter(nameColIndex)}${nextRow}`,
+      values: [[userName]],
+    });
+    if (nameDownColIndex !== undefined) {
+      batchUpdates.push({ range: `'${tabName}'!${getColumnLetter(nameDownColIndex)}${nextRow}`, values: [[nameDown]] });
+    }
+    if (pickedColIndex !== undefined) {
+      batchUpdates.push({ range: `'${tabName}'!${getColumnLetter(pickedColIndex)}${nextRow}`, values: [[picked]] });
+    }
+    if (percentPlayedColIndex !== undefined) {
+      const pct = percentPlayed > 1 ? percentPlayed / 100 : percentPlayed;
+      batchUpdates.push({ range: `'${tabName}'!${getColumnLetter(percentPlayedColIndex)}${nextRow}`, values: [[pct]] });
+    }
+    if (driverBarColIndex !== undefined) {
+      batchUpdates.push({ range: `'${tabName}'!${getColumnLetter(driverBarColIndex)}${nextRow}`, values: [[driverBarCode]] });
+    }
+    if (selectedColIndex !== undefined) {
+      batchUpdates.push({ range: `'${tabName}'!${getColumnLetter(selectedColIndex)}${nextRow}`, values: [[selected]] });
+    }
+
+    existing.add(userName.toLowerCase());
+    nextRow++;
+  }
+
+  // The grid may be too small to hold the new rows — e.g. a game that was emptied
+  // during allocation had its sheet shrunk to a couple of rows. Grow it first so
+  // the writes below don't fall outside the grid ("exceeds grid limits").
+  const lastRow = nextRow - 1;
+  if (lastRow > currentRowCount && sheetId !== undefined) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{
+          updateSheetProperties: {
+            properties: { sheetId, gridProperties: { rowCount: lastRow } },
+            fields: 'gridProperties.rowCount',
+          },
+        }],
+      },
     });
   }
 
@@ -2683,6 +2965,120 @@ export async function removePlayerFromGameSheet(tabName: string, userName: strin
       }],
     },
   });
+}
+
+/**
+ * Remove several players from a game sheet in a single pass.
+ * Reads the sheet once and deletes all matching rows in one batchUpdate, instead
+ * of one metadata read + one data read per player. Used by the allocation save to
+ * avoid exceeding the Google Sheets read-requests-per-minute quota.
+ *
+ * @param tabName The game's tab name
+ * @param userNames The usernames to remove from the sheet
+ */
+export async function batchRemovePlayersFromGameSheet(tabName: string, userNames: string[]): Promise<void> {
+  if (userNames.length === 0) return;
+
+  const spreadsheetId = getFriendliesSpreadsheetId();
+  const sheets = getSheetsClient();
+
+  // Confirm the game sheet exists and get its numeric id (one metadata read)
+  const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
+  const sheetDef = spreadsheet.data.sheets?.find(s => s.properties?.title === tabName);
+  if (!sheetDef) return; // Sheet doesn't exist — nothing to remove
+  const sheetId = sheetDef.properties?.sheetId;
+  if (sheetId === undefined) return;
+
+  const colMap = await getColumnMap(spreadsheetId, tabName);
+  const nameColIndex = colMap['name'] ?? colMap['user_name'] ?? 0;
+
+  // Read the sheet once
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${tabName}'!A2:ZZ`,
+  });
+  const rows = response.data.values || [];
+
+  // Collect the 1-indexed sheet row numbers for every player to remove
+  const targets = new Set(userNames.map(u => u.toLowerCase()));
+  const rowNumbers: number[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    const name = (rows[i][nameColIndex] || '').toLowerCase();
+    if (targets.has(name)) {
+      rowNumbers.push(i + 2); // data starts at row 2
+    }
+  }
+  if (rowNumbers.length === 0) return;
+
+  // Delete from the bottom up so earlier deletions don't shift later row indices
+  rowNumbers.sort((a, b) => b - a);
+
+  // Google Sheets refuses to delete EVERY non-frozen row in a single request, and
+  // these game sheets have a frozen header — so the data rows are the only
+  // non-frozen rows. If we're removing all of them (e.g. when every player was
+  // allocated to the other game), keep the topmost row by clearing its contents
+  // instead of deleting it, so at least one non-frozen row survives.
+  let deleteList = rowNumbers;
+  if (rowNumbers.length >= rows.length) {
+    const keepRow = rowNumbers[rowNumbers.length - 1]; // smallest = topmost data row
+    deleteList = rowNumbers.filter(r => r !== keepRow);
+    await sheets.spreadsheets.values.clear({
+      spreadsheetId,
+      range: `'${tabName}'!${keepRow}:${keepRow}`,
+    });
+  }
+
+  if (deleteList.length > 0) {
+    const requests = deleteList.map(rowNum => ({
+      deleteDimension: {
+        range: {
+          sheetId,
+          dimension: 'ROWS',
+          startIndex: rowNum - 1, // 0-indexed
+          endIndex: rowNum,       // exclusive
+        },
+      },
+    }));
+
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests },
+    });
+  }
+}
+
+/**
+ * Sort game-sheet players for display: by selection status (Y, R, T, then blank),
+ * then team number, then position, then surname. Sorts in place and returns the
+ * same array. Shared by the manage/game and get-stats routes so both present the
+ * player list in the same order.
+ *
+ * @param players The players to sort
+ * @returns The same array, sorted
+ */
+export function sortGameSheetPlayers(players: GameSheetPlayer[]): GameSheetPlayer[] {
+  const selectedOrder: Record<string, number> = { 'Y': 1, 'R': 2, 'T': 3, '': 4 };
+  const positionOrder: Record<string, number> = { 'S': 1, '1': 2, '2': 3, '3': 4, '': 5 };
+
+  players.sort((a, b) => {
+    const selA = selectedOrder[a.selected] ?? 4;
+    const selB = selectedOrder[b.selected] ?? 4;
+    if (selA !== selB) return selA - selB;
+
+    const teamA = a.team ?? 999;
+    const teamB = b.team ?? 999;
+    if (teamA !== teamB) return teamA - teamB;
+
+    const posA = positionOrder[a.position] ?? 5;
+    const posB = positionOrder[b.position] ?? 5;
+    if (posA !== posB) return posA - posB;
+
+    const lastNameCompare = (a.lastName || a.fullName).localeCompare(b.lastName || b.fullName);
+    if (lastNameCompare !== 0) return lastNameCompare;
+    return a.fullName.localeCompare(b.fullName);
+  });
+
+  return players;
 }
 
 /**

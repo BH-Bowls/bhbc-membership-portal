@@ -101,6 +101,20 @@ export async function GET(
       return a.fullName.localeCompare(b.fullName);
     });
 
+    // Resolve the paired game (the other game on the same date flagged paired),
+    // so the UI can offer "move reserve to the other game" actions.
+    let pairedTabName = '';
+    let pairedClubName = '';
+    if (game.paired === 'Y') {
+      for (const g of games) {
+        if (g.paired === 'Y' && g.date === game.date && g.tabName !== game.tabName) {
+          pairedTabName = g.tabName;
+          pairedClubName = g.clubName;
+          break;
+        }
+      }
+    }
+
     return NextResponse.json({
       orphanedEntries,
       game: {
@@ -117,6 +131,9 @@ export async function GET(
         entered: game.entered,
         selected: game.selected,
         reserves: game.reserves,
+        paired: game.paired || '',
+        pairedTabName,
+        pairedClubName,
         pickupInfo: game.pickupInfo || '',
         specialInstructions: game.specialInstructions || '',
       },

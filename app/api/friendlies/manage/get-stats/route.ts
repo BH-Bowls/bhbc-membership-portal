@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, updateGameSheetStats } from '@/lib/friendlies-sheets';
+import { getGames, updateGameSheetStats, getGameSheet, sortGameSheetPlayers } from '@/lib/friendlies-sheets';
 import { GetStatsRequest } from '@/lib/types/friendlies';
 import { hasRole } from '@/lib/role-utils';
 
@@ -58,10 +58,15 @@ export async function POST(request: NextRequest) {
     // This refreshes: name_down, picked, percent_played, driver/bar, last 8 games
     const playersUpdated = await updateGameSheetStats(game.tabName);
 
-    // Return success response with count of players updated
+    // Read back the refreshed players (sorted for display) so the caller doesn't
+    // need a second round-trip to /manage/game just to pick up the new stats.
+    const players = sortGameSheetPlayers(await getGameSheet(game.tabName));
+
+    // Return success with the refreshed player list
     return NextResponse.json({
       success: true,
       players_updated: playersUpdated,
+      players,
       message: 'Stats updated successfully',
     });
   } catch (error) {

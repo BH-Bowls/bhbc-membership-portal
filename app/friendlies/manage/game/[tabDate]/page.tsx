@@ -42,6 +42,9 @@ interface GameData {
     entered: number;        // Number of players entered
     selected: number;       // Number of players selected
     reserves: number;       // Number of reserves
+    paired?: string;        // 'Y' if this game is paired with another on the same date
+    pairedTabName?: string; // The paired game's tab name (empty if none)
+    pairedClubName?: string;// The paired game's club name (for button labels)
     pickupInfo: string;     // Pickup point / time info (away games)
     specialInstructions: string; // Optional special instructions message
   };
@@ -178,6 +181,8 @@ export default function TeamSelectionPage() {
 
   // State: Refreshing stats indicator
   const [refreshingStats, setRefreshingStats] = useState(false);
+  // Reserves flagged (by username) to move to the paired game on the next Save
+  const [reservesToMove, setReservesToMove] = useState<Set<string>>(new Set());
 
   // State: Add Players modal visibility
   const [showAddPlayersModal, setShowAddPlayersModal] = useState(false);
@@ -260,6 +265,9 @@ export default function TeamSelectionPage() {
 
     // Skip if we've already set up for this tabDate
     if (setupDoneRef.current === tabDate) return;
+    // Claim setup synchronously so React's dev double-invoke (Strict Mode) does
+    // not run initializePage — and its stats refresh — twice concurrently.
+    setupDoneRef.current = tabDate;
 
     async function initializePage() {
       setLoading(true);
@@ -328,29 +336,9 @@ export default function TeamSelectionPage() {
         setupDoneRef.current = tabDate;
         setLoading(false);
 
-        // 3. Refresh stats in the background — updates nameDown/picked/% and
-        //    last-6-games without blocking the initial render
-        try {
-          await fetch('/api/friendlies/manage/get-stats', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tab_name: data.game.tabName }),
-          });
-
-          const refreshed = await fetch(`/api/friendlies/manage/game/${tabDate}`);
-          if (refreshed.ok) {
-            const refreshedData = await refreshed.json();
-            setOriginalPlayers(refreshedData.players);
-            // Don't overwrite the player list if the captain is already editing
-            if (!isEditingRef.current) {
-              setPlayers(refreshedData.players);
-            }
-            // Keep cache up to date with fresh stats
-            saveToCache(refreshedData);
-          }
-        } catch (statsError) {
-          console.error('Error refreshing stats:', statsError);
-        }
+        // No background stats refresh on load: display stats are snapshotted once
+        // when the game is closed and are frozen thereafter, so the game data we
+        // just fetched already carries the correct, final figures.
       } catch (error) {
         console.error('Error fetching game:', error);
         alert('Failed to load game');
@@ -478,6 +466,22 @@ export default function TeamSelectionPage() {
     } catch (error) {
       console.error('Error refreshing game data:', error);
     }
+  }
+
+  /**
+   * Toggle whether a reserve is flagged to move to the paired game on Save.
+   */
+  function toggleReserveToMove(userName: string) {
+    setReservesToMove(prev => {
+      const next = new Set(prev);
+      const key = userName.toLowerCase();
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
   }
 
   /**
@@ -654,9 +658,34 @@ export default function TeamSelectionPage() {
         return;
       }
 
-      // 2. Update stats to Players sheet (recalculates from all game columns)
-      // 3. Refresh game sheet stats from the now-updated Players sheet
-      // 4. Re-fetch game data to get updated stats for display
+      // 1b. Move any flagged reserves to the paired game in one batched request.
+      // The server re-reads the sheet and only moves players that are still
+      // reserves, so a player you re-picked above is safely left in place.
+      let movedReserves = false;
+      if (reservesToMove.size > 0 && gameData.game.pairedTabName) {
+        movedReserves = true;
+        try {
+          const moveRes = await fetch('/api/friendlies/manage/move-reserve', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              from_tab: gameData.game.tabName,
+              to_tab: gameData.game.pairedTabName,
+              user_names: Array.from(reservesToMove),
+            }),
+          });
+          if (!moveRes.ok) {
+            const moveData = await moveRes.json();
+            console.error('Failed to move reserves:', moveData.error);
+          }
+        } catch (moveErr) {
+          console.error('Error moving reserves:', moveErr);
+        }
+        setReservesToMove(new Set());
+      }
+
+      // Sync the new selection statuses back to the Players sheet. No display-stat
+      // snapshot here — those are frozen from when the game was closed.
       let updatedPlayers = data.sorted_players;
       try {
         await fetch('/api/friendlies/manage/update-stats', {
@@ -665,17 +694,15 @@ export default function TeamSelectionPage() {
           body: JSON.stringify({ tab_name: gameData.game.tabName }),
         });
 
-        await fetch('/api/friendlies/manage/get-stats', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tab_name: gameData.game.tabName }),
-        });
-
-        const refreshResponse = await fetch(`/api/friendlies/manage/game/${encodeURIComponent(gameData.game.tabName)}`);
-        if (refreshResponse.ok) {
-          const refreshData = await refreshResponse.json();
-          if (refreshData.players) {
-            updatedPlayers = refreshData.players;
+        // If reserves were moved out, the roster changed, so the selection-save
+        // response is stale — refetch the (frozen-stats) game data to reflect it.
+        if (movedReserves) {
+          const refresh = await fetch(`/api/friendlies/manage/game/${encodeURIComponent(gameData.game.tabName)}`);
+          if (refresh.ok) {
+            const refreshData = await refresh.json();
+            if (refreshData.players) {
+              updatedPlayers = refreshData.players;
+            }
           }
         }
       } catch (statsError) {
@@ -699,7 +726,7 @@ export default function TeamSelectionPage() {
     } finally {
       setSaving(false);
     }
-  }, [gameData, players, draftFormName, acquireLock, releaseLock]);
+  }, [gameData, players, draftFormName, acquireLock, releaseLock, reservesToMove]);
 
   /**
    * Validate selection then save — shows a warnings modal if issues are found.
@@ -1139,6 +1166,21 @@ export default function TeamSelectionPage() {
                           <option value="" disabled>──</option>
                           <option value="__swap__">Swap…</option>
                         </select>
+                        {/* Flag a reserve to move to the paired game on Save */}
+                        {isEditing && player.selected === 'R' && gameData?.game.pairedTabName ? (
+                          <label
+                            className="flex items-center gap-1 mt-1 text-[10px] text-blue-700 cursor-pointer"
+                            title={`Move to ${gameData.game.pairedClubName} on Save`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={reservesToMove.has(player.name)}
+                              onChange={() => toggleReserveToMove(player.name)}
+                              className="w-3 h-3"
+                            />
+                            → {gameData.game.pairedClubName}
+                          </label>
+                        ) : null}
                       </td>
 
                       <td className="px-2 py-2">
@@ -1415,6 +1457,7 @@ export default function TeamSelectionPage() {
         onConfirm={confirmDialog.onConfirm}
         onCancel={closeConfirmDialog}
       />
+
 
       {/* Add Players Modal */}
       <EnteredPlayersModal

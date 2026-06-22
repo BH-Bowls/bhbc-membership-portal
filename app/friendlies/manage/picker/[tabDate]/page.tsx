@@ -100,26 +100,8 @@ export default function PickerSheetPage() {
   useEffect(() => {
     async function fetchGame() {
       try {
-        const tabName = decodeURIComponent(tabDate);
-
-        // Skip get-stats if the manage game page refreshed stats within the last 2 minutes.
-        // This avoids redundant Members sheet reads when the captain navigates here directly
-        // from the team-selection page (which already does a background stats refresh).
-        const STATS_TTL_MS = 2 * 60 * 1000;
-        const lastRefreshed = Number(sessionStorage.getItem(`stats_refreshed_${tabDate}`) ?? 0);
-        const statsAreFresh = Date.now() - lastRefreshed < STATS_TTL_MS;
-
-        if (!statsAreFresh) {
-          // Refresh stats from Players sheet so nameDown/picked/% and
-          // last-6-games history are current
-          await fetch('/api/friendlies/manage/get-stats', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tab_name: tabName }),
-          });
-          sessionStorage.setItem(`stats_refreshed_${tabDate}`, String(Date.now()));
-        }
-
+        // No stats refresh here — display stats are snapshotted when the game is
+        // closed and frozen after, so the game data below already has final figures.
         const response = await fetch(`/api/friendlies/manage/game/${tabDate}`);
         const data = await response.json();
         if (!response.ok) {

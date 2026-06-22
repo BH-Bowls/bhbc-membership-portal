@@ -10,10 +10,11 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import {
   getEnteredPlayers,
-  updatePlayerEntry,
+  batchUpdatePlayerEntries,
   createGameSheet,
   updateGameStatus,
-  removePlayerFromGameSheet,
+  batchRemovePlayersFromGameSheet,
+  updateGameSheetStats,
 } from '@/lib/friendlies-sheets';
 import { hasRole } from '@/lib/role-utils';
 
@@ -105,28 +106,41 @@ export async function POST(request: NextRequest) {
     const gameAPlayerSet = new Set(game_a_players.map(p => p.toLowerCase()));
     const gameBPlayerSet = new Set(game_b_players.map(p => p.toLowerCase()));
 
-    // Remove unallocated players from game sheets and clear their Players sheet entries
-    // Run sequentially to avoid Google Sheets API quota limits
-    for (const p of allPlayersA) {
-      if (!gameAPlayerSet.has(p.userName.toLowerCase())) {
-        await removePlayerFromGameSheet(game_a_tab_name, p.userName);
-        await updatePlayerEntry(p.userName, game_a_tab_name, '');
-      }
+    // Work out who entered but was NOT allocated to each game
+    const unallocatedA = allPlayersA.filter(p => !gameAPlayerSet.has(p.userName.toLowerCase()));
+    const unallocatedB = allPlayersB.filter(p => !gameBPlayerSet.has(p.userName.toLowerCase()));
+
+    // Clear their Players-sheet entries — one batched write per game instead of a
+    // per-player read+write loop (the old loop exceeded the Sheets read quota)
+    if (unallocatedA.length > 0) {
+      await batchUpdatePlayerEntries(
+        game_a_tab_name,
+        unallocatedA.map(p => ({ userName: p.userName, status: '' as const })),
+      );
     }
-    for (const p of allPlayersB) {
-      if (!gameBPlayerSet.has(p.userName.toLowerCase())) {
-        await removePlayerFromGameSheet(game_b_tab_name, p.userName);
-        await updatePlayerEntry(p.userName, game_b_tab_name, '');
-      }
+    if (unallocatedB.length > 0) {
+      await batchUpdatePlayerEntries(
+        game_b_tab_name,
+        unallocatedB.map(p => ({ userName: p.userName, status: '' as const })),
+      );
     }
 
-    // Ensure all allocated players are in the game sheets (adds any missing entries)
-    const resultA = await createGameSheet(game_a_tab_name, game_a_players);
-    const resultB = await createGameSheet(game_b_tab_name, game_b_players);
+    // Remove them from the game sheets — one read + one batched delete per game
+    await batchRemovePlayersFromGameSheet(game_a_tab_name, unallocatedA.map(p => p.userName));
+    await batchRemovePlayersFromGameSheet(game_b_tab_name, unallocatedB.map(p => p.userName));
+
+    // Ensure all allocated players are in the game sheets (adds any missing entries).
+    // Skip stats here — they're snapshotted for both games at close, just below.
+    const resultA = await createGameSheet(game_a_tab_name, game_a_players, true);
+    const resultB = await createGameSheet(game_b_tab_name, game_b_players, true);
 
     // Transition both games from L (Allocating) to X (Selecting)
     await updateGameStatus(game_a_tab_name, 'X', { modifiedBy: session.user.userName });
     await updateGameStatus(game_b_tab_name, 'X', { modifiedBy: session.user.userName });
+
+    // Snapshot each game's display stats + hover notes now, at close (frozen after)
+    await updateGameSheetStats(game_a_tab_name);
+    await updateGameSheetStats(game_b_tab_name);
 
     return NextResponse.json({
       success: true,

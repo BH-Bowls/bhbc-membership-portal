@@ -17,6 +17,7 @@ import {
   getTeaRotaEntry,
   setNeedsPlayersFlag,
   markGamePlayerEntriesAs,
+  updateGameSheetStats,
 } from '@/lib/friendlies-sheets';
 // addPlayerToGameSheet / removePlayerFromGameSheet imported below in enter/withdraw routes
 import { sendGamePublishedEmail, sendTeaRotaEmail, sendGameCancelledEmail, sendTeaRotaCancelledEmail } from '@/lib/email/friendlies';
@@ -177,8 +178,9 @@ export async function POST(request: NextRequest) {
         await createGameColumn(effectiveTabName);
 
         // Create the individual game sheet now (moved from Close)
-        // createGameSheet skips if sheet already exists, and deduplicates players on re-open
-        await createGameSheet(effectiveTabName);
+        // createGameSheet skips if sheet already exists, and deduplicates players on re-open.
+        // Skip stat computation here — stats are snapshotted for everyone at close.
+        await createGameSheet(effectiveTabName, undefined, true);
         gameSheetCreated = true;
         break;
 
@@ -214,6 +216,9 @@ export async function POST(request: NextRequest) {
         // Game sheet was already created at Open time — no sheet work needed here
         // Clear needs-players flag — entries are now closed
         await setNeedsPlayersFlag(effectiveTabName, false);
+        // Snapshot every player's display stats + last-6 hover note now, at close.
+        // These are frozen from here on (the selection page no longer re-refreshes).
+        await updateGameSheetStats(effectiveTabName);
         break;
 
       // PUBLISH: Transition from 'X' (Selecting) to 'S' (Selected/Published team)

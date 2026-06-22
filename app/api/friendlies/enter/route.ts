@@ -61,7 +61,8 @@ export async function POST(request: NextRequest) {
           try {
             await updatePlayerEntry(userName, game.tabName, 'E');
             const gameCarNumber = car_numbers?.[tabName];
-            await addPlayerToGameSheet(game.tabName, userName, 'R', gameCarNumber);
+            // Open-game entry — skip stat computation (stats are snapshotted at close)
+            await addPlayerToGameSheet(game.tabName, userName, 'R', gameCarNumber, false);
             return { game_id: tabName, entered: true };
           } catch (updateError: any) {
             return { game_id: tabName, entered: false, error: updateError.message || 'Update failed' };
