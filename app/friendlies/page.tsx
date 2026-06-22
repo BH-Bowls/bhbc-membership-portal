@@ -422,9 +422,15 @@ export default function FriendliesPage() {
         // Ineligible members see the card but cannot enter (no checkbox shown)
         return game.status === 'O';
 
-      case 'entered':
-        // Games the user has entered that haven't been played or cancelled yet
-        return !!game.userEntered && !['P', 'C', 'A'].includes(game.status);
+      case 'entered': {
+        // Games the user has entered that haven't been played or cancelled yet.
+        // Paired entry only lands on game 1, so also include a game whose paired
+        // partner is entered — otherwise the pair can't render together here.
+        const partnerEntered = game.paired === 'Y' && games.some(g =>
+          g.paired === 'Y' && g.date === game.date && g.tabName !== game.tabName && g.userEntered
+        );
+        return (!!game.userEntered || partnerEntered) && !['P', 'C', 'A'].includes(game.status);
+      }
 
       case 'played':
         // Games the user entered that have been played, cancelled, or abandoned
