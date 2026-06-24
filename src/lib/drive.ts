@@ -224,12 +224,51 @@ export interface DocumentFile {
 export interface DocumentFolder {
   name: string
   files: DocumentFile[]
+  subfolders: DocumentFolder[]
 }
 
 /**
- * List all subfolders and PDF files within the portal documents root folder.
- * Each subfolder becomes a collapsible section on /documents.
- * Files sorted by name descending; folders sorted alphabetically.
+ * Recursively list the PDF files and subfolders inside a Drive folder.
+ * Files are sorted by name descending; subfolders alphabetically.
+ */
+async function listFolderContents(
+  drive: any,
+  folderId: string
+): Promise<{ files: DocumentFile[]; subfolders: DocumentFolder[] }> {
+  // PDF files directly in this folder
+  const filesResponse = await drive.files.list({
+    q: `'${folderId}' in parents and mimeType = 'application/pdf' and trashed = false`,
+    fields: 'files(id, name, webViewLink, mimeType)',
+    includeItemsFromAllDrives: false,
+    supportsAllDrives: false,
+  });
+  const files: DocumentFile[] = (filesResponse.data.files ?? [])
+    .filter((f: any) => f.name && f.webViewLink && f.mimeType)
+    .map((f: any) => ({ name: f.name!, webViewLink: f.webViewLink!, mimeType: f.mimeType! }));
+  files.sort((a, b) => b.name.localeCompare(a.name));
+
+  // Subfolders directly in this folder, recursed into
+  const subfoldersResponse = await drive.files.list({
+    q: `'${folderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+    fields: 'files(id, name)',
+    includeItemsFromAllDrives: false,
+    supportsAllDrives: false,
+  });
+  const subfolders: DocumentFolder[] = [];
+  for (const sub of subfoldersResponse.data.files ?? []) {
+    if (!sub.id || !sub.name) continue;
+    const contents = await listFolderContents(drive, sub.id);
+    subfolders.push({ name: sub.name, files: contents.files, subfolders: contents.subfolders });
+  }
+  subfolders.sort((a, b) => a.name.localeCompare(b.name));
+
+  return { files, subfolders };
+}
+
+/**
+ * List the folder tree (PDF files + nested subfolders) under the portal
+ * documents root folder. Each top-level folder becomes a collapsible section on
+ * /documents, and subfolders are expandable within it.
  */
 export async function listPortalDocuments(): Promise<DocumentFolder[]> {
   const rootId = process.env.PORTAL_DOCUMENTS_FOLDER_ID;
@@ -244,26 +283,11 @@ export async function listPortalDocuments(): Promise<DocumentFolder[]> {
     supportsAllDrives: false,
   });
 
-  const folders = foldersResponse.data.files ?? [];
   const results: DocumentFolder[] = [];
-
-  for (const folder of folders) {
+  for (const folder of foldersResponse.data.files ?? []) {
     if (!folder.id || !folder.name) continue;
-
-    const filesResponse = await drive.files.list({
-      q: `'${folder.id}' in parents and mimeType = 'application/pdf' and trashed = false`,
-      fields: 'files(id, name, webViewLink, mimeType)',
-      includeItemsFromAllDrives: false,
-      supportsAllDrives: false,
-    });
-
-    const files = filesResponse.data.files ?? [];
-    const docFiles: DocumentFile[] = files
-      .filter((f) => f.name && f.webViewLink && f.mimeType)
-      .map((f) => ({ name: f.name!, webViewLink: f.webViewLink!, mimeType: f.mimeType! }));
-
-    docFiles.sort((a, b) => b.name.localeCompare(a.name));
-    results.push({ name: folder.name, files: docFiles });
+    const contents = await listFolderContents(drive, folder.id);
+    results.push({ name: folder.name, files: contents.files, subfolders: contents.subfolders });
   }
 
   results.sort((a, b) => a.name.localeCompare(b.name));
