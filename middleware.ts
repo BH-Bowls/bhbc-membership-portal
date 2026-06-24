@@ -85,6 +85,20 @@ function isPublicRoute(pathname: string): boolean {
   return false;
 }
 
+/**
+ * Public routes that stay open even when the public-access PIN gate is on.
+ * The /rowland section (per request) and visitor token links (which carry their
+ * own token and would break behind a PIN). The /unlock flow is excluded via the
+ * matcher, so it never reaches the gate.
+ */
+function isPinExempt(pathname: string): boolean {
+  if (pathname === '/rowland' || pathname.startsWith('/rowland/')) return true;
+  if (pathname.startsWith('/api/rowland')) return true;
+  if (pathname.startsWith('/availability/guest/')) return true;
+  if (pathname.startsWith('/api/availability/guest/')) return true;
+  return false;
+}
+
 export default withAuth(
   /**
    * Custom middleware logic for role-based access control
@@ -98,6 +112,23 @@ export default withAuth(
 
     // Get current URL pathname
     const pathname = req.nextUrl.pathname;
+
+    // Public-access PIN gate. When PUBLIC_ACCESS_PIN is configured, the public
+    // (no-login) pages require either a logged-in session or a valid PIN cookie.
+    // Logged-in members bypass it; the /rowland section and visitor token links
+    // are exempt. If the env var is unset, the gate is off (pages stay public).
+    const pin = process.env.PUBLIC_ACCESS_PIN;
+    if (pin && !token && isPublicRoute(pathname) && !isPinExempt(pathname)) {
+      const hasPin = req.cookies.get('public_access')?.value === pin;
+      if (!hasPin) {
+        if (pathname.startsWith('/api/')) {
+          return NextResponse.json({ error: 'PIN required' }, { status: 401 });
+        }
+        const url = new URL('/unlock', req.url);
+        url.searchParams.set('from', pathname + req.nextUrl.search);
+        return NextResponse.redirect(url);
+      }
+    }
 
     // Force password change if token is flagged (not when admin is impersonating)
     if (token?.mustChangePassword && !token?.isImpersonating) {
@@ -221,6 +252,6 @@ export default withAuth(
  */
 export const config = {
   matcher: [
-    '/((?!api/auth|api/apply|login|clublogin|forgot-password|reset-password|kiosk|apply|help/login|_next/static|_next/image|favicon.ico|bhbc-logo.jpg|manifest.json|icons/).*)',
+    '/((?!api/auth|api/apply|api/unlock|unlock|login|clublogin|forgot-password|reset-password|kiosk|apply|help/login|_next/static|_next/image|favicon.ico|bhbc-logo.jpg|manifest.json|icons/).*)',
   ],
 };
