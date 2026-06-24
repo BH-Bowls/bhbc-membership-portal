@@ -1,11 +1,10 @@
 'use client';
 
 import { Suspense, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import Image from 'next/image';
 
 function UnlockForm() {
-  const router = useRouter();
   const params = useSearchParams();
 
   // Only allow same-site relative redirects (guard against open redirects)
@@ -29,7 +28,9 @@ function UnlockForm() {
       });
       const data = await res.json();
       if (res.ok && data.ok) {
-        router.replace(from);
+        // Full reload so the Navbar re-reads the members_area cookie and shows
+        // the "Members Area Active" indicator.
+        window.location.href = from;
       } else {
         setError(data.error || 'Incorrect PIN. Please try again.');
         setPin('');

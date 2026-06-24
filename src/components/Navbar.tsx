@@ -99,6 +99,22 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
     stopImpersonation
   } = useImpersonation();
 
+  // Public-access PIN state: the (non-httpOnly) members_area marker is set when a
+  // guest enters the access PIN. Lets us show a "Members Area Active" indicator.
+  const [pinActive, setPinActive] = useState(false);
+  const [showMembersMenu, setShowMembersMenu] = useState(false);
+  useEffect(() => {
+    setPinActive(document.cookie.split('; ').some(c => c.startsWith('members_area=1')));
+  }, []);
+  async function handleLeaveMembersArea() {
+    try {
+      await fetch('/api/unlock', { method: 'DELETE' });
+    } catch { /* ignore — redirect re-gates anyway */ }
+    setShowMembersMenu(false);
+    setPinActive(false);
+    window.location.href = '/unlock';
+  }
+
   // Parse comma-separated role string into individual roles
   const roles = userRole ? userRole.split(',').map(r => r.trim()).filter(Boolean) : [];
   const isAdmin = roles.includes('Admin') || userRole === 'superadmin';
@@ -684,6 +700,29 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
           {/* Guest login button(s) */}
           {showLogoOnly && !isTokenMode && (
             <div className="flex items-center gap-2">
+              {/* Members-area indicator — shown when a guest has entered the access PIN */}
+              {pinActive && (
+                <div className="relative">
+                  <button
+                    onClick={() => setShowMembersMenu(v => !v)}
+                    className="flex items-center gap-1.5 rounded-md bg-green-100 px-3 py-1.5 text-sm font-medium text-green-800 hover:bg-green-200 transition-colors"
+                    title="You have entered the members-area PIN"
+                  >
+                    <span className="h-2 w-2 rounded-full bg-green-500" />
+                    Members Area Active
+                  </button>
+                  {showMembersMenu && (
+                    <div className="absolute right-0 mt-1 w-48 rounded-md border border-gray-200 bg-white py-1 shadow-lg z-50">
+                      <button
+                        onClick={handleLeaveMembersArea}
+                        className="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                      >
+                        Leave members area
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
               {guestButtons ?? (
                 <a
                   href="/login"
