@@ -128,6 +128,20 @@ export default withAuth(
         url.searchParams.set('from', pathname + req.nextUrl.search);
         return NextResponse.redirect(url);
       }
+      // Valid PIN cookie but no readable UI marker (e.g. the cookie predates the
+      // marker, or it was cleared) — set it so the "Members Area Active" indicator
+      // shows without the visitor having to re-enter the PIN.
+      if (!req.cookies.get('members_area')) {
+        const res = NextResponse.next();
+        res.cookies.set('members_area', '1', {
+          httpOnly: false,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'lax',
+          path: '/',
+          maxAge: 60 * 60 * 24 * 30, // 30 days
+        });
+        return res;
+      }
     }
 
     // Force password change if token is flagged (not when admin is impersonating)
