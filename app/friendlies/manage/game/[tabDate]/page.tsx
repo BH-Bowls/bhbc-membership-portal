@@ -15,6 +15,7 @@ import { GameInstructionsDialog } from '@/components/game-management/GameInstruc
 import Link from 'next/link';
 import { usePhoneBackNavigation } from '@/hooks/usePhoneBackNavigation';
 import { GameSheetPlayer, Position } from '@/lib/types/friendlies';
+import { parseNumberRequired } from '@/lib/friendlies-utils';
 import { saveDraft, restoreDraft, clearDraftsByFormName, notifyDraftsChanged } from '@/lib/form-draft-utils';
 import { parseUKDate } from '@/lib/date-utils';
 
@@ -441,22 +442,28 @@ export default function TeamSelectionPage() {
         setOriginalPlayers(gameDataResult.players);
         saveToCache(gameDataResult);
         if (isEditing) {
-          // Merge: preserve unsaved edits for players still in the sheet,
-          // drop players who were removed, and update status for withdrawn ones.
+          // Merge by player NAME, not rowNumber: removing a player deletes a sheet
+          // row and shifts everyone below it up, so rowNumbers are not stable across
+          // a refresh. Keyed by rowNumber the merge would pin edits to the wrong
+          // players. We keep each surviving player's unsaved edits but adopt the
+          // fresh rowNumber, so the next Save writes to the correct rows.
           setPlayers(prev => {
-            const freshMap = new Map<number, GameSheetPlayer>(
-              gameDataResult.players.map((p: GameSheetPlayer) => [p.rowNumber, p])
+            const freshByName = new Map<string, GameSheetPlayer>(
+              gameDataResult.players.map((p: GameSheetPlayer) => [p.name.toLowerCase(), p])
             );
             const merged = prev
-              .filter(p => freshMap.has(p.rowNumber)) // drop fully removed players
+              .filter(p => freshByName.has(p.name.toLowerCase())) // drop removed players
               .map(p => {
-                const fresh = freshMap.get(p.rowNumber)!;
-                // If withdrawn externally, use fresh state (don't preserve stale edits)
-                return fresh.status === 'W' ? fresh : p;
+                const fresh = freshByName.get(p.name.toLowerCase())!;
+                // Withdrawn externally → take fresh state; otherwise keep the edits
+                // but adopt the fresh (possibly shifted) rowNumber.
+                return fresh.status === 'W' ? fresh : { ...p, rowNumber: fresh.rowNumber };
               });
-            // Append any brand-new rows not yet in the editing state
-            const existingRows = new Set(prev.map(p => p.rowNumber));
-            const added = gameDataResult.players.filter((p: GameSheetPlayer) => !existingRows.has(p.rowNumber));
+            // Append any brand-new players not yet in the editing state
+            const existingNames = new Set(prev.map(p => p.name.toLowerCase()));
+            const added = gameDataResult.players.filter(
+              (p: GameSheetPlayer) => !existingNames.has(p.name.toLowerCase())
+            );
             return [...merged, ...added];
           });
         } else {
@@ -465,6 +472,35 @@ export default function TeamSelectionPage() {
       }
     } catch (error) {
       console.error('Error refreshing game data:', error);
+    }
+  }
+
+  /**
+   * Create a same-club reserve game for an oversubscribed standalone game,
+   * then refresh so the move-reserve checkboxes appear on the reserve rows.
+   */
+  async function handleAddReserveGame() {
+    if (!gameData) return;
+    const g = gameData.game;
+    if (!confirm(`Add a reserve game (${g.clubName} 2) for the overflow players? You'll then move reserves into it and pick it separately.`)) {
+      return;
+    }
+    try {
+      const res = await fetch('/api/friendlies/manage/add-reserve-game', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tab_name: g.tabName }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to add reserve game');
+        return;
+      }
+      // This game is now paired — reload so the move-reserve checkboxes appear
+      await refreshGameData();
+    } catch (error) {
+      console.error('Error adding reserve game:', error);
+      alert('Failed to add reserve game');
     }
   }
 
@@ -710,6 +746,12 @@ export default function TeamSelectionPage() {
         // Don't fail the save - just use data from save response
       }
 
+      // Exit edit mode FIRST — batched with setPlayers so the re-render during the
+      // awaited releaseLock below already has isEditing=false. Otherwise the
+      // auto-save effect would fire on the players change (edit mode still on) and
+      // re-create the draft we just cleared, which then re-opens edit mode when the
+      // captain returns to the game (e.g. back from Print Match Card).
+      setIsEditing(false); isEditingRef.current = false;
       setPlayers(updatedPlayers);
       setOriginalPlayers(updatedPlayers);
       clearDraftsByFormName(draftFormName);      // clears all keys regardless of username
@@ -717,7 +759,6 @@ export default function TeamSelectionPage() {
       notifyDraftsChanged();                     // tell Navbar to re-check immediately
       // Release selection lock now that save is complete
       await releaseLock(gameData.game.tabName);
-      setIsEditing(false); isEditingRef.current = false;
       // Success - no alert needed, UI reflects saved state
     } catch (error) {
       console.error('Error saving selection:', error);
@@ -915,6 +956,16 @@ export default function TeamSelectionPage() {
   const { game } = gameData;
   const isAway = game.homeAway === 'A';
 
+  // Offer "Add Reserve Game" when a standalone game is oversubscribed during
+  // selection — at least 8 players beyond a full team (matches the API guard).
+  const reserveNeeded = parseNumberRequired(game.format);
+  const canAddReserveGame =
+    !isEditing &&
+    game.status === 'X' &&
+    !game.paired &&
+    reserveNeeded != null &&
+    game.entered >= reserveNeeded + 8;
+
   // Position display: stored as '1' (Lead) but shown as 'L'
   const positionLabel = (pos: string) => pos === '1' ? 'L' : (pos || '-');
 
@@ -1071,6 +1122,19 @@ export default function TeamSelectionPage() {
             </button>
           )}
 
+          {/* Add Reserve Game — only for an oversubscribed standalone game in selection */}
+          {canAddReserveGame && (
+            <button
+              onClick={handleAddReserveGame}
+              className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 transition-colors flex items-center gap-2"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Add Reserve Game
+            </button>
+          )}
+
           {/* Print Match Card link — hidden when editing */}
           {!isEditing && (
             <Link
@@ -1162,7 +1226,6 @@ export default function TeamSelectionPage() {
                         >
                           <option value="Y">Y</option>
                           <option value="R">R</option>
-                          <option value="T">T</option>
                           <option value="" disabled>──</option>
                           <option value="__swap__">Swap…</option>
                         </select>
@@ -1285,7 +1348,7 @@ export default function TeamSelectionPage() {
                 <li>Player stats are populated when the game is closed and when new players are added</li>
                 <li>Click <strong>Edit Selection</strong> to start editing — if another captain is already editing you can wait or override them</li>
                 <li>Assign team numbers and positions for selected players — <strong>hover over a name</strong> to see their stats and recent game entries</li>
-                <li>Players set to Y (Playing) automatically when a team number is entered; change to R (Reserve) or T (Reserve Team) if needed</li>
+                <li>Players set to Y (Playing) automatically when a team number is entered; change to R (Reserve) if needed</li>
                 <li>Select ONE captain of the day (radio button)</li>
                 <li>For away games, mark drivers and assign car numbers</li>
                 <li>The <strong>Conf</strong> column shows a tick when a player has confirmed; withdrawn players show "Withdrawn"</li>
@@ -1471,6 +1534,11 @@ export default function TeamSelectionPage() {
         currentUserRole={session?.user?.role}
         onPlayersChanged={refreshGameData}
         onAddPlayers={handleAddPlayers}
+        infoBanner={
+          game.paired
+            ? 'This is a linked game. To move players between the two games, don’t add/remove here — go into Edit mode on the game the player is currently in and tick the “→” box on their reserve row to send them to the linked game.'
+            : undefined
+        }
       />
 
       {/* ================================================================== */}

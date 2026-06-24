@@ -95,7 +95,7 @@ export default function HelpFriendlyManagementPage() {
             <Step n={1}>When you are ready to pick the team, select <strong>Close Entries</strong> and click <strong>Go</strong>.</Step>
             <Step n={2}>A dialog appears. For away games you can update the <strong>Pickup Information</strong> before closing. Click <strong>Close</strong> — this closes entries and creates an internal selection sheet.</Step>
             <Step n={3}>Click <strong>Select Team</strong> to open the selection page.</Step>
-            <Step n={4}>Mark each player as Playing, Reserve, or Reserve Team.</Step>
+            <Step n={4}>Mark each player as Playing or Reserve.</Step>
             <Step n={5}>Assign a team number and position (Skip, Lead, 2nd, 3rd) to playing members.</Step>
             <Step n={6}>Optionally mark the captain of the day and assign driving duties for away games.</Step>
             <Step n={7}>Save your changes — you can return and edit at any time before publishing.</Step>
@@ -104,8 +104,9 @@ export default function HelpFriendlyManagementPage() {
               <strong>Add Players</strong> button on the selection page. If you remove a player
               after the game has been published, you will be asked whether to{' '}
               <strong>Withdraw</strong> them (marks them as withdrawn in the stats) or{' '}
-              <strong>Remove</strong> them completely (no trace in the stats — useful when
-              moving a player between the two games in a paired game).
+              <strong>Remove</strong> them completely (no trace in the stats — for example a
+              player added in error). To move a player between paired games, use the{' '}
+              <strong>→</strong> reserve checkboxes instead (see Paired games below).
             </Note>
           </HelpSection>
 
@@ -133,16 +134,16 @@ export default function HelpFriendlyManagementPage() {
               ND/Pk(%)&nbsp;+&nbsp;FE
             </div>
             <div className="mt-1 space-y-1 text-sm text-gray-700 mb-2">
-              <p><strong>ND</strong> (Name Down) — number of closed games where the player was selected (Playing, Reserve, or Reserve Team). Does not count games they simply entered.</p>
+              <p><strong>ND</strong> (Name Down) — number of closed games where the player was selected (Playing or Reserve). Does not count games they simply entered.</p>
               <p><strong>Pk</strong> (Picked) — number of those games where the player was in the main playing team.</p>
               <p><strong>%</strong> — Pk as a percentage of ND. A rough fairness measure.</p>
               <p><strong>FE</strong> (Future Entered) — number of future open games the player has already entered. Useful context when balancing the team.</p>
             </div>
             <Body>
               Hover over any player&apos;s name on the selection page to see their last 6 games
-              history as a tooltip — P (Playing), R (Reserve), T (Reserve Team), D (Did not enter),
-              etc. The same history also appears on the Picker Sheet. Only closed-game outcomes are
-              shown, so the history stays meaningful.
+              history as a tooltip — P (Playing), R (Reserve), D (Did not enter), etc. The same
+              history also appears on the Picker Sheet. Only closed-game outcomes are shown, so the
+              history stays meaningful.
             </Body>
           </HelpSection>
 
@@ -352,27 +353,59 @@ export default function HelpFriendlyManagementPage() {
 
           <HelpSection title="Paired games">
             <Body>
-              A paired game is when two separate games take place on the same date — typically a
-              Ladies game and a Men&apos;s game. Because members enter without knowing which game
-              they will be assigned to, entries are pooled and the captain then allocates them
-              between the two games.
+              A paired game is when two separate games take place on the same date — for example
+              a fixture against two different clubs, or a Ladies game and a Men&apos;s game.
+              Members enter a single combined pool; the captain picks one game, then moves the
+              players who aren&apos;t needed across to the other game.
             </Body>
             <Body>
               Paired games appear as a single combined row in the Manage table, highlighted in
-              purple. The workflow is slightly different from a standard game:
+              purple. The workflow is:
             </Body>
-            <Step n={1}><strong>Open Both</strong> — opens both games together for entries. Members enter as normal and the system combines the counts.</Step>
-            <Step n={2}><strong>Close &amp; Allocate</strong> — closes both games and takes you to the allocation page, where you assign members to each of the two games.</Step>
-            <Step n={3}>Once allocated, each game moves independently through the Selecting → Selected → Played flow using the standard Select Team and Publish actions.</Step>
+            <Step n={1}><strong>Open Both</strong> — opens both games together for entries. Members see one combined card and enter as normal; every entry goes into the <em>first</em> game of the pair (the second starts empty).</Step>
+            <Step n={2}><strong>Close</strong> — closes both games for entry and moves them straight to Selecting. There is no separate allocation step.</Step>
+            <Step n={3}>Open the <strong>first</strong> game and pick its team as usual. Everyone who entered is here; anyone you don&apos;t pick becomes a reserve.</Step>
+            <Step n={4}>Move the overflow into the second game: while editing, tick the <strong>→ [other club]</strong> box on each reserve you want to move, then <strong>Save</strong>. They move across as reserves (see below).</Step>
+            <Step n={5}>Open the <strong>second</strong> game and pick its team from the players you moved over.</Step>
             <Body>
-              <strong>Setting up a paired game:</strong> Paired games are created by ticking the{' '}
-              <strong>Paired game</strong> checkbox when adding or editing a game in Fixtures Admin
-              (Admin → Fixtures Management). Both games on that date must have the Paired checkbox
-              ticked — the system then automatically groups them together in the Manage view.
+              <strong>Setting up a paired game:</strong> tick the <strong>Paired game</strong>{' '}
+              checkbox on both games when adding or editing them in Fixtures Admin
+              (Admin → Fixtures Management). Both games on that date must be ticked — the system
+              then groups them together automatically in the Manage view.
             </Body>
             <Note>
               The Message button on a paired row sets the message for the first game. If you need
-              separate messages for each game, handle them individually after allocation.
+              separate messages, set the second game&apos;s message on its own selection page.
+            </Note>
+          </HelpSection>
+
+          <HelpSection title="Moving reserves between paired games">
+            <Body>
+              On the selection page of a paired game, each <strong>reserve</strong> row shows a{' '}
+              <strong>→ [other club]</strong> checkbox while you are editing. Tick the reserves you
+              want to send to the paired game and click <strong>Save</strong> — they are removed
+              here and added as reserves to the other game in a single step.
+            </Body>
+            <Note>
+              Only reserves can be moved, so a player you have already picked is never disturbed —
+              and if you re-pick someone you had ticked, they are safely left in place. The usual
+              approach is to pick the larger team first, then move the rest across to the other game.
+            </Note>
+          </HelpSection>
+
+          <HelpSection title="Reserve games (oversubscribed games)">
+            <Body>
+              When a single game attracts far more players than it needs — at least eight beyond a
+              full team — you can split it into a second game on the same date instead of turning
+              players away.
+            </Body>
+            <Step n={1}>Close the game and open its selection page.</Step>
+            <Step n={2}>Click <strong>Add Reserve Game</strong>. This creates a second game for the same club (shown as &quot;Club 2&quot;) and pairs the two together.</Step>
+            <Step n={3}>The two now behave exactly like a paired game: pick the first, move the overflow reserves into the second with the <strong>→</strong> checkboxes, then pick the second.</Step>
+            <Note>
+              The <strong>Add Reserve Game</strong> button only appears on a standalone game that is
+              being selected and is at least eight players over a full team. It is hidden once the
+              game is paired, or while you are editing the selection.
             </Note>
           </HelpSection>
 

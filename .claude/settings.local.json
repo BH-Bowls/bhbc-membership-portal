@@ -79,7 +79,11 @@
       "Bash(rm scripts/repair-australian-pairs-r1.ts)",
       "Bash(rm -f scripts/repair-friendlies-entered-counts.ts scripts/check-friendlies-entered-counts.ts tmp_games.json tmp_games2.json)",
       "Bash(rm -f scripts/fix-lancing-count.ts)",
-      "Bash(rm -rf app/api/friendlies/manage/allocate app/friendlies/manage/allocate)"
+      "Bash(rm -rf app/api/friendlies/manage/allocate app/friendlies/manage/allocate)",
+      "Bash(awk -F: '$1 < 4830')",
+      "Bash(ls -la .env*)",
+      "Bash(grep -l \"PUBLIC_ACCESS_PIN\" .env.local)",
+      "Bash(grep -rln \"PUBLIC_ACCESS_PIN\" .env*)"
     ]
   }
 }

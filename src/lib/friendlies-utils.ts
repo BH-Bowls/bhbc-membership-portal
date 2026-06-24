@@ -17,6 +17,34 @@ export function isPairedGame(item: GameOrPair): item is [Game, Game] {
 }
 
 /**
+ * Parse the number of players required from a format string.
+ * e.g. "4 Triples" → 12, "3 Pairs" → 6, "6 Rinks" → 24, "3 Triples, 4 Rinks" → 25.
+ * Returns null if the format can't be parsed.
+ */
+export function parseNumberRequired(format: string): number | null {
+  if (!format) return null;
+  const sizeMap: Record<string, number> = {
+    singles: 1, single: 1,
+    pairs: 2, pair: 2,
+    triples: 3, triple: 3,
+    fours: 4, four: 4, rinks: 4, rink: 4,
+    fives: 5, five: 5,
+  };
+  // Support compound formats e.g. "3 Triples, 4 Rinks"
+  const parts = format.split(',').map(s => s.trim());
+  let total = 0;
+  for (const part of parts) {
+    const match = part.match(/^(\d+)\s+(\w+)$/i);
+    if (!match) return null; // any unrecognised segment → can't calculate
+    const count = parseInt(match[1], 10);
+    const size = sizeMap[match[2].toLowerCase()];
+    if (!size) return null;
+    total += count * size;
+  }
+  return total > 0 ? total : null;
+}
+
+/**
  * Group games that are paired (same date, both paired='Y') into tuples.
  * Only groups games in Upcoming ('') or Open ('O') status — once closed
  * (Selecting onward) the two games are managed/selected individually.

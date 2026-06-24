@@ -854,6 +854,24 @@ export async function setNeedsPlayersFlag(tabName: string, flag: boolean): Promi
 }
 
 /**
+ * Set the `paired` flag on a Games row by row number.
+ * 'Y' = linked and still open for combined entry; 'C' = linked but closed/split
+ * (the move logic treats both as linked, but only 'Y' re-groups for entry, so a
+ * closed pair stays as two independent games if it is reopened).
+ */
+export async function setGamePairedFlag(rowNumber: number, value: string): Promise<void> {
+  const spreadsheetId = getFriendliesSpreadsheetId();
+  const colMap = await getColumnMap(spreadsheetId, 'Games');
+  if (colMap['paired'] === undefined) return;
+  await getSheetsClient().spreadsheets.values.update({
+    spreadsheetId,
+    range: `Games!${getColumnLetter(colMap['paired'])}${rowNumber}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[value]] },
+  });
+}
+
+/**
  * Writes the given outcome status ('C' or 'A') to every player's entry in the
  * Players sheet for the specified game column.  Called on cancel/abandon so that
  * stale P/R/T values don't inflate percent_played the next time update-stats runs.
@@ -2673,7 +2691,8 @@ export async function moveReservePlayers(
     if (!fromGame || !toGame) {
       return { success: false, moved: 0, error: 'Game not found' };
     }
-    if (fromGame.paired !== 'Y' || toGame.paired !== 'Y' || fromGame.date !== toGame.date) {
+    const linked = (p: string | undefined) => p === 'Y' || p === 'C';
+    if (!linked(fromGame.paired) || !linked(toGame.paired) || fromGame.date !== toGame.date) {
       return { success: false, moved: 0, error: 'Games are not a paired pair' };
     }
 
@@ -3057,7 +3076,7 @@ export async function batchRemovePlayersFromGameSheet(tabName: string, userNames
  * @returns The same array, sorted
  */
 export function sortGameSheetPlayers(players: GameSheetPlayer[]): GameSheetPlayer[] {
-  const selectedOrder: Record<string, number> = { 'Y': 1, 'R': 2, 'T': 3, '': 4 };
+  const selectedOrder: Record<string, number> = { 'Y': 1, 'R': 2, '': 3 };
   const positionOrder: Record<string, number> = { 'S': 1, '1': 2, '2': 3, '3': 4, '': 5 };
 
   players.sort((a, b) => {
@@ -4875,6 +4894,93 @@ export async function createFixture(data: {
       values: [row],
     },
   });
+}
+
+/**
+ * Create a same-club "reserve game" for an oversubscribed standalone game.
+ *
+ * Appends a Games row that copies the original game's full row, then overrides:
+ * tab name → `<orig>-2`, club_suffix → '2', paired → 'C', status → 'X', the
+ * counts zeroed, and the tea duty blanked (tea belongs to the original only).
+ * The original is paired back (suffix '1', paired 'C'). 'C' (not 'Y') because the
+ * pair is born in the selection phase, so it must never re-group for combined
+ * entry — but the move logic treats 'C' as linked. Finally creates the Players
+ * column and an empty game sheet so the captain can move overflow reserves in.
+ *
+ * Guards here: original must exist and not already be paired, and the -2 game
+ * must not already exist. Status/oversubscription are enforced by the API.
+ */
+export async function createReserveGame(originalTabName: string): Promise<{ tabName: string }> {
+  const spreadsheetId = getFriendliesSpreadsheetId();
+  const sheets = getSheetsClient();
+
+  const games = await getGames();
+  const original = games.find(g => g.tabName === originalTabName);
+  if (!original) throw new Error(`Game not found: ${originalTabName}`);
+  if (original.paired) throw new Error('Game is already part of a pair');
+
+  const newTabName = `${originalTabName}-2`;
+  if (games.some(g => g.tabName === newTabName)) {
+    throw new Error(`A reserve game already exists for ${originalTabName}`);
+  }
+
+  const colMap = await getColumnMap(spreadsheetId, 'Games');
+
+  // Read the original's full row so the reserve game copies every column
+  const rowResp = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `Games!${original.rowNumber}:${original.rowNumber}`,
+  });
+  const row: string[] = (rowResp.data.values?.[0] || []).map(v => (v == null ? '' : String(v)));
+  const maxColIndex = Math.max(...Object.values(colMap));
+  while (row.length <= maxColIndex) row.push('');
+
+  const setCol = (field: string, value: string | number) => {
+    const idx = colMap[field];
+    if (idx !== undefined) row[idx] = String(value);
+  };
+
+  // Reserve-game overrides
+  setCol('tab_name', newTabName);
+  setCol('club_suffix', '2');
+  setCol('paired', 'C');
+  setCol('status', 'X');
+  setCol('entered', 0);
+  setCol('selected', 0);
+  setCol('reserves', 0);
+  // Tea duty belongs to the original (home) game only
+  setCol('tea_lead', '');
+  setCol('tea_first', '');
+  setCol('tea_second', '');
+
+  // Append the reserve game row
+  await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: 'Games!A:A',
+    valueInputOption: 'USER_ENTERED',
+    requestBody: { values: [row] },
+  });
+
+  // Pair the original game: suffix '1', paired 'C' (closed-link — see above)
+  const origUpdates: { range: string; values: (string | number)[][] }[] = [];
+  if (colMap['club_suffix'] !== undefined) {
+    origUpdates.push({ range: `Games!${getColumnLetter(colMap['club_suffix'])}${original.rowNumber}`, values: [['1']] });
+  }
+  if (colMap['paired'] !== undefined) {
+    origUpdates.push({ range: `Games!${getColumnLetter(colMap['paired'])}${original.rowNumber}`, values: [['C']] });
+  }
+  if (origUpdates.length > 0) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: { data: origUpdates, valueInputOption: 'USER_ENTERED' },
+    });
+  }
+
+  // Players-sheet column + empty game sheet (skip stats — nobody's in it yet)
+  await createGameColumn(newTabName);
+  await createGameSheet(newTabName, [], true);
+
+  return { tabName: newTabName };
 }
 
 /**

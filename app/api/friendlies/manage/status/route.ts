@@ -19,6 +19,7 @@ import {
   markGamePlayerEntriesAs,
   updateGameSheetStats,
   markBlankSelectionsAsReserve,
+  setGamePairedFlag,
 } from '@/lib/friendlies-sheets';
 // addPlayerToGameSheet / removePlayerFromGameSheet imported below in enter/withdraw routes
 import { sendGamePublishedEmail, sendTeaRotaEmail, sendGameCancelledEmail, sendTeaRotaCancelledEmail } from '@/lib/email/friendlies';
@@ -199,6 +200,12 @@ export async function POST(request: NextRequest) {
         // Game sheet was already created at Open time — no sheet work needed here
         // Clear needs-players flag — entries are now closed
         await setNeedsPlayersFlag(effectiveTabName, false);
+        // If this is a linked game, mark the pair as closed ('Y' → 'C'). Moves
+        // still work ('C' is treated as linked), but the pair will no longer
+        // re-group for combined entry, so reopening leaves them independent.
+        if (game.paired === 'Y') {
+          await setGamePairedFlag(game.rowNumber, 'C');
+        }
         // Default any blank selections to Reserve so every active entrant is at
         // least a reserve (captain then promotes); covers manually-added rows.
         await markBlankSelectionsAsReserve(effectiveTabName);

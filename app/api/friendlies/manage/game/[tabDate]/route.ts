@@ -102,12 +102,14 @@ export async function GET(
     });
 
     // Resolve the paired game (the other game on the same date flagged paired),
-    // so the UI can offer "move reserve to the other game" actions.
+    // so the UI can offer "move reserve to the other game" actions. Both 'Y'
+    // (open pair) and 'C' (closed/split pair) count as linked for moves.
+    const isLinked = (p: string | undefined) => p === 'Y' || p === 'C';
     let pairedTabName = '';
     let pairedClubName = '';
-    if (game.paired === 'Y') {
+    if (isLinked(game.paired)) {
       for (const g of games) {
-        if (g.paired === 'Y' && g.date === game.date && g.tabName !== game.tabName) {
+        if (isLinked(g.paired) && g.date === game.date && g.tabName !== game.tabName) {
           pairedTabName = g.tabName;
           pairedClubName = g.clubName;
           break;

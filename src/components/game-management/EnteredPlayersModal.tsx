@@ -46,6 +46,7 @@ interface EnteredPlayersModalProps {
   addOnlyMode?: boolean; // If true, starts in add mode without showing entered players list
   existingPlayerNames?: string[]; // Players already in game (for filtering in add-only mode)
   onAddPlayers?: (playerUserNames: string[]) => Promise<{ success: boolean; message?: string; error?: string }>; // Custom add handler
+  infoBanner?: string; // Optional informational message shown at the top of the modal
 }
 
 export function EnteredPlayersModal({
@@ -63,6 +64,7 @@ export function EnteredPlayersModal({
   addOnlyMode = false,
   existingPlayerNames = [],
   onAddPlayers,
+  infoBanner,
 }: EnteredPlayersModalProps) {
   const [enteredPlayers, setEnteredPlayers] = useState<EnteredPlayer[]>([]);
   const [availablePlayers, setAvailablePlayers] = useState<{ userName: string; fullName: string; memberType?: string }[]>([]);
@@ -361,6 +363,16 @@ export function EnteredPlayersModal({
               )}
             </p>
           </div>
+
+          {/* Optional info banner (e.g. linked-game move guidance) */}
+          {infoBanner && (
+            <div className="mx-6 mt-4 flex gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+              <svg className="mt-0.5 h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span>{infoBanner}</span>
+            </div>
+          )}
 
           {/* Action buttons at top */}
           {!loading && (
