@@ -10,6 +10,7 @@ import {
   isEmailConfigured,
   sendTemplateEmail,
 } from './mailer';
+import { getAppUrl } from '../app-url';
 import { getUserByUsername, getAllUsers } from '../sheets';
 import {
   getGroupById,
@@ -26,21 +27,6 @@ import type {
   AvailabilityInvitee,
   AvailabilityGroupMember,
 } from '@/types/availability';
-
-// Returns the public app URL — used when building email links
-function getAppUrl(): string {
-  // NEXT_PUBLIC_APP_URL is set in .env.local for all environments
-  const url = process.env.NEXT_PUBLIC_APP_URL;
-  if (!url) {
-    // Fall back to NEXTAUTH_URL if public URL not set
-    const nextauthUrl = process.env.NEXTAUTH_URL;
-    if (!nextauthUrl) {
-      return 'https://members.burgesshill-bowls.co.uk';
-    }
-    return nextauthUrl;
-  }
-  return url;
-}
 
 // ─── 1. Group Added Notification ──────────────────────────────────────────────
 
@@ -78,7 +64,7 @@ export async function sendGroupAddedEmail(
   }
 
   // Build the URL to the group page for portal members
-  const appUrl = getAppUrl();
+  const appUrl = await getAppUrl();
   const groupUrl = `${appUrl}/availability/groups/${groupId}`;
 
   // Collect email addresses for new portal members
@@ -178,7 +164,7 @@ export async function sendEventInviteEmails(
     year: 'numeric',
   });
 
-  const appUrl = getAppUrl();
+  const appUrl = await getAppUrl();
 
   // Separate member invitees from visitor invitees
   const memberInvitees: AvailabilityInvitee[] = [];
@@ -514,7 +500,7 @@ export async function sendResponseNotificationEmail(
     respondentName = respondentUser.fullKnownAs || respondentUser.fullName || respondentUserName;
   }
 
-  const appUrl = getAppUrl();
+  const appUrl = await getAppUrl();
   const manageUrl = `${appUrl}/availability/events/${eventId}/manage`;
 
   const emailResult = await sendTemplateEmail(
@@ -563,7 +549,7 @@ export async function sendResponseNotificationEmailForVisitor(
 
   const creatorName = creatorUser.fullKnownAs || creatorUser.fullName || event.createdByUsername;
 
-  const appUrl = getAppUrl();
+  const appUrl = await getAppUrl();
   const manageUrl = `${appUrl}/availability/events/${eventId}/manage`;
 
   const emailResult = await sendTemplateEmail(

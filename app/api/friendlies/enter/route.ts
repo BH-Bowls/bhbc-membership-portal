@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
+import { getAppUrl } from '@/lib/app-url';
 import { getGames, updatePlayerEntry, batchUpdateGameCounts, addPlayerToGameSheet } from '@/lib/friendlies-sheets';
 import { clearDiaryCache } from '@/lib/home-cache';
 import { EnterGamesRequest, EnterGamesResponse } from '@/lib/types/friendlies';
@@ -138,7 +139,7 @@ export async function POST(request: NextRequest) {
         const user = await getUserByUsername(userName);
         if (user?.emailAddress) {
           const fullName = user.fullName || (user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : userName);
-          const appUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
+          const appUrl = await getAppUrl();
 
           // Group entries: paired games on the same date → one combined email; others individual
           const successfulGames = successfulEntries

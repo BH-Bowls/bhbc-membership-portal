@@ -3,6 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getGames, validateGameToken, updateGameSheet, acknowledgeGameCancellation } from '@/lib/friendlies-sheets';
 import { sendWithdrawalEmail } from '@/lib/email/friendlies';
+import { getAppUrl } from '@/lib/app-url';
 
 // In-memory rate limit: 10 requests per 5 minutes per IP
 const RATE_LIMIT_MINUTES = 5;
@@ -92,7 +93,7 @@ export async function POST(
       return NextResponse.json({ error: 'Action not permitted for current game or player status' }, { status: 400 });
     }
 
-    const appUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
+    const appUrl = await getAppUrl();
 
     if (action === 'confirm') {
       await updateGameSheet(tabName, [{ rowNumber: tokenData.rowNumber, status: 'Y' }]);

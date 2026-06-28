@@ -16,10 +16,7 @@ import { getGroupById, getGroupMembers } from '@/lib/availability-groups-sheets'
 import { sendTemplateEmail, getEmailTransporter, isEmailConfigured } from '@/lib/email/mailer';
 import { theme } from '@/config/theme';
 import type { AvailabilityInvitee } from '@/types/availability';
-
-function getAppUrl(): string {
-  return process.env.NEXT_PUBLIC_APP_URL || process.env.NEXTAUTH_URL || 'https://members.burgesshill-bowls.co.uk';
-}
+import { getAppUrl } from '@/lib/app-url';
 
 // POST /api/availability/events/[eventId]/nudge
 // Re-send invite emails to all invitees who have not yet responded
@@ -117,7 +114,7 @@ export async function POST(
       day: 'numeric', month: 'long', year: 'numeric',
     });
 
-    const appUrl = getAppUrl();
+    const appUrl = await getAppUrl();
     const notifiedIds: string[] = [];
 
     // Member non-responders: single BCC email

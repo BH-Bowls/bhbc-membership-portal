@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
+import { getAppUrl } from '@/lib/app-url';
 import { getGames, batchUpdatePlayerEntries, addPlayersToGameSheetDirect, updateGameCounts, getActiveEnteredCount } from '@/lib/friendlies-sheets';
 import { canEnterGame } from '@/lib/game-management/capacity';
 import { hasRole } from '@/lib/role-utils';
@@ -113,7 +114,7 @@ export async function POST(request: NextRequest) {
         try {
           const addedUserNames = results.filter(r => r.added).map(r => r.userName);
           const allUsers = await getAllUsers();
-          const appUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
+          const appUrl = await getAppUrl();
           for (const userName of addedUserNames) {
             const user = allUsers.find(u => u.userName.toLowerCase() === userName.toLowerCase());
             if (!user?.emailAddress) continue;

@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
+import { getAppUrl } from '@/lib/app-url';
 import { getGames, getGameSheet, updateGameSheet, updatePlayerEntry, updateGameCounts, removePlayerFromGameSheet, getActiveEnteredCount } from '@/lib/friendlies-sheets';
 import { clearDiaryCache } from '@/lib/home-cache';
 import { sendWithdrawalEmail, sendWithdrawalNoticeEmail } from '@/lib/email/friendlies';
@@ -49,7 +50,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Derive app URL from the incoming request so custom domains work correctly
-    const appUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
+    const appUrl = await getAppUrl();
 
     // Handle withdrawal differently based on game status
     // Scenario 1: Game is still Open - simple removal

@@ -5,26 +5,11 @@
 // into a member). Both use the shared sendTemplateEmail helper.
 
 import { sendTemplateEmail } from './mailer';
+import { getAppUrl } from '../app-url';
 import type { Application } from '../applications-sheets';
 
 // Club inbox copied on the payment request and used as the applicant contact.
 const CLUB_EMAIL = 'burgesshillbc@gmail.com';
-
-/**
- * Resolve the public portal URL for login links in emails.
- * Prefers the explicit public app URL, then NEXTAUTH_URL, then a sensible default.
- *
- * @returns The portal base URL
- */
-function getPortalUrl(): string {
-  if (process.env.NEXT_PUBLIC_APP_URL) {
-    return process.env.NEXT_PUBLIC_APP_URL;
-  }
-  if (process.env.NEXTAUTH_URL) {
-    return process.env.NEXTAUTH_URL;
-  }
-  return 'https://members.burgesshill-bowls.co.uk';
-}
 
 /**
  * Build the applicant's preferred first name for greetings.
@@ -142,7 +127,7 @@ export async function sendWelcomeEmail(
       firstName,
       userName,
       tempPassword,
-      portalUrl: getPortalUrl(),
+      portalUrl: await getAppUrl(),
     }
   );
 }

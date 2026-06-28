@@ -10,6 +10,7 @@ import {
   logMemberEmail,
 } from '@/lib/sheets';
 import { sendTemplateEmail, isEmailConfigured } from '@/lib/email/mailer';
+import { getAppUrl } from '@/lib/app-url';
 
 async function sendPasswordResetEmail(
   email: string,
@@ -131,7 +132,7 @@ export async function POST(request: NextRequest) {
 
       if (user && user.emailAddress) {
         // Get base URL from request
-        const baseUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
+        const baseUrl = await getAppUrl();
 
         // Send reset email
         await sendPasswordResetEmail(

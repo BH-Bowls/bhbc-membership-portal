@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
+import { getAppUrl } from '@/lib/app-url';
 import {
   getGames,
   updateGameStatus,
@@ -260,7 +261,7 @@ export async function POST(request: NextRequest) {
             }
 
             // Derive app URL from the incoming request so custom domains work correctly
-            const appUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
+            const appUrl = await getAppUrl();
 
             // Send the email
             const result = await sendGamePublishedEmail(game, playersWithEmails, appUrl, false, publish_message);
@@ -309,7 +310,7 @@ export async function POST(request: NextRequest) {
                   phone: rotaPhoneMap.get(m.userName.toLowerCase()) || null,
                 }));
 
-              const appUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
+              const appUrl = await getAppUrl();
               const rotaResult = await sendTeaRotaEmail(game, teaMembers, appUrl);
 
               teaRotaEmailResult = {
@@ -361,7 +362,7 @@ export async function POST(request: NextRequest) {
               const targetSet = new Set(email_player_names.map(n => n.toLowerCase()));
               playersWithEmails = playersWithEmails.filter(p => targetSet.has(p.userName.toLowerCase()));
             }
-            const appUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
+            const appUrl = await getAppUrl();
             const result = await sendGamePublishedEmail(game, playersWithEmails, appUrl, true, publish_message);
             emailResult = {
               emailsSent: result.emailsSent,
@@ -453,7 +454,7 @@ export async function POST(request: NextRequest) {
               }
             }
 
-            const appUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
+            const appUrl = await getAppUrl();
             const cancelResult = await sendGameCancelledEmail(game, enteredPlayers, appUrl, reason);
             emailResult = {
               emailsSent: cancelResult.emailsSent,

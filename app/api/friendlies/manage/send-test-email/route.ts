@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
+import { getAppUrl } from '@/lib/app-url';
 import { getGames, getGameSheet } from '@/lib/friendlies-sheets';
 import { GameSheetPlayer } from '@/lib/types/friendlies';
 import { sendGamePublishedEmail } from '@/lib/email/friendlies';
@@ -69,7 +70,7 @@ export async function POST(request: NextRequest) {
       position: senderInGame?.position ?? 'S',
     };
 
-    const appUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
+    const appUrl = await getAppUrl();
     const result = await sendGamePublishedEmail(game, [previewPlayer], appUrl);
 
     if (!result.success) {

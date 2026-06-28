@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
+import { getAppUrl } from '@/lib/app-url';
 import { getGames, updatePlayerEntry, updateGameCounts, removePlayerFromGameSheet, getGameSheet, updateGameSheet, getActiveEnteredCount } from '@/lib/friendlies-sheets';
 import { hasRole } from '@/lib/role-utils';
 import { getUserByUsername } from '@/lib/sheets';
@@ -61,7 +62,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const appUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
+    const appUrl = await getAppUrl();
 
     if (game.status === 'S' && !forceRemove) {
       // Published game — mark as withdrawn rather than delete.
