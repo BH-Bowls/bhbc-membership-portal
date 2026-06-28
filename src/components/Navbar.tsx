@@ -289,6 +289,7 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
         { name: 'Tea Rota', href: '/tea-rota' },
         { name: 'Cleaning Rota', href: '/cleaning-rota' },
         { name: 'Sweeping Rota', href: '/sweeping-rota' },
+        { name: '200 Club', href: '/200-club' },
       ],
     },
   ];
@@ -366,6 +367,7 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
         { name: 'Tea Rota', href: '/tea-rota' },
         { name: 'Cleaning Rota', href: '/cleaning-rota' },
         { name: 'Sweeping Rota', href: '/sweeping-rota' },
+        { name: '200 Club', href: '/200-club' },
       ],
     },
     ...(isRowlandPlayer || isCaptain ? [{
