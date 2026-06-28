@@ -22,7 +22,10 @@ interface SlotDraft {
 
 function buildSlotDatetime(date: string, time: string): string {
   if (!date) return '';
-  return new Date(`${date}T${time || '12:00'}:00`).toISOString();
+  // Parse the typed wall-clock time as UTC ('Z') so it round-trips unchanged —
+  // the slot is displayed everywhere with timeZone: 'UTC'. Without the 'Z' the
+  // time is read as local (BST) and stored an hour earlier.
+  return new Date(`${date}T${time || '12:00'}:00Z`).toISOString();
 }
 
 function formatSlotDisplay(draft: SlotDraft, slotType: AvailabilitySlotType): string {

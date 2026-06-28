@@ -100,7 +100,9 @@ function cap(s: string): string {
 function buildSlotDatetime(date: string, time: string): string {
   if (!date) return '';
   const t = time ? time : '12:00';
-  return new Date(`${date}T${t}:00`).toISOString();
+  // Parse the typed wall-clock time as UTC ('Z') so it round-trips unchanged —
+  // slots are displayed/edited everywhere with UTC (getUTCHours / timeZone: 'UTC').
+  return new Date(`${date}T${t}:00Z`).toISOString();
 }
 
 export default function ManageEventPage({

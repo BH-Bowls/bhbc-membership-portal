@@ -21,7 +21,9 @@ interface SlotDraft {
 
 function buildSlotDatetime(date: string, time: string): string {
   if (!date) return '';
-  return new Date(`${date}T${time || '12:00'}:00`).toISOString();
+  // Parse the typed wall-clock time as UTC ('Z') so it round-trips unchanged —
+  // slots are displayed everywhere with timeZone: 'UTC'.
+  return new Date(`${date}T${time || '12:00'}:00Z`).toISOString();
 }
 
 function isDraftFilled(draft: SlotDraft, slotType: AvailabilitySlotType): boolean {
