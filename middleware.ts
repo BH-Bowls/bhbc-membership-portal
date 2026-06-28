@@ -209,21 +209,10 @@ export default withAuth(
       }
     }
 
-    // Restrict /availability to Admin or Testing roles during testing phase
-    // Guest sub-paths (/availability/guest/) remain public (handled by isPublicRoute above)
-    if (pathname.startsWith('/availability') && !pathname.startsWith('/availability/guest/')) {
-      if (!token || !hasRole(token.role as string, 'Admin', 'Testing')) {
-        return NextResponse.redirect(new URL('/', req.url));
-      }
-    }
-
-    // Restrict /api/availability to Admin or Testing roles during testing phase
-    // Guest sub-paths (/api/availability/guest/) remain public (handled by isPublicRoute above)
-    if (pathname.startsWith('/api/availability') && !pathname.startsWith('/api/availability/guest/')) {
-      if (!token || !hasRole(token.role as string, 'Admin', 'Testing')) {
-        return NextResponse.redirect(new URL('/', req.url));
-      }
-    }
+    // /availability is open to any logged-in member (create polls + respond).
+    // Per-poll access is enforced at the route level: a poll's own GET checks
+    // public/group membership, and manage/conclude require its creator or Admin.
+    // (Guest token sub-paths stay public via isPublicRoute above.)
 
     // No special handling needed - allow request to continue
     return NextResponse.next();
