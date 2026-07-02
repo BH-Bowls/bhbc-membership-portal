@@ -9,9 +9,10 @@ import {
   getEventById,
   getSlotsForEvent,
   upsertMemberResponse,
+  deleteMemberResponse,
 } from '@/lib/availability-events-sheets';
 import { clearDiaryCache } from '@/lib/home-cache';
-import { isGroupMember } from '@/lib/availability-groups-sheets';
+import { isGroupMember, getGroupById, canManageGroupMembers } from '@/lib/availability-groups-sheets';
 import type { MemberRespondPayload, AvailabilityResponse } from '@/types/availability';
 
 // POST /api/availability/events/[eventId]/respond
@@ -51,6 +52,45 @@ export async function POST(
       }
     }
 
+    // Parse the request body once — used both for the proxy target and the responses
+    const body: MemberRespondPayload & { onBehalfOf?: string } = await request.json();
+
+    // Resolve the target respondent. By default a member responds for themselves; a group
+    // manager may submit on behalf of another group member via `onBehalfOf`.
+    const onBehalfOf: string = (body.onBehalfOf ? String(body.onBehalfOf) : '').trim();
+    let targetUserName = userName;
+
+    if (onBehalfOf && onBehalfOf !== userName) {
+      // Proxy responses are only valid for group events
+      if (!event.groupId) {
+        return NextResponse.json(
+          { error: 'Responding on behalf of others is only allowed for group polls' },
+          { status: 400 }
+        );
+      }
+      // Caller must be able to manage the group
+      const group = await getGroupById(event.groupId);
+      if (!group) {
+        return NextResponse.json({ error: 'Group not found' }, { status: 404 });
+      }
+      const canManage = await canManageGroupMembers(group, userName, userRole);
+      if (!canManage) {
+        return NextResponse.json(
+          { error: 'You do not have permission to respond for other members' },
+          { status: 403 }
+        );
+      }
+      // The target must be a current member of this event's group (the roster = group members)
+      const targetIsMember = await isGroupMember(event.groupId, onBehalfOf);
+      if (!targetIsMember) {
+        return NextResponse.json(
+          { error: 'That member is not part of this poll' },
+          { status: 400 }
+        );
+      }
+      targetUserName = onBehalfOf;
+    }
+
     // Event must be open to accept responses
     if (event.status !== 'open') {
       return NextResponse.json(
@@ -66,16 +106,14 @@ export async function POST(
       return NextResponse.json({ error: 'This event has expired' }, { status: 400 });
     }
 
-    // Parse the request body
-    const body: MemberRespondPayload = await request.json();
-
     // Validate responses array is non-empty
     if (!body.responses || body.responses.length === 0) {
       return NextResponse.json({ error: 'At least one response is required' }, { status: 400 });
     }
 
-    // Validate each response entry
-    const validResponses = ['yes', 'maybe', 'no'];
+    // Validate each response entry. 'none' is accepted as a special value meaning
+    // "clear my previously-saved response for this slot" (used by the match-finder matrix).
+    const validResponses = ['yes', 'maybe', 'no', 'none'];
     for (let i = 0; i < body.responses.length; i++) {
       const r = body.responses[i];
       if (!r.slotId) {
@@ -109,17 +147,22 @@ export async function POST(
       }
     }
 
-    // Save each response — upsert (insert new or update existing)
+    // Save each response — upsert (insert new or update existing), or clear when 'none'.
+    // targetUserName is the caller unless a manager is responding on behalf of someone.
     for (let i = 0; i < body.responses.length; i++) {
       const r = body.responses[i];
-      await upsertMemberResponse(eventId, r.slotId, userName, r.response as AvailabilityResponse);
+      if (r.response === 'none') {
+        await deleteMemberResponse(eventId, r.slotId, targetUserName);
+      } else {
+        await upsertMemberResponse(eventId, r.slotId, targetUserName, r.response as AvailabilityResponse);
+      }
     }
 
     // If the event creator has opted in to response notifications, send an email
     if (event.notifyCreatorOnResponse) {
       try {
         const { sendResponseNotificationEmail } = await import('@/lib/email/availability');
-        await sendResponseNotificationEmail(event.eventId, userName);
+        await sendResponseNotificationEmail(event.eventId, targetUserName);
       } catch (emailError) {
         // Email failure must not block the 200 response — log and continue
         console.error(
@@ -129,8 +172,9 @@ export async function POST(
       }
     }
 
-    // Invalidate the diary cache — responding may change nudge/confirmed items on the home page
-    clearDiaryCache(userName);
+    // Invalidate the diary cache for whoever the response belongs to — responding may
+    // change nudge/confirmed items on their home page
+    clearDiaryCache(targetUserName);
 
     return NextResponse.json({ success: true });
   } catch (error) {

@@ -1,7 +1,8 @@
 // src/lib/availability-events-sheets.ts
-// Google Sheets data layer for Availability Planner v2 — Events, Slots, Responses, Invitees
-// Handles all CRUD operations for the AvailabilityEvents, AvailabilitySlots,
-// AvailabilityResponses and AvailabilityInvitees sheets
+// Google Sheets data layer for Availability Planner v2 — Events, Slots, Responses.
+// Handles CRUD for the AvailabilityEvents, AvailabilitySlots and AvailabilityResponses
+// sheets. There is no invitees sheet — the roster is the group's members (see
+// availability-groups-sheets.ts), and each member carries a response token.
 
 import crypto from 'crypto';
 import {
@@ -11,6 +12,15 @@ import {
   getAllUsers,
   getUserByUsername,
 } from './sheets';
+import type { User } from './sheets';
+import { disambiguateDisplayNames } from './display-name-utils';
+import {
+  getGroupById,
+  canManageGroupMembers,
+  getGroupMembers,
+  getGroupMemberByToken,
+  ensureGroupMemberTokens,
+} from './availability-groups-sheets';
 import type {
   AvailabilityEvent,
   AvailabilityEventSummary,
@@ -32,12 +42,10 @@ import type {
 const EVENTS_SHEET = 'AvailabilityEvents';
 const SLOTS_SHEET = 'AvailabilitySlots';
 const RESPONSES_SHEET = 'AvailabilityResponses';
-const INVITEES_SHEET = 'AvailabilityInvitees';
 
-const EVENTS_RANGE = `${EVENTS_SHEET}!A2:Q`;
+const EVENTS_RANGE = `${EVENTS_SHEET}!A2:V`;
 const SLOTS_RANGE = `${SLOTS_SHEET}!A2:F`;
 const RESPONSES_RANGE = `${RESPONSES_SHEET}!A2:K`;
-const INVITEES_RANGE = `${INVITEES_SHEET}!A2:K`;
 
 // ─── Environment Variable Getter ──────────────────────────────────────────────
 
@@ -144,35 +152,6 @@ async function generateResponseId(): Promise<string> {
   return `AVR-${String(maxNumber + 1).padStart(6, '0')}`;
 }
 
-// Generate next invitee ID in AVI-NNNNNN format, never resets
-async function generateInviteeId(): Promise<string> {
-  const sheets = getGoogleSheetsClient();
-  const spreadsheetId = getSpreadsheetId();
-
-  // Fetch column A of invitees sheet for existing IDs
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `${INVITEES_SHEET}!A2:A`,
-  });
-
-  const rows = response.data.values;
-  const prefix = 'AVI-';
-  let maxNumber = 0;
-
-  if (rows) {
-    for (let i = 0; i < rows.length; i++) {
-      const id = rows[i][0];
-      if (id && typeof id === 'string' && id.startsWith(prefix)) {
-        const num = parseInt(id.substring(prefix.length), 10);
-        if (!isNaN(num) && num > maxNumber) {
-          maxNumber = num;
-        }
-      }
-    }
-  }
-
-  return `AVI-${String(maxNumber + 1).padStart(6, '0')}`;
-}
 
 // ─── Row Parsers ──────────────────────────────────────────────────────────────
 
@@ -204,6 +183,11 @@ function parseEventRow(row: string[], colMap: Record<string, number>): Availabil
     concludedByUsername: get('concluded_by_username'),
     createdAt: get('created_at'),
     updatedAt: get('updated_at'),
+    matchFinder: get('is_match_finder') === 'Y',
+    offeredSlotIds: (get('offered_slot_ids') || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0),
   };
 }
 
@@ -254,184 +238,7 @@ function parseResponseRow(row: string[], colMap: Record<string, number>): Availa
   };
 }
 
-// Parse a raw sheet row into an AvailabilityInvitee object
-function parseInviteeRow(row: string[], colMap: Record<string, number>): AvailabilityInvitee {
-  const get = (key: string): string => {
-    const col = colMap[key];
-    if (col === undefined) {
-      return '';
-    }
-    return row[col] || '';
-  };
-
-  return {
-    inviteeId: get('invitee_id'),
-    eventId: get('event_id'),
-    groupMemberId: get('group_member_id'),
-    inviteeType: (get('invitee_type') || 'member') as 'member' | 'visitor',
-    userName: get('user_name'),
-    visitorName: get('visitor_name'),
-    visitorEmail: get('visitor_email'),
-    token: get('token'),
-    tokenExpiresAt: get('token_expires_at'),
-    notifiedAt: get('notified_at'),
-    createdAt: get('created_at'),
-  };
-}
-
 // ─── Event Functions ───────────────────────────────────────────────────────────
-
-// Fetch all public events (group_id blank, status !== 'archived').
-// Resolves hasResponded for the calling user and createdByName.
-export async function getPublicEvents(
-  callerUserName: string
-): Promise<AvailabilityEventSummary[]> {
-  const sheets = getGoogleSheetsClient();
-  const spreadsheetId = getSpreadsheetId();
-  const eventsColMap = await getColumnMap(EVENTS_SHEET, spreadsheetId);
-  const slotsColMap = await getColumnMap(SLOTS_SHEET, spreadsheetId);
-  const responsesColMap = await getColumnMap(RESPONSES_SHEET, spreadsheetId);
-
-  // Fetch all events
-  const eventsResp = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: EVENTS_RANGE,
-  });
-
-  // Fetch all slots (for counting)
-  const slotsResp = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: SLOTS_RANGE,
-  });
-
-  // Fetch all responses (for counting and hasResponded check)
-  const responsesResp = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: RESPONSES_RANGE,
-  });
-
-  const eventRows = eventsResp.data.values;
-  const slotRows = slotsResp.data.values;
-  const responseRows = responsesResp.data.values;
-
-  // Build a map of user display names from the Members sheet
-  const allUsers = await getAllUsers();
-  const userNameToDisplay: Record<string, string> = {};
-  for (let i = 0; i < allUsers.length; i++) {
-    const u = allUsers[i];
-    if (u.userName) {
-      userNameToDisplay[u.userName] = u.fullKnownAs || u.fullName || u.userName;
-    }
-  }
-
-  // Build slot count map: eventId → count
-  const slotCountMap: Record<string, number> = {};
-  if (slotRows) {
-    const eventIdCol = slotsColMap['event_id'];
-    if (eventIdCol !== undefined) {
-      for (let i = 0; i < slotRows.length; i++) {
-        const eid = slotRows[i][eventIdCol];
-        if (eid) {
-          if (slotCountMap[eid] === undefined) {
-            slotCountMap[eid] = 0;
-          }
-          slotCountMap[eid] = slotCountMap[eid] + 1;
-        }
-      }
-    }
-  }
-
-  // Build response count map: eventId → unique respondent count
-  // Also build hasResponded map: eventId → boolean (true if callerUserName responded)
-  const responseCountMap: Record<string, Set<string>> = {};
-  const hasRespondedMap: Record<string, boolean> = {};
-
-  if (responseRows) {
-    const eventIdCol = responsesColMap['event_id'];
-    const userNameCol = responsesColMap['user_name'];
-    const respondentTypeCol = responsesColMap['respondent_type'];
-    const visitorEmailCol = responsesColMap['visitor_email'];
-
-    if (eventIdCol !== undefined) {
-      for (let i = 0; i < responseRows.length; i++) {
-        const row = responseRows[i];
-        const eid = row[eventIdCol];
-        if (!eid) {
-          continue;
-        }
-
-        if (responseCountMap[eid] === undefined) {
-          responseCountMap[eid] = new Set<string>();
-        }
-
-        // Use userName for members, visitorEmail for visitors as unique key
-        const respondentType = respondentTypeCol !== undefined ? row[respondentTypeCol] : 'member';
-        const uname = userNameCol !== undefined ? row[userNameCol] : '';
-        const vemail = visitorEmailCol !== undefined ? row[visitorEmailCol] : '';
-
-        let uniqueKey = '';
-        if (respondentType === 'member' && uname) {
-          uniqueKey = `member:${uname}`;
-          // Check if caller has responded
-          if (uname === callerUserName) {
-            hasRespondedMap[eid] = true;
-          }
-        } else if (vemail) {
-          uniqueKey = `visitor:${vemail}`;
-        }
-
-        if (uniqueKey) {
-          responseCountMap[eid].add(uniqueKey);
-        }
-      }
-    }
-  }
-
-  const results: AvailabilityEventSummary[] = [];
-
-  if (!eventRows) {
-    return results;
-  }
-
-  const eventsGroupIdCol = eventsColMap['group_id'];
-  const eventsStatusCol = eventsColMap['status'];
-  const eventsEventIdCol = eventsColMap['event_id'];
-
-  for (let i = 0; i < eventRows.length; i++) {
-    const row = eventRows[i];
-
-    if (eventsEventIdCol === undefined || eventsStatusCol === undefined) {
-      continue;
-    }
-
-    const status = row[eventsStatusCol] || '';
-
-    // Skip archived events
-    if (status === 'archived') {
-      continue;
-    }
-
-    // Only include public events (group_id is blank)
-    const groupId = eventsGroupIdCol !== undefined ? (row[eventsGroupIdCol] || '') : '';
-    if (groupId !== '') {
-      continue;
-    }
-
-    const eventId = row[eventsEventIdCol] || '';
-    results.push(buildEventSummary(row, eventsColMap, eventId, userNameToDisplay, slotCountMap, responseCountMap, hasRespondedMap));
-  }
-
-  // Sort newest first by createdAt (cast to any because createdAt is not in the summary type)
-  results.sort((a, b) => {
-    const aCreated = (a as any).createdAt || '';
-    const bCreated = (b as any).createdAt || '';
-    if (aCreated > bCreated) return -1;
-    if (aCreated < bCreated) return 1;
-    return 0;
-  });
-
-  return results;
-}
 
 // Build an event summary object from a raw row plus precomputed maps
 function buildEventSummary(
@@ -669,6 +476,7 @@ export async function createEvent(data: {
   showResponsesToRespondents: boolean;
   notifyCreatorOnResponse: boolean;
   expiresAt: string;
+  matchFinder?: boolean;
 }): Promise<string> {
   const sheets = getGoogleSheetsClient();
   const spreadsheetId = getSpreadsheetId();
@@ -706,11 +514,13 @@ export async function createEvent(data: {
   setCol('concluded_by_username', '');
   setCol('created_at', now);
   setCol('updated_at', '');
+  setCol('is_match_finder', data.matchFinder ? 'Y' : '');
+  setCol('offered_slot_ids', '');
 
   // Append the new event row
   await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range: `${EVENTS_SHEET}!A:Q`,
+    range: `${EVENTS_SHEET}!A:V`,
     valueInputOption: 'USER_ENTERED',
     requestBody: { values: [newRow] },
   });
@@ -960,6 +770,65 @@ export async function archiveEvent(eventId: string): Promise<void> {
   await updateEvent(eventId, { status: 'archived' });
 }
 
+// Persist the organiser's chosen "offered" slots for a match-finder event.
+// Writes the slotIds as a comma-separated list into the offered_slot_ids column.
+export async function setOfferedSlots(eventId: string, slotIds: string[]): Promise<void> {
+  const sheets = getGoogleSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+  const colMap = await getColumnMap(EVENTS_SHEET, spreadsheetId);
+
+  const offeredCol = colMap['offered_slot_ids'];
+  if (offeredCol === undefined) {
+    throw new Error('offered_slot_ids column not found in AvailabilityEvents sheet');
+  }
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: EVENTS_RANGE,
+  });
+  const rows = response.data.values;
+  if (!rows) {
+    throw new Error(`Event not found: ${eventId}`);
+  }
+
+  const eventIdCol = colMap['event_id'];
+  if (eventIdCol === undefined) {
+    throw new Error('event_id column not found');
+  }
+
+  let rowNumber = -1;
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i][eventIdCol] === eventId) {
+      rowNumber = i + 2;
+      break;
+    }
+  }
+  if (rowNumber === -1) {
+    throw new Error(`Event not found: ${eventId}`);
+  }
+
+  const now = new Date().toISOString();
+  const updateData: Array<{ range: string; values: string[][] }> = [
+    {
+      range: `${EVENTS_SHEET}!${getColumnLetter(offeredCol)}${rowNumber}`,
+      values: [[slotIds.join(',')]],
+    },
+  ];
+
+  const updatedAtCol = colMap['updated_at'];
+  if (updatedAtCol !== undefined) {
+    updateData.push({
+      range: `${EVENTS_SHEET}!${getColumnLetter(updatedAtCol)}${rowNumber}`,
+      values: [[now]],
+    });
+  }
+
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: { data: updateData, valueInputOption: 'USER_ENTERED' },
+  });
+}
+
 // ─── Slot Functions ────────────────────────────────────────────────────────────
 
 // Fetch all slots for an event, ordered by display_order ascending.
@@ -1043,6 +912,74 @@ export async function addSlot(
   });
 
   return slotId;
+}
+
+// Append MANY slots in a single Sheets call. Use this when creating a poll's slots — calling
+// addSlot in a loop does one column read + one append PER slot, which blows the write quota
+// for date-finder polls (dates × times can be 20+ slots). This reads the max slot ID once,
+// assigns sequential IDs locally, then appends every row in one request.
+export async function addSlots(
+  eventId: string,
+  slots: Array<{ slotDatetime: string | null; slotLabel: string; displayOrder: number }>
+): Promise<void> {
+  if (slots.length === 0) {
+    return;
+  }
+
+  const sheets = getGoogleSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+  const colMap = await getColumnMap(SLOTS_SHEET, spreadsheetId);
+
+  // Read existing slot IDs ONCE to find the current max sequence number
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SLOTS_SHEET}!A2:A`,
+  });
+  const rows = response.data.values;
+  const prefix = 'AVS-';
+  let maxNumber = 0;
+  if (rows) {
+    for (let i = 0; i < rows.length; i++) {
+      const id = rows[i][0];
+      if (id && typeof id === 'string' && id.startsWith(prefix)) {
+        const num = parseInt(id.substring(prefix.length), 10);
+        if (!isNaN(num) && num > maxNumber) {
+          maxNumber = num;
+        }
+      }
+    }
+  }
+
+  const now = new Date().toISOString();
+  const maxCol = Math.max(...Object.values(colMap));
+
+  // Build every slot row, assigning IDs sequentially from the max
+  const values: string[][] = [];
+  for (let i = 0; i < slots.length; i++) {
+    const slotId = `AVS-${String(maxNumber + 1 + i).padStart(6, '0')}`;
+    const newRow: string[] = new Array(maxCol + 1).fill('');
+    const setCol = (key: string, value: string) => {
+      const col = colMap[key];
+      if (col !== undefined) {
+        newRow[col] = value;
+      }
+    };
+    setCol('slot_id', slotId);
+    setCol('event_id', eventId);
+    setCol('slot_datetime', slots[i].slotDatetime || '');
+    setCol('slot_label', slots[i].slotLabel);
+    setCol('display_order', String(slots[i].displayOrder));
+    setCol('created_at', now);
+    values.push(newRow);
+  }
+
+  // Single append for all rows
+  await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: `${SLOTS_SHEET}!A:F`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: { values },
+  });
 }
 
 // Update an existing slot's datetime and/or label. Sets no updated_at (slots sheet has none).
@@ -1379,11 +1316,176 @@ export async function upsertMemberResponse(
   }
 }
 
-// Upsert a visitor's response. Matches on (event_id, slot_id, invitee_id).
+// Delete a member's response for a slot (used to clear/unset a previously-saved choice).
+// Matches on (event_id, slot_id, user_name, respondent_type = member). No-op if not found.
+export async function deleteMemberResponse(
+  eventId: string,
+  slotId: string,
+  userName: string
+): Promise<void> {
+  const sheets = getGoogleSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+  const colMap = await getColumnMap(RESPONSES_SHEET, spreadsheetId);
+
+  // Need the sheetId for a deleteDimension request
+  const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
+  const sheetsData = spreadsheet.data.sheets;
+  if (!sheetsData) {
+    throw new Error('Could not fetch spreadsheet metadata');
+  }
+
+  let responsesSheetId: number | null = null;
+  for (let i = 0; i < sheetsData.length; i++) {
+    const s = sheetsData[i];
+    if (s.properties && s.properties.title === RESPONSES_SHEET) {
+      if (s.properties.sheetId !== undefined && s.properties.sheetId !== null) {
+        responsesSheetId = s.properties.sheetId;
+      }
+    }
+  }
+  if (responsesSheetId === null) {
+    throw new Error(`${RESPONSES_SHEET} sheet not found`);
+  }
+
+  const resp = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: RESPONSES_RANGE,
+  });
+  const rows = resp.data.values;
+  if (!rows) {
+    return;
+  }
+
+  const eventIdCol = colMap['event_id'];
+  const slotIdCol = colMap['slot_id'];
+  const userNameCol = colMap['user_name'];
+  const respondentTypeCol = colMap['respondent_type'];
+
+  if (eventIdCol === undefined || slotIdCol === undefined || userNameCol === undefined) {
+    throw new Error('Required columns not found in AvailabilityResponses sheet');
+  }
+
+  let rowNumber = -1;
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const rowType = respondentTypeCol !== undefined ? row[respondentTypeCol] : 'member';
+    if (row[eventIdCol] === eventId && row[slotIdCol] === slotId && rowType === 'member' && row[userNameCol] === userName) {
+      rowNumber = i + 2;
+      break;
+    }
+  }
+
+  // Nothing saved for this slot — nothing to clear
+  if (rowNumber === -1) {
+    return;
+  }
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [
+        {
+          deleteDimension: {
+            range: {
+              sheetId: responsesSheetId,
+              dimension: 'ROWS',
+              startIndex: rowNumber - 1,
+              endIndex: rowNumber,
+            },
+          },
+        },
+      ],
+    },
+  });
+}
+
+// Delete a visitor's saved response for one slot. Matches on
+// (event_id, slot_id, respondent_type='visitor', visitor_email). No-op if not found.
+export async function deleteVisitorResponse(
+  eventId: string,
+  slotId: string,
+  visitorEmail: string
+): Promise<void> {
+  const sheets = getGoogleSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+  const colMap = await getColumnMap(RESPONSES_SHEET, spreadsheetId);
+
+  // Need the sheetId for a deleteDimension request
+  const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
+  const sheetsData = spreadsheet.data.sheets;
+  if (!sheetsData) {
+    throw new Error('Could not fetch spreadsheet metadata');
+  }
+
+  let responsesSheetId: number | null = null;
+  for (let i = 0; i < sheetsData.length; i++) {
+    const s = sheetsData[i];
+    if (s.properties && s.properties.title === RESPONSES_SHEET) {
+      if (s.properties.sheetId !== undefined && s.properties.sheetId !== null) {
+        responsesSheetId = s.properties.sheetId;
+      }
+    }
+  }
+  if (responsesSheetId === null) {
+    throw new Error(`${RESPONSES_SHEET} sheet not found`);
+  }
+
+  const resp = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: RESPONSES_RANGE,
+  });
+  const rows = resp.data.values;
+  if (!rows) {
+    return;
+  }
+
+  const eventIdCol = colMap['event_id'];
+  const slotIdCol = colMap['slot_id'];
+  const visitorEmailCol = colMap['visitor_email'];
+  const respondentTypeCol = colMap['respondent_type'];
+
+  if (eventIdCol === undefined || slotIdCol === undefined || visitorEmailCol === undefined) {
+    throw new Error('Required columns not found in AvailabilityResponses sheet');
+  }
+
+  let rowNumber = -1;
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const rowType = respondentTypeCol !== undefined ? row[respondentTypeCol] : '';
+    if (row[eventIdCol] === eventId && row[slotIdCol] === slotId && rowType === 'visitor' && row[visitorEmailCol] === visitorEmail) {
+      rowNumber = i + 2;
+      break;
+    }
+  }
+
+  // Nothing saved for this slot — nothing to clear
+  if (rowNumber === -1) {
+    return;
+  }
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [
+        {
+          deleteDimension: {
+            range: {
+              sheetId: responsesSheetId,
+              dimension: 'ROWS',
+              startIndex: rowNumber - 1,
+              endIndex: rowNumber,
+            },
+          },
+        },
+      ],
+    },
+  });
+}
+
+// Upsert a visitor's response. Matches on (event_id, slot_id, visitor_email).
 export async function upsertVisitorResponse(
   eventId: string,
   slotId: string,
-  inviteeId: string,
   visitorName: string,
   visitorEmail: string,
   response: AvailabilityResponse
@@ -1403,16 +1505,16 @@ export async function upsertVisitorResponse(
 
   const eventIdCol = colMap['event_id'];
   const slotIdCol = colMap['slot_id'];
-  const inviteeIdCol = colMap['invitee_id'];
+  const visitorEmailCol = colMap['visitor_email'];
   const respondentTypeCol = colMap['respondent_type'];
   const responseCol = colMap['response'];
   const updatedAtCol = colMap['updated_at'];
 
-  if (eventIdCol === undefined || slotIdCol === undefined || inviteeIdCol === undefined) {
+  if (eventIdCol === undefined || slotIdCol === undefined || visitorEmailCol === undefined) {
     throw new Error('Required columns not found in AvailabilityResponses sheet');
   }
 
-  // Look for existing visitor response for this event/slot/invitee combination
+  // Look for existing visitor response for this event/slot/visitor-email combination
   let existingRowNumber = -1;
 
   if (rows) {
@@ -1420,10 +1522,10 @@ export async function upsertVisitorResponse(
       const row = rows[i];
       const rowEventId = row[eventIdCol];
       const rowSlotId = row[slotIdCol];
-      const rowInviteeId = row[inviteeIdCol];
+      const rowVisitorEmail = row[visitorEmailCol];
       const rowType = respondentTypeCol !== undefined ? row[respondentTypeCol] : 'member';
 
-      if (rowEventId === eventId && rowSlotId === slotId && rowType === 'visitor' && rowInviteeId === inviteeId) {
+      if (rowEventId === eventId && rowSlotId === slotId && rowType === 'visitor' && rowVisitorEmail === visitorEmail) {
         existingRowNumber = i + 2;
         break;
       }
@@ -1480,7 +1582,6 @@ export async function upsertVisitorResponse(
     setCol('response', response);
     setCol('responded_at', now);
     setCol('updated_at', '');
-    setCol('invitee_id', inviteeId);
 
     await sheets.spreadsheets.values.append({
       spreadsheetId,
@@ -1491,326 +1592,105 @@ export async function upsertVisitorResponse(
   }
 }
 
-// ─── Invitee Functions ─────────────────────────────────────────────────────────
+// ─── Roster + Token Functions ──────────────────────────────────────────────────
 
-// Fetch all invitees for an event.
-export async function getInviteesForEvent(
-  eventId: string
-): Promise<AvailabilityInvitee[]> {
-  const sheets = getGoogleSheetsClient();
-  const spreadsheetId = getSpreadsheetId();
-  const colMap = await getColumnMap(INVITEES_SHEET, spreadsheetId);
-
-  // Fetch all invitee rows
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: INVITEES_RANGE,
-  });
-
-  const rows = response.data.values;
-  const results: AvailabilityInvitee[] = [];
-
-  if (!rows) {
-    return results;
+// Build an event's roster directly from LIVE group membership. There is no invitees sheet —
+// the group members ARE the roster. Returns invitee-shaped objects so the response/manage
+// grids (which read detail.invitees) need no change. The per-member token is NEVER included
+// here — it stays server-side (used only for email links + validation).
+export async function getEventRoster(event: AvailabilityEvent): Promise<AvailabilityInvitee[]> {
+  if (!event.groupId) {
+    return [];
   }
-
-  const eventIdCol = colMap['event_id'];
-  if (eventIdCol === undefined) {
-    return results;
-  }
-
-  // Filter invitees for this event
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    if (row[eventIdCol] === eventId) {
-      results.push(parseInviteeRow(row, colMap));
-    }
-  }
-
-  return results;
-}
-
-// Create invitee records from a list of group members.
-// For member-type: creates row with no token.
-// For visitor-type: generates 64-char hex token, sets token and token_expires_at.
-// Returns the list of created invitee records.
-export async function createInviteesFromGroupMembers(
-  eventId: string,
-  tokenExpiresAt: string,
-  groupMembers: AvailabilityGroupMember[]
-): Promise<AvailabilityInvitee[]> {
-  const sheets = getGoogleSheetsClient();
-  const spreadsheetId = getSpreadsheetId();
-  const colMap = await getColumnMap(INVITEES_SHEET, spreadsheetId);
-
-  const createdInvitees: AvailabilityInvitee[] = [];
-  const now = new Date().toISOString();
-
-  const maxCol = Math.max(...Object.values(colMap));
-
-  // Helper to build and append an invitee row
-  const appendInviteeRow = async (invitee: AvailabilityInvitee): Promise<void> => {
-    const newRow: string[] = new Array(maxCol + 1).fill('');
-    const setCol = (key: string, value: string) => {
-      const col = colMap[key];
-      if (col !== undefined) {
-        newRow[col] = value;
-      }
-    };
-
-    setCol('invitee_id', invitee.inviteeId);
-    setCol('event_id', invitee.eventId);
-    setCol('group_member_id', invitee.groupMemberId);
-    setCol('invitee_type', invitee.inviteeType);
-    setCol('user_name', invitee.userName);
-    setCol('visitor_name', invitee.visitorName);
-    setCol('visitor_email', invitee.visitorEmail);
-    setCol('token', invitee.token);
-    setCol('token_expires_at', invitee.tokenExpiresAt);
-    setCol('notified_at', invitee.notifiedAt);
-    setCol('created_at', invitee.createdAt);
-
-    await sheets.spreadsheets.values.append({
-      spreadsheetId,
-      range: `${INVITEES_SHEET}!A:K`,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: { values: [newRow] },
-    });
-  };
-
-  // Process each group member sequentially to avoid parallel Sheets calls
-  for (let i = 0; i < groupMembers.length; i++) {
-    const member = groupMembers[i];
-    const inviteeId = await generateInviteeId();
-
-    let token = '';
-    let tokenExp = '';
-
-    // Visitor-type invitees get a unique 64-char hex token
-    if (member.memberType === 'visitor') {
-      // Generate 32 random bytes = 64 hex characters
-      token = crypto.randomBytes(32).toString('hex');
-      tokenExp = tokenExpiresAt;
-    }
-
-    const invitee: AvailabilityInvitee = {
-      inviteeId,
-      eventId,
-      groupMemberId: member.memberId,
-      inviteeType: member.memberType,
-      userName: member.userName,
-      visitorName: member.visitorName,
-      visitorEmail: member.visitorEmail,
-      token,
-      tokenExpiresAt: tokenExp,
+  const members = await getGroupMembers(event.groupId);
+  const roster: AvailabilityInvitee[] = [];
+  for (let i = 0; i < members.length; i++) {
+    const m = members[i];
+    roster.push({
+      inviteeId: m.memberId,
+      eventId: event.eventId,
+      groupMemberId: m.memberId,
+      inviteeType: m.memberType,
+      userName: m.userName,
+      visitorName: m.visitorName,
+      visitorEmail: m.visitorEmail,
+      token: '',            // never expose the token to the client
+      tokenExpiresAt: '',
       notifiedAt: '',
-      createdAt: now,
-    };
-
-    // Append to sheet sequentially
-    await appendInviteeRow(invitee);
-    createdInvitees.push(invitee);
+      createdAt: m.createdAt || '',
+    });
   }
-
-  return createdInvitees;
+  return roster;
 }
 
-// Validate a visitor token. Returns matching invitee or null.
-// Checks: token exists in sheet, event_id matches, token_expires_at not passed.
-export async function validateVisitorToken(
+// Validate a response-link token. Resolves the group member holding it, then checks that
+// member's group owns this event and the group is still active (annual expiry via archival).
+// Returns the group member on success, else null.
+export async function validateGroupMemberToken(
   eventId: string,
   token: string
-): Promise<AvailabilityInvitee | null> {
-  const sheets = getGoogleSheetsClient();
-  const spreadsheetId = getSpreadsheetId();
-  const colMap = await getColumnMap(INVITEES_SHEET, spreadsheetId);
-
-  // Fetch all invitee rows
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: INVITEES_RANGE,
-  });
-
-  const rows = response.data.values;
-  if (!rows) {
-    console.warn('[validateVisitorToken] No rows returned from AvailabilityInvitees sheet');
+): Promise<AvailabilityGroupMember | null> {
+  const event = await getEventById(eventId);
+  if (!event || !event.groupId) {
     return null;
   }
-
-  const eventIdCol = colMap['event_id'];
-  const tokenCol = colMap['token'];
-  const tokenExpiresAtCol = colMap['token_expires_at'];
-
-  if (eventIdCol === undefined || tokenCol === undefined) {
-    console.error('[validateVisitorToken] Column map missing event_id or token column. colMap keys:', Object.keys(colMap));
+  const member = await getGroupMemberByToken(token);
+  if (!member) {
     return null;
   }
-
-  const now = new Date();
-  // Only reject tokens with a clearly valid expiry date that is genuinely in the past.
-  // Google Sheets may return dates as formatted strings (e.g. "30/05/2026") or, if the
-  // cell has number formatting, as a raw date-serial string (e.g. "46188" ≈ epoch time
-  // when parsed by JS). Treating an unparseable or epoch-era date as "expired" would
-  // silently break all visitor links, so we only expire when the parsed date is both
-  // valid and after the year 2000.
-  const MIN_EXPIRY_YEAR = 2000;
-
-  // Search for a matching token
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    const rowEventId = row[eventIdCol];
-    const rowToken = row[tokenCol];
-
-    // Check event ID and token match
-    if (rowEventId !== eventId || rowToken !== token) {
-      continue;
-    }
-
-    // Check token expiry (robustly)
-    if (tokenExpiresAtCol !== undefined) {
-      const expiresAt = row[tokenExpiresAtCol];
-      if (expiresAt) {
-        const expiresDate = new Date(expiresAt);
-        const isValidDate = !isNaN(expiresDate.getTime());
-        const isReasonablyRecent = isValidDate && expiresDate.getFullYear() >= MIN_EXPIRY_YEAR;
-        if (isReasonablyRecent && expiresDate < now) {
-          console.warn('[validateVisitorToken] Token expired. expiresAt raw value:', expiresAt);
-          return null;
-        }
-      }
-    }
-
-    // Token is valid
-    return parseInviteeRow(row, colMap);
+  // The token's member must belong to this event's group
+  if (member.groupId !== event.groupId) {
+    return null;
   }
-
-  // No matching row found — log diagnostic info to help trace the cause
-  console.warn(
-    '[validateVisitorToken] No matching row for eventId=%s token=%s…  Rows checked: %d. Event IDs in sheet: %s',
-    eventId,
-    token.substring(0, 8),
-    rows.length,
-    rows.map((r) => r[eventIdCol] ?? '(empty)').join(', ')
-  );
-  return null;
+  // Reject tokens for archived groups (last season's groups expire when archived)
+  const group = await getGroupById(event.groupId);
+  if (!group || group.status === 'archived') {
+    return null;
+  }
+  return member;
 }
 
-// Mark invitees as notified by setting notified_at to current ISO timestamp.
-export async function markInviteesNotified(inviteeIds: string[]): Promise<void> {
-  if (inviteeIds.length === 0) {
-    return;
-  }
-
-  const sheets = getGoogleSheetsClient();
-  const spreadsheetId = getSpreadsheetId();
-  const colMap = await getColumnMap(INVITEES_SHEET, spreadsheetId);
-
-  // Fetch all invitee rows to find row numbers for the given IDs
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: INVITEES_RANGE,
-  });
-
-  const rows = response.data.values;
-  if (!rows) {
-    return;
-  }
-
-  const inviteeIdCol = colMap['invitee_id'];
-  const notifiedAtCol = colMap['notified_at'];
-
-  if (inviteeIdCol === undefined || notifiedAtCol === undefined) {
-    return;
-  }
-
-  const now = new Date().toISOString();
-  const updateData: Array<{ range: string; values: string[][] }> = [];
-
-  // Build set of IDs to update for fast lookup
-  const idsToNotify = new Set<string>(inviteeIds);
-
-  // Find row numbers for matching invitees
-  for (let i = 0; i < rows.length; i++) {
-    const inviteeId = rows[i][inviteeIdCol];
-    if (inviteeId && idsToNotify.has(inviteeId)) {
-      const rowNumber = i + 2;
-      updateData.push({
-        range: `${INVITEES_SHEET}!${getColumnLetter(notifiedAtCol)}${rowNumber}`,
-        values: [[now]],
-      });
-    }
-  }
-
-  // Execute batch update for all notified invitees at once
-  if (updateData.length > 0) {
-    await sheets.spreadsheets.values.batchUpdate({
-      spreadsheetId,
-      requestBody: {
-        data: updateData,
-        valueInputOption: 'USER_ENTERED',
-      },
-    });
-  }
-}
-
-// Check whether a member is an invitee for a specific event.
-export async function isMemberInvitee(
-  eventId: string,
-  userName: string
-): Promise<boolean> {
-  const sheets = getGoogleSheetsClient();
-  const spreadsheetId = getSpreadsheetId();
-  const colMap = await getColumnMap(INVITEES_SHEET, spreadsheetId);
-
-  // Fetch all invitee rows
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: INVITEES_RANGE,
-  });
-
-  const rows = response.data.values;
-  if (!rows) {
-    return false;
-  }
-
-  const eventIdCol = colMap['event_id'];
-  const userNameCol = colMap['user_name'];
-  const inviteeTypeCol = colMap['invitee_type'];
-
-  if (eventIdCol === undefined || userNameCol === undefined) {
-    return false;
-  }
-
-  // Search for a matching member invitee
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    const rowType = inviteeTypeCol !== undefined ? row[inviteeTypeCol] : 'member';
-    if (row[eventIdCol] === eventId && rowType === 'member' && row[userNameCol] === userName) {
-      return true;
-    }
-  }
-
-  return false;
-}
 
 // ─── Composite Read Functions ──────────────────────────────────────────────────
+
+// Build a userName → display-name map for a poll's roster, disambiguating shared first
+// names against each other only (a lone "Sue" stays "Sue"; two "Sue"s become "Sue A"/
+// "Sue B", extending the surname prefix as needed). See display-name-utils.
+function buildRosterDisplayNames(userNames: string[], allUsers: User[]): Record<string, string> {
+  const byUser: Record<string, User> = {};
+  for (let i = 0; i < allUsers.length; i++) {
+    if (allUsers[i].userName) byUser[allUsers[i].userName] = allUsers[i];
+  }
+  const seen: Record<string, boolean> = {};
+  const people: Array<{ userName: string; firstName: string; lastName: string }> = [];
+  for (let i = 0; i < userNames.length; i++) {
+    const un = userNames[i];
+    if (!un || seen[un]) continue;
+    seen[un] = true;
+    const u = byUser[un];
+    if (u) {
+      people.push({ userName: un, firstName: u.fullKnownAs || u.firstName || un, lastName: u.lastName || '' });
+    } else {
+      people.push({ userName: un, firstName: un, lastName: '' });
+    }
+  }
+  return disambiguateDisplayNames(people);
+}
 
 // Build AvailabilityEventDetail for the member response page.
 export async function getEventDetailForMember(
   eventId: string,
-  callerUserName: string
+  callerUserName: string,
+  callerRole: string = ''
 ): Promise<AvailabilityEventDetail | null> {
-  // Fetch the event
-  const event = await getEventById(eventId);
-  if (!event) {
+  // Fetch event + slots + responses + invitees in a single batched read
+  const bundle = await fetchEventBundle(eventId);
+  if (!bundle) {
     return null;
   }
-
-  // Fetch slots for this event
-  const slots = await getSlotsForEvent(eventId);
-
-  // Fetch all responses for this event
-  const allResponseRecords = await getResponsesForEvent(eventId);
+  const event = bundle.event;
+  const slots = bundle.slots;
+  const allResponseRecords = bundle.responses;
 
   // Build caller's own response map: slotId → response
   const myResponses: Record<string, AvailabilityResponse> = {};
@@ -1825,19 +1705,31 @@ export async function getEventDetailForMember(
   const isCreator = event.createdByUsername === callerUserName;
   const showAll = event.showResponsesToRespondents || isCreator;
 
+  // Roster (group events) — fetched up front so its members join the display-name
+  // disambiguation set alongside respondents (so a shared first name resolves the same
+  // way whether the person has replied yet or not).
+  let invitees: AvailabilityInvitee[] = [];
+  if (event.groupId) {
+    invitees = await getEventRoster(event);
+  }
+
+  // Build ONE disambiguated display-name map for every member shown in this poll
+  // (caller + member respondents + roster members).
+  const rosterUserNames: string[] = [callerUserName];
+  for (let i = 0; i < allResponseRecords.length; i++) {
+    const rec = allResponseRecords[i];
+    if (rec.respondentType === 'member' && rec.userName) rosterUserNames.push(rec.userName);
+  }
+  for (let i = 0; i < invitees.length; i++) {
+    const inv = invitees[i];
+    if (inv.inviteeType === 'member' && inv.userName) rosterUserNames.push(inv.userName);
+  }
+  const allUsers = await getAllUsers();
+  const userNameToDisplay = buildRosterDisplayNames(rosterUserNames, allUsers);
+
   let allResponses: AvailabilityParticipantResponses[] = [];
 
   if (showAll) {
-    // Get display names for member respondents
-    const allUsers = await getAllUsers();
-    const userNameToDisplay: Record<string, string> = {};
-    for (let i = 0; i < allUsers.length; i++) {
-      const u = allUsers[i];
-      if (u.userName) {
-        userNameToDisplay[u.userName] = u.fullKnownAs || u.fullName || u.userName;
-      }
-    }
-
     // Group responses by respondent
     const participantMap: Record<string, AvailabilityParticipantResponses> = {};
 
@@ -1860,6 +1752,7 @@ export async function getEventDetailForMember(
         participantMap[participantKey] = {
           displayName,
           respondentType: rec.respondentType,
+          userName: rec.respondentType === 'member' ? rec.userName : '',
           responses: {},
         };
       }
@@ -1867,16 +1760,14 @@ export async function getEventDetailForMember(
       participantMap[participantKey].responses[rec.slotId] = rec.response;
     }
 
-    // Convert to array, putting the caller first
+    // Convert to array, EXCLUDING the caller. The client renders the caller's own
+    // responses separately (via myResponses / the "You" row, and adds them into the
+    // per-slot tallies from pendingResponses). Including the caller here as well would
+    // double-count them in the counts and show them twice in the responses modal.
     const keys = Object.keys(participantMap);
     const callerKey = `member:${callerUserName}`;
 
-    // Start with caller's entry if it exists
-    if (participantMap[callerKey]) {
-      allResponses.push(participantMap[callerKey]);
-    }
-
-    // Add remaining participants
+    // Add all participants except the caller
     for (let i = 0; i < keys.length; i++) {
       if (keys[i] !== callerKey) {
         allResponses.push(participantMap[keys[i]]);
@@ -1895,13 +1786,104 @@ export async function getEventDetailForMember(
     }
   }
 
+  // Invitee display names (group events) reuse the disambiguated map built above, plus
+  // whether the caller can manage the group (and thus proxy-respond).
+  const inviteeDisplayNames: Record<string, string> = {};
+  let canManageGroup = false;
+
+  if (event.groupId) {
+    for (let i = 0; i < invitees.length; i++) {
+      const inv = invitees[i];
+      if (inv.inviteeType === 'member' && inv.userName) {
+        inviteeDisplayNames[inv.userName] = userNameToDisplay[inv.userName] || inv.userName;
+      }
+    }
+
+    // Determine whether the caller can manage the group (and thus proxy-respond)
+    const group = await getGroupById(event.groupId);
+    if (group) {
+      canManageGroup = await canManageGroupMembers(group, callerUserName, callerRole);
+    }
+  }
+
   return {
     event,
     slots,
     myResponses,
     allResponses,
     concludedSlot,
+    invitees,
+    inviteeDisplayNames,
+    canManageGroup,
   };
+}
+
+// Fetch an event plus its slots, responses, and invitees in ONE batchGet instead of four
+// separate reads. Column maps are cached, so this is a single Sheets read per call — used by
+// the manage + member detail builders to stay well under the per-minute read quota.
+async function fetchEventBundle(eventId: string): Promise<{
+  event: AvailabilityEvent;
+  slots: AvailabilitySlot[];
+  responses: AvailabilityResponseRecord[];
+} | null> {
+  const sheets = getGoogleSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+
+  const [eventsColMap, slotsColMap, respColMap] = await Promise.all([
+    getColumnMap(EVENTS_SHEET, spreadsheetId),
+    getColumnMap(SLOTS_SHEET, spreadsheetId),
+    getColumnMap(RESPONSES_SHEET, spreadsheetId),
+  ]);
+
+  // Single batched read of the three ranges (roster comes from group members, not a sheet)
+  const batch = await sheets.spreadsheets.values.batchGet({
+    spreadsheetId,
+    ranges: [EVENTS_RANGE, SLOTS_RANGE, RESPONSES_RANGE],
+  });
+  const vr = batch.data.valueRanges || [];
+  const eventRows = (vr[0] && vr[0].values) ? (vr[0].values as string[][]) : [];
+  const slotRows = (vr[1] && vr[1].values) ? (vr[1].values as string[][]) : [];
+  const respRows = (vr[2] && vr[2].values) ? (vr[2].values as string[][]) : [];
+
+  // Find the event
+  const eventIdCol = eventsColMap['event_id'];
+  let event: AvailabilityEvent | null = null;
+  if (eventIdCol !== undefined) {
+    for (let i = 0; i < eventRows.length; i++) {
+      if (eventRows[i][eventIdCol] === eventId) {
+        event = parseEventRow(eventRows[i], eventsColMap);
+        break;
+      }
+    }
+  }
+  if (!event) {
+    return null;
+  }
+
+  // Slots for this event, ordered by display_order
+  const slots: AvailabilitySlot[] = [];
+  const slotsEventIdCol = slotsColMap['event_id'];
+  if (slotsEventIdCol !== undefined) {
+    for (let i = 0; i < slotRows.length; i++) {
+      if (slotRows[i][slotsEventIdCol] === eventId) {
+        slots.push(parseSlotRow(slotRows[i], slotsColMap));
+      }
+    }
+  }
+  slots.sort((a, b) => a.displayOrder - b.displayOrder);
+
+  // Responses for this event
+  const responses: AvailabilityResponseRecord[] = [];
+  const respEventIdCol = respColMap['event_id'];
+  if (respEventIdCol !== undefined) {
+    for (let i = 0; i < respRows.length; i++) {
+      if (respRows[i][respEventIdCol] === eventId) {
+        responses.push(parseResponseRow(respRows[i], respColMap));
+      }
+    }
+  }
+
+  return { event, slots, responses };
 }
 
 // Build AvailabilityManageDetail for the manage page.
@@ -1909,30 +1891,29 @@ export async function getEventDetailForMember(
 export async function getEventManageDetail(
   eventId: string
 ): Promise<AvailabilityManageDetail | null> {
-  // Fetch the event
-  const event = await getEventById(eventId);
-  if (!event) {
+  // Fetch event + slots + responses + invitees in a single batched read
+  const bundle = await fetchEventBundle(eventId);
+  if (!bundle) {
     return null;
   }
+  const event = bundle.event;
+  const slots = bundle.slots;
+  const allResponseRecords = bundle.responses;
+  // Roster comes straight from live group membership (there is no invitees sheet)
+  const invitees = await getEventRoster(event);
 
-  // Fetch slots for this event
-  const slots = await getSlotsForEvent(eventId);
-
-  // Fetch all responses for this event
-  const allResponseRecords = await getResponsesForEvent(eventId);
-
-  // Fetch all invitees for this event
-  const invitees = await getInviteesForEvent(eventId);
-
-  // Get display names for member respondents and invitees
-  const allUsers = await getAllUsers();
-  const userNameToDisplay: Record<string, string> = {};
-  for (let i = 0; i < allUsers.length; i++) {
-    const u = allUsers[i];
-    if (u.userName) {
-      userNameToDisplay[u.userName] = u.fullKnownAs || u.fullName || u.userName;
-    }
+  // Disambiguated display names for every member shown (roster + respondents)
+  const rosterUserNames: string[] = [];
+  for (let i = 0; i < invitees.length; i++) {
+    const inv = invitees[i];
+    if (inv.inviteeType === 'member' && inv.userName) rosterUserNames.push(inv.userName);
   }
+  for (let i = 0; i < allResponseRecords.length; i++) {
+    const rec = allResponseRecords[i];
+    if (rec.respondentType === 'member' && rec.userName) rosterUserNames.push(rec.userName);
+  }
+  const allUsers = await getAllUsers();
+  const userNameToDisplay = buildRosterDisplayNames(rosterUserNames, allUsers);
 
   // Build invitee display names map (only for member-type invitees)
   const inviteeDisplayNames: Record<string, string> = {};
@@ -1964,6 +1945,7 @@ export async function getEventManageDetail(
       participantMap[participantKey] = {
         displayName,
         respondentType: rec.respondentType,
+        userName: rec.respondentType === 'member' ? rec.userName : '',
         responses: {},
       };
     }
@@ -2027,9 +2009,9 @@ export async function getEventDetailForVisitor(
   allResponses: AvailabilityParticipantResponses[];
   concludedSlot: AvailabilitySlot | null;
 } | null> {
-  // Validate the visitor token first
-  const invitee = await validateVisitorToken(eventId, token);
-  if (!invitee) {
+  // Validate the token → the group member holding it
+  const member = await validateGroupMemberToken(eventId, token);
+  if (!member) {
     return null;
   }
 
@@ -2039,18 +2021,49 @@ export async function getEventDetailForVisitor(
     return null;
   }
 
-  // Fetch slots for this event
-  const slots = await getSlotsForEvent(eventId);
+  // Build an invitee-shaped record from the group member (the guest page reads
+  // invitee.visitorName as its greeting label)
+  const invitee: AvailabilityInvitee = {
+    inviteeId: member.memberId,
+    eventId,
+    groupMemberId: member.memberId,
+    inviteeType: member.memberType,
+    userName: member.userName,
+    visitorName: member.visitorName,
+    visitorEmail: member.visitorEmail,
+    token: '',
+    tokenExpiresAt: '',
+    notifiedAt: '',
+    createdAt: member.createdAt || '',
+  };
 
-  // Fetch all responses for this event
+  // Fetch slots + responses for this event
+  const slots = await getSlotsForEvent(eventId);
   const allResponseRecords = await getResponsesForEvent(eventId);
 
-  // Build visitor's own response map using inviteeId as the key
+  // Build the person's own response map. Members are keyed by userName (so it merges with a
+  // logged-in reply); visitors by visitor email.
+  const isMemberInvitee = member.memberType === 'member';
   const myResponses: Record<string, AvailabilityResponse> = {};
   for (let i = 0; i < allResponseRecords.length; i++) {
     const rec = allResponseRecords[i];
-    if (rec.respondentType === 'visitor' && rec.inviteeId === invitee.inviteeId) {
-      myResponses[rec.slotId] = rec.response;
+    if (isMemberInvitee) {
+      if (rec.respondentType === 'member' && rec.userName === member.userName) {
+        myResponses[rec.slotId] = rec.response;
+      }
+    } else {
+      if (rec.respondentType === 'visitor' && rec.visitorEmail === member.visitorEmail) {
+        myResponses[rec.slotId] = rec.response;
+      }
+    }
+  }
+
+  // For members, resolve a display name so the page greets them by name (reuses the
+  // visitorName field as the label on the shared guest page).
+  if (isMemberInvitee && member.userName) {
+    const memberUser = await getUserByUsername(member.userName);
+    if (memberUser) {
+      invitee.visitorName = memberUser.fullKnownAs || memberUser.fullName || member.userName;
     }
   }
 
@@ -2058,15 +2071,14 @@ export async function getEventDetailForVisitor(
   let allResponses: AvailabilityParticipantResponses[] = [];
 
   if (event.showResponsesToRespondents) {
-    // Get display names for member respondents
-    const allUsers = await getAllUsers();
-    const userNameToDisplay: Record<string, string> = {};
-    for (let i = 0; i < allUsers.length; i++) {
-      const u = allUsers[i];
-      if (u.userName) {
-        userNameToDisplay[u.userName] = u.fullKnownAs || u.fullName || u.userName;
-      }
+    // Disambiguated display names for the member respondents shown in the results
+    const rosterUserNames: string[] = [];
+    for (let i = 0; i < allResponseRecords.length; i++) {
+      const rec = allResponseRecords[i];
+      if (rec.respondentType === 'member' && rec.userName) rosterUserNames.push(rec.userName);
     }
+    const allUsers = await getAllUsers();
+    const userNameToDisplay = buildRosterDisplayNames(rosterUserNames, allUsers);
 
     const participantMap: Record<string, AvailabilityParticipantResponses> = {};
 
@@ -2088,6 +2100,7 @@ export async function getEventDetailForVisitor(
         participantMap[participantKey] = {
           displayName,
           respondentType: rec.respondentType,
+          userName: rec.respondentType === 'member' ? rec.userName : '',
           responses: {},
         };
       }
@@ -2130,11 +2143,11 @@ export async function getOpenPollsForMember(
   const batchResp = await sheets.spreadsheets.values.batchGet({
     spreadsheetId,
     ranges: [
-      EVENTS_RANGE,               // 0
-      `${SLOTS_SHEET}!A2:F`,      // 1
-      `${RESPONSES_SHEET}!A2:K`,  // 2
-      `${INVITEES_SHEET}!A2:K`,   // 3
-      'AvailabilityGroups!A2:I',  // 4
+      EVENTS_RANGE,                     // 0
+      `${SLOTS_SHEET}!A2:F`,            // 1
+      `${RESPONSES_SHEET}!A2:K`,        // 2
+      'AvailabilityGroupMembers!A2:N',  // 3 — the roster (there is no invitees sheet)
+      'AvailabilityGroups!A2:I',        // 4
     ],
   });
 
@@ -2144,14 +2157,14 @@ export async function getOpenPollsForMember(
   const eventRows  = (vr[0].values || []) as string[][];
   const slotRows   = (vr[1].values || []) as string[][];
   const respRows   = (vr[2].values || []) as string[][];
-  const invRows    = (vr[3].values || []) as string[][];
+  const memberRows = (vr[3].values || []) as string[][];
   const groupRows  = (vr[4].values || []) as string[][];
 
-  const [eventsColMap, slotsColMap, respColMap, invColMap, groupsColMap] = await Promise.all([
+  const [eventsColMap, slotsColMap, respColMap, membersColMap, groupsColMap] = await Promise.all([
     getColumnMap(EVENTS_SHEET, spreadsheetId),
     getColumnMap(SLOTS_SHEET, spreadsheetId),
     getColumnMap(RESPONSES_SHEET, spreadsheetId),
-    getColumnMap(INVITEES_SHEET, spreadsheetId),
+    getColumnMap('AvailabilityGroupMembers', spreadsheetId),
     getColumnMap('AvailabilityGroups', spreadsheetId),
   ]);
 
@@ -2165,7 +2178,7 @@ export async function getOpenPollsForMember(
   const getEv  = makeGet(eventsColMap);
   const getSl  = makeGet(slotsColMap);
   const getRe  = makeGet(respColMap);
-  const getInv = makeGet(invColMap);
+  const getMem = makeGet(membersColMap);
   const getGr  = makeGet(groupsColMap);
 
   // Group name lookup: groupId → name
@@ -2198,13 +2211,14 @@ export async function getOpenPollsForMember(
     if (rType === 'member' && uname === callerUserName) hasRespondedSet.add(eid);
   }
 
-  // EventIds where caller is an explicit invitee (group events)
-  const invitedEventIds = new Set<string>();
-  for (let i = 0; i < invRows.length; i++) {
-    const uname = getInv(invRows[i], 'user_name');
+  // GroupIds the caller belongs to. Polls are group-only, so a member sees a poll only
+  // when they are a member of that poll's group.
+  const callerGroupIds = new Set<string>();
+  for (let i = 0; i < memberRows.length; i++) {
+    const uname = getMem(memberRows[i], 'user_name');
     if (uname.toLowerCase() === callerUserName.toLowerCase()) {
-      const eid = getInv(invRows[i], 'event_id');
-      if (eid) invitedEventIds.add(eid);
+      const gid = getMem(memberRows[i], 'group_id');
+      if (gid) callerGroupIds.add(gid);
     }
   }
 
@@ -2217,9 +2231,9 @@ export async function getOpenPollsForMember(
     if (!eventId) continue;
 
     const groupId = getEv(row, 'group_id');
-    const isPublic = !groupId;
-    const isInvited = isPublic || invitedEventIds.has(eventId);
-    if (!isInvited) continue;
+
+    // Only show polls whose group the caller belongs to
+    if (!groupId || !callerGroupIds.has(groupId)) continue;
 
     results.push({
       eventId,

@@ -34,6 +34,7 @@ export interface AvailabilityGroupMember {
   visitorEmail: string;         // blank for members
   addedByUsername: string;
   createdAt: string;
+  token: string;                // per-member response token (generated lazily on email send)
 }
 
 // Summary returned to the groups list / hub page
@@ -107,6 +108,8 @@ export interface AvailabilityEvent {
   concludedByUsername: string;
   createdAt: string;
   updatedAt: string;
+  matchFinder: boolean;         // true = render as a date×time match-finder (matrix + results), independent of `type`
+  offeredSlotIds: string[];     // match-finder: the slotIds the organiser has selected to offer the opponent
 }
 
 // Summary used in lists (group page event feed, public event list)
@@ -171,6 +174,7 @@ export interface AvailabilityInvitee {
 export interface AvailabilityParticipantResponses {
   displayName: string;
   respondentType: AvailabilityRespondentType;
+  userName: string;                                // member username (blank for visitors) — used to key proxy edits
   responses: Record<string, AvailabilityResponse>; // slotId → response
 }
 
@@ -182,6 +186,11 @@ export interface AvailabilityEventDetail {
   // Empty array if show_responses_to_respondents is false and caller is not creator
   allResponses: AvailabilityParticipantResponses[];
   concludedSlot: AvailabilitySlot | null;
+  // Group-event roster (empty for public events) — lets the member page show every group
+  // member, including those who have not responded yet.
+  invitees: AvailabilityInvitee[];
+  inviteeDisplayNames: Record<string, string>;       // userName → displayName
+  canManageGroup: boolean;                           // caller may submit responses on behalf of others
 }
 
 // Full detail returned to the manage page
@@ -212,13 +221,17 @@ export interface CreateEventPayload {
     slotDatetime?: string | null;
     slotLabel: string;
   }>;
+  // Date-finder ("find best date") mode — renders the date×time matrix + results.
+  // Optional so plain fixed-date/text polls are unaffected.
+  matchFinder?: boolean;
 }
 
-// Body for member respond endpoint
+// Body for member respond endpoint.
+// 'none' is a special value meaning "clear my saved response for this slot".
 export interface MemberRespondPayload {
   responses: Array<{
     slotId: string;
-    response: AvailabilityResponse;
+    response: AvailabilityResponse | 'none';
   }>;
 }
 

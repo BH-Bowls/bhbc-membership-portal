@@ -804,14 +804,16 @@ async function fetchAvailabilityItems(
 
   const sheets = getGoogleSheetsClient();
 
-  // Fetch all four availability sheets in one batchGet call
+  // Fetch the availability sheets in one batchGet call. The roster is the group's members
+  // (there is no invitees sheet), so we read AvailabilityGroupMembers to find the member's
+  // groups.
   const batchResponse = await sheets.spreadsheets.values.batchGet({
     spreadsheetId: availabilitySpreadsheetId,
     ranges: [
       'AvailabilityEvents!A2:P',
       'AvailabilitySlots!A2:F',
       'AvailabilityResponses!A2:K',
-      'AvailabilityInvitees!A2:K',
+      'AvailabilityGroupMembers!A2:N',
     ],
   });
 
@@ -821,11 +823,11 @@ async function fetchAvailabilityItems(
   }
 
   // Get column maps for each sheet so we access by name
-  const [eventsColMap, slotsColMap, responsesColMap, inviteesColMap] = await Promise.all([
+  const [eventsColMap, slotsColMap, responsesColMap, membersColMap] = await Promise.all([
     getColumnMap('AvailabilityEvents', availabilitySpreadsheetId),
     getColumnMap('AvailabilitySlots', availabilitySpreadsheetId),
     getColumnMap('AvailabilityResponses', availabilitySpreadsheetId),
-    getColumnMap('AvailabilityInvitees', availabilitySpreadsheetId),
+    getColumnMap('AvailabilityGroupMembers', availabilitySpreadsheetId),
   ]);
 
   // Build safe cell accessor for a given column map
@@ -843,12 +845,12 @@ async function fetchAvailabilityItems(
   const getEvent = makeGetter(eventsColMap);
   const getSlot = makeGetter(slotsColMap);
   const getResponse = makeGetter(responsesColMap);
-  const getInvitee = makeGetter(inviteesColMap);
+  const getMember = makeGetter(membersColMap);
 
   const eventsRows = valueRanges[0].values || [];
   const slotsRows = valueRanges[1].values || [];
   const responsesRows = valueRanges[2].values || [];
-  const inviteesRows = valueRanges[3].values || [];
+  const memberRows = valueRanges[3].values || [];
 
   // Build a map from eventId → member's response record(s) for quick lookups
   // Map: eventId → slotId → response value ('yes' | 'maybe' | 'no')
@@ -874,15 +876,15 @@ async function fetchAvailabilityItems(
     }
   }
 
-  // Build a set of eventIds where this member is an invitee
-  const invitedEventIds = new Set<string>();
-  for (let i = 0; i < inviteesRows.length; i++) {
-    const row = inviteesRows[i] as string[];
-    const inviteeUserName = getInvitee(row, 'user_name');
-    if (inviteeUserName.toLowerCase() === userName.toLowerCase()) {
-      const eventId = getInvitee(row, 'event_id');
-      if (eventId) {
-        invitedEventIds.add(eventId);
+  // Build the set of groupIds this member belongs to (the roster = group members)
+  const callerGroupIds = new Set<string>();
+  for (let i = 0; i < memberRows.length; i++) {
+    const row = memberRows[i] as string[];
+    const memberUserName = getMember(row, 'user_name');
+    if (memberUserName.toLowerCase() === userName.toLowerCase()) {
+      const groupId = getMember(row, 'group_id');
+      if (groupId) {
+        callerGroupIds.add(groupId);
       }
     }
   }
@@ -911,13 +913,8 @@ async function fetchAvailabilityItems(
       continue;
     }
 
-    // Determine if this member is an invitee:
-    // public events (groupId is empty) include all members;
-    // group events require an explicit invitee record
-    const isPublicEvent = !groupId;
-    const isMemberInvited = isPublicEvent || invitedEventIds.has(eventId);
-
-    if (!isMemberInvited) {
+    // The member is invited when they belong to the event's group (polls are group-only)
+    if (!groupId || !callerGroupIds.has(groupId)) {
       continue;
     }
 

@@ -11,8 +11,9 @@ import {
   addGroupMembers,
   isGroupMember,
   canManageGroupMembers,
+  ensureGroupMemberTokens,
 } from '@/lib/availability-groups-sheets';
-import { getGroupEvents, createInviteesFromGroupMembers } from '@/lib/availability-events-sheets';
+import { getGroupEvents } from '@/lib/availability-events-sheets';
 import type { AddGroupMembersPayload } from '@/types/availability';
 
 // GET /api/availability/groups/[groupId]/members
@@ -141,36 +142,25 @@ export async function POST(
         }
       }
 
-      // Step 3: For each open event, create invitee records for the new members
-      for (let i = 0; i < openEvents.length; i++) {
-        const ev = openEvents[i];
-        try {
-          // Create invitee records — returns the newly created invitees (including visitor tokens)
-          const newInvitees = await createInviteesFromGroupMembers(
-            ev.eventId,
-            ev.expiresAt,
-            newMembers
-          );
+      // Step 3: Ensure tokens for the group, then pick out just the newly added members
+      const membersWithTokens = await ensureGroupMemberTokens(groupId);
+      const newMemberIds = new Set(newMembers.map((m) => m.memberId));
+      const newMembersWithTokens = membersWithTokens.filter((m) => newMemberIds.has(m.memberId));
 
-          // Step 4: Send event invite emails to the new members for this open event
-          if (newInvitees.length > 0) {
-            try {
-              const { sendEventInviteEmails } = await import('@/lib/email/availability');
-              await sendEventInviteEmails(ev.eventId, ev.groupId, newInvitees, userName);
-            } catch (emailError) {
-              // Email failure must not block the response
-              console.error(
-                `[POST /api/availability/groups/[groupId]/members] Invite email failed for event ${ev.eventId}:`,
-                emailError
-              );
-            }
+      // Step 4: Email the new members an invite for each open event (no invitee sheet)
+      if (newMembersWithTokens.length > 0) {
+        for (let i = 0; i < openEvents.length; i++) {
+          const ev = openEvents[i];
+          try {
+            const { sendEventInviteEmails } = await import('@/lib/email/availability');
+            await sendEventInviteEmails(ev.eventId, ev.groupId, newMembersWithTokens, userName);
+          } catch (emailError) {
+            // Email failure must not block the response
+            console.error(
+              `[POST /api/availability/groups/[groupId]/members] Invite email failed for event ${ev.eventId}:`,
+              emailError
+            );
           }
-        } catch (inviteError) {
-          // Log but continue — don't fail the whole request if one event's invitees fail
-          console.error(
-            `[POST /api/availability/groups/[groupId]/members] Failed to create invitees for event ${ev.eventId}:`,
-            inviteError
-          );
         }
       }
 

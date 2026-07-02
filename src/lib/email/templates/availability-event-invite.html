@@ -35,9 +35,13 @@
                 <strong>{{creatorName}}</strong> has created a new availability poll: <strong>{{eventTitle}}</strong>{{#if groupName}} in <strong>{{groupName}}</strong>{{/if}}.
               </p>
 
-              <p style="margin: 0 0 30px 0; font-size: 16px; color: #1F2937;">
-                Please indicate your availability by <strong>{{expiresAtFormatted}}</strong>.
+              <p style="margin: 0 0 20px 0; font-size: 16px; color: #1F2937;">
+                Please indicate your availability. This poll closes on <strong>{{expiresAtFormatted}}</strong>.
               </p>
+
+              {{#if customMessage}}
+              <p style="margin: 0 0 30px 0; font-size: 16px; color: #1F2937; white-space: pre-line;">{{customMessage}}</p>
+              {{/if}}
 
               <!-- CTA button -->
               <table role="presentation" style="margin: 0 0 30px 0;">
@@ -61,8 +65,16 @@
           <!-- Footer -->
           <tr>
             <td style="background-color: #F9FAFB; padding: 20px 30px; text-align: center; border-top: 1px solid #E5E7EB;">
-              <p style="margin: 0; font-size: 14px; color: #6B7280;">
-                This is an automated email from the {{BRAND_NAME}} Members Portal.
+              <p style="margin: 0 0 6px 0; font-size: 14px; color: #374151;">
+                <strong>Please do not reply to this email.</strong>
+              </p>
+              {{#if captainName}}
+              <p style="margin: 0 0 10px 0; font-size: 14px; color: #374151;">
+                To discuss this poll, contact {{captainName}}{{#if captainPhone}} on {{captainPhone}}{{/if}}{{#if captainEmail}} ({{captainEmail}}){{/if}}.
+              </p>
+              {{/if}}
+              <p style="margin: 0; font-size: 13px; color: #6B7280;">
+                Automated email from the {{BRAND_NAME}} Members Portal.
               </p>
             </td>
           </tr>

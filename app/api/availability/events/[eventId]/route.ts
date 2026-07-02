@@ -53,7 +53,7 @@ export async function GET(
     // Public event (groupId blank): any authenticated member can view
 
     // Fetch full event detail with responses resolved for this caller
-    const detail = await getEventDetailForMember(eventId, userName);
+    const detail = await getEventDetailForMember(eventId, userName, userRole);
     if (!detail) {
       return NextResponse.json({ error: 'Event not found' }, { status: 404 });
     }

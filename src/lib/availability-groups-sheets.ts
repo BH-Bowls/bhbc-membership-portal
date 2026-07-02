@@ -2,6 +2,7 @@
 // Google Sheets data layer for Availability Planner v2 — Groups and Group Members
 // Handles all CRUD operations for AvailabilityGroups and AvailabilityGroupMembers sheets
 
+import crypto from 'crypto';
 import {
   getColumnMap,
   getColumnLetter,
@@ -26,7 +27,8 @@ const EVENTS_SHEET = 'AvailabilityEvents';
 
 // Data ranges (row 1 = header, data starts row 2)
 const GROUPS_RANGE = `${GROUPS_SHEET}!A2:I`;
-const MEMBERS_RANGE = `${MEMBERS_SHEET}!A2:H`;
+// Widened to include the Token column (col I) — a per-member response token
+const MEMBERS_RANGE = `${MEMBERS_SHEET}!A2:N`;
 const EVENTS_RANGE = `${EVENTS_SHEET}!A2:P`;
 
 // ─── Environment Variable Getter ──────────────────────────────────────────────
@@ -388,12 +390,15 @@ export async function getGroupDetail(
     // Get all users to build a name lookup map
     const allUsers = await getAllUsers();
 
-    // Build a map of userName → fullKnownAs for fast lookup
+    // Build a map of userName → full name for fast lookup. The Manage Members list (and
+    // the create-poll recipient list) show the FULL name so the committee can tell apart
+    // members who share a first name — unlike the poll response lists, which use the
+    // shorter disambiguated names.
     const userNameMap: Record<string, string> = {};
     for (let i = 0; i < allUsers.length; i++) {
       const user = allUsers[i];
       if (user.userName) {
-        userNameMap[user.userName] = user.fullKnownAs || user.fullName || user.userName;
+        userNameMap[user.userName] = user.fullName || user.fullKnownAs || user.userName;
       }
     }
 
@@ -765,7 +770,93 @@ function parseGroupMemberRow(row: string[], colMap: Record<string, number>): Ava
     visitorEmail: get('visitor_email'),
     addedByUsername: get('added_by_username'),
     createdAt: get('created_at'),
+    token: get('token'),
   };
+}
+
+// Ensure every member of a group has a response token, generating (and persisting) one for
+// any that are blank. Returns the members with tokens populated. One read + at most one
+// batched write. This is the availability equivalent of the friendlies lazy token pattern —
+// called on email send. Requires a "Token" column on AvailabilityGroupMembers.
+export async function ensureGroupMemberTokens(groupId: string): Promise<AvailabilityGroupMember[]> {
+  const sheets = getGoogleSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+  const colMap = await getColumnMap(MEMBERS_SHEET, spreadsheetId);
+
+  const tokenCol = colMap['token'];
+  if (tokenCol === undefined) {
+    console.error('[ensureGroupMemberTokens] AvailabilityGroupMembers sheet has no "Token" column — response links will require login. Add a "Token" column.');
+  }
+
+  // Read all member rows
+  const response = await sheets.spreadsheets.values.get({ spreadsheetId, range: MEMBERS_RANGE });
+  const rows = response.data.values;
+  const results: AvailabilityGroupMember[] = [];
+  if (!rows) {
+    return results;
+  }
+
+  const groupIdCol = colMap['group_id'];
+  if (groupIdCol === undefined) {
+    return results;
+  }
+
+  // Collect this group's members and note which rows need a fresh token
+  const updates: { range: string; values: string[][] }[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (row[groupIdCol] !== groupId) {
+      continue;
+    }
+    const member = parseGroupMemberRow(row, colMap);
+    // Generate + persist a token if this member has none and the column exists
+    if (!member.token && tokenCol !== undefined) {
+      member.token = crypto.randomBytes(32).toString('hex');
+      updates.push({
+        range: `${MEMBERS_SHEET}!${getColumnLetter(tokenCol)}${i + 2}`,
+        values: [[member.token]],
+      });
+    }
+    results.push(member);
+  }
+
+  // One batched write for any newly generated tokens
+  if (updates.length > 0) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: { data: updates, valueInputOption: 'USER_ENTERED' },
+    });
+  }
+
+  return results;
+}
+
+// Find the group member holding the given token, across all groups. Returns null if none.
+// Used to validate a response link — the caller then checks the member's group owns the event.
+export async function getGroupMemberByToken(token: string): Promise<AvailabilityGroupMember | null> {
+  if (!token) {
+    return null;
+  }
+  const sheets = getGoogleSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+  const colMap = await getColumnMap(MEMBERS_SHEET, spreadsheetId);
+  const tokenCol = colMap['token'];
+  if (tokenCol === undefined) {
+    return null;
+  }
+
+  const response = await sheets.spreadsheets.values.get({ spreadsheetId, range: MEMBERS_RANGE });
+  const rows = response.data.values;
+  if (!rows) {
+    return null;
+  }
+
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i][tokenCol] === token) {
+      return parseGroupMemberRow(rows[i], colMap);
+    }
+  }
+  return null;
 }
 
 // Add a batch of members to a group.
@@ -853,6 +944,7 @@ export async function addGroupMembers(
       visitorEmail: '',
       addedByUsername,
       createdAt: now,
+      token: '',
     };
 
     // Append to sheet sequentially
@@ -879,6 +971,7 @@ export async function addGroupMembers(
       visitorEmail: v.visitorEmail,
       addedByUsername,
       createdAt: now,
+      token: '',
     };
 
     // Append to sheet sequentially

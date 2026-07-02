@@ -4,7 +4,9 @@
 'use client';
 
 import React, { useEffect, useState, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
+import { useSession } from 'next-auth/react';
+import { Navbar } from '@/components/Navbar';
 import { getBadgeClasses, getButtonClasses, getAlertClasses } from '@/config/theme-helpers';
 import type {
   AvailabilityEvent,
@@ -38,6 +40,27 @@ function fmtDate(iso: string): string {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return '';
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+// UTC date key YYYY-MM-DD for grouping slots by date (matrix rows)
+function slotDateKey(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const y = d.getUTCFullYear();
+  const mo = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}-${mo}-${day}`;
+}
+
+// UTC time HH:MM for grouping slots by time (matrix columns)
+function slotTimeKey(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const h = String(d.getUTCHours()).padStart(2, '0');
+  const m = String(d.getUTCMinutes()).padStart(2, '0');
+  return `${h}:${m}`;
 }
 
 function typeBadgeVariant(type: string): 'primary' | 'secondary' | 'warning' {
@@ -114,6 +137,8 @@ function GuestPageInner({ eventId }: GuestPageInnerProps) {
   const [fetchError, setFetchError] = useState<string | null>(null);
 
   const [pendingResponses, setPendingResponses] = useState<Record<string, AvailabilityResponse>>({});
+  // Snapshot of saved responses, so cleared slots can be sent as 'none' on save
+  const [originalResponses, setOriginalResponses] = useState<Record<string, AvailabilityResponse>>({});
 
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -145,6 +170,7 @@ function GuestPageInner({ eventId }: GuestPageInnerProps) {
       setAllResponses(data.allResponses || []);
       setConcludedSlot(data.concludedSlot || null);
       setPendingResponses(data.myResponses || {});
+      setOriginalResponses(data.myResponses || {});
     } catch (err) {
       setFetchError('Failed to load event. Please try again or check the link from your email.');
       console.error('[GuestPage] fetchGuestData error:', err);
@@ -157,6 +183,16 @@ function GuestPageInner({ eventId }: GuestPageInnerProps) {
     setPendingResponses(prev => {
       const next = { ...prev };
       next[slotId] = response;
+      return next;
+    });
+  }
+
+  // Clear a pending response (used by the matrix tap-to-cycle). Slots that were saved
+  // before and are now absent are sent as 'none' on save to delete the stored response.
+  function clearResponse(slotId: string) {
+    setPendingResponses(prev => {
+      const next = { ...prev };
+      delete next[slotId];
       return next;
     });
   }
@@ -175,10 +211,18 @@ function GuestPageInner({ eventId }: GuestPageInnerProps) {
     setSaveError(null);
     setSaveSuccess(false);
     try {
-      const responsesPayload = [];
+      const responsesPayload: Array<{ slotId: string; response: AvailabilityResponse | 'none' }> = [];
       const slotIds = Object.keys(pendingResponses);
       for (let i = 0; i < slotIds.length; i++) {
         responsesPayload.push({ slotId: slotIds[i], response: pendingResponses[slotIds[i]] });
+      }
+      // Slots saved before but since cleared → send 'none' to delete them
+      const originalSlotIds = Object.keys(originalResponses);
+      for (let i = 0; i < originalSlotIds.length; i++) {
+        const sid = originalSlotIds[i];
+        if (pendingResponses[sid] === undefined) {
+          responsesPayload.push({ slotId: sid, response: 'none' });
+        }
       }
       const res = await fetch(`/api/availability/guest/${eventId}/respond`, {
         method: 'POST',
@@ -293,10 +337,23 @@ function GuestPageInner({ eventId }: GuestPageInnerProps) {
         </div>
       )}
 
-      {/* ── Slot poll list ────────────────────────────────────── */}
+      {/* ── Slot poll: compact matrix (match-finder) or flat list ─── */}
       {slots.length === 0 ? (
         <div className={getAlertClasses('info')}>
           No date slots have been added to this event yet.
+        </div>
+      ) : event.matchFinder && event.slotType === 'datetime' ? (
+        <div className="mb-6">
+          <GuestMatrix
+            slots={slots}
+            pendingResponses={pendingResponses}
+            allResponses={allResponses}
+            readOnly={readOnly}
+            concludedSlotId={event.concludedSlotId}
+            onSetResponse={setResponse}
+            onClearResponse={clearResponse}
+            onViewSlot={setModalSlotId}
+          />
         </div>
       ) : (
         <div className="space-y-3 mb-6">
@@ -459,6 +516,164 @@ function GuestPageInner({ eventId }: GuestPageInnerProps) {
   );
 }
 
+// ── GuestMatrix ────────────────────────────────────────────────────────────────
+// Compact date×time grid for match-finder polls (rows = dates, columns = times),
+// mirroring the logged-in MatchMatrix but for a single respondent (the guest).
+// Tap a cell to cycle Yes → Maybe → No → clear.
+
+interface GuestMatrixProps {
+  slots: AvailabilitySlot[];
+  pendingResponses: Record<string, AvailabilityResponse>;
+  allResponses: AvailabilityParticipantResponses[];
+  readOnly: boolean;
+  concludedSlotId: string;
+  onSetResponse: (slotId: string, r: AvailabilityResponse) => void;
+  onClearResponse: (slotId: string) => void;
+  onViewSlot: (slotId: string) => void;
+}
+
+function GuestMatrix({
+  slots,
+  pendingResponses,
+  allResponses,
+  readOnly,
+  concludedSlotId,
+  onSetResponse,
+  onClearResponse,
+  onViewSlot,
+}: GuestMatrixProps) {
+  // Derive unique sorted dates (rows) and times (columns) from the slot list
+  const dateKeys: string[] = [];
+  const timeKeys: string[] = [];
+  const seenDates = new Set<string>();
+  const seenTimes = new Set<string>();
+  for (let i = 0; i < slots.length; i++) {
+    const dk = slotDateKey(slots[i].slotDatetime);
+    const tk = slotTimeKey(slots[i].slotDatetime);
+    if (dk && !seenDates.has(dk)) { seenDates.add(dk); dateKeys.push(dk); }
+    if (tk && !seenTimes.has(tk)) { seenTimes.add(tk); timeKeys.push(tk); }
+  }
+  dateKeys.sort();
+  timeKeys.sort();
+
+  // slotMap: dateKey + '|' + timeKey → AvailabilitySlot
+  const slotMap: Record<string, AvailabilitySlot> = {};
+  for (let i = 0; i < slots.length; i++) {
+    const dk = slotDateKey(slots[i].slotDatetime);
+    const tk = slotTimeKey(slots[i].slotDatetime);
+    if (dk && tk) slotMap[dk + '|' + tk] = slots[i];
+  }
+
+  function cycleCell(slotId: string, cur: AvailabilityResponse | undefined) {
+    if (cur === undefined) onSetResponse(slotId, 'yes');
+    else if (cur === 'yes') onSetResponse(slotId, 'maybe');
+    else if (cur === 'maybe') onSetResponse(slotId, 'no');
+    else onClearResponse(slotId);
+  }
+
+  function cellClass(myR: AvailabilityResponse | undefined): string {
+    if (myR === 'yes') return 'bg-green-500 text-white border-green-500';
+    if (myR === 'maybe') return 'bg-yellow-400 text-white border-yellow-400';
+    if (myR === 'no') return 'bg-red-100 text-red-700 border-red-200';
+    return 'bg-white text-gray-700 border-gray-200 hover:bg-blue-50';
+  }
+
+  function cellLabel(myR: AvailabilityResponse | undefined): string {
+    if (myR === 'yes') return '✓';
+    if (myR === 'maybe') return '?';
+    if (myR === 'no') return '✗';
+    return '—';
+  }
+
+  return (
+    <div>
+      {!readOnly && (
+        <p className="text-xs text-gray-700 mb-3">
+          Tap each cell to cycle Yes → Maybe → No → clear.
+        </p>
+      )}
+      <div className="overflow-x-auto -mx-4 px-4">
+        <table className="min-w-full border-separate border-spacing-1">
+          <thead>
+            <tr>
+              <th className="text-left text-xs font-medium text-gray-700 pb-1 pr-2 min-w-[80px]">Date</th>
+              {timeKeys.map((tk) => {
+                const h = parseInt(tk.split(':')[0], 10);
+                const suffix = h < 12 ? 'am' : 'pm';
+                const h12 = h > 12 ? h - 12 : h;
+                const label = `${h12}:${tk.split(':')[1]} ${suffix}`;
+                return (
+                  <th key={tk} className="text-center text-xs font-medium text-gray-700 pb-1 min-w-[72px]">
+                    {label}
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {dateKeys.map((dk) => {
+              const d = new Date(dk + 'T12:00:00Z');
+              const dateLabel = d.toLocaleDateString('en-GB', {
+                weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC',
+              });
+              return (
+                <tr key={dk}>
+                  <td className="text-xs text-gray-900 font-medium pr-2 py-1 whitespace-nowrap">{dateLabel}</td>
+                  {timeKeys.map((tk) => {
+                    const slot = slotMap[dk + '|' + tk];
+                    if (!slot) {
+                      return <td key={tk} className="py-1"><div className="h-10 rounded bg-gray-50 border border-gray-100" /></td>;
+                    }
+                    const myR = pendingResponses[slot.slotId] as AvailabilityResponse | undefined;
+                    const isChosen = slot.slotId === concludedSlotId;
+                    const counts = slotCounts(slot.slotId, allResponses, pendingResponses);
+                    return (
+                      <td key={tk} className="py-1">
+                        <div className={'rounded border ' + (isChosen ? 'ring-2 ring-green-400' : '')}>
+                          {!readOnly ? (
+                            <button
+                              type="button"
+                              onClick={() => cycleCell(slot.slotId, myR)}
+                              className={'w-full h-10 rounded text-sm font-bold border transition-colors ' + cellClass(myR)}
+                              title={`${fmtSlotDate(slot.slotDatetime)} — tap to cycle Yes / Maybe / No / clear`}
+                            >
+                              {cellLabel(myR)}
+                            </button>
+                          ) : (
+                            <div className={'w-full h-10 rounded text-sm font-bold border flex items-center justify-center ' + cellClass(myR)}>
+                              {cellLabel(myR)}
+                            </div>
+                          )}
+                          <div className="flex justify-center gap-1 pt-0.5 pb-0.5">
+                            <span className="text-green-700 text-xs font-medium">{counts.yes}</span>
+                            <span className="text-yellow-700 text-xs">/</span>
+                            <span className="text-yellow-700 text-xs font-medium">{counts.maybe}</span>
+                          </div>
+                          {(counts.yes + counts.maybe + counts.no) > 0 && (
+                            <div className="flex justify-center pb-0.5">
+                              <button
+                                type="button"
+                                onClick={() => onViewSlot(slot.slotId)}
+                                className="text-blue-600 text-xs hover:underline"
+                              >
+                                detail
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ── GuestPageWrapper ───────────────────────────────────────────────────────────
 
 export default function GuestEventPage({
@@ -466,32 +681,43 @@ export default function GuestEventPage({
 }: {
   params: Promise<{ eventId: string }>;
 }) {
+  const { status } = useSession();
+  const router = useRouter();
   const [eventId, setEventId] = React.useState('');
   React.useEffect(() => {
     params.then((p) => setEventId(p.eventId));
   }, [params]);
 
+  // Mirror the friendlies token flow: a logged-in member who follows a poll link
+  // is sent to the full response page (normal navbar, free to navigate the app)
+  // rather than the stripped token view. Guests stay on this token page and get a
+  // Log in button on the navbar via isTokenMode.
+  const isLoggedIn = status === 'authenticated';
+  React.useEffect(() => {
+    if (isLoggedIn && eventId) {
+      router.replace(`/availability/events/${eventId}`);
+    }
+  }, [isLoggedIn, eventId, router]);
+
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200">
-        <div className="container mx-auto px-4 py-4 max-w-2xl">
-          <div className="flex items-center gap-3">
-            <div>
-              <p className="text-lg font-bold text-gray-900">Burgess Hill Bowls Club</p>
-              <p className="text-xs text-gray-700">Availability Planner</p>
-            </div>
-          </div>
-        </div>
-      </header>
+      <Navbar showLogoOnly isTokenMode />
 
-      <Suspense fallback={
+      {isLoggedIn ? (
         <div className="text-center py-16">
           <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
           <p className="mt-3 text-gray-700">Loading…</p>
         </div>
-      }>
-        {eventId && <GuestPageInner eventId={eventId} />}
-      </Suspense>
+      ) : (
+        <Suspense fallback={
+          <div className="text-center py-16">
+            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+            <p className="mt-3 text-gray-700">Loading…</p>
+          </div>
+        }>
+          {eventId && <GuestPageInner eventId={eventId} />}
+        </Suspense>
+      )}
     </div>
   );
 }

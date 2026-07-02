@@ -117,8 +117,12 @@ export default withAuth(
     // (no-login) pages require either a logged-in session or a valid PIN cookie.
     // Logged-in members bypass it; the /rowland section and visitor token links
     // are exempt. If the env var is unset, the gate is off (pages stay public).
+    // A request carrying a per-recipient token (email links: /friendlies/game,
+    // /availability/guest, …) authenticates itself and must skip the PIN gate —
+    // otherwise a tokened visitor is wrongly asked for the members-area PIN.
     const pin = process.env.PUBLIC_ACCESS_PIN;
-    if (pin && !token && isPublicRoute(pathname) && !isPinExempt(pathname)) {
+    const hasToken = req.nextUrl.searchParams.has('token');
+    if (pin && !token && !hasToken && isPublicRoute(pathname) && !isPinExempt(pathname)) {
       const hasPin = req.cookies.get('public_access')?.value === pin;
       if (!hasPin) {
         if (pathname.startsWith('/api/')) {

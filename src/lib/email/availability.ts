@@ -19,12 +19,9 @@ import {
 import {
   getEventById,
   getSlotsForEvent,
-  getInviteesForEvent,
   getResponsesForEvent,
-  markInviteesNotified,
 } from '../availability-events-sheets';
 import type {
-  AvailabilityInvitee,
   AvailabilityGroupMember,
 } from '@/types/availability';
 
@@ -118,33 +115,43 @@ export async function sendGroupAddedEmail(
 
 // ─── 2. Event Invite Emails ────────────────────────────────────────────────────
 
-// Send event invite emails to a list of newly created invitees.
-// Members: one BCC email with a generic login URL.
-// Visitors: sequential individual emails via pooled transporter, each with unique token URL.
-// Calls markInviteesNotified() after sending.
+// Send event invite/reminder emails to a list of group members. Each recipient carries their
+// own response token (ensure it beforehand via ensureGroupMemberTokens). Everyone gets an
+// individual email with a token link that works without logging in. Returns the count sent.
 export async function sendEventInviteEmails(
   eventId: string,
   groupId: string,
-  invitees: AvailabilityInvitee[],
-  senderUsername: string
-): Promise<void> {
+  recipients: AvailabilityGroupMember[],
+  senderUsername: string,
+  options?: { customMessage?: string; subject?: string }
+): Promise<number> {
   // No-op if email is not configured
   if (!isEmailConfigured()) {
-    return;
+    return 0;
   }
 
   // Fetch the event to get title and expiry
   const event = await getEventById(eventId);
   if (!event) {
     console.error(`[sendEventInviteEmails] Event ${eventId} not found`);
-    return;
+    return 0;
   }
 
-  // Fetch the sender's display name
+  // Optional organiser message + subject override (used by republish/reminders)
+  const customMessage = (options && options.customMessage) ? options.customMessage : '';
+  const emailSubject = (options && options.subject) ? options.subject : `New availability poll — ${event.title}`;
+
+  // Fetch the sender's display name. The poll creator acts as the "captain" — their
+  // details go in the footer and their email becomes the Reply-To so replies reach them,
+  // not the club's automated inbox.
   const senderUser = await getUserByUsername(senderUsername);
   let creatorName = senderUsername;
+  let captainEmail = '';
+  let captainPhone = '';
   if (senderUser) {
     creatorName = senderUser.fullKnownAs || senderUser.fullName || senderUsername;
+    if (senderUser.emailAddress) captainEmail = senderUser.emailAddress;
+    captainPhone = senderUser.mobile || senderUser.landline || '';
   }
 
   // Fetch group name if this is a group event
@@ -166,130 +173,131 @@ export async function sendEventInviteEmails(
 
   const appUrl = await getAppUrl();
 
-  // Separate member invitees from visitor invitees
-  const memberInvitees: AvailabilityInvitee[] = [];
-  const visitorInvitees: AvailabilityInvitee[] = [];
+  // Separate member recipients from visitor recipients
+  const memberRecipients: AvailabilityGroupMember[] = [];
+  const visitorRecipients: AvailabilityGroupMember[] = [];
 
-  for (let i = 0; i < invitees.length; i++) {
-    if (invitees[i].inviteeType === 'member') {
-      memberInvitees.push(invitees[i]);
+  for (let i = 0; i < recipients.length; i++) {
+    if (recipients[i].memberType === 'member') {
+      memberRecipients.push(recipients[i]);
     } else {
-      visitorInvitees.push(invitees[i]);
+      visitorRecipients.push(recipients[i]);
     }
   }
 
-  // Track all successfully notified invitee IDs for markInviteesNotified()
-  const notifiedIds: string[] = [];
+  // Count of emails actually sent
+  let sentCount = 0;
 
-  // ── Member invitees: single BCC email ──
-  if (memberInvitees.length > 0) {
-    // Collect email addresses for member invitees
-    const allUsers = await getAllUsers();
-    const memberEmails: string[] = [];
-
-    for (let i = 0; i < memberInvitees.length; i++) {
-      const inv = memberInvitees[i];
-      let foundEmail = '';
-      // Find email address for this member
-      for (let j = 0; j < allUsers.length; j++) {
-        if (allUsers[j].userName === inv.userName) {
-          // emailAddress is string | null — only use if non-null
-          if (allUsers[j].emailAddress !== null && allUsers[j].emailAddress !== undefined) {
-            foundEmail = allUsers[j].emailAddress as string;
-          }
-          break;
-        }
-      }
-      if (foundEmail) {
-        memberEmails.push(foundEmail);
-        notifiedIds.push(inv.inviteeId);
-      }
-    }
-
-    if (memberEmails.length > 0) {
-      // The response URL for members is the event page (requires login)
-      const responseUrl = `${appUrl}/availability/events/${eventId}`;
-      const toList = memberEmails.join(', ');
-
-      const emailResult = await sendTemplateEmail(
-        toList,
-        `New availability poll — ${event.title}`,
-        'availability-event-invite',
-        {
-          inviteeName: 'there',   // Generic greeting for BCC batch
-          eventTitle: event.title,
-          eventType: event.type,
-          groupName: groupName,
-          creatorName: creatorName,
-          expiresAtFormatted: expiresAtFormatted,
-          responseUrl: responseUrl,
-        }
-      );
-
-      if (!emailResult.success) {
-        console.error('[sendEventInviteEmails] Member batch email failed:', emailResult.error);
-      }
-    }
-  }
-
-  // ── Visitor invitees: sequential individual emails via pooled transporter ──
-  if (visitorInvitees.length > 0) {
-    // Get a pooled transporter for sequential visitor emails (reuses single SMTP connection)
+  // Everyone gets an INDIVIDUAL email carrying their own token link (so a member who never
+  // logs in can still respond). One pooled transporter handles all sequential sends.
+  if (memberRecipients.length > 0 || visitorRecipients.length > 0) {
     const pooledTransporter = getEmailTransporter(true);
 
-    // Load the template manually to personalise each visitor's email
+    // Load + compile the invite template once
     const { readFileSync } = await import('fs');
     const { join } = await import('path');
     const Handlebars = (await import('handlebars')).default;
     const { theme } = await import('@/config/theme');
 
-    // Read the template file once and compile it
     const templatePath = join(process.cwd(), 'src', 'lib', 'email', 'templates', 'availability-event-invite.html');
     const templateSource = readFileSync(templatePath, 'utf-8');
     const template = Handlebars.compile(templateSource);
 
-    // Send one email per visitor
-    for (let i = 0; i < visitorInvitees.length; i++) {
-      const inv = visitorInvitees[i];
+    // Variables shared across every recipient
+    const baseVars = {
+      eventTitle: event.title,
+      eventType: event.type,
+      groupName: groupName,
+      creatorName: creatorName,
+      captainName: creatorName,
+      captainEmail: captainEmail,
+      captainPhone: captainPhone,
+      customMessage: customMessage,
+      expiresAtFormatted: expiresAtFormatted,
+      BRAND_NAME: theme.brand.name,
+      BRAND_SHORT_NAME: theme.brand.shortName,
+      HEADER_COLOR: theme.email.headerColor,
+      BUTTON_COLOR: theme.email.buttonColor,
+      LINK_COLOR: theme.email.buttonColor,
+      PRIMARY_COLOR: theme.email.headerColor,
+    };
 
-      // Skip if this visitor has no email address
-      if (!inv.visitorEmail) {
-        continue;
+    // ── Member recipients: resolve email + name from the Members sheet, use their token ──
+    if (memberRecipients.length > 0) {
+      const allUsers = await getAllUsers();
+
+      for (let i = 0; i < memberRecipients.length; i++) {
+        const m = memberRecipients[i];
+
+        // Find this member's email + display name from the Members sheet
+        let memberEmail = '';
+        let memberName = m.userName;
+        for (let j = 0; j < allUsers.length; j++) {
+          if (allUsers[j].userName === m.userName) {
+            // emailAddress is string | null — only use if non-null
+            if (allUsers[j].emailAddress !== null && allUsers[j].emailAddress !== undefined) {
+              memberEmail = allUsers[j].emailAddress as string;
+            }
+            memberName = allUsers[j].fullKnownAs || allUsers[j].fullName || m.userName;
+            break;
+          }
+        }
+
+        // Skip members without an email address (log it — otherwise a 0-send is silent)
+        if (!memberEmail) {
+          console.warn(`[sendEventInviteEmails] Skipping member ${m.userName} — no email address on the Members sheet`);
+          continue;
+        }
+
+        // Prefer the token link (works without logging in). If the member somehow has no
+        // token, fall back to the login page rather than dropping them.
+        const responseUrl = m.token
+          ? `${appUrl}/availability/guest/${eventId}?token=${m.token}`
+          : `${appUrl}/availability/events/${eventId}`;
+        const htmlContent = template({ ...baseVars, inviteeName: memberName, responseUrl });
+
+        try {
+          await pooledTransporter.sendMail({
+            from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
+            to: memberEmail,
+            replyTo: captainEmail || undefined,
+            subject: emailSubject,
+            html: htmlContent,
+          });
+          sentCount = sentCount + 1;
+        } catch (err) {
+          // Log individual failure but continue sending to others
+          console.error(`[sendEventInviteEmails] Failed to send to member ${m.userName}:`, err);
+        }
       }
+    }
 
-      // Build the unique guest response URL with the visitor's token
-      const responseUrl = `${appUrl}/availability/guest/${eventId}?token=${inv.token}`;
+    // ── Visitor recipients: individual token emails ──
+    if (visitorRecipients.length > 0) {
+      for (let i = 0; i < visitorRecipients.length; i++) {
+        const v = visitorRecipients[i];
 
-      // Render the template with this visitor's personalised variables
-      const variables = {
-        inviteeName: inv.visitorName,
-        eventTitle: event.title,
-        eventType: event.type,
-        groupName: groupName,
-        creatorName: creatorName,
-        expiresAtFormatted: expiresAtFormatted,
-        responseUrl: responseUrl,
-        BRAND_NAME: theme.brand.name,
-        BRAND_SHORT_NAME: theme.brand.shortName,
-        HEADER_COLOR: theme.email.headerColor,
-        BUTTON_COLOR: theme.email.buttonColor,
-        LINK_COLOR: theme.email.buttonColor,
-        PRIMARY_COLOR: theme.email.headerColor,
-      };
+        // Skip if this visitor has no email address
+        if (!v.visitorEmail) {
+          continue;
+        }
 
-      const htmlContent = template(variables);
+        const responseUrl = `${appUrl}/availability/guest/${eventId}?token=${v.token}`;
+        const htmlContent = template({ ...baseVars, inviteeName: v.visitorName, responseUrl });
 
-      try {
-        await pooledTransporter.sendMail({
-          from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
-          to: inv.visitorEmail,
-          subject: `New availability poll — ${event.title}`,
-          html: htmlContent,
-        });
-        notifiedIds.push(inv.inviteeId);
-      } catch (err) {
-        // Log individual failure but continue sending to other visitors
-        console.error(`[sendEventInviteEmails] Failed to send to visitor ${inv.visitorName}:`, err);
+        try {
+          await pooledTransporter.sendMail({
+            from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
+            to: v.visitorEmail,
+            replyTo: captainEmail || undefined,
+            subject: emailSubject,
+            html: htmlContent,
+          });
+          sentCount = sentCount + 1;
+        } catch (err) {
+          // Log individual failure but continue sending to other visitors
+          console.error(`[sendEventInviteEmails] Failed to send to visitor ${v.visitorName}:`, err);
+        }
       }
     }
 
@@ -297,15 +305,7 @@ export async function sendEventInviteEmails(
     pooledTransporter.close();
   }
 
-  // Mark all successfully notified invitees as notified in the sheet
-  if (notifiedIds.length > 0) {
-    try {
-      await markInviteesNotified(notifiedIds);
-    } catch (markError) {
-      // Log but don't throw — the emails were sent, this is just housekeeping
-      console.error('[sendEventInviteEmails] Failed to mark invitees as notified:', markError);
-    }
-  }
+  return sentCount;
 }
 
 // ─── 3. Conclusion Notification ───────────────────────────────────────────────

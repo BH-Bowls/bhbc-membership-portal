@@ -96,6 +96,66 @@ function cap(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+// A row in the manage response grid — one per roster member/visitor, including those
+// who have not responded (their responses map is empty → every cell renders "—").
+interface ManageRow {
+  key: string;
+  displayName: string;
+  responses: Record<string, AvailabilityResponse>;
+}
+
+// Merge the group roster (invitees) with the responders so the grid shows non-responders
+// too. For non-group polls (no roster) this is just the responders — unchanged behaviour.
+function buildManageRows(detail: AvailabilityManageDetail): ManageRow[] {
+  const rows: ManageRow[] = [];
+  const memberResp: Record<string, Record<string, AvailabilityResponse>> = {};
+  const visitorResp: Record<string, Record<string, AvailabilityResponse>> = {};
+  for (let i = 0; i < detail.allResponses.length; i++) {
+    const p = detail.allResponses[i];
+    if (p.respondentType === 'member' && p.userName) memberResp[p.userName] = p.responses;
+    else if (p.respondentType === 'visitor') visitorResp[p.displayName] = p.responses;
+  }
+
+  // Roster members first (including non-responders)
+  const seenMembers: Record<string, boolean> = {};
+  for (let i = 0; i < detail.invitees.length; i++) {
+    const inv = detail.invitees[i];
+    if (inv.inviteeType === 'member' && inv.userName) {
+      if (seenMembers[inv.userName]) continue;
+      seenMembers[inv.userName] = true;
+      const dn = detail.inviteeDisplayNames[inv.userName] || inv.userName;
+      rows.push({ key: 'm:' + inv.userName, displayName: dn, responses: memberResp[inv.userName] || {} });
+    }
+  }
+  // Member respondents not in the roster (e.g. left the group since replying)
+  for (let i = 0; i < detail.allResponses.length; i++) {
+    const p = detail.allResponses[i];
+    if (p.respondentType === 'member' && p.userName && !seenMembers[p.userName]) {
+      seenMembers[p.userName] = true;
+      rows.push({ key: 'm:' + p.userName, displayName: p.displayName, responses: p.responses });
+    }
+  }
+  // Visitors (roster + any extra respondents)
+  const seenVisitors: Record<string, boolean> = {};
+  for (let i = 0; i < detail.invitees.length; i++) {
+    const inv = detail.invitees[i];
+    if (inv.inviteeType === 'visitor') {
+      const dn = inv.visitorName || inv.visitorEmail || 'Guest';
+      if (seenVisitors[dn]) continue;
+      seenVisitors[dn] = true;
+      rows.push({ key: 'v:' + (inv.inviteeId || dn), displayName: dn, responses: visitorResp[dn] || {} });
+    }
+  }
+  for (let i = 0; i < detail.allResponses.length; i++) {
+    const p = detail.allResponses[i];
+    if (p.respondentType === 'visitor' && !seenVisitors[p.displayName]) {
+      seenVisitors[p.displayName] = true;
+      rows.push({ key: 'v:' + p.displayName, displayName: p.displayName, responses: p.responses });
+    }
+  }
+  return rows;
+}
+
 // Build ISO datetime from date input (YYYY-MM-DD) and optional time (HH:MM)
 function buildSlotDatetime(date: string, time: string): string {
   if (!date) return '';
@@ -185,9 +245,14 @@ export default function ManageEventPage({
   // Which slot is being deleted (to show spinner on that button)
   const [deletingSlotId, setDeletingSlotId] = useState<string | null>(null);
 
-  // Nudge state
-  const [nudging, setNudging] = useState(false);
-  const [nudgeResult, setNudgeResult] = useState<string | null>(null);
+  // Republish / reminder state
+  const [republishing, setRepublishing] = useState(false);
+  const [republishResult, setRepublishResult] = useState<string | null>(null);
+  const [republishTarget, setRepublishTarget] = useState<'nonresponders' | 'all' | 'selected'>('nonresponders');
+  const [republishMessage, setRepublishMessage] = useState('');
+  const [republishSelected, setRepublishSelected] = useState<Set<string>>(new Set());
+  // True when the last republish actually sent at least one email (drives the banner colour)
+  const [republishSent, setRepublishSent] = useState(false);
 
   const currentUserName = session && session.user ? session.user.userName : '';
   const currentUserRole = session && session.user ? session.user.role : '';
@@ -516,25 +581,44 @@ export default function ManageEventPage({
     }
   }
 
-  // Nudge non-responders
-  async function handleNudge() {
+  // Toggle a member in the "choose recipients" list for republish
+  function toggleRepublishSelected(userName: string) {
+    setRepublishSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(userName)) next.delete(userName); else next.add(userName);
+      return next;
+    });
+  }
+
+  // Republish / remind — re-send the poll email to the chosen recipients, with a message
+  async function handleRepublish() {
     if (!eventId) return;
-    setNudging(true);
-    setNudgeResult(null);
+    setRepublishing(true);
+    setRepublishResult(null);
+    setRepublishSent(false);
     try {
-      const res = await fetch(`/api/availability/events/${eventId}/nudge`, { method: 'POST' });
+      const res = await fetch(`/api/availability/events/${eventId}/nudge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          target: republishTarget,
+          selectedUserNames: republishTarget === 'selected' ? Array.from(republishSelected) : [],
+          message: republishMessage.trim(),
+        }),
+      });
       const data = await res.json();
       if (!res.ok) {
-        setNudgeResult(data.error || 'Failed to send reminders.');
-      } else if (data.nudgedCount === 0) {
-        setNudgeResult('Everyone has already responded — no reminders sent.');
+        setRepublishResult(data.error || 'Failed to send emails.');
+      } else if (data.sentCount === 0) {
+        setRepublishResult('No emails sent — none of the selected people have an email address on file.');
       } else {
-        setNudgeResult(`Reminder sent to ${data.nudgedCount} non-responder${data.nudgedCount === 1 ? '' : 's'}.`);
+        setRepublishResult(`Email sent to ${data.sentCount} ${data.sentCount === 1 ? 'person' : 'people'}.`);
+        setRepublishSent(true);
       }
     } catch {
-      setNudgeResult('An unexpected error occurred.');
+      setRepublishResult('An unexpected error occurred.');
     } finally {
-      setNudging(false);
+      setRepublishing(false);
     }
   }
 
@@ -546,6 +630,10 @@ export default function ManageEventPage({
     ? `/availability/groups/${detail.event.groupId}`
     : '/availability';
   const backLabel = detail && detail.event.groupId ? 'Group' : 'Polls';
+
+  // Neutral "unselected toggle" style — matches the create page. Unselected toggle buttons
+  // must read as "no colour" (outline), not as the orange 'secondary' variant which looks red.
+  const inactiveBtn = 'inline-flex items-center justify-center font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 rounded-md px-3 py-1.5 text-sm border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 shadow-sm';
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
@@ -644,7 +732,7 @@ export default function ManageEventPage({
                   <div className="flex gap-2">
                     {(['general', 'fixture', 'signup'] as AvailabilityEventType[]).map((t) => (
                       <button key={t} type="button" onClick={() => setEditType(t)}
-                        className={editType === t ? getButtonClasses('primary', 'sm') : getButtonClasses('secondary', 'sm')}>
+                        className={editType === t ? getButtonClasses('primary', 'sm') : inactiveBtn}>
                         {cap(t)}
                       </button>
                     ))}
@@ -657,15 +745,15 @@ export default function ManageEventPage({
                 <div className="mb-3">
                   <label className="block text-sm font-medium text-gray-700 mb-1">Show responses to respondents</label>
                   <div className="flex gap-2">
-                    <button type="button" onClick={() => setEditShowResponses(true)} className={editShowResponses ? getButtonClasses('primary', 'sm') : getButtonClasses('secondary', 'sm')}>Yes</button>
-                    <button type="button" onClick={() => setEditShowResponses(false)} className={!editShowResponses ? getButtonClasses('primary', 'sm') : getButtonClasses('secondary', 'sm')}>No</button>
+                    <button type="button" onClick={() => setEditShowResponses(true)} className={editShowResponses ? getButtonClasses('success', 'sm') : inactiveBtn}>Yes</button>
+                    <button type="button" onClick={() => setEditShowResponses(false)} className={!editShowResponses ? getButtonClasses('danger', 'sm') : inactiveBtn}>No</button>
                   </div>
                 </div>
                 <div className="mb-4">
                   <label className="block text-sm font-medium text-gray-700 mb-1">Notify me when someone responds</label>
                   <div className="flex gap-2">
-                    <button type="button" onClick={() => setEditNotify(true)} className={editNotify ? getButtonClasses('primary', 'sm') : getButtonClasses('secondary', 'sm')}>Yes</button>
-                    <button type="button" onClick={() => setEditNotify(false)} className={!editNotify ? getButtonClasses('primary', 'sm') : getButtonClasses('secondary', 'sm')}>No</button>
+                    <button type="button" onClick={() => setEditNotify(true)} className={editNotify ? getButtonClasses('success', 'sm') : inactiveBtn}>Yes</button>
+                    <button type="button" onClick={() => setEditNotify(false)} className={!editNotify ? getButtonClasses('danger', 'sm') : inactiveBtn}>No</button>
                   </div>
                 </div>
                 <div className="flex gap-2">
@@ -844,9 +932,10 @@ export default function ManageEventPage({
                       </tr>
                     </thead>
                     <tbody className="bg-white text-gray-900">
-                      {/* All respondents — read-only for manager */}
-                      {detail.allResponses.map((participant: AvailabilityParticipantResponses) => (
-                        <tr key={participant.displayName} className="hover:bg-gray-50">
+                      {/* Every roster member (responders + non-responders) — read-only.
+                          Non-responders show "—" across all slots. */}
+                      {buildManageRows(detail).map((participant) => (
+                        <tr key={participant.key} className="hover:bg-gray-50">
                           <td className="sticky left-0 bg-white px-3 py-2 text-sm text-gray-900 border-b border-gray-100">
                             {participant.displayName}
                           </td>
@@ -870,10 +959,10 @@ export default function ManageEventPage({
                       ))}
 
                       {/* Empty state */}
-                      {detail.allResponses.length === 0 && (
+                      {buildManageRows(detail).length === 0 && (
                         <tr>
                           <td colSpan={detail.slots.length + 1} className="px-3 py-4 text-sm text-gray-700 text-center">
-                            No responses yet.
+                            No members or responses yet.
                           </td>
                         </tr>
                       )}
@@ -915,6 +1004,17 @@ export default function ManageEventPage({
                 </div>
               )}
             </div>
+
+            {/* ── Match Results (match-finder events only) ─────────── */}
+            {detail.event.matchFinder && detail.slots.length > 0 && (
+              <MatchResults
+                eventId={eventId}
+                slots={detail.slots}
+                responseSummary={detail.responseSummary}
+                title={detail.event.title}
+                initialOffered={detail.event.offeredSlotIds || []}
+              />
+            )}
 
             {/* ── Options section ────────────────────────────────────── */}
             <div className="bg-white rounded-lg border border-gray-200 p-4 mb-4">
@@ -1003,22 +1103,79 @@ export default function ManageEventPage({
               )}
             </div>
 
-            {/* ── Nudge non-responders ──────────────────────────────── */}
+            {/* ── Republish / remind ────────────────────────────────── */}
             {detail.event.groupId && detail.event.status === 'open' && (
               <div className="bg-white rounded-lg border border-gray-200 p-4 mb-4">
-                <h2 className="text-base font-semibold text-gray-900 mb-1">Remind non-responders</h2>
+                <h2 className="text-base font-semibold text-gray-900 mb-1">Send a reminder</h2>
                 <p className="text-xs text-gray-700 mb-3">
-                  Send a reminder email to everyone who has not yet responded.
+                  Re-send the poll email. Replies go to you, not the club address.
                 </p>
-                {nudgeResult && (
-                  <p className="text-sm text-gray-700 mb-2">{nudgeResult}</p>
+
+                {republishResult && (
+                  <div className={getAlertClasses(republishSent ? 'success' : 'warning') + ' mb-3 text-sm'}>
+                    {republishResult}
+                  </div>
                 )}
+
+                <div className="mb-3">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Who to email</label>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" onClick={() => setRepublishTarget('nonresponders')}
+                      className={republishTarget === 'nonresponders' ? getButtonClasses('primary', 'sm') : inactiveBtn}>
+                      Non-responders
+                    </button>
+                    <button type="button" onClick={() => setRepublishTarget('all')}
+                      className={republishTarget === 'all' ? getButtonClasses('primary', 'sm') : inactiveBtn}>
+                      Everyone
+                    </button>
+                    <button type="button" onClick={() => setRepublishTarget('selected')}
+                      className={republishTarget === 'selected' ? getButtonClasses('primary', 'sm') : inactiveBtn}>
+                      Choose…
+                    </button>
+                  </div>
+                </div>
+
+                {republishTarget === 'selected' && (
+                  <div className="mb-3 space-y-1 max-h-48 overflow-y-auto border border-gray-100 rounded p-2">
+                    {detail.invitees
+                      .filter((i: AvailabilityInvitee) => i.inviteeType === 'member' && i.userName !== '')
+                      .map((i: AvailabilityInvitee) => {
+                        const name = detail.inviteeDisplayNames[i.userName] || i.userName;
+                        return (
+                          <label key={i.userName} className="flex items-center gap-2 text-sm text-gray-900">
+                            <input
+                              type="checkbox"
+                              checked={republishSelected.has(i.userName)}
+                              onChange={() => toggleRepublishSelected(i.userName)}
+                              className="rounded border-gray-300"
+                            />
+                            {name}
+                          </label>
+                        );
+                      })}
+                  </div>
+                )}
+
+                <div className="mb-3">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Message <span className="text-gray-500">(optional)</span>
+                  </label>
+                  <textarea
+                    value={republishMessage}
+                    onChange={(e) => setRepublishMessage(e.target.value)}
+                    className={getInputClasses(false)}
+                    rows={2}
+                    maxLength={800}
+                    placeholder="Add a note to the email…"
+                  />
+                </div>
+
                 <button
-                  onClick={handleNudge}
-                  disabled={nudging}
+                  onClick={handleRepublish}
+                  disabled={republishing}
                   className={getButtonClasses('secondary', 'sm')}
                 >
-                  {nudging ? 'Sending…' : 'Nudge non-responders'}
+                  {republishing ? 'Sending…' : 'Send email'}
                 </button>
               </div>
             )}
@@ -1103,6 +1260,227 @@ export default function ManageEventPage({
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+// ── MatchResults ───────────────────────────────────────────────────────────────
+// Ranked results panel for fixture-type events. Shows slots sorted by yes count,
+// a select-3 toggle, and a copy-to-clipboard summary.
+
+interface MatchResultsProps {
+  eventId: string;
+  slots: AvailabilitySlot[];
+  responseSummary: Array<{ slotId: string; yesCount: number; maybeCount: number; noCount: number }>;
+  title: string;
+  initialOffered: string[];
+}
+
+function MatchResults({ eventId, slots, responseSummary, title, initialOffered }: MatchResultsProps) {
+  const [selected, setSelected] = React.useState<Set<string>>(new Set(initialOffered));
+  const [copied, setCopied] = React.useState(false);
+  const [saving, setSaving] = React.useState(false);
+  const [saveError, setSaveError] = React.useState<string | null>(null);
+  // Snapshot of what is persisted, so we can show "unsaved changes" vs "saved"
+  const [savedSel, setSavedSel] = React.useState<Set<string>>(new Set(initialOffered));
+
+  // Build ranked list: merge slots with counts, sort by yes desc then yes+maybe desc
+  interface RankedSlot {
+    slot: AvailabilitySlot;
+    yes: number;
+    maybe: number;
+    no: number;
+  }
+
+  const summaryMap: Record<string, { yesCount: number; maybeCount: number; noCount: number }> = {};
+  for (let i = 0; i < responseSummary.length; i++) {
+    summaryMap[responseSummary[i].slotId] = {
+      yesCount: responseSummary[i].yesCount,
+      maybeCount: responseSummary[i].maybeCount,
+      noCount: responseSummary[i].noCount,
+    };
+  }
+
+  const ranked: RankedSlot[] = [];
+  for (let i = 0; i < slots.length; i++) {
+    const s = slots[i];
+    const counts = summaryMap[s.slotId] || { yesCount: 0, maybeCount: 0, noCount: 0 };
+    ranked.push({ slot: s, yes: counts.yesCount, maybe: counts.maybeCount, no: counts.noCount });
+  }
+
+  // Sort: yes desc, then yes+maybe desc as tiebreak
+  ranked.sort((a, b) => {
+    if (b.yes !== a.yes) return b.yes - a.yes;
+    return (b.yes + b.maybe) - (a.yes + a.maybe);
+  });
+
+  function toggleSelect(slotId: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(slotId)) {
+        next.delete(slotId);
+      } else {
+        if (next.size >= 3) return prev;
+        next.add(slotId);
+      }
+      return next;
+    });
+  }
+
+  // Format slot as "Tue 8 Jul 10am" for the copy text
+  function formatSlotForCopy(slot: AvailabilitySlot): string {
+    if (slot.slotLabel) return slot.slotLabel;
+    if (!slot.slotDatetime) return '';
+    const d = new Date(slot.slotDatetime);
+    if (isNaN(d.getTime())) return '';
+    const datePart = d.toLocaleDateString('en-GB', {
+      weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC',
+    });
+    const h = d.getUTCHours();
+    const suffix = h < 12 ? 'am' : 'pm';
+    const h12 = h > 12 ? h - 12 : h;
+    const timePart = `${h12}${suffix}`;
+    return `${datePart} ${timePart}`;
+  }
+
+  function handleCopy() {
+    const lines: string[] = [];
+    for (let i = 0; i < ranked.length; i++) {
+      if (selected.has(ranked[i].slot.slotId)) {
+        lines.push(formatSlotForCopy(ranked[i].slot));
+      }
+    }
+    const text = `${title} — we can offer:\n${lines.map((l, idx) => `${idx + 1}. ${l}`).join('\n')}`;
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    });
+  }
+
+  // Persist the current selection so it survives navigation/refresh
+  async function handleSaveSelection() {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const slotIds = Array.from(selected);
+      const res = await fetch(`/api/availability/events/${eventId}/offered`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slotIds }),
+      });
+      if (!res.ok) {
+        const d = await res.json();
+        setSaveError(d.error || 'Failed to save selection.');
+        return;
+      }
+      setSavedSel(new Set(slotIds));
+    } catch {
+      setSaveError('An unexpected error occurred.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Whether the current selection differs from what is persisted
+  function selectionDirty(): boolean {
+    if (selected.size !== savedSel.size) return true;
+    let dirty = false;
+    selected.forEach((id) => { if (!savedSel.has(id)) dirty = true; });
+    return dirty;
+  }
+
+  const hasResponses = ranked.some((r) => r.yes + r.maybe + r.no > 0);
+
+  return (
+    <div className="mb-6">
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-base font-semibold text-gray-900">Match Results</h2>
+      </div>
+
+      {!hasResponses && (
+        <p className="text-sm text-gray-700 mb-3">No responses yet — results will appear here as the squad replies.</p>
+      )}
+
+      <div className="space-y-2">
+        {ranked.map((r, idx) => {
+          const isSelected = selected.has(r.slot.slotId);
+          const label = r.slot.slotLabel || formatSlotForCopy(r.slot);
+          return (
+            <div
+              key={r.slot.slotId}
+              className="bg-white rounded-lg border border-gray-200 p-3 flex items-center gap-3"
+            >
+              <span className="text-sm font-medium text-gray-500 w-4 shrink-0">{idx + 1}</span>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-gray-900 truncate">{label}</p>
+                <div className="flex items-center gap-3 mt-1">
+                  <span className="text-green-700 text-xs font-medium">✓ {r.yes}</span>
+                  <span className="text-yellow-700 text-xs font-medium">? {r.maybe}</span>
+                  <span className="text-red-700 text-xs font-medium">✗ {r.no}</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => toggleSelect(r.slot.slotId)}
+                disabled={!isSelected && selected.size >= 3}
+                className={
+                  'shrink-0 w-8 h-8 rounded-full border-2 flex items-center justify-center text-sm font-bold transition-colors ' +
+                  (isSelected
+                    ? 'bg-blue-600 border-blue-600 text-white'
+                    : selected.size >= 3
+                    ? 'border-gray-200 text-gray-300 cursor-not-allowed'
+                    : 'border-gray-300 text-gray-400 hover:border-blue-400 hover:text-blue-600')
+                }
+                title={isSelected ? 'Deselect' : selected.size >= 3 ? 'Max 3 selected' : 'Select this date'}
+              >
+                {isSelected ? '✓' : ''}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      {selected.size > 0 && (
+        <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-100">
+          <p className="text-sm text-gray-700 mb-2">
+            {selected.size} date{selected.size === 1 ? '' : 's'} selected — copy to share with opponent, and save so the selection sticks:
+          </p>
+          {saveError && (
+            <p className="text-xs text-red-600 mb-2">{saveError}</p>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md border border-blue-300 bg-white text-blue-700 hover:bg-blue-50 transition-colors"
+            >
+              {copied ? '✓ Copied!' : 'Copy dates'}
+            </button>
+            <button
+              type="button"
+              onClick={handleSaveSelection}
+              disabled={saving || !selectionDirty()}
+              className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md border border-blue-600 bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {saving ? 'Saving…' : selectionDirty() ? 'Save selection' : '✓ Saved'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* When the saved selection was cleared down to nothing but there is a persisted set */}
+      {selected.size === 0 && savedSel.size > 0 && (
+        <div className="mt-4">
+          <button
+            type="button"
+            onClick={handleSaveSelection}
+            disabled={saving}
+            className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 transition-colors"
+          >
+            {saving ? 'Saving…' : 'Clear saved selection'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
