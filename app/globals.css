@@ -60,6 +60,21 @@ select:disabled {
   color: #6B7280; /* gray-500 */
 }
 
+/* Date/time inputs: on iPad / desktop-class Safari the @tailwindcss/forms
+ * `appearance: none` reset hides the native calendar-picker indicator, leaving an
+ * apparently blank box — the picker still opens on tap, but nothing signals the
+ * field is editable. Force the indicator to render so there is always a visible,
+ * tappable calendar icon (matching the chevron iPhone Safari shows). This is a
+ * no-op on Chrome/Edge, which already display the indicator. */
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator {
+  display: block;
+  opacity: 1;
+  cursor: pointer;
+  -webkit-appearance: auto;
+  appearance: auto;
+}
+
 /* Print styles */
 @media print {
   /* Hide navbar */
