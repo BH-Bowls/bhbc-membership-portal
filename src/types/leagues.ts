@@ -43,6 +43,7 @@ export interface LeagueSquadMember {
   position: SquadPosition;
   enteredDate: string;
   mobile?: string | null;
+  landline?: string | null;   // fallback contact number when mobile is blank
   email?: string | null;
 }
 

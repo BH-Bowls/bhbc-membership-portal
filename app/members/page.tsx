@@ -8,6 +8,7 @@ import { useEffect, useState, Suspense } from 'react';
 import { useSession } from 'next-auth/react';
 import { useSearchParams } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
+import { ContactLink, EmailLink } from '@/components/ContactLink';
 
 interface MemberLookupResult {
   fullName: string;
@@ -214,24 +215,16 @@ function MembersPageInner() {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {member.mobile || member.landline ? (
-                          <a
-                            href={`tel:${member.mobile || member.landline}`}
-                            className="text-blue-600 hover:text-blue-800 hover:underline"
-                          >
+                          <ContactLink type="tel" value={member.mobile || member.landline || ''}>
                             {getContactNumber(member)}
-                          </a>
+                          </ContactLink>
                         ) : (
                           <span className="text-gray-400">-</span>
                         )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {member.emailAddress ? (
-                          <a
-                            href={`mailto:${member.emailAddress}`}
-                            className="text-blue-600 hover:text-blue-800 hover:underline"
-                          >
-                            {member.emailAddress}
-                          </a>
+                          <EmailLink email={member.emailAddress} />
                         ) : (
                           <span className="text-gray-400">-</span>
                         )}
@@ -259,12 +252,9 @@ function MembersPageInner() {
                     <div className="flex justify-between">
                       <span className="text-gray-500">Phone:</span>
                       {member.mobile || member.landline ? (
-                        <a
-                          href={`tel:${member.mobile || member.landline}`}
-                          className="text-blue-600 hover:underline"
-                        >
+                        <ContactLink type="tel" value={member.mobile || member.landline || ''}>
                           {getContactNumber(member)}
-                        </a>
+                        </ContactLink>
                       ) : (
                         <span className="text-gray-400">-</span>
                       )}
@@ -272,12 +262,7 @@ function MembersPageInner() {
                     <div className="flex justify-between">
                       <span className="text-gray-500">Email:</span>
                       {member.emailAddress ? (
-                        <a
-                          href={`mailto:${member.emailAddress}`}
-                          className="text-blue-600 hover:underline truncate ml-2"
-                        >
-                          {member.emailAddress}
-                        </a>
+                        <EmailLink email={member.emailAddress} className="truncate" />
                       ) : (
                         <span className="text-gray-400">-</span>
                       )}

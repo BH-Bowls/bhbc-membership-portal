@@ -93,7 +93,7 @@ function parseSquadRow(
   row: any[],
   colMap: Record<string, number>,
   rowNumber: number,
-  memberMap: Map<string, { fullName: string; mobile: string | null; email: string | null }>
+  memberMap: Map<string, { fullName: string; mobile: string | null; landline: string | null; email: string | null }>
 ): LeagueSquadMember {
   const get = makeGetter(row, colMap);
   const username = get('username') || '';
@@ -107,6 +107,7 @@ function parseSquadRow(
     position: (get('position') || '') as SquadPosition,
     enteredDate: get('entered_date') || '',
     mobile: info?.mobile ?? null,
+    landline: info?.landline ?? null,
     email: info?.email ?? null,
   };
 }
@@ -380,10 +381,11 @@ export async function getLeagueSquad(leagueId: string): Promise<LeagueSquadMembe
 
   // Build member info map
   const users = await getAllUsers();
-  const memberMap = new Map<string, { fullName: string; mobile: string | null; email: string | null }>(
+  const memberMap = new Map<string, { fullName: string; mobile: string | null; landline: string | null; email: string | null }>(
     users.map((u) => [u.userName, {
       fullName: u.fullName || `${u.firstName} ${u.lastName}`.trim(),
       mobile: u.mobile ?? null,
+      landline: u.landline ?? null,
       email: u.emailAddress ?? null,
     }])
   );
@@ -411,10 +413,11 @@ export async function getTeamSquad(teamId: string): Promise<LeagueSquadMember[]>
   if (rows.length < 2) return [];
 
   const users = await getAllUsers();
-  const memberMap = new Map<string, { fullName: string; mobile: string | null; email: string | null }>(
+  const memberMap = new Map<string, { fullName: string; mobile: string | null; landline: string | null; email: string | null }>(
     users.map((u) => [u.userName, {
       fullName: u.fullName || `${u.firstName} ${u.lastName}`.trim(),
       mobile: u.mobile ?? null,
+      landline: u.landline ?? null,
       email: u.emailAddress ?? null,
     }])
   );

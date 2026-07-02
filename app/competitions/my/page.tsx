@@ -9,6 +9,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
+import { EmailLink, PhoneLink } from '@/components/ContactLink';
 import { COMP_ROUND_LABELS } from '@/types/competitions';
 import type { MyCompEntry, CompPosition, JourneyStep, ContactInfo } from '../../api/competitions/my/route';
 import { getButtonClasses, getInputClasses } from '@/config/theme-helpers';
@@ -55,10 +56,10 @@ function ContactLine({ person, label }: { person: ContactInfo; label?: string })
       {hasContact ? (
         <>
           {person.mobile && (
-            <> · <a href={`tel:${person.mobile}`} className="text-blue-600 hover:underline" onClick={(e) => e.stopPropagation()}>{person.mobile}</a></>
+            <> · <PhoneLink phone={person.mobile} stopPropagation /></>
           )}
           {person.email && (
-            <> · <a href={`mailto:${person.email}`} className="text-blue-600 hover:underline" onClick={(e) => e.stopPropagation()}>{person.email}</a></>
+            <> · <EmailLink email={person.email} stopPropagation /></>
           )}
         </>
       ) : (

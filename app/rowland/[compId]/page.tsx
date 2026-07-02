@@ -9,6 +9,7 @@ import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
 import { BracketView } from '@/components/competitions/BracketView';
 import { RowlandMatchDialog } from '@/components/rowland/RowlandMatchDialog';
+import { EmailLink, PhoneLink } from '@/components/ContactLink';
 import type { RowlandResultData } from '@/components/rowland/RowlandMatchDialog';
 import type { CompMatch, CompMemberInfo, CompRound } from '@/types/competitions';
 import type { RowlandComp, RowlandMatch } from '@/types/rowland';
@@ -375,13 +376,13 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
                           </span>{' '}
                           <span className="text-gray-900">{c.name || `${c.firstName} ${c.lastName}`.trim()}</span>
                           {c.mobileNumber && (
-                            <> · <a href={`tel:${c.mobileNumber}`} className="text-blue-600 hover:underline">{c.mobileNumber}</a></>
+                            <> · <PhoneLink phone={c.mobileNumber} /></>
                           )}
                           {!c.mobileNumber && c.phoneNumber && (
-                            <> · <a href={`tel:${c.phoneNumber}`} className="text-blue-600 hover:underline">{c.phoneNumber}</a></>
+                            <> · <PhoneLink phone={c.phoneNumber} /></>
                           )}
                           {c.email && (
-                            <> · <a href={`mailto:${c.email}`} className="text-blue-600 hover:underline">{c.email}</a></>
+                            <> · <EmailLink email={c.email} /></>
                           )}
                         </div>
                       ))}

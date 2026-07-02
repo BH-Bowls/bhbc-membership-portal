@@ -5,6 +5,7 @@ import { useSession } from 'next-auth/react';
 import { Navbar } from '@/components/Navbar';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { SearchableSelect } from '@/components/SearchableSelect';
+import { EmailLink, PhoneLink } from '@/components/ContactLink';
 import { getButtonClasses } from '@/config/theme-helpers';
 import { hasRole } from '@/lib/role-utils';
 import type { MarkerEntry } from '@/lib/markers-sheets';
@@ -224,17 +225,17 @@ export default function MarkersPage() {
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-700">
                         {m.mobile ? (
-                          <a href={`tel:${m.mobile}`} className="text-blue-600 hover:underline">{m.mobile}</a>
+                          <PhoneLink phone={m.mobile} />
                         ) : <span className="text-gray-400">—</span>}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-700">
                         {m.landline ? (
-                          <a href={`tel:${m.landline}`} className="text-blue-600 hover:underline">{m.landline}</a>
+                          <PhoneLink phone={m.landline} />
                         ) : <span className="text-gray-400">—</span>}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-700">
                         {m.emailAddress ? (
-                          <a href={`mailto:${m.emailAddress}`} className="text-blue-600 hover:underline truncate block max-w-[200px]">{m.emailAddress}</a>
+                          <EmailLink email={m.emailAddress} className="truncate max-w-[200px]" />
                         ) : <span className="text-gray-400">—</span>}
                       </td>
                       {canEdit && (
@@ -279,19 +280,19 @@ export default function MarkersPage() {
                     {m.mobile && (
                       <div className="flex gap-2">
                         <span className="text-gray-500 w-20">Mobile:</span>
-                        <a href={`tel:${m.mobile}`} className="text-blue-600 hover:underline">{m.mobile}</a>
+                        <PhoneLink phone={m.mobile} />
                       </div>
                     )}
                     {m.landline && (
                       <div className="flex gap-2">
                         <span className="text-gray-500 w-20">Landline:</span>
-                        <a href={`tel:${m.landline}`} className="text-blue-600 hover:underline">{m.landline}</a>
+                        <PhoneLink phone={m.landline} />
                       </div>
                     )}
                     {m.emailAddress && (
                       <div className="flex gap-2">
                         <span className="text-gray-500 w-20">Email:</span>
-                        <a href={`mailto:${m.emailAddress}`} className="text-blue-600 hover:underline break-all">{m.emailAddress}</a>
+                        <EmailLink email={m.emailAddress} className="break-all" />
                       </div>
                     )}
                     {!m.mobile && !m.landline && !m.emailAddress && (

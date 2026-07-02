@@ -9,6 +9,7 @@ import { useSession } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Navbar } from '@/components/Navbar';
+import { EmailLink, PhoneLink } from '@/components/ContactLink';
 import { getButtonClasses } from '@/config/theme-helpers';
 import { Club, ClubContact, UpdateClubRequest, UpdateContactRequest } from '@/lib/types/clubs';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -539,7 +540,7 @@ export default function ClubDetailPage({ params }: PageProps) {
                     <svg className="h-5 w-5 mr-2 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
                     </svg>
-                    <a href={`tel:${club.clubNumber}`} className="text-blue-600 hover:underline">{club.clubNumber}</a>
+                    <PhoneLink phone={club.clubNumber} />
                   </div>
                 )}
                 {club.clubMobile && (
@@ -547,7 +548,7 @@ export default function ClubDetailPage({ params }: PageProps) {
                     <svg className="h-5 w-5 mr-2 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
                     </svg>
-                    <a href={`tel:${club.clubMobile}`} className="text-blue-600 hover:underline">{club.clubMobile}</a>
+                    <PhoneLink phone={club.clubMobile} />
                   </div>
                 )}
                 {club.clubEmailAddress && (
@@ -556,7 +557,7 @@ export default function ClubDetailPage({ params }: PageProps) {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                     </svg>
                     <div>
-                      <a href={`mailto:${club.clubEmailAddress}`} className="text-blue-600 hover:underline">{club.clubEmailAddress}</a>
+                      <EmailLink email={club.clubEmailAddress} />
                       {club.clubEmailNote && <p className="text-sm text-gray-500">{club.clubEmailNote}</p>}
                     </div>
                   </div>
@@ -1021,19 +1022,19 @@ export default function ClubDetailPage({ params }: PageProps) {
                           {contact.phoneNumber && (
                             <div>
                               <span className="text-gray-600">Phone:</span>{' '}
-                              <a href={`tel:${contact.phoneNumber}`} className="text-blue-600 hover:underline">{contact.phoneNumber}</a>
+                              <PhoneLink phone={contact.phoneNumber} />
                             </div>
                           )}
                           {contact.mobileNumber && (
                             <div>
                               <span className="text-gray-600">Mobile:</span>{' '}
-                              <a href={`tel:${contact.mobileNumber}`} className="text-blue-600 hover:underline">{contact.mobileNumber}</a>
+                              <PhoneLink phone={contact.mobileNumber} />
                             </div>
                           )}
                           {contact.email && (
                             <div>
                               <span className="text-gray-600">Email:</span>{' '}
-                              <a href={`mailto:${contact.email}`} className="text-blue-600 hover:underline">{contact.email}</a>
+                              <EmailLink email={contact.email} />
                             </div>
                           )}
                           {contact.notes && (

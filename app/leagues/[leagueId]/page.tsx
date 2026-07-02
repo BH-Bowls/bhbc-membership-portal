@@ -7,6 +7,7 @@ import { useEffect, useState, Suspense } from 'react';
 import { useSession } from 'next-auth/react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
+import { EmailLink, PhoneLink } from '@/components/ContactLink';
 import type {
   League,
   LeagueTeam,
@@ -107,6 +108,9 @@ function LeagueDetailPageInner() {
   // Entry
   const [enteringLeague, setEnteringLeague] = useState(false);
   const [enterError, setEnterError] = useState<string | null>(null);
+
+  // Brief feedback after copying the team's emails / phone numbers to the clipboard
+  const [copiedContacts, setCopiedContacts] = useState<'emails' | 'phones' | null>(null);
 
   function loadLeague() {
     fetch(`/api/leagues/${leagueId}`)
@@ -276,6 +280,41 @@ function LeagueDetailPageInner() {
     ? squad.filter((m) => m.teamId === myEntry.teamId && m.username !== userName)
     : [];
 
+  // Copy all teammate emails (or phone numbers) as a comma-separated list, ready to paste
+  // straight into an email To: field or a text-message recipient field.
+  async function copyTeammateContacts(kind: 'emails' | 'phones') {
+    // Collect non-blank, de-duplicated values in display order
+    const parts: string[] = [];
+    for (let i = 0; i < myTeammates.length; i++) {
+      // Phone falls back to landline when no mobile is set
+      const raw = kind === 'emails'
+        ? myTeammates[i].email
+        : (myTeammates[i].mobile || myTeammates[i].landline);
+      const value = raw ? raw.trim() : '';
+      if (value && parts.indexOf(value) === -1) {
+        parts.push(value);
+      }
+    }
+    if (parts.length === 0) return;
+    try {
+      await navigator.clipboard.writeText(parts.join(', '));
+      setCopiedContacts(kind);
+      setTimeout(() => setCopiedContacts(null), 1500);
+    } catch {
+      // Clipboard API unavailable (e.g. non-secure context) — silently ignore
+    }
+  }
+
+  // Whether the team has any emails / phone numbers to copy
+  let teamHasEmails = false;
+  let teamHasPhones = false;
+  for (let i = 0; i < myTeammates.length; i++) {
+    const em = myTeammates[i].email;
+    const mob = myTeammates[i].mobile || myTeammates[i].landline;
+    if (em && em.trim()) teamHasEmails = true;
+    if (mob && mob.trim()) teamHasPhones = true;
+  }
+
   const nextFixture = myEntry?.teamId
     ? [...matches]
         .filter((m) =>
@@ -418,14 +457,38 @@ function LeagueDetailPageInner() {
                 {myTeammates.map((m) => (
                   <div key={m.username} className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
                     <span className="font-medium text-blue-900">{m.fullName}{m.position ? ` (${m.position})` : ''}</span>
-                    {m.mobile && (
-                      <a href={`tel:${m.mobile}`} onClick={(e) => e.stopPropagation()} className="text-blue-600 hover:underline">{m.mobile}</a>
+                    {(m.mobile || m.landline) && (
+                      <PhoneLink phone={m.mobile || m.landline || ''} stopPropagation />
                     )}
                     {m.email && (
-                      <a href={`mailto:${m.email}`} onClick={(e) => e.stopPropagation()} className="text-blue-600 hover:underline">{m.email}</a>
+                      <EmailLink email={m.email} stopPropagation />
                     )}
                   </div>
                 ))}
+
+                {/* Copy all contacts — paste straight into an email To: or a text recipient field */}
+                {(teamHasEmails || teamHasPhones) && (
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {teamHasEmails && (
+                      <button
+                        type="button"
+                        onClick={() => copyTeammateContacts('emails')}
+                        className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded border border-blue-300 bg-white text-blue-700 hover:bg-blue-100"
+                      >
+                        {copiedContacts === 'emails' ? '✓ Copied!' : 'Copy all emails'}
+                      </button>
+                    )}
+                    {teamHasPhones && (
+                      <button
+                        type="button"
+                        onClick={() => copyTeammateContacts('phones')}
+                        className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded border border-blue-300 bg-white text-blue-700 hover:bg-blue-100"
+                      >
+                        {copiedContacts === 'phones' ? '✓ Copied!' : 'Copy all phone numbers'}
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
@@ -444,11 +507,11 @@ function LeagueDetailPageInner() {
                       {contactOpposingSkip && (
                         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5">
                           <span className="text-blue-700">Opposing Captain: <span className="font-medium text-blue-900">{contactOpposingSkip.fullName}</span></span>
-                          {contactOpposingSkip.mobile && (
-                            <a href={`tel:${contactOpposingSkip.mobile}`} onClick={(e) => e.stopPropagation()} className="text-blue-600 hover:underline">{contactOpposingSkip.mobile}</a>
+                          {(contactOpposingSkip.mobile || contactOpposingSkip.landline) && (
+                            <PhoneLink phone={contactOpposingSkip.mobile || contactOpposingSkip.landline || ''} stopPropagation />
                           )}
                           {contactOpposingSkip.email && (
-                            <a href={`mailto:${contactOpposingSkip.email}`} onClick={(e) => e.stopPropagation()} className="text-blue-600 hover:underline">{contactOpposingSkip.email}</a>
+                            <EmailLink email={contactOpposingSkip.email} stopPropagation />
                           )}
                         </div>
                       )}
