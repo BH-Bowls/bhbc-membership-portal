@@ -374,6 +374,13 @@ export default function HelpFriendlyManagementPage() {
               then groups them together automatically in the Manage view.
             </Body>
             <Note>
+              Paired games must be the same <strong>section</strong> (the Ladies/Men field) —
+              usually both Mixed. You can&apos;t pair a Mixed game with a Ladies (or Men) game: the
+              system blocks it both when you tick <strong>Paired game</strong> and again at{' '}
+              <strong>Open Both</strong>. If two games were paired by mistake, untick{' '}
+              <strong>Paired game</strong> on one of them in Fixtures Admin to separate them.
+            </Note>
+            <Note>
               The Message button on a paired row sets the message for the first game. If you need
               separate messages, set the second game&apos;s message on its own selection page.
             </Note>
@@ -399,13 +406,17 @@ export default function HelpFriendlyManagementPage() {
               full team — you can split it into a second game on the same date instead of turning
               players away.
             </Body>
-            <Step n={1}>Close the game and open its selection page.</Step>
-            <Step n={2}>Click <strong>Add Reserve Game</strong>. This creates a second game for the same club (shown as &quot;Club 2&quot;) and pairs the two together.</Step>
+            <Step n={1}><strong>Close entries</strong> so the game moves to <strong>Selecting</strong>, then open its selection page.</Step>
+            <Step n={2}>Click <strong>Add Reserve Game</strong>. A dialog asks for the reserve team&apos;s <strong>name</strong> (defaults to &quot;[Club] BH Reserves&quot;) and its <strong>format</strong> (defaults to the original game&apos;s). Adjust if needed and confirm — this creates the second game with that name and pairs the two together.</Step>
             <Step n={3}>The two now behave exactly like a paired game: pick the first, move the overflow reserves into the second with the <strong>→</strong> checkboxes, then pick the second.</Step>
+            <Step n={4}><strong>Recording the result:</strong> a reserve team is usually Burgess Hill players against other Burgess Hill players, so there is often no real score. When marking it Played, tick <strong>No score (e.g. reserve team)</strong> and enter a reason — it defaults to &quot;Reserve Team&quot;.</Step>
             <Note>
-              The <strong>Add Reserve Game</strong> button only appears on a standalone game that is
-              being selected and is at least eight players over a full team. It is hidden once the
-              game is paired, or while you are editing the selection.
+              The <strong>Add Reserve Game</strong> button only appears while the game is{' '}
+              <strong>Selecting</strong> — i.e. entries are closed but the team has not yet been
+              published. It is <strong>not</strong> shown once the team is{' '}
+              <strong>Selected/Published</strong> (take it back to Selecting first), nor on an Open
+              game, nor while you are editing the selection, nor once the game is already paired, and
+              only when at least eight players over a full team.
             </Note>
           </HelpSection>
 

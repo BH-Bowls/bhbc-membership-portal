@@ -92,6 +92,7 @@ export default function ManageGamesPage() {
     status: 'P' | 'C' | 'A' | '';  // Played, Cancelled, Abandoned
     bhbcScore: string;
     opponentScore: string;
+    noScore: boolean;    // Played with no score (reserve team, BH vs BH) — record a reason instead
     reason: string;
     who: 'Burgess Hill' | 'Opponent' | '';
     sendEmail: boolean;
@@ -114,6 +115,7 @@ export default function ManageGamesPage() {
     status: '',
     bhbcScore: '',
     opponentScore: '',
+    noScore: false,
     reason: '',
     who: '',
     sendEmail: false,
@@ -364,7 +366,10 @@ export default function ManageGamesPage() {
         closeConfirmDialog();
         setActionLoading(`paired-${gameA.rowNumber}-${gameB.rowNumber}`);
         try {
-          await changeStatus(gameA.tabName, 'open', undefined, gameA.rowNumber);
+          // Open the first; if it fails (e.g. the section-mismatch trap) stop so the
+          // captain only sees one error rather than two.
+          const a = await changeStatus(gameA.tabName, 'open', undefined, gameA.rowNumber);
+          if (!a.success) return;
           await changeStatus(gameB.tabName, 'open', undefined, gameB.rowNumber);
         } finally {
           setActionLoading(null);
@@ -489,6 +494,7 @@ export default function ManageGamesPage() {
       status: autoStatus as 'P' | 'C' | 'A' | '',
       bhbcScore: '',
       opponentScore: '',
+      noScore: false,
       reason: '',
       who: '',
       sendEmail: false,
@@ -502,17 +508,25 @@ export default function ManageGamesPage() {
    * Submit game outcome from the dialog
    */
   async function submitOutcome() {
-    const { tabName, status, bhbcScore, opponentScore, reason, who, sendEmail, sendTeaRotaEmail } = outcomeDialog;
+    const { tabName, status, bhbcScore, opponentScore, noScore, reason, who, sendEmail, sendTeaRotaEmail } = outcomeDialog;
 
     // Show loading state — keep dialog open while the API call runs
     setOutcomeDialog(prev => ({ ...prev, isSubmitting: true }));
 
     let result: { success: boolean; data?: Record<string, unknown> } = { success: false };
     if (status === 'P') {
-      result = await changeStatus(tabName, 'played', {
-        bhbc_score: parseInt(bhbcScore),
-        opponent_score: parseInt(opponentScore),
-      });
+      // A no-score game (e.g. a reserve team, BH vs BH) records a reason instead of scores
+      if (noScore) {
+        result = await changeStatus(tabName, 'played', {
+          no_score: true,
+          reason,
+        });
+      } else {
+        result = await changeStatus(tabName, 'played', {
+          bhbc_score: parseInt(bhbcScore),
+          opponent_score: parseInt(opponentScore),
+        });
+      }
     } else if (status === 'C') {
       result = await changeStatus(tabName, 'cancel', {
         reason,
@@ -553,12 +567,13 @@ export default function ManageGamesPage() {
    * Check if outcome dialog can be submitted
    */
   function canSubmitOutcome(): boolean {
-    const { status, bhbcScore, opponentScore, reason, who } = outcomeDialog;
+    const { status, bhbcScore, opponentScore, noScore, reason, who } = outcomeDialog;
 
     if (!status) return false;
 
     if (status === 'P') {
-      // Played: need both scores
+      // Played: need both scores, unless "no score" is chosen (then need a reason)
+      if (noScore) return reason.trim() !== '';
       return bhbcScore !== '' && opponentScore !== '';
     } else if (status === 'C') {
       // Cancelled: need reason and who
@@ -1366,7 +1381,10 @@ export default function ManageGamesPage() {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                       </svg>
                       <span>
-                        {outcomeDialog.status === 'P' ? `Score: BHBC ${outcomeDialog.bhbcScore} – ${outcomeDialog.opponentScore}` :
+                        {outcomeDialog.status === 'P'
+                          ? (outcomeDialog.noScore
+                              ? `No score — ${outcomeDialog.reason}`
+                              : `Score: BHBC ${outcomeDialog.bhbcScore} – ${outcomeDialog.opponentScore}`) :
                          outcomeDialog.status === 'C' ? `Cancelled by ${outcomeDialog.who} — ${outcomeDialog.reason}` :
                          `Abandoned — ${outcomeDialog.reason}`}
                       </span>
@@ -1484,7 +1502,26 @@ export default function ManageGamesPage() {
                     )}
 
                     {/* Scores - show for Played or Abandoned */}
-                    {(outcomeDialog.status === 'P' || outcomeDialog.status === 'A') && (
+                    {/* No-score option — e.g. a reserve team (Burgess Hill vs Burgess Hill) */}
+                    {outcomeDialog.status === 'P' && (
+                      <label className="flex items-center gap-2 text-sm text-gray-900">
+                        <input
+                          type="checkbox"
+                          checked={outcomeDialog.noScore}
+                          onChange={(e) => setOutcomeDialog({
+                            ...outcomeDialog,
+                            noScore: e.target.checked,
+                            // Default the reason to "Reserve Team" the first time it's ticked
+                            reason: e.target.checked && !outcomeDialog.reason ? 'Reserve Team' : outcomeDialog.reason,
+                          })}
+                          className="w-4 h-4"
+                        />
+                        No score (e.g. reserve team)
+                      </label>
+                    )}
+
+                    {/* Scores — for Abandoned, and for Played unless "no score" is ticked */}
+                    {(outcomeDialog.status === 'A' || (outcomeDialog.status === 'P' && !outcomeDialog.noScore)) && (
                       <>
                         <div>
                           <label className="block text-sm font-medium text-gray-700 mb-1">Burgess Hill Score</label>
@@ -1507,6 +1544,21 @@ export default function ManageGamesPage() {
                           />
                         </div>
                       </>
+                    )}
+
+                    {/* Reason — for a no-score Played game (defaults to "Reserve Team") */}
+                    {outcomeDialog.status === 'P' && outcomeDialog.noScore && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Reason</label>
+                        <input
+                          type="text"
+                          value={outcomeDialog.reason}
+                          onChange={(e) => setOutcomeDialog({ ...outcomeDialog, reason: e.target.value })}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          placeholder="Reserve Team"
+                          maxLength={100}
+                        />
+                      </div>
                     )}
 
                     {/* Reason and Who - show for Cancelled or Abandoned */}

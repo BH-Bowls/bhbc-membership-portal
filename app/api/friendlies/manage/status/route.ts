@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
 
     // Parse request body
     const body: ChangeStatusRequest = await request.json();
-    const { tab_name, row_number, action, expected_status, bhbc_score, opponent_score, reason, who, send_email, email_player_names, send_tea_rota_email, publish_message } = body;
+    const { tab_name, row_number, action, expected_status, bhbc_score, opponent_score, no_score, reason, who, send_email, email_player_names, send_tea_rota_email, publish_message } = body;
 
     // Fetch all games from Games sheet
     const games = await getGames();
@@ -139,7 +139,13 @@ export async function POST(request: NextRequest) {
       tabDatePart = formatTabDate(game.date);
     }
 
-    const effectiveTabName = `${game.clubName} ${tabDatePart}`.trim();
+    // Prefer the game's stored tab name — it is the canonical sheet/column key. Reconstruct
+    // from club name + date only for a game being opened for the first time (no tab name yet).
+    // This keeps reserve games (tab "<orig>-2") and any game whose club_name differs from its
+    // tab (e.g. a renamed reserve team) resolving to the correct sheet and Players column.
+    const effectiveTabName = (game.tabName && game.tabName.trim() !== '')
+      ? game.tabName.trim()
+      : `${game.clubName} ${tabDatePart}`.trim();
 
     // Get current status (empty string if not set)
     let currentStatus = game.status;
@@ -164,6 +170,28 @@ export async function POST(request: NextRequest) {
             { error: `Can only open Upcoming games — this game is ${statusLabel(currentStatus)}. Refresh the game list.` },
             { status: 400 }
           );
+        }
+
+        // Trap a mismatched pair before opening: paired games must be the same section
+        // (Ladies/Men — usually both Mixed). Catches games paired together by mistake.
+        if (game.paired === 'Y' || game.paired === 'C') {
+          const thisSection = (game.ladiesMen || '').trim().toLowerCase();
+          for (let i = 0; i < games.length; i++) {
+            const other = games[i];
+            if (other.rowNumber === game.rowNumber) continue;
+            const otherPaired = other.paired === 'Y' || other.paired === 'C';
+            if (otherPaired && other.date === game.date) {
+              const otherSection = (other.ladiesMen || '').trim().toLowerCase();
+              if (thisSection && otherSection && thisSection !== otherSection) {
+                return NextResponse.json(
+                  {
+                    error: `These paired games are different sections — "${game.ladiesMen}" vs "${other.ladiesMen}". Unpair them (or fix the section) before opening. Paired games must be the same section, usually both Mixed.`,
+                  },
+                  { status: 400 }
+                );
+              }
+            }
+          }
         }
 
         // Set new status to Open
@@ -386,10 +414,18 @@ export async function POST(request: NextRequest) {
           );
         }
 
-        // Validate that both scores are provided (required for completed games)
-        if (bhbc_score === undefined || opponent_score === undefined) {
+        // Normally both scores are required. A "no score" game (e.g. a reserve team —
+        // Burgess Hill vs Burgess Hill) is recorded as played with a reason instead.
+        if (!no_score) {
+          if (bhbc_score === undefined || opponent_score === undefined) {
+            return NextResponse.json(
+              { error: 'Scores required for played status' },
+              { status: 400 }
+            );
+          }
+        } else if (!reason || !reason.trim()) {
           return NextResponse.json(
-            { error: 'Scores required for played status' },
+            { error: 'A reason is required when recording no score' },
             { status: 400 }
           );
         }

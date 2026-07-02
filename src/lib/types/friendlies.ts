@@ -426,7 +426,8 @@ export interface ChangeStatusRequest {
   expected_status?: string; // Client's known current status — server rejects with 409 if it doesn't match
   bhbc_score?: number;      // Burgess Hill score (required for 'played' and 'abandon')
   opponent_score?: number;  // Opponent score (required for 'played' and 'abandon')
-  reason?: string;          // Reason for cancellation/abandonment (required for 'cancel' and 'abandon')
+  no_score?: boolean;       // 'played' with no score (e.g. a reserve team, BH vs BH) — scores skipped, reason recorded
+  reason?: string;          // Reason for cancellation/abandonment, or for a no-score played game
   who?: string;             // Who initiated cancellation (required for 'cancel')
   send_email?: boolean;     // Whether to send email notification to players (for 'publish' action)
   email_player_names?: string[]; // When set, only email these specific players (subset of all entered players)

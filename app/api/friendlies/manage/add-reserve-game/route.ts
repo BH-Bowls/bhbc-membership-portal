@@ -29,6 +29,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'tab_name is required' }, { status: 400 });
     }
 
+    // Optional reserve-team name + format (the dialog supplies sensible defaults)
+    const teamName = typeof body.team_name === 'string' ? body.team_name.trim() : '';
+    const format = typeof body.format === 'string' ? body.format.trim() : '';
+
     const games = await getGames();
     const game = games.find(g => g.tabName === tabName);
     if (!game) {
@@ -54,7 +58,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result = await createReserveGame(tabName);
+    const result = await createReserveGame(tabName, { teamName, format });
     return NextResponse.json({ success: true, tabName: result.tabName });
   } catch (error) {
     console.error('[POST /api/friendlies/manage/add-reserve-game] Error:', error);

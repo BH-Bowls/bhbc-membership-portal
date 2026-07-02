@@ -220,6 +220,15 @@ export default function TeamSelectionPage() {
   // State: Instructions / Publish dialog (shared GameInstructionsDialog)
   const [instructionsDialogMode, setInstructionsDialogMode] = useState<'instructions' | 'publish' | null>(null);
 
+  // State: Add-reserve-game dialog — captures the reserve team's name + format
+  const [reserveDialog, setReserveDialog] = useState<{
+    open: boolean;
+    teamName: string;
+    format: string;
+    submitting: boolean;
+    error: string | null;
+  }>({ open: false, teamName: '', format: '', submitting: false, error: null });
+
   // State: whether the orphan-repair call is in progress
   const [fixingOrphans, setFixingOrphans] = useState(false);
 
@@ -479,28 +488,49 @@ export default function TeamSelectionPage() {
    * Create a same-club reserve game for an oversubscribed standalone game,
    * then refresh so the move-reserve checkboxes appear on the reserve rows.
    */
-  async function handleAddReserveGame() {
+  function handleAddReserveGame() {
     if (!gameData) return;
     const g = gameData.game;
-    if (!confirm(`Add a reserve game (${g.clubName} 2) for the overflow players? You'll then move reserves into it and pick it separately.`)) {
-      return;
-    }
+    // Open the dialog pre-filled with sensible defaults: "<club> BH Reserves" and the
+    // original game's format. The captain can change either before confirming.
+    setReserveDialog({
+      open: true,
+      teamName: `${g.clubName} BH Reserves`,
+      format: g.format || '',
+      submitting: false,
+      error: null,
+    });
+  }
+
+  /**
+   * Create the reserve game with the chosen team name + format, then refresh so the
+   * move-reserve checkboxes appear on the reserve rows.
+   */
+  async function submitAddReserveGame() {
+    if (!gameData) return;
+    const g = gameData.game;
+    setReserveDialog(prev => ({ ...prev, submitting: true, error: null }));
     try {
       const res = await fetch('/api/friendlies/manage/add-reserve-game', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tab_name: g.tabName }),
+        body: JSON.stringify({
+          tab_name: g.tabName,
+          team_name: reserveDialog.teamName.trim(),
+          format: reserveDialog.format.trim(),
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
-        alert(data.error || 'Failed to add reserve game');
+        setReserveDialog(prev => ({ ...prev, submitting: false, error: data.error || 'Failed to add reserve game' }));
         return;
       }
-      // This game is now paired — reload so the move-reserve checkboxes appear
+      // Close the dialog and reload — this game is now paired, so move-reserve appears
+      setReserveDialog({ open: false, teamName: '', format: '', submitting: false, error: null });
       await refreshGameData();
     } catch (error) {
       console.error('Error adding reserve game:', error);
-      alert('Failed to add reserve game');
+      setReserveDialog(prev => ({ ...prev, submitting: false, error: 'Failed to add reserve game' }));
     }
   }
 
@@ -1750,6 +1780,76 @@ export default function TeamSelectionPage() {
           }}
           onCancel={() => setInstructionsDialogMode(null)}
         />
+      )}
+
+      {/* ================================================================== */}
+      {/* Add Reserve Game dialog — name the reserve team + choose its format */}
+      {/* ================================================================== */}
+      {reserveDialog.open && gameData && (
+        <div className="fixed inset-0 z-[100] overflow-y-auto">
+          <div
+            className="fixed inset-0 bg-black bg-opacity-50"
+            onClick={() => !reserveDialog.submitting && setReserveDialog(prev => ({ ...prev, open: false }))}
+          />
+          <div className="flex min-h-full items-center justify-center p-4">
+            <div
+              className="relative bg-white rounded-lg shadow-xl max-w-md w-full p-6 text-gray-900"
+              onClick={e => e.stopPropagation()}
+            >
+              <h3 className="text-lg font-semibold text-gray-900 mb-1">Create Reserve Team</h3>
+              <p className="text-sm text-gray-700 mb-4">
+                A second game is created for the overflow players. Give the reserve team a name and
+                format — you&apos;ll then move reserves into it and pick it separately.
+              </p>
+
+              {reserveDialog.error && (
+                <div className="mb-3 rounded-md bg-red-50 border border-red-200 text-red-800 text-sm px-3 py-2">
+                  {reserveDialog.error}
+                </div>
+              )}
+
+              <div className="mb-3">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Team name</label>
+                <input
+                  type="text"
+                  value={reserveDialog.teamName}
+                  onChange={(e) => setReserveDialog(prev => ({ ...prev, teamName: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  maxLength={100}
+                />
+              </div>
+
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Format</label>
+                <input
+                  type="text"
+                  value={reserveDialog.format}
+                  onChange={(e) => setReserveDialog(prev => ({ ...prev, format: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="e.g. 4 Triples"
+                  maxLength={60}
+                />
+              </div>
+
+              <div className="flex gap-3 justify-end">
+                <button
+                  onClick={() => setReserveDialog(prev => ({ ...prev, open: false }))}
+                  disabled={reserveDialog.submitting}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={submitAddReserveGame}
+                  disabled={reserveDialog.submitting || !reserveDialog.teamName.trim()}
+                  className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {reserveDialog.submitting ? 'Creating…' : 'Create Reserve Team'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

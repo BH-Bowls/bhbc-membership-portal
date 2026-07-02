@@ -4910,7 +4910,10 @@ export async function createFixture(data: {
  * Guards here: original must exist and not already be paired, and the -2 game
  * must not already exist. Status/oversubscription are enforced by the API.
  */
-export async function createReserveGame(originalTabName: string): Promise<{ tabName: string }> {
+export async function createReserveGame(
+  originalTabName: string,
+  options?: { teamName?: string; format?: string }
+): Promise<{ tabName: string }> {
   const spreadsheetId = getFriendliesSpreadsheetId();
   const sheets = getSheetsClient();
 
@@ -4942,7 +4945,19 @@ export async function createReserveGame(originalTabName: string): Promise<{ tabN
 
   // Reserve-game overrides
   setCol('tab_name', newTabName);
-  setCol('club_suffix', '2');
+  // Give the reserve a distinct display name so it isn't a second "Newick". The team name
+  // (default "<club> BH Reserves") is stored in club_name; the suffix is cleared so it shows
+  // exactly the chosen name. Falls back to the legacy "<club> 2" suffix if none is supplied.
+  if (options && options.teamName && options.teamName.trim()) {
+    setCol('club_name', options.teamName.trim());
+    setCol('club_suffix', '');
+  } else {
+    setCol('club_suffix', '2');
+  }
+  // Format defaults (in the dialog) to the original's format, but can be changed
+  if (options && options.format && options.format.trim()) {
+    setCol('format', options.format.trim());
+  }
   setCol('paired', 'C');
   setCol('status', 'X');
   setCol('entered', 0);
@@ -4961,11 +4976,10 @@ export async function createReserveGame(originalTabName: string): Promise<{ tabN
     requestBody: { values: [row] },
   });
 
-  // Pair the original game: suffix '1', paired 'C' (closed-link — see above)
+  // Pair the original game: paired 'C' (closed-link — see above). The original keeps its
+  // own name/suffix unchanged — the reserve now carries a distinct team name, so there's no
+  // need to relabel the original as "<club> 1".
   const origUpdates: { range: string; values: (string | number)[][] }[] = [];
-  if (colMap['club_suffix'] !== undefined) {
-    origUpdates.push({ range: `Games!${getColumnLetter(colMap['club_suffix'])}${original.rowNumber}`, values: [['1']] });
-  }
   if (colMap['paired'] !== undefined) {
     origUpdates.push({ range: `Games!${getColumnLetter(colMap['paired'])}${original.rowNumber}`, values: [['C']] });
   }
