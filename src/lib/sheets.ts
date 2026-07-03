@@ -420,7 +420,7 @@ export function getUsersCacheStats() {
   const loadedAt = _usersCacheStats.windowLoadedAt;
   return {
     cached: _usersCache !== null,
-    memberCount: _usersCache ? _usersCache.users.length : 0,
+    count: _usersCache ? _usersCache.users.length : 0,
     loadedAt,
     ageMs: loadedAt !== null ? now - loadedAt : null,
     ttlMs: USERS_CACHE_TTL_MS,

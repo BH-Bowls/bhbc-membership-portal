@@ -162,7 +162,7 @@ export function getFriendliesMembersCacheStats() {
   const rows = _membersRowsCache ? _membersRowsCache.rows.length : 0;
   return {
     cached: _membersRowsCache !== null,
-    memberCount: rows > 0 ? rows - 1 : 0, // rows include the header
+    count: rows > 0 ? rows - 1 : 0, // rows include the header
     loadedAt,
     ageMs: loadedAt !== null ? now - loadedAt : null,
     ttlMs: MEMBERS_ROWS_TTL_MS,
@@ -209,11 +209,22 @@ export function getSheetsClient() {
 
   // Wrap all values.* methods with exponential-backoff retry so transient
   // quota errors (HTTP 429) are automatically retried across every call site.
+  // Writes to the Games sheet also drop the Games read cache on this instance
+  // (friendlies uses its own client, so the sheets.ts registry never sees them).
   const values = sheets.spreadsheets.values as any;
+  const writeMethods = new Set(['update', 'batchUpdate', 'append', 'clear']);
   for (const method of ['get', 'batchGet', 'update', 'batchUpdate', 'append', 'clear']) {
     if (typeof values[method] !== 'function') continue;
     const original = values[method].bind(values);
-    values[method] = (...args: any[]) => withRetry(() => original(...args));
+    if (writeMethods.has(method)) {
+      values[method] = async (...args: any[]) => {
+        const result = await withRetry(() => original(...args));
+        if (writeTargetsGames(method, args)) invalidateGamesCache();
+        return result;
+      };
+    } else {
+      values[method] = (...args: any[]) => withRetry(() => original(...args));
+    }
   }
 
   // Serve the full Members-sheet read from a shared cache (see _membersRowsCache).
@@ -393,29 +404,124 @@ export function clearColumnMapCacheForSheet(spreadsheetId: string, sheetName: st
 // GAMES SHEET OPERATIONS
 // ============================================================================
 
+// ── Games sheet read cache ───────────────────────────────────────────────────
+// The Games master sheet (Games!A2:ZZ) is read by getGames, getTeaRotaList and the
+// match-card lookup — several times per friendlies page load. It changes often
+// (entries, scores, selection, locks), but only DISPLAY reads use this cache; every
+// write-gating read (enter, add-players, lock, selection-save) passes forceFresh so
+// it always sees current state. Short TTL (90s), and a Games write invalidates it on
+// this instance immediately (see the write wrapper in getSheetsClient).
+let _gamesRowsCache: { rows: any[][]; at: number } | null = null;
+const GAMES_ROWS_TTL_MS = 90 * 1000; // 90 seconds
+
+interface GamesInvalidation { invalidatedAt: number; hitsServed: number; windowMs: number; }
+const _gamesCacheStats = {
+  windowHits: 0,
+  windowLoadedAt: null as number | null,
+  totalHits: 0,
+  totalLoads: 0,
+  totalInvalidations: 0,
+  startedAt: Date.now(),
+  recent: [] as GamesInvalidation[],
+};
+const GAMES_CACHE_STATS_MAX = 50;
+
+/** Snapshot of the Games cache for the admin diagnostics view. */
+export function getGamesCacheStats() {
+  const now = Date.now();
+  const loadedAt = _gamesCacheStats.windowLoadedAt;
+  return {
+    cached: _gamesRowsCache !== null,
+    count: _gamesRowsCache ? _gamesRowsCache.rows.length : 0, // games held (A2:ZZ, no header)
+    loadedAt,
+    ageMs: loadedAt !== null ? now - loadedAt : null,
+    ttlMs: GAMES_ROWS_TTL_MS,
+    currentWindowHits: _gamesCacheStats.windowHits,
+    totalHits: _gamesCacheStats.totalHits,
+    totalLoads: _gamesCacheStats.totalLoads,
+    totalInvalidations: _gamesCacheStats.totalInvalidations,
+    startedAt: _gamesCacheStats.startedAt,
+    recentInvalidations: _gamesCacheStats.recent.slice(),
+  };
+}
+
+function invalidateGamesCache(): void {
+  if (_gamesRowsCache !== null && _gamesCacheStats.windowLoadedAt !== null) {
+    const now = Date.now();
+    _gamesCacheStats.recent.unshift({
+      invalidatedAt: now,
+      hitsServed: _gamesCacheStats.windowHits,
+      windowMs: now - _gamesCacheStats.windowLoadedAt,
+    });
+    if (_gamesCacheStats.recent.length > GAMES_CACHE_STATS_MAX) {
+      _gamesCacheStats.recent.length = GAMES_CACHE_STATS_MAX;
+    }
+    _gamesCacheStats.totalInvalidations += 1;
+    console.log(`[games-cache] invalidated after serving ${_gamesCacheStats.windowHits} reads over ${Math.round((now - _gamesCacheStats.windowLoadedAt) / 1000)}s`);
+  }
+  _gamesRowsCache = null;
+  _gamesCacheStats.windowHits = 0;
+  _gamesCacheStats.windowLoadedAt = null;
+}
+
+// True when a values write targets the Games master sheet (range starts "Games!").
+// Per-game tabs (e.g. "'Rottingdean 03 Jul 26'!A1") don't match, so they don't bust it.
+function writeTargetsGames(method: string, args: any[]): boolean {
+  const arg = args && args.length > 0 ? args[0] : null;
+  if (!arg) return false;
+  const hitsGames = (range: any) => typeof range === 'string' && range.indexOf('Games!') === 0;
+  if (method === 'batchUpdate') {
+    const data = arg.requestBody && arg.requestBody.data ? arg.requestBody.data : null;
+    if (Array.isArray(data)) {
+      for (let i = 0; i < data.length; i++) {
+        if (hitsGames(data[i].range)) return true;
+      }
+    }
+    return false;
+  }
+  return hitsGames(arg.range);
+}
+
+// Raw rows of Games!A2:ZZ, shared by every reader. forceFresh bypasses the cache
+// (write-gating callers) but still repopulates it so the instance's display catches up.
+async function getGamesRawRows(forceFresh = false): Promise<any[][]> {
+  if (!forceFresh && _gamesRowsCache && (Date.now() - _gamesRowsCache.at) < GAMES_ROWS_TTL_MS) {
+    _gamesCacheStats.windowHits += 1;
+    _gamesCacheStats.totalHits += 1;
+    return _gamesRowsCache.rows;
+  }
+  const spreadsheetId = getFriendliesSpreadsheetId();
+  const sheets = getSheetsClient();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: 'Games!A2:ZZ',
+  });
+  const rows = response.data.values || [];
+  const loadedAt = Date.now();
+  _gamesRowsCache = { rows, at: loadedAt };
+  _gamesCacheStats.windowLoadedAt = loadedAt;
+  _gamesCacheStats.windowHits = 0;
+  _gamesCacheStats.totalLoads += 1;
+  console.log(`[games-cache] loaded ${rows.length} rows from the sheet`);
+  return rows;
+}
+
 /**
  * Get all games from Games sheet, optionally filtered by status
  * Returns array of Game objects with all game details
  * Status codes: O=Open, X=Selecting, S=Selected, P=Played, C=Cancelled, A=Abandoned
+ * forceFresh bypasses the 90s Games cache — used by write-gating callers (enter,
+ * add-players, lock, selection-save) that must act on current game state.
  */
-export async function getGames(statusFilter?: GameStatus, typeFilter?: GameType[]): Promise<Game[]> {
+export async function getGames(statusFilter?: GameStatus, typeFilter?: GameType[], forceFresh = false): Promise<Game[]> {
   // Get Friendlies spreadsheet ID from environment
   const spreadsheetId = getFriendliesSpreadsheetId();
 
   // Get column mappings for Games sheet (cached)
   const colMap = await getColumnMap(spreadsheetId, 'Games');
 
-  // Initialize Google Sheets API client
-  const sheets = getSheetsClient();
-
-  // Fetch all data rows from Games sheet (skip header row 1)
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: 'Games!A2:ZZ',
-  });
-
-  // Extract rows from response (empty array if no data)
-  const rows = response.data.values || [];
+  // Fetch all data rows from Games sheet (cached unless forceFresh)
+  const rows = await getGamesRawRows(forceFresh);
 
   // Helper function to get a string value from a row by field name
   // Returns null if column doesn't exist or cell is empty
@@ -817,7 +923,8 @@ export async function acquireGameLock(
     return { acquired: true, lockedBy: username, lockedAt: new Date().toISOString() };
   }
 
-  const games = await getGames();
+  // Fresh read — lock state must be current so two captains can't both acquire it
+  const games = await getGames(undefined, undefined, true);
   const game = rowNumber
     ? (games.find(g => g.rowNumber === rowNumber) ?? games.find(g => g.tabName === tabName))
     : games.find(g => g.tabName === tabName);
@@ -4454,17 +4561,8 @@ export async function getTeaRotaList(options?: { includeCancelled?: boolean }): 
   // Get column mappings for Games sheet (cached)
   const colMap = await getColumnMap(spreadsheetId, 'Games');
 
-  // Initialize Google Sheets API client
-  const sheets = getSheetsClient();
-
-  // Fetch all data rows from Games sheet (skip header row 1)
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: 'Games!A2:ZZ',
-  });
-
-  // Extract rows from response (empty array if no data)
-  const rows = response.data.values || [];
+  // Fetch all data rows from Games sheet (cached, shared with getGames)
+  const rows = await getGamesRawRows();
 
   // Helper function to get a string value from a row by field name
   const get = (row: any[], field: string): string | null => {
@@ -4717,16 +4815,9 @@ export async function swapTeaAssignment(
     [teaSecondCol]: 'teaSecond',
   };
 
-  // Initialize Google Sheets API client
-  const sheets = getSheetsClient();
-
-  // Fetch ALL rows to find where newUsername is assigned
-  const allRowsResponse = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: 'Games!A2:ZZ',
-  });
-
-  const allRows = allRowsResponse.data.values || [];
+  // Fetch ALL rows to find where newUsername is assigned (cached, shared with getGames)
+  const allRows = await getGamesRawRows();
+  const sheets = getSheetsClient(); // used for the swap write below
 
   // Verify oldUsername is in the specified position at the specified row
   const oldUserRowIndex = rowNumber - 2; // Convert sheet row to array index (row 2 = index 0)

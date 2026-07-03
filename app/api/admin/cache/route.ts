@@ -8,7 +8,7 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
 import { getUsersCacheStats } from '@/lib/sheets';
-import { getFriendliesMembersCacheStats } from '@/lib/friendlies-sheets';
+import { getFriendliesMembersCacheStats, getGamesCacheStats } from '@/lib/friendlies-sheets';
 
 export async function GET() {
   const session = await getServerSession(authOptions);
@@ -20,6 +20,7 @@ export async function GET() {
   return NextResponse.json({
     usersCache: getUsersCacheStats(),
     friendliesMembersCache: getFriendliesMembersCacheStats(),
+    gamesCache: getGamesCacheStats(),
     serverTime: Date.now(),
   });
 }

@@ -30,8 +30,10 @@ export async function POST(request: NextRequest) {
     const body: UpdateSelectionRequest = await request.json();
     const { tab_name, captain_username, selections } = body;
 
-    // Fetch all games from Games sheet
-    const games = await getGames();
+    // Fetch all games from Games sheet. Fresh read — the lock guard below checks
+    // game.lockedBy, which must be current so a stale cache can't let a captain save
+    // selections for a game another captain now holds the lock on.
+    const games = await getGames(undefined, undefined, true);
 
     // Search for the game matching the provided tab_name
     let game = null;

@@ -161,31 +161,6 @@ export default function FriendliesPage() {
   }, []);
 
   /**
-   * Effect: Fetch tea rota to determine if user has tea duty on any game days
-   */
-  useEffect(() => {
-    if (isLimitedView) return;
-    async function fetchTeaDuty() {
-      try {
-        const response = await fetch('/api/tea-rota');
-        if (response.ok) {
-          const data = await response.json();
-          const userName: string = data.currentUser;
-          const dates = new Set<string>(
-            (data.entries as any[])
-              .filter(e => e.teaLead === userName || e.teaFirst === userName || e.teaSecond === userName)
-              .map(e => e.date as string) // DD/MM/YYYY — same format as game.date
-          );
-          setTeaDutyDates(dates);
-        }
-      } catch (error) {
-        console.error('Failed to fetch tea rota:', error);
-      }
-    }
-    fetchTeaDuty();
-  }, []);
-
-  /**
    * Layout effect: restore client-side state from sessionStorage before first paint.
    * Runs synchronously after hydration so the browser never paints the loading spinner
    * or wrong filter tab when returning from a game.
@@ -263,6 +238,11 @@ export default function FriendliesPage() {
       if (data.games) {
         setGames(data.games);
         sessionStorage.setItem(CACHE_KEY, JSON.stringify(data.games));
+      }
+      // Tea-duty dates now come back with the games response (same Games read), so
+      // there's no separate /api/tea-rota fetch on this page.
+      if (Array.isArray(data.teaDutyDates)) {
+        setTeaDutyDates(new Set<string>(data.teaDutyDates));
       }
     } catch (error) {
       if (!silent) alert('Failed to load games. Please refresh the page.');

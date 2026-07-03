@@ -39,8 +39,10 @@ export async function POST(request: NextRequest) {
     // Get current user's username
     const userName = session.user.userName;
 
-    // Fetch all games to verify each game exists and is open
-    const allGames = await getGames();
+    // Fetch all games to verify each game exists and is open. Fresh read — the
+    // open/closed status gates entry, so it must not come from the Games cache
+    // (a member could otherwise enter a game the captain just closed).
+    const allGames = await getGames(undefined, undefined, true);
 
     // Process all game entries in parallel — each game writes to a different
     // column in Players sheet and a different game sheet tab, so no conflicts.

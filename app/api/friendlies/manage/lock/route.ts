@@ -26,7 +26,9 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const games = await getGames();
+    // Fresh read — this reports the current lock holder to the manage UI, so it must
+    // not be served from the (up to 90s stale) Games cache.
+    const games = await getGames(undefined, undefined, true);
     const game = games.find(g => g.tabName === tabName);
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });

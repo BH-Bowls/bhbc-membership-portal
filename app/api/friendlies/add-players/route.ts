@@ -34,8 +34,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Fetch all games to verify game exists and is open
-    const allGames = await getGames();
+    // Fetch all games to verify game exists and is open. Fresh read — status gates
+    // whether players can be added, so it must not come from the Games cache.
+    const allGames = await getGames(undefined, undefined, true);
     const game = allGames.find(g => g.tabName === gameId);
 
     if (!game) {

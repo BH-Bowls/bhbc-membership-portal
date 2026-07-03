@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, getPlayerEntries, getGameSheet } from '@/lib/friendlies-sheets';
+import { getGames, getPlayerEntries, getGameSheet, getTeaRotaList } from '@/lib/friendlies-sheets';
 import { getClubs } from '@/lib/clubs-sheets';
 import { GameStatus, GameType } from '@/lib/types/friendlies';
 import { hasRole } from '@/lib/role-utils';
@@ -36,6 +36,24 @@ export async function GET(request: NextRequest) {
       clubs.filter(c => c.petrolCost > 0).map(c => [c.clubName, c.petrolCost])
     );
 
+    // Tea rota is derived from the same Games sheet. The getGames call above already
+    // warmed the 90s Games cache, so this reuses it (no extra read) — merged here so the
+    // friendlies page gets its tea-duty info in this response instead of a separate
+    // /api/tea-rota call (which was a second, un-shareable Games read per page load).
+    const userName = session?.user?.userName ?? '';
+    const teaDutyDates: string[] = [];
+    if (userName) {
+      const teaEntries = await getTeaRotaList({ includeCancelled: true });
+      const seen = new Set<string>();
+      for (const e of teaEntries) {
+        const onDuty = e.teaLead === userName || e.teaFirst === userName || e.teaSecond === userName;
+        if (onDuty && !seen.has(e.date)) {
+          seen.add(e.date);
+          teaDutyDates.push(e.date);
+        }
+      }
+    }
+
     // For guests (no session) return games without user entry status
     if (!session?.user?.userName) {
       const gamesWithUserStatus = games.map(game => ({
@@ -45,7 +63,7 @@ export async function GET(request: NextRequest) {
         userStatus: null,
         userConfirmed: null,
       }));
-      return NextResponse.json({ games: gamesWithUserStatus });
+      return NextResponse.json({ games: gamesWithUserStatus, teaDutyDates });
     }
 
     // Fetch all entries for this user from Players sheet
@@ -83,8 +101,8 @@ export async function GET(request: NextRequest) {
       userConfirmed: confirmationMap.has(game.tabName) ? confirmationMap.get(game.tabName)! : null,
     }));
 
-    // Return success response with games array
-    return NextResponse.json({ games: gamesWithUserStatus });
+    // Return success response with games array + the user's tea-duty dates
+    return NextResponse.json({ games: gamesWithUserStatus, teaDutyDates });
   } catch (error) {
     // Log error and return 500 response
     return NextResponse.json(

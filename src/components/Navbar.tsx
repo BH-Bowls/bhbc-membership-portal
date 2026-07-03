@@ -196,9 +196,9 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
       items.push({ name: 'Availability', href: '/availability' });
     }
 
-    // Admin only — Members cache diagnostics
+    // Admin only — cache diagnostics
     if (isAdmin) {
-      items.push({ name: 'Members Cache', href: '/admin/cache' });
+      items.push({ name: 'Cache View', href: '/admin/cache' });
     }
 
     // Admin and RowlandOrganiser get Rowland Admin

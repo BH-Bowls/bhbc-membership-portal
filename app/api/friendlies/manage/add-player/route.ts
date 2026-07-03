@@ -36,8 +36,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Fetch all games from Games sheet
-    const games = await getGames();
+    // Fetch all games from Games sheet. Fresh read — status gates whether the player
+    // can be added, so it must not come from the Games cache.
+    const games = await getGames(undefined, undefined, true);
 
     // Search for the game by tabName
     let game = null;
