@@ -190,9 +190,15 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
       items.push({ name: 'Print Labels', href: '/labels' });
     }
 
-    // Admin and Testing roles — Availability (restricted during testing phase)
-    if (isAdmin || isTesting) {
+    // Admin only — Availability (still testing). The pages stay reachable by direct
+    // link, so members can complete their availability without a nav entry.
+    if (isAdmin) {
       items.push({ name: 'Availability', href: '/availability' });
+    }
+
+    // Admin only — Members cache diagnostics
+    if (isAdmin) {
+      items.push({ name: 'Members Cache', href: '/admin/cache' });
     }
 
     // Admin and RowlandOrganiser get Rowland Admin
