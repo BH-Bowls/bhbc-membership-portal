@@ -252,6 +252,9 @@ export async function authenticateUser(
         deviceType: detectDeviceType(userAgent),
       });
 
+      // Record the failed attempt on the member's row (Last Login Failed Date)
+      await updateLastLogin(user.userName, false);
+
       // Return generic error (don't reveal that username was correct)
       return {
         success: false,
@@ -269,6 +272,11 @@ export async function authenticateUser(
       userAgent: userAgent || '',
       deviceType: detectDeviceType(userAgent),
     });
+
+    // Stamp the Last Login Date on the member's row. (This had silently stopped
+    // happening — updateLastLogin was imported but never invoked.) It is
+    // self-guarded, so a write failure never blocks login.
+    await updateLastLogin(user.userName, true);
 
     // Use Full Name from sheet (e.g., "Celia Dasey" - uses preferred name + last name)
     let displayName = user.fullName;
@@ -317,8 +325,11 @@ export async function findUserByIdentifier(
   identifier: string
 ): Promise<User | null> {
   try {
-    // Strategy 1: Try as exact username first (most specific, fastest)
-    let user = await getUserByUsername(identifier);
+    // Strategy 1: Try as exact username first (most specific, fastest).
+    // Read FRESH (login path): a just-changed password or newly-added member must be
+    // seen even if this serverless instance's cache is stale. This repopulates the
+    // cache, so the variant/email lookups below reuse it without another round-trip.
+    let user = await getUserByUsername(identifier, true);
     if (user) {
       return user;
     }
@@ -465,8 +476,9 @@ export async function changePassword(
   isTempPassword: boolean = false
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    // Get user profile from Google Sheets
-    const user = await getUserByUsername(userName);
+    // Get user profile from Google Sheets. Read FRESH — we verify the current
+    // password against this hash, so it must not be a stale cross-instance copy.
+    const user = await getUserByUsername(userName, true);
 
     // Check if user exists
     if (!user) {

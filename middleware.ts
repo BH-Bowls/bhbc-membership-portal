@@ -198,6 +198,13 @@ export default withAuth(
       }
     }
 
+    // Protect /admin/cache route - Admin only (Members cache diagnostics)
+    if (pathname.startsWith('/admin/cache')) {
+      if (!token || !hasRole(token.role as string, 'Admin')) {
+        return NextResponse.redirect(new URL('/', req.url));
+      }
+    }
+
     // Protect /admin/stats routes - Admin, Captain, GMC (Treasurer excluded)
     if (pathname.startsWith('/admin/stats')) {
       if (!token || !hasRole(token.role as string, 'Admin', 'Captain', 'GMC')) {

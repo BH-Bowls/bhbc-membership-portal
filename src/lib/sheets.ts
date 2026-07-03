@@ -93,6 +93,63 @@ export async function withRetry<T>(
 }
 
 // ============================================================================
+// READ-CACHE INVALIDATION REGISTRY
+// ============================================================================
+// Hot sheets (Members above all) are read on nearly every request but change
+// rarely, so they are cached in memory to cut Google Sheets read-quota usage.
+// Any write that targets a cached sheet must drop that cache. Every writer goes
+// through the shared client wrapped by applyRetryToValues, so we invalidate
+// centrally there — individual writers never have to remember to bust the cache.
+
+const cacheInvalidators: Map<string, Array<() => void>> = new Map();
+
+/** Register a callback to run whenever a values write targets `sheetName`. */
+export function registerSheetCacheInvalidator(sheetName: string, fn: () => void): void {
+  const list = cacheInvalidators.get(sheetName);
+  if (list) {
+    list.push(fn);
+  } else {
+    cacheInvalidators.set(sheetName, [fn]);
+  }
+}
+
+function fireCacheInvalidators(sheetName: string): void {
+  const list = cacheInvalidators.get(sheetName);
+  if (!list) return;
+  for (let i = 0; i < list.length; i++) {
+    list[i]();
+  }
+}
+
+/** Extract the sheet name(s) a values write targets, from its request args. */
+function writtenSheetNames(method: string, args: any[]): string[] {
+  const arg = args && args.length > 0 ? args[0] : null;
+  if (!arg) return [];
+  const names: string[] = [];
+  const addFromRange = (range: any) => {
+    if (typeof range !== 'string' || range.length === 0) return;
+    // Ranges look like "Sheet!A1:B2", "'Sheet Name'!A1", or a bare "Sheet"
+    let name = range;
+    const bang = range.indexOf('!');
+    if (bang !== -1) name = range.slice(0, bang);
+    if (name.length >= 2 && name.charAt(0) === "'" && name.charAt(name.length - 1) === "'") {
+      name = name.slice(1, name.length - 1);
+    }
+    names.push(name);
+  };
+  if (method === 'batchUpdate') {
+    const body = arg.requestBody;
+    const data = body && body.data ? body.data : null;
+    if (Array.isArray(data)) {
+      for (let i = 0; i < data.length; i++) addFromRange(data[i].range);
+    }
+  } else {
+    addFromRange(arg.range);
+  }
+  return names;
+}
+
+// ============================================================================
 // GOOGLE SHEETS CLIENT
 // ============================================================================
 
@@ -103,10 +160,21 @@ export async function withRetry<T>(
  */
 function applyRetryToValues(sheets: ReturnType<typeof google.sheets>): void {
   const values = sheets.spreadsheets.values as any;
+  const writeMethods = new Set(['update', 'batchUpdate', 'append', 'clear']);
   for (const method of ['get', 'batchGet', 'update', 'batchUpdate', 'append', 'clear']) {
     if (typeof values[method] !== 'function') continue;
     const original = values[method].bind(values);
-    values[method] = (...args: any[]) => withRetry(() => original(...args));
+    if (writeMethods.has(method)) {
+      // Writes: retry, then drop the cache for any sheet they touched.
+      values[method] = async (...args: any[]) => {
+        const result = await withRetry(() => original(...args));
+        const names = writtenSheetNames(method, args);
+        for (let i = 0; i < names.length; i++) fireCacheInvalidators(names[i]);
+        return result;
+      };
+    } else {
+      values[method] = (...args: any[]) => withRetry(() => original(...args));
+    }
   }
 }
 
@@ -316,7 +384,93 @@ export function getColumnLetter(index: number): string {
  * @returns Array of all users in the system
  * @throws Error if unable to fetch data from Google Sheets
  */
-export async function getAllUsers(): Promise<User[]> {
+// ── Members (users) read cache ───────────────────────────────────────────────
+// The Members sheet is read on almost every request (getUserByUsername,
+// getUsersByEmail, auth, and 30+ call sites) but changes rarely, so cache the
+// parsed User[] for a long TTL. Any write to the Members sheet auto-invalidates
+// it via the registry above (clearUsersCache), so edits/password changes/new
+// members are reflected immediately. This is the single biggest read saving.
+const USERS_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+let _usersCache: { users: User[]; at: number } | null = null;
+
+// ── Cache diagnostics (surfaced at /admin/cache) ─────────────────────────────
+// Tracks how many reads each cached copy serves before it is invalidated, so an
+// admin can see the cache working. NOTE: this is per serverless instance — each
+// warm instance keeps its own cache + counters, so the numbers reflect only the
+// instance that happened to serve the diagnostics request.
+interface CacheInvalidationRecord {
+  invalidatedAt: number; // epoch ms the copy was dropped
+  hitsServed: number;    // cache hits served during the window that just closed
+  windowMs: number;      // how long that copy lived before being dropped
+}
+const _usersCacheStats = {
+  windowHits: 0,          // hits served since the current copy loaded
+  windowLoadedAt: null as number | null,
+  totalHits: 0,           // lifetime cache hits (reads avoided)
+  totalLoads: 0,          // lifetime fetches from the Sheets API
+  totalInvalidations: 0,  // lifetime invalidations that dropped a live copy
+  startedAt: Date.now(),  // when this instance began tracking
+  recent: [] as CacheInvalidationRecord[], // most-recent-first, capped
+};
+const USERS_CACHE_STATS_MAX = 50;
+
+/** Snapshot of the Members cache state for the admin diagnostics view. */
+export function getUsersCacheStats() {
+  const now = Date.now();
+  const loadedAt = _usersCacheStats.windowLoadedAt;
+  return {
+    cached: _usersCache !== null,
+    memberCount: _usersCache ? _usersCache.users.length : 0,
+    loadedAt,
+    ageMs: loadedAt !== null ? now - loadedAt : null,
+    ttlMs: USERS_CACHE_TTL_MS,
+    currentWindowHits: _usersCacheStats.windowHits,
+    totalHits: _usersCacheStats.totalHits,
+    totalLoads: _usersCacheStats.totalLoads,
+    totalInvalidations: _usersCacheStats.totalInvalidations,
+    startedAt: _usersCacheStats.startedAt,
+    recentInvalidations: _usersCacheStats.recent.slice(),
+  };
+}
+
+/** Drop the cached Members data (auto-called on any Members write). */
+export function clearUsersCache(): void {
+  // Record the window that just closed — but only when a live copy is being
+  // dropped (a write while the cache is already empty is not an interesting event).
+  if (_usersCache !== null && _usersCacheStats.windowLoadedAt !== null) {
+    const now = Date.now();
+    _usersCacheStats.recent.unshift({
+      invalidatedAt: now,
+      hitsServed: _usersCacheStats.windowHits,
+      windowMs: now - _usersCacheStats.windowLoadedAt,
+    });
+    if (_usersCacheStats.recent.length > USERS_CACHE_STATS_MAX) {
+      _usersCacheStats.recent.length = USERS_CACHE_STATS_MAX;
+    }
+    _usersCacheStats.totalInvalidations += 1;
+    console.log(`[users-cache] invalidated after serving ${_usersCacheStats.windowHits} reads over ${Math.round((now - _usersCacheStats.windowLoadedAt) / 1000)}s`);
+  }
+  _usersCache = null;
+  _usersCacheStats.windowHits = 0;
+  _usersCacheStats.windowLoadedAt = null;
+}
+registerSheetCacheInvalidator('Members', clearUsersCache);
+
+export async function getAllUsers(forceFresh = false): Promise<User[]> {
+  // Serve from cache when fresh. Return a shallow copy so a caller that sorts the
+  // array in place can't reorder the cached copy.
+  //
+  // CROSS-INSTANCE NOTE: this cache is per serverless instance. A write invalidates
+  // only the instance that made it; other warm instances keep their copy until TTL.
+  // Fine for display data (eventually consistent), but WRONG for authentication —
+  // a password change on one instance must not let a stale login succeed elsewhere.
+  // So auth-critical reads (login, reset-token, change-password verify) pass
+  // forceFresh=true to bypass the cache and read the sheet directly.
+  if (!forceFresh && _usersCache && (Date.now() - _usersCache.at) < USERS_CACHE_TTL_MS) {
+    _usersCacheStats.windowHits += 1;
+    _usersCacheStats.totalHits += 1;
+    return _usersCache.users.slice();
+  }
   try {
     // Get the column mapping for the Members sheet
     // This tells us which column index corresponds to each field
@@ -370,7 +524,15 @@ export async function getAllUsers(): Promise<User[]> {
       users.push(user);
     }
 
-    return users;
+    // Cache for subsequent reads; invalidated automatically on any Members write
+    const loadedAt = Date.now();
+    _usersCache = { users, at: loadedAt };
+    _usersCacheStats.windowLoadedAt = loadedAt;
+    _usersCacheStats.windowHits = 0;
+    _usersCacheStats.totalLoads += 1;
+    console.log(`[users-cache] loaded ${users.length} members from the sheet`);
+
+    return users.slice();
   } catch (error) {
     // Log error for debugging
     console.error('Error getting users:', error);
@@ -384,8 +546,8 @@ export async function getAllUsers(): Promise<User[]> {
  * Get user by username (exact match, case-insensitive)
  * Supports alternative format with underscores (e.g., john_smith -> john.smith)
  */
-export async function getUserByUsername(userName: string): Promise<User | null> {
-  const users = await getAllUsers();
+export async function getUserByUsername(userName: string, forceFresh = false): Promise<User | null> {
+  const users = await getAllUsers(forceFresh);
   const normalized = userName.toLowerCase();
   const normalizedWithDot = normalized.replace(/_/g, '.');
 
@@ -398,11 +560,11 @@ export async function getUserByUsername(userName: string): Promise<User | null> 
 /**
  * Get users by email address
  */
-export async function getUsersByEmail(email: string): Promise<User[]> {
-  const users = await getAllUsers();
+export async function getUsersByEmail(email: string, forceFresh = false): Promise<User[]> {
+  const users = await getAllUsers(forceFresh);
   const normalized = email.toLowerCase();
-  
-  return users.filter(u => 
+
+  return users.filter(u =>
     u.emailAddress && u.emailAddress.toLowerCase() === normalized
   );
 }
@@ -1024,7 +1186,8 @@ export async function generatePasswordResetToken(
  */
 export async function validateResetToken(token: string): Promise<User | null> {
   try {
-    const users = await getAllUsers();
+    // Read fresh: the token was just written and may not be in another instance's cache
+    const users = await getAllUsers(true);
     const user = users.find((u) => u.resetToken === token);
 
     if (!user) {
