@@ -10,7 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getCompetitionMatches, updateMatch, propagateWinnerToNextRound, getMemberInfoMap } from '@/lib/competitions-sheets';
+import { getCompetitionMatches, updateMatch, propagateWinnerToNextRound, getMemberInfoMap, getNextRoundMatch, resetMatch } from '@/lib/competitions-sheets';
 import { clearDiaryCache } from '@/lib/home-cache';
 import { hasRole } from '@/lib/role-utils';
 
@@ -47,15 +47,118 @@ export async function PATCH(
       return NextResponse.json({ error: 'Match not found' }, { status: 404 });
     }
 
-    // Both committee and members cannot update a match that is already complete
+    const body = await request.json();
+
+    // ── Already-completed match: only "correct" or "reset" actions are allowed ──
+    // Everything else is rejected (a normal save can't touch a finished match).
     if (match.status !== 'Pending') {
+      const action = body.action;
+
+      // RESET (blank) — Admin only. Clears the result and removes the side it fed
+      // into the next round. Guarded: refuse if that next match has already been
+      // played (the admin must reset the later round first — deepest-first unwind).
+      if (action === 'reset') {
+        if (!hasRole(session.user.role, 'Admin')) {
+          return NextResponse.json({ error: 'Only an Admin can blank a match' }, { status: 403 });
+        }
+        const nextMatch = await getNextRoundMatch(compId, match, matches);
+        if (nextMatch && (nextMatch.status === 'Complete' || nextMatch.status === 'Walkover')) {
+          return NextResponse.json(
+            { error: 'The next-round match has already been played. Reset that round first.' },
+            { status: 409 }
+          );
+        }
+        await resetMatch(compId, match);
+        clearDiaryCache(currentUsername);
+        return NextResponse.json({ success: true });
+      }
+
+      // CORRECT — committee. Amend the score/winner of a finished match. A pure score
+      // fix that keeps the same winner is always allowed. A fix that changes who
+      // advances is only allowed while the next-round match is still unplayed.
+      if (action === 'correct') {
+        if (!committee) {
+          return NextResponse.json({ error: 'Only committee can correct a result' }, { status: 403 });
+        }
+
+        const { score1, score2, winnerSide, status: newStatus, playedDate, marker } = body;
+
+        // Resolve the corrected winner from the new score / walkover
+        let newWinnerSide: 1 | 2;
+        if (newStatus === 'Complete') {
+          if (score1 == null || score2 == null) {
+            return NextResponse.json({ error: 'score1 and score2 are required' }, { status: 400 });
+          }
+          if (score1 < 0 || score2 < 0) {
+            return NextResponse.json({ error: 'Scores cannot be negative' }, { status: 400 });
+          }
+          if (score1 === score2) {
+            return NextResponse.json({ error: 'Scores cannot be equal — there must be a winner' }, { status: 400 });
+          }
+          newWinnerSide = score1 > score2 ? 1 : 2;
+        } else if (newStatus === 'Walkover') {
+          if (winnerSide !== 1 && winnerSide !== 2) {
+            return NextResponse.json({ error: 'winnerSide (1 or 2) is required for walkover' }, { status: 400 });
+          }
+          newWinnerSide = winnerSide;
+        } else {
+          return NextResponse.json({ error: 'A correction must supply a Complete or Walkover result' }, { status: 400 });
+        }
+
+        // Guardrail: if the winner changes, the next-round match must not be played yet
+        const winnerChanges = newWinnerSide !== match.winnerSide;
+        if (winnerChanges) {
+          const nextMatch = await getNextRoundMatch(compId, match, matches);
+          if (nextMatch && (nextMatch.status === 'Complete' || nextMatch.status === 'Walkover')) {
+            return NextResponse.json(
+              { error: 'This correction changes who goes through, but the next-round match has already been played. Reset that round first.' },
+              { status: 409 }
+            );
+          }
+        }
+
+        // Write the corrected result
+        const correctToday = new Date().toISOString().split('T')[0];
+        if (newStatus === 'Complete') {
+          await updateMatch(compId, matchId, {
+            score1,
+            score2,
+            winnerSide: newWinnerSide,
+            status: 'Complete',
+            playedDate: playedDate || match.playedDate || correctToday,
+            ...(marker !== undefined && { marker }),
+          });
+        } else {
+          await updateMatch(compId, matchId, {
+            score1: null,
+            score2: null,
+            winnerSide: newWinnerSide,
+            status: 'Walkover',
+            playedDate: playedDate || match.playedDate || correctToday,
+            ...(marker !== undefined && { marker }),
+          });
+        }
+
+        // Re-advance only when the winner actually changed (uses the original match's
+        // sides + the new winner to overwrite the next-round slot)
+        if (winnerChanges) {
+          try {
+            await propagateWinnerToNextRound(compId, match, newWinnerSide);
+          } catch (err) {
+            console.error('[correct propagate] Error:', err);
+          }
+        }
+
+        clearDiaryCache(currentUsername);
+        return NextResponse.json({ success: true });
+      }
+
+      // No recognised action on a finished match — reject as before.
       return NextResponse.json(
         { error: 'Match is already completed' },
         { status: 400 }
       );
     }
-
-    const body = await request.json();
 
     // ── Member-level permission tier ──────────────────────────────────────────
     // Non-committee members may only record the planned date for their own match.

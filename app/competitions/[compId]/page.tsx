@@ -79,6 +79,7 @@ export default function CompetitionBracketPage({
   const role = session?.user?.role ?? '';
   // Only Captains and Admins can manage/enter competition results on behalf of players
   const canEnterScores = (role.split(',').map(r => r.trim())).some(r => ['Captain', 'Admin'].includes(r));
+  const isAdmin = (role.split(',').map(r => r.trim())).includes('Admin');
   const currentUsername = session?.user?.userName ?? '';
 
   // ── Data loading ───────────────────────────────────────────────────────────
@@ -120,6 +121,8 @@ export default function CompetitionBracketPage({
   // marker is the selected marker username ('' = no marker / clear existing).
   // Sent to the API alongside scores so both are recorded in the same request.
   async function handleScoreSubmit(matchId: string, score1: number, score2: number, marker: string) {
+    // Editing a finished match is a "correction"; the API re-checks who advances.
+    const isCorrection = !!activeMatch && activeMatch.status !== 'Pending';
     setSaving(true);
     try {
       // Include the marker with scores so both are written in a single PATCH.
@@ -127,7 +130,11 @@ export default function CompetitionBracketPage({
       const res = await fetch(`/api/competitions/${compId}/matches/${matchId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'Complete', score1, score2, marker }),
+        body: JSON.stringify(
+          isCorrection
+            ? { action: 'correct', status: 'Complete', score1, score2, marker }
+            : { status: 'Complete', score1, score2, marker }
+        ),
       });
       if (!res.ok) {
         const d = await res.json();
@@ -143,16 +150,46 @@ export default function CompetitionBracketPage({
   }
 
   async function handleWalkover(matchId: string, winnerSide: 1 | 2) {
+    const isCorrection = !!activeMatch && activeMatch.status !== 'Pending';
     setSaving(true);
     try {
       const res = await fetch(`/api/competitions/${compId}/matches/${matchId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'Walkover', winnerSide }),
+        body: JSON.stringify(
+          isCorrection
+            ? { action: 'correct', status: 'Walkover', winnerSide }
+            : { status: 'Walkover', winnerSide }
+        ),
       });
       if (!res.ok) {
         const d = await res.json();
         throw new Error(d.error || 'Failed to save walkover');
+      }
+      setActiveMatch(null);
+      loadData();
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Admin-only: blank a finished match back to Pending and remove the side it advanced.
+  async function handleResetMatch(matchId: string) {
+    if (!window.confirm('Blank this match back to Pending? This clears the score and removes the advanced side from the next round.')) {
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/competitions/${compId}/matches/${matchId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'reset' }),
+      });
+      if (!res.ok) {
+        const d = await res.json();
+        throw new Error(d.error || 'Failed to reset match');
       }
       setActiveMatch(null);
       loadData();
@@ -411,6 +448,9 @@ export default function CompetitionBracketPage({
           onSaveDateOnly={handleSaveDateOnly}
           isSingles={isSinglesComp}
           playingMembers={playingMembers}
+          isCompleted={activeMatch.status !== 'Pending'}
+          isAdmin={isAdmin}
+          onReset={handleResetMatch}
         />
       )}
 

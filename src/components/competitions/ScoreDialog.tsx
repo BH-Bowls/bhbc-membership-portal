@@ -25,6 +25,12 @@ interface ScoreDialogProps {
   isSingles?: boolean;
   // Sorted list of playing members for the marker dropdown (singles only)
   playingMembers?: { username: string; fullName: string }[];
+  // True when the match is already Complete/Walkover — turns this into a "correct" flow
+  isCompleted?: boolean;
+  // Admin can additionally blank the match back to Pending
+  isAdmin?: boolean;
+  // Called when an Admin blanks a completed match
+  onReset?: (matchId: string) => void;
 }
 
 // Build a human-readable label for one side of a match
@@ -46,10 +52,13 @@ export function ScoreDialog({
   onSaveDateOnly,
   isSingles = false,
   playingMembers = [],
+  isCompleted = false,
+  isAdmin = false,
+  onReset,
 }: ScoreDialogProps) {
-  // Score fields — start empty so the user must enter values
-  const [score1, setScore1] = useState('');
-  const [score2, setScore2] = useState('');
+  // Score fields — pre-filled from the existing result when correcting a finished match
+  const [score1, setScore1] = useState(isCompleted && match.score1 != null ? String(match.score1) : '');
+  const [score2, setScore2] = useState(isCompleted && match.score2 != null ? String(match.score2) : '');
   const [showWalkoverOptions, setShowWalkoverOptions] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Arranged date — pre-filled from any existing value on the match
@@ -63,9 +72,13 @@ export function ScoreDialog({
   const side1Info = getInfo(match.side1Usernames[0]);
   const side2Info = match.side2Usernames ? getInfo(match.side2Usernames[0]) : null;
 
-  // When no scores are entered and onSaveDateOnly is wired up, the submit button saves only the date+marker
+  // When no scores are entered and onSaveDateOnly is wired up, the submit button saves only the date+marker.
+  // Disabled for corrections — a finished match must be given a score/walkover, not a date.
   const scoresEmpty = score1 === '' && score2 === '';
-  const saveDateOnly = onSaveDateOnly && scoresEmpty;
+  const saveDateOnly = !isCompleted && onSaveDateOnly && scoresEmpty;
+
+  // Existing result summary shown when correcting
+  const currentWinnerLabel = match.winnerSide === 1 ? side1Label : match.winnerSide === 2 ? side2Label : '';
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -110,7 +123,7 @@ export function ScoreDialog({
       <div className="bg-white rounded-xl shadow-xl w-full max-w-sm text-gray-900">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b">
-          <h2 className="text-base font-semibold text-gray-900">Enter Score</h2>
+          <h2 className="text-base font-semibold text-gray-900">{isCompleted ? 'Correct Score' : 'Enter Score'}</h2>
           <button
             onClick={onClose}
             className="text-gray-500 hover:text-gray-700"
@@ -123,8 +136,22 @@ export function ScoreDialog({
 
         {!showWalkoverOptions ? (
           <form onSubmit={handleSubmit} className="p-5 space-y-4">
-            {/* Optional date arranged field — only shown when onSaveDateOnly is wired up */}
-            {onSaveDateOnly && (
+            {/* Current result banner — shown when correcting a finished match */}
+            {isCompleted && (
+              <div className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800">
+                <span className="font-medium">Recorded:</span>{' '}
+                {match.status === 'Walkover'
+                  ? `walkover to ${currentWinnerLabel}`
+                  : `${side1Label} ${match.score1 ?? '?'}–${match.score2 ?? '?'} ${side2Label}`}
+                <span className="block text-xs mt-1 text-amber-700">
+                  Editing the score is fine. If it changes who goes through, the next round must not have
+                  been played yet.
+                </span>
+              </div>
+            )}
+
+            {/* Optional date arranged field — only for pending matches (not corrections) */}
+            {!isCompleted && onSaveDateOnly && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Date arranged <span className="font-normal text-gray-500">(leave scores blank to save date only)</span>
@@ -228,10 +255,24 @@ export function ScoreDialog({
                   disabled={saving}
                   className="px-4 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
                 >
-                  {saving ? 'Saving…' : saveDateOnly ? 'Save Date' : 'Save Score'}
+                  {saving ? 'Saving…' : isCompleted ? 'Save Correction' : saveDateOnly ? 'Save Date' : 'Save Score'}
                 </button>
               </div>
             </div>
+
+            {/* Admin-only: blank a finished match back to Pending (removes the advanced side) */}
+            {isCompleted && isAdmin && onReset && (
+              <div className="pt-3 mt-1 border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => onReset(match.matchId)}
+                  disabled={saving}
+                  className="text-sm text-red-600 hover:text-red-700 disabled:opacity-50"
+                >
+                  Blank this match (reset to Pending)
+                </button>
+              </div>
+            )}
           </form>
         ) : (
           <div className="p-5 space-y-4">

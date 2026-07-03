@@ -647,6 +647,27 @@ export async function saveCompetitionSetup(
  *   odd position  → side 1 of next match
  *   even position → side 2 of next match
  */
+// Compute which next-round match a given match feeds into, and which side its winner
+// occupies. Returns null when there is no next round (the match is the Final).
+function nextRoundTarget(
+  compId: string,
+  match: CompMatch,
+  allMatches: CompMatch[]
+): { nextMatchId: string; targetSide: 'side1Usernames' | 'side2Usernames' } | null {
+  const nextRound = findNextRound(match.round, allMatches);
+  if (!nextRound) return null;
+  const nextPosition = Math.ceil(match.position / 2);
+  const nextMatchId = `${compId}-${nextRound.toLowerCase()}-${nextPosition}`;
+  const targetSide: 'side1Usernames' | 'side2Usernames' =
+    match.position % 2 === 1 ? 'side1Usernames' : 'side2Usernames';
+  return { nextMatchId, targetSide };
+}
+
+/**
+ * Propagate the winner of a completed match into the correct slot of the next-round
+ * match. Overwrites whatever is there, so re-running it after a correction replaces a
+ * wrongly-advanced side.
+ */
 export async function propagateWinnerToNextRound(
   compId: string,
   completedMatch: CompMatch,
@@ -659,16 +680,64 @@ export async function propagateWinnerToNextRound(
 
   if (winnerUsernames.length === 0) return;
 
-  // Load all current matches to detect the next round
   const allMatches = await getCompetitionMatches(compId);
-  const nextRound = findNextRound(completedMatch.round, allMatches);
-  if (!nextRound) return; // Completed match was the Final — nothing to propagate
+  const target = nextRoundTarget(compId, completedMatch, allMatches);
+  if (!target) return; // Completed match was the Final — nothing to propagate
 
-  const nextPosition = Math.ceil(completedMatch.position / 2);
-  const nextMatchId = `${compId}-${nextRound.toLowerCase()}-${nextPosition}`;
-  const targetSide = completedMatch.position % 2 === 1 ? 'side1Usernames' : 'side2Usernames';
+  const updates: Parameters<typeof updateMatch>[2] = {};
+  if (target.targetSide === 'side1Usernames') updates.side1Usernames = winnerUsernames;
+  else updates.side2Usernames = winnerUsernames;
+  await updateMatch(compId, target.nextMatchId, updates);
+}
 
-  await updateMatch(compId, nextMatchId, { [targetSide]: winnerUsernames });
+/**
+ * Find the next-round match a given match feeds into (or null if it's the Final).
+ * Used to guard corrections/resets: you cannot change who advances, or blank a match,
+ * if that next-round match has already been played.
+ */
+export async function getNextRoundMatch(
+  compId: string,
+  match: CompMatch,
+  allMatches?: CompMatch[]
+): Promise<CompMatch | null> {
+  const matches = allMatches ?? (await getCompetitionMatches(compId));
+  const target = nextRoundTarget(compId, match, matches);
+  if (!target) return null;
+  for (let i = 0; i < matches.length; i++) {
+    if (matches[i].matchId === target.nextMatchId) return matches[i];
+  }
+  return null;
+}
+
+/**
+ * Reset a completed match back to Pending: clears its score/winner/status/played date
+ * (keeping the participants and play-by date) and removes the side it previously
+ * advanced from the next-round slot. The caller MUST ensure that next-round match has
+ * not already been played — otherwise clearing the slot orphans that result.
+ */
+export async function resetMatch(compId: string, match: CompMatch): Promise<void> {
+  await updateMatch(compId, match.matchId, {
+    score1: null,
+    score2: null,
+    winnerSide: null,
+    status: 'Pending',
+    playedDate: null,
+  });
+
+  const allMatches = await getCompetitionMatches(compId);
+  const target = nextRoundTarget(compId, match, allMatches);
+  if (!target) return;
+  // Only clear the slot if that next-round match actually exists (avoids a throw on a
+  // sparse bracket where the placeholder row hasn't been created)
+  let nextExists = false;
+  for (let i = 0; i < allMatches.length; i++) {
+    if (allMatches[i].matchId === target.nextMatchId) { nextExists = true; break; }
+  }
+  if (!nextExists) return;
+  const updates: Parameters<typeof updateMatch>[2] = {};
+  if (target.targetSide === 'side1Usernames') updates.side1Usernames = [];
+  else updates.side2Usernames = [];
+  await updateMatch(compId, target.nextMatchId, updates);
 }
 
 // ============================================================================
