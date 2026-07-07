@@ -5,6 +5,7 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
+import { hasRole } from '@/lib/role-utils';
 import { getAllLeagues, createLeague } from '@/lib/leagues-sheets';
 import type { LeagueType } from '@/types/leagues';
 
@@ -22,8 +23,9 @@ export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  // Admin only — multi-role aware (an exact compare here denied "Admin,Captain")
   const role = session.user?.role ?? '';
-  if (role !== 'Admin') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  if (!hasRole(role, 'Admin')) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   const body = await req.json();
   const { name, type, season } = body;

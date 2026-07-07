@@ -5,6 +5,7 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
+import { hasRole, isCommitteeMember } from '@/lib/role-utils';
 import { getRowlandMessage, setRowlandMessage } from '@/lib/rowland-sheets';
 
 export async function GET() {
@@ -22,8 +23,10 @@ export async function PUT(req: Request) {
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  // Committee or the Rowland organiser — multi-role aware (a raw string blocklist
+  // here previously let multi-role member strings through)
   const role = session.user?.role ?? '';
-  if (role === 'Member' || role === 'Kiosk' || role === 'Club' || role === '') {
+  if (!isCommitteeMember(role) && !hasRole(role, 'RowlandOrganiser')) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 

@@ -7,6 +7,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getAttachmentById, deleteAttachment } from '@/lib/attachments-sheets';
 import { getSuggestionById } from '@/lib/suggestions-sheets';
+import { isCommitteeMember } from '@/lib/role-utils';
 import { deleteFileFromDrive, isDriveFileId, driveEmbedUrl, driveViewUrl, driveDownloadUrl } from '@/lib/drive';
 import { deleteFileFromCloudinary, fetchFileFromCloudinary } from '@/lib/cloudinary';
 
@@ -93,8 +94,8 @@ export async function DELETE(
     }
 
     const userName = session.user.userName;
-    const role = session.user.role || 'Member';
-    const isCommittee = role !== 'Member' && role !== '';
+    // Multi-role aware — the previous raw compare treated Kiosk/Club as committee
+    const isCommittee = isCommitteeMember(session.user.role);
 
     const attachment = await getAttachmentById(attachmentId);
     if (!attachment) return NextResponse.json({ error: 'Attachment not found' }, { status: 404 });

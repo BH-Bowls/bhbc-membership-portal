@@ -10,6 +10,7 @@ import {
   propagateRowlandWinnerForMatch,
 } from '@/lib/rowland-sheets';
 import { getEmailTransporter, isEmailConfigured } from '@/lib/email/mailer';
+import { hasRole, isCommitteeMember } from '@/lib/role-utils';
 import type { RowlandCompId, RowlandMatch } from '@/types/rowland';
 import { ROWLAND_COMP_NAMES, ROWLAND_ROUND_LABELS } from '@/types/rowland';
 
@@ -26,11 +27,14 @@ export async function PATCH(
     const BHBC_CLUB_ID = 'burgess.hill';
 
     const role = session.user.role;
-    const roles = role ? role.split(',').map((r: string) => r.trim()) : [];
-    const isClub = role === 'Club';
-    const isRowlandPlayer = roles.includes('RowlandPlayer');
-    // RowlandPlayer acts like a club (restricted to BHBC matches)
-    const isCommittee = !isClub && !isRowlandPlayer && role !== 'Member' && role !== '';
+    const isClub = hasRole(role, 'Club');
+    const isRowlandPlayer = hasRole(role, 'RowlandPlayer');
+    // RowlandPlayer acts like a club (restricted to BHBC matches). Committee =
+    // general committee or the Rowland organiser — multi-role aware (the previous
+    // raw string compare let Kiosk / multi-role member strings through).
+    const isCommittee =
+      !isClub && !isRowlandPlayer &&
+      (isCommitteeMember(role) || hasRole(role, 'RowlandOrganiser'));
 
     if (!isCommittee && !isClub && !isRowlandPlayer) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });

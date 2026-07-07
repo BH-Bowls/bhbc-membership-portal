@@ -6,6 +6,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { setPublicReadPermission, driveViewUrl } from '@/lib/drive';
 import { getRowlandMatches, updateRowlandMatch } from '@/lib/rowland-sheets';
+import { hasRole, isCommitteeMember } from '@/lib/role-utils';
 import type { RowlandCompId } from '@/types/rowland';
 
 const BHBC_CLUB_ID = 'burgess.hill';
@@ -21,10 +22,12 @@ export async function POST(
     }
 
     const role = session.user.role;
-    const roles = role ? role.split(',').map((r: string) => r.trim()) : [];
-    const isClub = role === 'Club';
-    const isRowlandPlayer = roles.includes('RowlandPlayer');
-    const isCommittee = !isClub && !isRowlandPlayer && role !== 'Member' && role !== '';
+    const isClub = hasRole(role, 'Club');
+    const isRowlandPlayer = hasRole(role, 'RowlandPlayer');
+    // Committee = general committee or the Rowland organiser — multi-role aware
+    const isCommittee =
+      !isClub && !isRowlandPlayer &&
+      (isCommitteeMember(role) || hasRole(role, 'RowlandOrganiser'));
 
     if (!isCommittee && !isClub && !isRowlandPlayer) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });

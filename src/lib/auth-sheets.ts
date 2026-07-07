@@ -1,6 +1,8 @@
 // src/lib/auth-sheets.ts
 // Authentication logic using Google Sheets as database
-// Supports both legacy XOR hashes and bcrypt for gradual migration
+// All passwords are bcrypt hashes — including temp passwords, which are hashed at
+// write time (the legacy XOR and plaintext-temp verification paths were removed
+// Jul 2026 once no such passwords remained in the sheet)
 
 import bcrypt from 'bcryptjs';
 import { parseRoles } from './role-utils';
@@ -67,75 +69,23 @@ export async function hashPassword(password: string): Promise<string> {
 }
 
 /**
- * Legacy XOR hash function (from Google Apps Script)
- * DEPRECATED: Only used for backward compatibility during migration to bcrypt
- * XOR hashing is NOT cryptographically secure (easily reversible)
- * Kept temporarily to support existing user passwords until they login and auto-migrate
- * Algorithm: XOR each character code with 1940, convert back to character
- * @param password Plain text password to hash with XOR
- * @returns XOR "hash" string (WARNING: Not secure, migration-only)
- */
-function legacyXORHash(password: string): string {
-  // Build hash string character by character
-  let hash = '';
-
-  // Loop through each character in password
-  for (let i = 0; i < password.length; i++) {
-    // Get ASCII/Unicode code for this character
-    const charCode = password.charCodeAt(i);
-
-    // XOR with magic number 1940 (legacy Google Apps Script implementation)
-    const xorCode = charCode ^ 1940;
-
-    // Convert XOR result back to character and append to hash
-    hash += String.fromCharCode(xorCode);
-  }
-
-  return hash;
-}
-
-/**
- * Verify password against stored hash (supports both bcrypt and legacy XOR)
- * Automatically migrates legacy XOR hashes to bcrypt on successful login
- * This allows gradual migration from insecure XOR to secure bcrypt without forcing password resets
+ * Verify password against the stored bcrypt hash.
+ * bcrypt-only: the legacy XOR and plaintext-temp-password paths were removed once no
+ * such passwords remained in the sheet (temp passwords are now bcrypt-hashed at write
+ * time). A stored value that is not a bcrypt hash can never verify.
  * @param password Plain text password entered by user
- * @param storedHash The hash stored in Google Sheets (bcrypt or legacy XOR)
- * @param userName Username for auto-migration (if needed)
+ * @param storedHash The bcrypt hash stored in Google Sheets (starts with $2b$)
  * @returns Promise resolving to true if password matches, false otherwise
  */
 export async function verifyPassword(
   password: string,
-  storedHash: string,
-  userName: string,
-  isTempPassword?: boolean
+  storedHash: string
 ): Promise<boolean> {
-  // Check if it's a bcrypt hash (bcrypt hashes start with $2b$)
-  if (storedHash.startsWith('$2b$')) {
-    // Modern bcrypt hash - verify using bcrypt
-    return bcrypt.compare(password, storedHash);
+  // Only bcrypt hashes are valid ($2b$ prefix); anything else fails closed
+  if (!storedHash || !storedHash.startsWith('$2b$')) {
+    return false;
   }
-
-  // Plain text temp password (set by admin in sheet or via UI with "force change" checked)
-  if (isTempPassword) {
-    return password === storedHash;
-  }
-
-  // Legacy XOR hash - compute XOR hash and compare
-  const legacyHash = legacyXORHash(password);
-  const isValid = legacyHash === storedHash;
-
-  // If password is valid with legacy XOR, migrate to bcrypt automatically
-  if (isValid) {
-    try {
-      const newHash = await hashPassword(password);
-      await updatePasswordHash(userName, newHash, false);
-      console.log(`✓ Migrated ${userName} from XOR to bcrypt`);
-    } catch (error) {
-      console.error(`Failed to migrate password for ${userName}:`, error);
-    }
-  }
-
-  return isValid;
+  return bcrypt.compare(password, storedHash);
 }
 
 // ============================================================================
@@ -236,8 +186,8 @@ export async function authenticateUser(
       };
     }
 
-    // Verify password against stored hash (bcrypt, plain text temp, or legacy XOR)
-    const isValid = await verifyPassword(password, user.passwordHash, user.userName, user.isTempPassword);
+    // Verify password against the stored bcrypt hash
+    const isValid = await verifyPassword(password, user.passwordHash);
 
     // Check if password was correct
     if (!isValid) {
@@ -435,10 +385,11 @@ export async function setTemporaryPassword(
     // Generate 4-digit temporary password
     const tempPassword = generateTempPassword();
 
-    // Update password in Google Sheets
-    // Pass true for isTemporary flag - user must change on next login
-    // updatePasswordHash will handle bcrypt hashing
-    await updatePasswordHash(user.userName, tempPassword, true);
+    // bcrypt-hash the temp password before storing — updatePasswordHash writes the
+    // value verbatim, so hashing here keeps plaintext out of the sheet. The temp flag
+    // still forces a change on next login.
+    const tempHash = await hashPassword(tempPassword);
+    await updatePasswordHash(user.userName, tempHash, true);
 
     // Return success with temp password and email
     // Caller will send email with temp password to user
@@ -491,7 +442,7 @@ export async function changePassword(
     // If oldPassword provided, verify it first (security check)
     // This prevents unauthorized password changes if session is hijacked
     if (oldPassword) {
-      const isValid = await verifyPassword(oldPassword, user.passwordHash, userName, user.isTempPassword);
+      const isValid = await verifyPassword(oldPassword, user.passwordHash);
 
       // Check if current password is correct
       if (!isValid) {
@@ -502,8 +453,9 @@ export async function changePassword(
       }
     }
 
-    // Hash new password with bcrypt, or store plain text if it's a temporary password
-    const newHash = isTempPassword ? newPassword : await hashPassword(newPassword);
+    // Always hash with bcrypt — temp passwords included (the temp flag only controls
+    // the forced change on next login, not how the password is stored)
+    const newHash = await hashPassword(newPassword);
 
     // Update password in Google Sheets
     await updatePasswordHash(userName, newHash, isTempPassword);

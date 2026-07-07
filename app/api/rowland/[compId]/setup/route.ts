@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
+import { hasRole, isCommitteeMember } from '@/lib/role-utils';
 import { setupRowlandBracket, updateRowlandComp } from '@/lib/rowland-sheets';
 import type { RowlandCompId, RowlandTeamRef } from '@/types/rowland';
 
@@ -17,8 +18,10 @@ export async function POST(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    // Committee or the Rowland organiser only. Multi-role aware — a raw string
+    // compare here previously let Kiosk and multi-role member strings through.
     const role = session.user.role;
-    const isCommittee = role !== 'Member' && role !== 'Club' && role !== '';
+    const isCommittee = isCommitteeMember(role) || hasRole(role, 'RowlandOrganiser');
     if (!isCommittee) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }

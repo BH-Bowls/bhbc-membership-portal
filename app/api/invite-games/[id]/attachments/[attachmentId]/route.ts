@@ -7,6 +7,7 @@ import {
   getInviteGameAttachmentById,
   deleteInviteGameAttachment,
 } from '@/lib/invite-games-attachments-sheets';
+import { isCommitteeMember } from '@/lib/role-utils';
 import { deleteFileFromDrive, isDriveFileId, driveEmbedUrl, driveDownloadUrl } from '@/lib/drive';
 import { deleteFileFromCloudinary, fetchFileFromCloudinary } from '@/lib/cloudinary';
 
@@ -88,8 +89,8 @@ export async function DELETE(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const role = session.user.role || 'Member';
-    if (role === 'Member' || role === '') {
+    // Committee only — multi-role aware (the previous blocklist let Kiosk/Club through)
+    if (!isCommitteeMember(session.user.role)) {
       return NextResponse.json({ error: 'Only committee members can delete attachments' }, { status: 403 });
     }
 

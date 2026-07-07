@@ -5,6 +5,7 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
+import { isCommitteeMember } from '@/lib/role-utils';
 import { getCompetitionMessage, setCompetitionMessage } from '@/lib/competitions-sheets';
 
 export async function GET() {
@@ -22,8 +23,10 @@ export async function PUT(req: Request) {
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  // Committee only — multi-role aware. The previous blocklist also omitted 'Club',
+  // so external club logins could set the competitions message.
   const role = session.user?.role ?? '';
-  if (role === 'Member' || role === 'Kiosk' || role === '') {
+  if (!isCommitteeMember(role)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 

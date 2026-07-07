@@ -3,6 +3,17 @@
 // Implements permission system allowing users to manage themselves, their buddies, and admins to manage everyone
 
 import { getUserByUsername, getAllUsers, type User } from './sheets';
+import { hasRole, isCommitteeMember } from './role-utils';
+
+/**
+ * True when a role string carries privileges beyond a plain member.
+ * Used as the ceiling on buddy impersonation: a buddy relationship must never be a
+ * route to committee/admin powers — only plain-member (or specialist-player) accounts
+ * may be impersonated via the buddy rule.
+ */
+function hasElevatedRole(role: string | null | undefined): boolean {
+  return isCommitteeMember(role) || hasRole(role, 'RowlandOrganiser', 'Super Admin', 'superadmin');
+}
 
 // ============================================================================
 // Authorization Functions
@@ -32,8 +43,9 @@ export async function canManageUser(
   }
 
   // Rule 2: Admins can manage anyone
-  // Admin role has full system access
-  if (currentUserRole === 'Admin') {
+  // Admin role has full system access (multi-role aware — an exact compare here
+  // previously denied e.g. "Admin,Captain")
+  if (hasRole(currentUserRole, 'Admin')) {
     return true;
   }
 
@@ -108,7 +120,7 @@ export async function canEditProfileField(
     }
 
     // Check if admin
-    if (currentUserRole === 'Admin') {
+    if (hasRole(currentUserRole, 'Admin')) {
       return true;
     }
 
@@ -125,7 +137,7 @@ export async function canEditProfileField(
     }
 
     // Check if admin
-    if (currentUserRole === 'Admin') {
+    if (hasRole(currentUserRole, 'Admin')) {
       return true;
     }
 
@@ -146,7 +158,7 @@ export async function canEditProfileField(
   // Username field: admin only
   // Username is the primary key and shouldn't be changed
   if (fieldName === 'userName') {
-    if (currentUserRole === 'Admin') {
+    if (hasRole(currentUserRole, 'Admin')) {
       return true;
     }
     return false;
@@ -155,7 +167,7 @@ export async function canEditProfileField(
   // Role field: admin only
   // Prevents privilege escalation (users making themselves admin)
   if (fieldName === 'role') {
-    if (currentUserRole === 'Admin') {
+    if (hasRole(currentUserRole, 'Admin')) {
       return true;
     }
     return false;
@@ -165,7 +177,7 @@ export async function canEditProfileField(
   // honorary (fee exemption), handicap (competitions), include (renewal emails),
   // gmc, renewStatus (renewal delivery method)
   if (fieldName === 'honorary' || fieldName === 'handicap' || fieldName === 'include' || fieldName === 'gmc' || fieldName === 'renewStatus') {
-    if (currentUserRole === 'Admin') {
+    if (hasRole(currentUserRole, 'Admin')) {
       return true;
     }
     return false;
@@ -191,7 +203,7 @@ export function canEditPaymentFields(
 ): boolean {
   // Only admins can edit banking and payment fields
   // This prevents members from marking their own renewals as paid
-  if (currentUserRole === 'Admin') {
+  if (hasRole(currentUserRole, 'Admin')) {
     return true;
   }
 
@@ -221,8 +233,8 @@ export async function canImpersonate(
     return false;
   }
 
-  // Admins and Super Admins can impersonate anyone
-  if (currentUserRole === 'Admin' || currentUserRole === 'Super Admin' || currentUserRole === 'superadmin') {
+  // Admins and Super Admins can impersonate anyone (multi-role aware)
+  if (hasRole(currentUserRole, 'Admin', 'Super Admin', 'superadmin')) {
     return true;
   }
 
@@ -233,7 +245,10 @@ export async function canImpersonate(
     return false;
   }
 
-  if (targetUser.buddyUserName === currentUserName) {
+  // Buddy rule with a ROLE CEILING: impersonating grants the target's full powers,
+  // so a buddy link to a committee/admin account must not be an escalation route.
+  // Buddy impersonation is for plain-member family accounts only.
+  if (targetUser.buddyUserName === currentUserName && !hasElevatedRole(targetUser.role)) {
     return true;
   }
 
@@ -261,7 +276,7 @@ export async function getImpersonatableUsers(
   const allUsers = await getAllUsers();
 
   // If user is admin or super admin, they can impersonate everyone (except themselves)
-  if (currentUserRole === 'Admin' || currentUserRole === 'Super Admin' || currentUserRole === 'superadmin') {
+  if (hasRole(currentUserRole, 'Admin', 'Super Admin', 'superadmin')) {
     const impersonatableUsers = allUsers.filter(u => u.userName !== currentUserName);
 
     // Sort alphabetically by full name
@@ -274,10 +289,12 @@ export async function getImpersonatableUsers(
     return impersonatableUsers;
   }
 
-  // For non-admins, return only users who list them as buddy (exclude self)
+  // For non-admins, return only users who list them as buddy (exclude self).
+  // Elevated-role targets are excluded to match the canImpersonate role ceiling.
   const buddies = allUsers.filter(u =>
     u.buddyUserName === currentUserName &&
-    u.userName !== currentUserName
+    u.userName !== currentUserName &&
+    !hasElevatedRole(u.role)
   );
 
   // Sort alphabetically by full name
@@ -314,7 +331,7 @@ export async function getManageableUsers(
   const allUsers = await getAllUsers();
 
   // If user is admin, they can manage everyone
-  if (currentUserRole === 'Admin') {
+  if (hasRole(currentUserRole, 'Admin')) {
 
     // Sort all users alphabetically by full name
     // Loop through and sort manually

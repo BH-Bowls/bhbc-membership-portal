@@ -4,11 +4,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
+import { hasRole, isCommitteeMember } from '@/lib/role-utils';
 import { getRowlandComp, updateRowlandComp, createEmptyBracket, getRowlandMatches } from '@/lib/rowland-sheets';
 import type { RowlandCompId } from '@/types/rowland';
 
+// Committee or the Rowland organiser. Multi-role aware — the previous raw string
+// compare let Kiosk and multi-role member strings through.
 function isCommittee(role: string) {
-  return role !== 'Member' && role !== 'Club' && role !== '';
+  return isCommitteeMember(role) || hasRole(role, 'RowlandOrganiser');
 }
 
 export async function GET(

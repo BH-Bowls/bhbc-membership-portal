@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompetitionById, getCompetitionMatches } from '@/lib/competitions-sheets';
+import { hasRole } from '@/lib/role-utils';
 import { getAllUsers } from '@/lib/sheets';
 import { exportBracketToSheet } from '@/lib/sheet-export';
 import type { CompMemberInfo } from '@/types/competitions';
@@ -21,8 +22,9 @@ export async function POST(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    // Admin only — multi-role aware (an exact compare here denied "Admin,Captain")
     const role = session.user.role || 'Member';
-    if (role !== 'Admin') {
+    if (!hasRole(role, 'Admin')) {
       return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
     }
 

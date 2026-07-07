@@ -12,6 +12,7 @@ import {
   validateAttachments,
 } from '@/lib/attachments-sheets';
 import { getSuggestionById } from '@/lib/suggestions-sheets';
+import { isCommitteeMember } from '@/lib/role-utils';
 import { setPublicReadPermission, driveViewUrl } from '@/lib/drive';
 
 /**
@@ -60,8 +61,8 @@ export async function POST(
     }
 
     const userName = session.user.userName;
-    const role = session.user.role || 'Member';
-    const isCommittee = role !== 'Member' && role !== '';
+    // Multi-role aware — the previous raw compare treated Kiosk/Club as committee
+    const isCommittee = isCommitteeMember(session.user.role);
 
     const suggestion = await getSuggestionById(suggestionId);
     if (!suggestion) {
