@@ -3,7 +3,7 @@
 // Handles sending withdrawal notifications to captains and future game status notifications
 // Uses the club's email service to notify captains when players withdraw from selected teams
 
-import { sendEmail } from './mailer';
+import { sendEmail, commonMailHeaders } from './mailer';
 import { getUserByUsername, getAllUsers } from '../sheets';
 import { Game, GameSheetPlayer } from '../types/friendlies';
 import { hasRole } from '../role-utils';
@@ -527,6 +527,7 @@ Friendlies Management System
           subject,
           text,
           html,
+          headers: commonMailHeaders(),
           ...(icsAttachment ? { attachments: [icsAttachment] } : {}),
         });
         emailsSent++;
@@ -681,6 +682,7 @@ Friendlies Management System
       subject,
       text,
       html,
+      headers: commonMailHeaders(),
     });
 
     console.log(`✓ Tea rota notification sent to ${membersWithEmail.length} member(s) for ${game.tabName}`);
@@ -819,6 +821,7 @@ export async function sendGameCancelledEmail(
           subject,
           text,
           html,
+          headers: commonMailHeaders(),
           ...(ics ? { attachments: [ics] } : {}),
         });
         emailsSent++;
@@ -916,6 +919,7 @@ export async function sendTeaRotaCancelledEmail(
       subject,
       text,
       html,
+      headers: commonMailHeaders(),
     });
 
     console.log(`✓ Tea rota cancellation sent to ${membersWithEmail.length} member(s) for ${game.tabName}`);

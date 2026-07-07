@@ -9,6 +9,8 @@ import {
   getEmailTransporter,
   isEmailConfigured,
   sendTemplateEmail,
+  commonMailHeaders,
+  htmlToPlainText,
 } from './mailer';
 import { getAppUrl } from '../app-url';
 import { getUserByUsername, getAllUsers } from '../sheets';
@@ -262,7 +264,9 @@ export async function sendEventInviteEmails(
             to: memberEmail,
             replyTo: captainEmail || undefined,
             subject: emailSubject,
+            text: htmlToPlainText(htmlContent),
             html: htmlContent,
+            headers: commonMailHeaders(),
           });
           sentCount = sentCount + 1;
         } catch (err) {
@@ -291,7 +295,9 @@ export async function sendEventInviteEmails(
             to: v.visitorEmail,
             replyTo: captainEmail || undefined,
             subject: emailSubject,
+            text: htmlToPlainText(htmlContent),
             html: htmlContent,
+            headers: commonMailHeaders(),
           });
           sentCount = sentCount + 1;
         } catch (err) {
@@ -452,7 +458,9 @@ export async function sendConclusionEmails(eventId: string): Promise<void> {
           from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
           to: v.email,
           subject: `Poll update — ${event.title}`,
+          text: htmlToPlainText(htmlContent),
           html: htmlContent,
+          headers: commonMailHeaders(),
         });
       } catch (err) {
         // Log but continue sending to others

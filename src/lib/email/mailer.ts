@@ -110,48 +110,69 @@ function loadTemplate(templateName: string, variables: Record<string, string | n
  * @param html The HTML content to convert
  * @returns Plain text version suitable for text-only email clients
  */
-function htmlToPlainText(html: string): string {
-  // Start with original HTML
+export function htmlToPlainText(html: string): string {
   let text = html;
 
-  // Convert line breaks to newlines
+  // Drop non-content blocks entirely so their contents don't leak into the text part
+  text = text.replace(/<style[\s\S]*?<\/style>/gi, '');
+  text = text.replace(/<script[\s\S]*?<\/script>/gi, '');
+  text = text.replace(/<head[\s\S]*?<\/head>/gi, '');
+
+  // Links → "label ( url )" so the text version still shows where each link goes.
+  // A text part with no visible URLs (while the HTML has buttons) reads as mismatched
+  // to spam filters — surfacing the URLs makes the two parts consistent.
+  text = text.replace(
+    /<a\b[^>]*href=["']([^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi,
+    (_m, href: string, label: string) => {
+      const cleanLabel = label.replace(/<[^>]+>/g, '').trim();
+      if (!href || href.startsWith('#') || href.startsWith('mailto:')) return cleanLabel;
+      if (cleanLabel && cleanLabel !== href) return `${cleanLabel} ( ${href} )`;
+      return href;
+    }
+  );
+
+  // Headings and block ends → line breaks
+  text = text.replace(/<\/(h[1-6])>/gi, '\n\n');
   text = text.replace(/<br\s*\/?>/gi, '\n');
-
-  // Convert paragraph ends to double newlines
   text = text.replace(/<\/p>/gi, '\n\n');
-
-  // Convert div ends to newlines
   text = text.replace(/<\/div>/gi, '\n');
-
-  // Convert list item ends to newlines
   text = text.replace(/<\/li>/gi, '\n');
+  text = text.replace(/<\/tr>/gi, '\n');
 
   // Remove all remaining HTML tags
   text = text.replace(/<[^>]+>/g, '');
 
-  // Decode HTML entities
-  // Non-breaking space to regular space
-  text = text.replace(/&nbsp;/g, ' ');
+  // Decode common HTML entities
+  text = text
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/&rsquo;/g, '’')
+    .replace(/&mdash;/g, '—')
+    .replace(/&pound;/g, '£');
 
-  // Ampersand entity to &
-  text = text.replace(/&amp;/g, '&');
-
-  // Less-than entity to <
-  text = text.replace(/&lt;/g, '<');
-
-  // Greater-than entity to >
-  text = text.replace(/&gt;/g, '>');
-
-  // Quote entity to "
-  text = text.replace(/&quot;/g, '"');
-
-  // Clean up excessive newlines (3+ → 2)
+  // Tidy whitespace (trailing spaces before newlines, then 3+ newlines → 2)
+  text = text.replace(/[ \t]+\n/g, '\n');
   text = text.replace(/\n\s*\n\s*\n/g, '\n\n');
 
-  // Remove leading/trailing whitespace
-  text = text.trim();
+  return text.trim();
+}
 
-  return text;
+/**
+ * Common headers added to every outbound email to help deliverability.
+ * List-Unsubscribe is expected by Gmail/Yahoo/BT on anything that looks like bulk
+ * mail. A monitored `mailto:` is the low-risk form — it needs no one-click endpoint
+ * and simply lets a recipient (or their provider) request removal by email.
+ */
+export function commonMailHeaders(): Record<string, string> {
+  const club = process.env.SMTP_USER || '';
+  if (!club) return {};
+  return {
+    'List-Unsubscribe': `<mailto:${club}?subject=Unsubscribe>`,
+  };
 }
 
 /**
@@ -196,7 +217,7 @@ export async function sendTemplateEmail(
       subject,
       text: textContent,
       html: htmlContent,
-      // REMOVED custom headers temporarily to test if they're causing Gmail to drop emails
+      headers: commonMailHeaders(),
     };
 
     // Add a CC recipient when requested (e.g. copying the club inbox)
@@ -270,7 +291,7 @@ export async function sendEmail(
       subject,
       text,
       html: htmlContent,
-      // REMOVED custom headers temporarily to test if they're causing Gmail to drop emails
+      headers: commonMailHeaders(),
     };
     if (attachments && attachments.length > 0) {
       mailOptions.attachments = attachments;
@@ -335,7 +356,7 @@ export async function sendEmailWithAttachments(
       text: textContent,
       html: processedHtml,
       attachments, // Array of {filename, content} objects
-      // REMOVED custom headers temporarily to test if they're causing Gmail to drop emails
+      headers: commonMailHeaders(),
     };
     const info = await emailTransporter.sendMail(mailOptions);
 
