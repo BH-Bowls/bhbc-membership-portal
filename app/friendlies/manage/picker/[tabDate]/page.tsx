@@ -319,9 +319,9 @@ export default function PickerSheetPage() {
                       ))}
                     </div>
 
-                    {/* Own Transport box */}
+                    {/* Making own way box */}
                     <div className="border-2 border-gray-600 mt-2 p-1 text-center font-semibold">
-                      Own Transport
+                      Making own way
                     </div>
                     <div className="border border-gray-600 border-t-0 h-[44px]" />
                   </>

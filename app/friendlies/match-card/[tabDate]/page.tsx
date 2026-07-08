@@ -488,10 +488,10 @@ export default function MatchCardPage() {
                       ))}
                     </div>
 
-                    {/* Own Transport */}
+                    {/* Making own way */}
                     {ownTransport.length > 0 && (
                       <div className="p-2">
-                        <p className="font-bold text-sm text-center mb-1">Own Transport</p>
+                        <p className="font-bold text-sm text-center mb-1">Making own way</p>
                         <p className="text-sm">{ownTransport.join(', ')}</p>
                       </div>
                     )}

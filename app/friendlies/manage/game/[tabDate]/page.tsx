@@ -1484,7 +1484,7 @@ export default function TeamSelectionPage() {
                       ))}
                       {previewData.ownTransport.length > 0 && (
                         <div className="py-0.5 border-t border-gray-200 mt-1 pt-1">
-                          <div className="font-medium text-gray-900">Own Transport</div>
+                          <div className="font-medium text-gray-900">Making own way</div>
                           <div>{previewData.ownTransport.join(', ')}</div>
                         </div>
                       )}

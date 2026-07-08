@@ -113,9 +113,9 @@ export default function HelpFriendliesPage() {
               <p><strong>Petrol cost</strong> — shown next to the Away badge if a reimbursement amount has been set.</p>
             </div>
             <Body>
-              When you tick a checkbox to enter an away game, an <strong>Own Transport</strong> option
-              appears below the checkbox. Tick this if you are making your own way to the venue and
-              do not need a lift — the Captain can see this when arranging lifts.
+              When you tick a checkbox to enter an away game, a <strong>Making my own way</strong> option
+              appears below the checkbox. Tick this if you are travelling to the venue yourself and are
+              not part of the car share — the Captain can see this when arranging lifts.
             </Body>
           </HelpSection>
 

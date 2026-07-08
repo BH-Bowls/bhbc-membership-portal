@@ -1104,7 +1104,9 @@ export default function FriendliesPage() {
                               }}
                               className="w-4 h-4 text-gray-500 rounded focus:ring-gray-500"
                             />
-                            <span className="text-sm text-gray-600">Own Transport</span>
+                            <span className="text-sm text-gray-600">
+                              Making my own way <span className="text-gray-500">— not car sharing</span>
+                            </span>
                           </label>
                         )}
                       </div>
