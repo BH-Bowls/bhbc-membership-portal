@@ -246,7 +246,29 @@ export async function GET(
       }
     }
 
+    // Partners the current user may confirm on behalf of: selected players in THIS
+    // game who have listed the current user as their buddy (the same relationship
+    // that powers "switch user"). Drives the inline "Confirm you and <partner>".
+    const partners: Array<{ userName: string; name: string; confirmed: boolean }> = [];
+    if (userName) {
+      const buddyUserNames = new Set<string>();
+      for (const u of allUsers) {
+        if (u.userName && u.buddyUserName === userName) buddyUserNames.add(u.userName);
+      }
+      for (const p of selectedPlayers) {
+        if (buddyUserNames.has(p.name)) {
+          const pUser = allUsers.find(u => u.userName === p.name);
+          partners.push({
+            userName: p.name,
+            name: pUser ? (pUser.fullKnownAs || pUser.fullName || p.name) : (p.fullName || p.name),
+            confirmed: p.status === 'Y',
+          });
+        }
+      }
+    }
+
     return NextResponse.json({
+      partners,
       game: {
         tabDate: game.tabDate,
         date: game.date,

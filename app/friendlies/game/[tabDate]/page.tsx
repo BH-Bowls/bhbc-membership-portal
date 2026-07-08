@@ -103,6 +103,10 @@ interface GameDetails {
     teaFirst: { userName: string; name: string; hasEmail?: boolean } | null;
     teaSecond: { userName: string; name: string; hasEmail?: boolean } | null;
   } | null;
+
+  // Buddies (partners) of the current user who are selected in this game — the people
+  // the user may confirm on behalf of (and, for withdraw, switch-user to).
+  partners?: Array<{ userName: string; name: string; confirmed: boolean }>;
 }
 
 // ============================================================================
@@ -286,23 +290,50 @@ export default function GameDetailsPage() {
    * Updates user's status to confirmed in Google Sheets
    * Only available for selected players who haven't confirmed yet
    */
+  // Work out the confirm button state, including any partner (buddy) the user can
+  // confirm alongside themselves. Shared by the button label and the confirm dialog.
+  function getConfirmInfo() {
+    const g = gameDetails?.game;
+    const partners = gameDetails?.partners ?? [];
+    const unconfirmed = partners.filter(p => !p.confirmed);
+    const iSelected = !!g && !!g.userStatus && ['Y', 'R', 'T'].includes(g.userStatus);
+    const iNeed = !!g && g.status === 'S' && !g.userConfirmed && iSelected;
+    const show = !!g && g.status === 'S' && (iNeed || unconfirmed.length > 0);
+    const names = unconfirmed.map(p => p.name);
+
+    let label = 'Confirm Participation';
+    if (iNeed && names.length === 1) label = `Confirm you and ${names[0]}`;
+    else if (iNeed && names.length > 1) label = 'Confirm you and your partners';
+    else if (!iNeed && names.length === 1) label = `Confirm ${names[0]}`;
+    else if (!iNeed && names.length > 1) label = 'Confirm your partners';
+
+    return { show, label, names, onBehalfOf: unconfirmed.map(p => p.userName) };
+  }
+
   async function handleConfirm() {
-    // Show confirmation dialog to user
+    const { names, onBehalfOf } = getConfirmInfo();
+
+    // Tailor the dialog message to whoever is being confirmed
+    let message = 'Confirm your participation in this game?';
+    if (names.length === 1) message = `Confirm participation for you and ${names[0]}?`;
+    else if (names.length > 1) message = `Confirm participation for you and your partners (${names.join(', ')})?`;
+
     setConfirmDialog({
       isOpen: true,
       title: 'Confirm Participation',
-      message: 'Confirm your participation in this game?',
+      message,
       onConfirm: () => {
         closeConfirmDialog();
-        performConfirm();
+        performConfirm(onBehalfOf);
       },
     });
   }
 
   /**
-   * Perform the actual confirm operation
+   * Perform the actual confirm operation. onBehalfOf lists buddy usernames to confirm
+   * alongside the caller (the API confirms the caller too, and re-confirming is a no-op).
    */
-  async function performConfirm() {
+  async function performConfirm(onBehalfOf: string[] = []) {
     // Show action loading indicator
     setActionLoading(true);
     setFlashMessage(null);
@@ -315,6 +346,7 @@ export default function GameDetailsPage() {
         body: JSON.stringify({
           tab_name: tabDate,
           action: 'confirm',
+          onBehalfOf,
         }),
       });
 
@@ -323,7 +355,10 @@ export default function GameDetailsPage() {
       // Check if confirmation was successful
       if (response.ok) {
         // Show success message
-        setFlashMessage({ type: 'success', text: 'Participation confirmed!' });
+        setFlashMessage({
+          type: 'success',
+          text: onBehalfOf.length > 0 ? 'Participation confirmed for you and your partner.' : 'Participation confirmed!',
+        });
 
         // Invalidate the friendlies games cache so the list re-fetches when returning
         sessionStorage.removeItem('friendlies_games_cache');
@@ -798,14 +833,15 @@ export default function GameDetailsPage() {
 
               {/* Action buttons (Confirm, Withdraw, Message Captains) */}
               <div className="flex flex-wrap gap-2 justify-end">
-                {/* Confirm button - only show if game is Selected and user hasn't confirmed yet */}
-                {game.status === 'S' && !game.userConfirmed && ['Y', 'R', 'T'].includes(game.userStatus) && (
+                {/* Confirm button — shows when the user or one of their partners still
+                    needs confirming. Label adapts: "Confirm you and Peter" etc. */}
+                {getConfirmInfo().show && (
                   <button
                     onClick={handleConfirm}
                     disabled={actionLoading}
                     className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition-colors disabled:opacity-50"
                   >
-                    {actionLoading ? 'Processing...' : 'Confirm Participation'}
+                    {actionLoading ? 'Processing...' : getConfirmInfo().label}
                   </button>
                 )}
 
@@ -829,6 +865,15 @@ export default function GameDetailsPage() {
                 </button>
               </div>
             </div>
+
+            {/* Withdrawing is personal — if the user has a partner in this game, nudge
+                them to Switch User rather than trying to withdraw the partner here. */}
+            {game.status === 'S' && (gameDetails.partners?.length ?? 0) > 0 && (
+              <p className="mt-3 text-xs text-gray-600">
+                To withdraw {gameDetails.partners!.length === 1 ? gameDetails.partners![0].name : 'your partner'},
+                use <span className="font-medium">Switch User</span> (top-right menu).
+              </p>
+            )}
           </div>
         ) : !isGuest && (
           /* No status box — show Message Captains as a standalone button */
@@ -1139,7 +1184,7 @@ export default function GameDetailsPage() {
               ))}
               {ownTransport.length > 0 && (
                 <div className="p-3 bg-gray-50 rounded border border-gray-200">
-                  <p className="font-medium text-gray-900">Own Transport</p>
+                  <p className="font-medium text-gray-900">Making own way</p>
                   <p className="text-sm text-gray-700">{ownTransport.join(', ')}</p>
                 </div>
               )}

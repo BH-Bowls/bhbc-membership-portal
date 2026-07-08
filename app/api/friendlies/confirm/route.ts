@@ -8,6 +8,7 @@ import { authOptions } from '@/lib/auth';
 import { getGames, getGameSheet, updateGameSheet } from '@/lib/friendlies-sheets';
 import { ConfirmParticipationRequest } from '@/lib/types/friendlies';
 import { getUserByUsername } from '@/lib/sheets';
+import { canManageUser } from '@/lib/buddies-sheets';
 import { buildFriendlyICSAttachment, isGmailAddress, icsUpdatesEnabled } from '@/lib/ics-utils';
 import { sendEmail } from '@/lib/email/mailer';
 
@@ -23,12 +24,16 @@ export async function POST(request: NextRequest) {
     }
 
     // Parse request body
-    const body: ConfirmParticipationRequest = await request.json();
+    const body: ConfirmParticipationRequest & { onBehalfOf?: string[] } = await request.json();
     // Decode tab_name in case it's URL-encoded
     const tab_name = decodeURIComponent(body.tab_name);
 
     // Get current user's username
     const userName = session.user.userName;
+
+    // Optional: additional players to confirm alongside the caller (their buddies —
+    // the same people they can "switch user" to). Each is authorised below.
+    const onBehalfOf: string[] = Array.isArray(body.onBehalfOf) ? body.onBehalfOf : [];
 
     // Fetch all games from Games sheet
     const games = await getGames();
@@ -58,38 +63,50 @@ export async function POST(request: NextRequest) {
     // Fetch all players from the game sheet
     const players = await getGameSheet(game.tabName);
 
-    // Find this user in the game sheet
-    let userPlayer = null;
-    for (const p of players) {
-      if (p.name === userName) {
-        userPlayer = p;
-        break;
+    // Build the set of usernames to confirm: the caller, plus any authorised buddies.
+    const targets: string[] = [userName];
+    for (const other of onBehalfOf) {
+      if (!other || other === userName) continue;
+      // Only buddies (people who list the caller as their buddy) may be confirmed by them
+      const allowed = await canManageUser(userName, session.user.role, other);
+      if (!allowed) {
+        return NextResponse.json(
+          { error: 'You can only confirm for your own partner' },
+          { status: 403 }
+        );
+      }
+      targets.push(other);
+    }
+
+    // Resolve each target to a selected game-sheet row. A target who isn't a selected
+    // player is skipped. For a plain self-confirm (no buddies) preserve the clear
+    // "not in game / not selected" errors.
+    const updates: { rowNumber: number; status: string }[] = [];
+    for (const target of targets) {
+      let player = null;
+      for (const p of players) {
+        if (p.name === target) { player = p; break; }
+      }
+      const selected = !!player && ['Y', 'R', 'T'].includes(player.selected);
+      if (target === userName && onBehalfOf.length === 0) {
+        if (!player) {
+          return NextResponse.json({ error: 'You are not in this game' }, { status: 404 });
+        }
+        if (!selected) {
+          return NextResponse.json({ error: 'You have not been selected for this game' }, { status: 400 });
+        }
+      }
+      if (player && selected) {
+        updates.push({ rowNumber: player.rowNumber, status: 'Y' });
       }
     }
 
-    // Return 404 if user is not in this game
-    if (!userPlayer) {
-      return NextResponse.json(
-        { error: 'You are not in this game' },
-        { status: 404 }
-      );
+    if (updates.length === 0) {
+      return NextResponse.json({ error: 'No selected players to confirm' }, { status: 400 });
     }
 
-    // Verify user has been selected to play (Y=Playing, R=Reserve, T=Reserve Team)
-    if (!['Y', 'R', 'T'].includes(userPlayer.selected)) {
-      return NextResponse.json(
-        { error: 'You have not been selected for this game' },
-        { status: 400 }
-      );
-    }
-
-    // Update confirmation status to 'Y' (confirmed) in game sheet
-    await updateGameSheet(game.tabName, [
-      {
-        rowNumber: userPlayer.rowNumber,
-        status: 'Y',
-      },
-    ]);
+    // Update confirmation status to 'Y' (confirmed) for the caller + any buddies
+    await updateGameSheet(game.tabName, updates);
 
     // Send ICS confirmation email (fire-and-forget — failure does not affect the response)
     // Gated by ICS_UPDATE_EMAILS flag; Gmail users always skipped
