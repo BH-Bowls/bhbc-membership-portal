@@ -20,7 +20,8 @@ const FIXED_TIMES = [
   { label: '6:00 pm', value: '18:00' },
 ];
 
-const DAYS_AHEAD = 28; // candidate-date picker shows ~4 weeks ahead
+const DAYS_AHEAD = 28; // candidate-date picker shows ~4 weeks per page
+const MAX_DATE_WINDOWS = 11; // "Next" caps out around 48 weeks ahead (~1 bowls season)
 
 // A fixed-poll option row (datetime or text). Blank fields mean an unfilled ghost row.
 interface SlotDraft {
@@ -44,10 +45,13 @@ function dateOffsetIso(offsetDays: number): string {
   return d.toISOString().substring(0, 10);
 }
 
-// Candidate dates: tomorrow through today+DAYS_AHEAD
-function buildCandidateDates(): string[] {
+// Candidate dates for one "page" of the picker.
+// windowIndex 0 = tomorrow..DAYS_AHEAD, windowIndex 1 = the next DAYS_AHEAD after that, etc.
+function buildCandidateDates(windowIndex: number = 0): string[] {
   const dates: string[] = [];
-  for (let i = 1; i <= DAYS_AHEAD; i++) {
+  const startOffset = windowIndex * DAYS_AHEAD + 1;
+  const endOffset = startOffset + DAYS_AHEAD - 1;
+  for (let i = startOffset; i <= endOffset; i++) {
     dates.push(dateOffsetIso(i));
   }
   return dates;
@@ -136,6 +140,8 @@ export default function NewGroupEventPage({
   const [drafts, setDrafts] = useState<SlotDraft[]>([emptyDraft()]);
 
   // Date-finder fields: tap candidate dates + times, then trim the generated slot list
+  // Which page of the candidate-date picker is showing (0 = next 4 weeks, 1 = the 4 weeks after that, etc.)
+  const [dateWindowIndex, setDateWindowIndex] = useState(0);
   const [selectedDates, setSelectedDates] = useState<Set<string>>(new Set());
   const [selectedTimes, setSelectedTimes] = useState<Set<string>>(new Set(['10:00', '14:00', '18:00']));
   // Slot keys ("YYYY-MM-DD|HH:MM") the organiser has removed from the generated grid
@@ -367,7 +373,7 @@ export default function NewGroupEventPage({
   const role = session && session.user ? session.user.role : '';
   const inactiveBtn = 'inline-flex items-center justify-center font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 rounded-md px-3 py-1.5 text-sm border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 shadow-sm';
   const submitDisabled = submitting || (mode === 'finder' ? activeSlots.length === 0 : filledDrafts.length === 0);
-  const candidateDates = buildCandidateDates();
+  const candidateDates = buildCandidateDates(dateWindowIndex);
 
   // Email confirmation message shown after a successful create
   let emailNote = '';
@@ -572,6 +578,33 @@ export default function NewGroupEventPage({
                       </button>
                     );
                   })}
+                </div>
+
+                {/* Paging — the grid only shows one 4-week window at a time */}
+                <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
+                  <button
+                    type="button"
+                    onClick={() => setDateWindowIndex((i) => Math.max(0, i - 1))}
+                    disabled={dateWindowIndex === 0}
+                    className={dateWindowIndex === 0
+                      ? 'text-xs text-gray-500 cursor-not-allowed px-2 py-1'
+                      : 'text-xs text-blue-600 hover:underline px-2 py-1'}
+                  >
+                    ← Previous 4 weeks
+                  </button>
+                  <span className="text-xs text-gray-700">
+                    {monthLabel(candidateDates[0])} {dayNum(candidateDates[0])} – {monthLabel(candidateDates[candidateDates.length - 1])} {dayNum(candidateDates[candidateDates.length - 1])}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setDateWindowIndex((i) => Math.min(MAX_DATE_WINDOWS, i + 1))}
+                    disabled={dateWindowIndex >= MAX_DATE_WINDOWS}
+                    className={dateWindowIndex >= MAX_DATE_WINDOWS
+                      ? 'text-xs text-gray-500 cursor-not-allowed px-2 py-1'
+                      : 'text-xs text-blue-600 hover:underline px-2 py-1'}
+                  >
+                    Next 4 weeks →
+                  </button>
                 </div>
               </div>
 
