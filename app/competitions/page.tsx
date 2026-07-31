@@ -132,6 +132,14 @@ export default function CompetitionsPage() {
             )}
           </div>
           <div className="flex gap-2">
+            <a
+              href="https://burgesshillbowlsclub.com/marking"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 font-medium text-sm"
+            >
+              Marker Tips
+            </a>
             {!!role && role !== 'Kiosk' && (
               <button
                 onClick={() => router.push('/competitions/my')}
