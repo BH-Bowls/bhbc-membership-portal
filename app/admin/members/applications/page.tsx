@@ -119,6 +119,10 @@ export default function ApplicationsPage() {
   const [showConverted, setShowConverted] = useState(false);
   const [showRejected, setShowRejected] = useState(false);
 
+  // Rows whose objection ("waiting") period has been manually overridden so the
+  // admin can approve/reject before the deadline. Keyed by application row number.
+  const [overriddenRows, setOverriddenRows] = useState<Set<number>>(new Set());
+
   // Load all applications from the API
   const loadApplications = async () => {
     setError(null);
@@ -410,7 +414,37 @@ export default function ApplicationsPage() {
                 <p className="text-sm text-gray-700">No applications in the objection period.</p>
               ) : (
                 pending.map((app) => renderRow(app, (
-                  <span className="text-xs text-gray-700 self-center">Awaiting objection deadline</span>
+                  overriddenRows.has(app.rowNumber) ? (
+                    // Waiting period overridden — allow approve/reject before the deadline
+                    <>
+                      <button className={getButtonClasses('success', 'sm')} onClick={() => openModal('approve', app)}>
+                        Approve
+                      </button>
+                      <button className={getButtonClasses('danger', 'sm')} onClick={() => openModal('reject', app)}>
+                        Reject
+                      </button>
+                      <button
+                        className="text-xs text-gray-500 self-center hover:text-gray-700"
+                        onClick={() => setOverriddenRows((prev) => {
+                          const next = new Set(prev);
+                          next.delete(app.rowNumber);
+                          return next;
+                        })}
+                      >
+                        Cancel override
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-xs text-gray-700 self-center">Awaiting objection deadline</span>
+                      <button
+                        className={getButtonClasses('secondary', 'sm')}
+                        onClick={() => setOverriddenRows((prev) => new Set(prev).add(app.rowNumber))}
+                      >
+                        Override Waiting Period
+                      </button>
+                    </>
+                  )
                 )))
               )
             )}

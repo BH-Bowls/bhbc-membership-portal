@@ -51,7 +51,7 @@ export function getGoogleDriveClient() {
 // Service-account-only Drive client — bypasses the OAuth refresh token path.
 // Use for read-only operations like listing documents where the folder is shared
 // with the service account email, not the personal OAuth account.
-function getServiceAccountDriveClient() {
+export function getServiceAccountDriveClient() {
   const auth = new google.auth.JWT({
     email: getServiceAccountEmail(),
     key: getPrivateKey(),
@@ -176,15 +176,20 @@ export async function deleteFileFromDrive(fileId: string): Promise<void> {
 }
 
 // Check if a Drive file exists (for attachment validation).
+// Uses the service-account (read-only) client — the OAuth client's refresh token can
+// lapse (invalid_grant), and a failed auth must NOT be read as "file missing".
 export async function checkDriveFileExists(fileId: string): Promise<boolean> {
-  const drive = getGoogleDriveClient();
+  const drive = getServiceAccountDriveClient();
   try {
     await drive.files.get({ fileId, fields: 'id', supportsAllDrives: true });
     return true;
   } catch (error: any) {
+    // Only a genuine 404 means the file is gone. For any other error (auth, network,
+    // quota) assume the file is still present — never mark an attachment deleted on
+    // the strength of a transient/auth failure.
     if (error?.status === 404 || error?.code === 404) return false;
-    console.error(`[Drive] Error checking file ${fileId}:`, error);
-    return false;
+    console.error(`[Drive] Error checking file ${fileId} (assuming present):`, error);
+    return true;
   }
 }
 
@@ -294,6 +299,62 @@ export async function listPortalDocuments(): Promise<DocumentFolder[]> {
   return results;
 }
 
+// ── Guide documents (Guides subfolder of the attachments root) ───────────────
+
+// Small in-memory cache of resolved guide file IDs (name → fileId). Guides rarely
+// change, so this avoids two Drive lookups on every button click. Reset on restart.
+const guideFileIdCache = new Map<string, { fileId: string; name: string; at: number }>();
+const GUIDE_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+/**
+ * Find a PDF by name inside the "Guides" subfolder of the attachments root.
+ * Matches case-insensitively, ignoring a trailing ".pdf". Returns null if the
+ * Guides folder or a matching PDF isn't found.
+ */
+export async function findGuidePdf(guideName: string): Promise<{ fileId: string; name: string } | null> {
+  const cacheKey = guideName.trim().toLowerCase();
+  const cached = guideFileIdCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < GUIDE_CACHE_TTL_MS) {
+    return { fileId: cached.fileId, name: cached.name };
+  }
+
+  // Use the service account (read-only) — the same client the /documents page uses
+  // for manually-curated Drive PDFs. The OAuth/personal-account client is unreliable
+  // for this (its refresh token expires → invalid_grant). Requires the Guides folder
+  // to be shared with the service-account email.
+  const drive = getServiceAccountDriveClient();
+  const rootId = getRootFolderId();
+
+  // Locate the "Guides" subfolder (search only — never create).
+  const folderRes = await drive.files.list({
+    q: `name = 'Guides' and '${rootId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+    fields: 'files(id)',
+    includeItemsFromAllDrives: false,
+    supportsAllDrives: false,
+  });
+  const guidesFolderId = folderRes.data.files && folderRes.data.files[0] ? folderRes.data.files[0].id : null;
+  if (!guidesFolderId) return null;
+
+  // Find the PDF whose name (minus .pdf) matches the requested guide.
+  const filesRes = await drive.files.list({
+    q: `'${guidesFolderId}' in parents and mimeType = 'application/pdf' and trashed = false`,
+    fields: 'files(id, name)',
+    includeItemsFromAllDrives: false,
+    supportsAllDrives: false,
+  });
+  const files = filesRes.data.files || [];
+  const target = guideName.trim().toLowerCase();
+  const match = files.find((f: any) => {
+    const n = (f.name || '').toLowerCase().replace(/\.pdf$/, '').trim();
+    return n === target;
+  });
+  if (!match || !match.id) return null;
+
+  const result = { fileId: match.id, name: match.name || `${guideName}.pdf` };
+  guideFileIdCache.set(cacheKey, { ...result, at: Date.now() });
+  return result;
+}
+
 // ── URL helpers (usable server-side; client has its own copy) ────────────────
 
 export function driveViewUrl(fileId: string): string {
@@ -310,10 +371,4 @@ export function driveDownloadUrl(fileId: string): string {
 
 export function driveThumbnailUrl(fileId: string, size = 200): string {
   return `https://drive.google.com/thumbnail?id=${fileId}&sz=w${size}`;
-}
-
-// Returns true if the id is a Drive file ID (no slashes).
-// Cloudinary publicIds always contain slashes (folder/subfolder/filename).
-export function isDriveFileId(id: string | null | undefined): boolean {
-  return !!id && !id.includes('/');
 }

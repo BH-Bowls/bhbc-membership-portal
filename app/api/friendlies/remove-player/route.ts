@@ -9,7 +9,7 @@ import { getAppUrl } from '@/lib/app-url';
 import { getGames, updatePlayerEntry, updateGameCounts, removePlayerFromGameSheet, getGameSheet, updateGameSheet, getActiveEnteredCount } from '@/lib/friendlies-sheets';
 import { hasRole } from '@/lib/role-utils';
 import { getUserByUsername } from '@/lib/sheets';
-import { sendWithdrawnByAdminNoticeEmail, sendRemovedNoticeEmail } from '@/lib/email/friendlies';
+import { sendWithdrawnByAdminNoticeEmail, sendRemovedNoticeEmail, sendLinkedWithdrawalNoticeEmail } from '@/lib/email/friendlies';
 
 // POST handler - Removes a player from a game (Players column + game sheet row)
 export async function POST(request: NextRequest) {
@@ -115,12 +115,22 @@ export async function POST(request: NextRequest) {
       // Don't fail — player was removed successfully
     }
 
-    // Send removal notice to the player (fire-and-forget)
+    // Send removal notice to the player (fire-and-forget). For a joint game still
+    // open for combined entry (paired='Y'), send the linked removal email naming
+    // both games — mirror of the joint entry email. The partner comes from the
+    // already-loaded games list (no extra reads).
+    const emailPartner = game.paired === 'Y'
+      ? allGames.find(g => g.tabName !== game.tabName && g.paired === 'Y' && g.date === game.date)
+      : undefined;
     try {
       const user = await getUserByUsername(playerUserName);
       if (user?.emailAddress) {
         const fullName = user.fullName || (user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : playerUserName);
-        await sendRemovedNoticeEmail(user.emailAddress, playerUserName, fullName, game, appUrl);
+        if (emailPartner) {
+          await sendLinkedWithdrawalNoticeEmail(user.emailAddress, playerUserName, fullName, game, emailPartner, appUrl);
+        } else {
+          await sendRemovedNoticeEmail(user.emailAddress, playerUserName, fullName, game, appUrl);
+        }
       }
     } catch (emailError) {
       console.error('[remove-player] Error sending removal notice email:', emailError);

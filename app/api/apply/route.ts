@@ -135,6 +135,17 @@ export async function POST(request: NextRequest) {
     // land correctly regardless of their physical position in the sheet.
     const appColMap = await getColumnMap('Applications');
 
+    // Google Sheets with USER_ENTERED parses a pure-digit string as a number,
+    // which strips the leading zero from UK phone numbers (e.g. "07771833837"
+    // becomes 7771833837). Prefixing with an apostrophe forces the cell to be
+    // stored as text, preserving the leading zero and any spaces the applicant
+    // typed. The apostrophe is a Sheets text marker — it is not stored and does
+    // not appear when the value is read back via the API.
+    const asPhoneText = (v: string | undefined) => {
+      const trimmed = v?.trim() || '';
+      return trimmed ? `'${trimmed}` : '';
+    };
+
     // Map normalized column name -> value for every field we want to write
     const fieldValues: { [key: string]: any } = {
       first_name: data.firstName?.trim() || '',
@@ -142,8 +153,8 @@ export async function POST(request: NextRequest) {
       known_as: data.knownAs?.trim() || '',
       gender: data.gender || '',
       email_address: data.email?.trim() || '',
-      landline: data.landline?.trim() || '',
-      mobile: data.mobile?.trim() || '',
+      landline: asPhoneText(data.landline),
+      mobile: asPhoneText(data.mobile),
       address_1: data.address1?.trim() || '',
       address_2: data.address2?.trim() || '',
       address_3: data.address3?.trim() || '',

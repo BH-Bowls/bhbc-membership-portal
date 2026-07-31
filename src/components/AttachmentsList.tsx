@@ -16,9 +16,6 @@ interface AttachmentsListProps {
 
 // ── Drive URL helpers ────────────────────────────────────────────────────────
 
-function isDriveFileId(id: string | null | undefined): boolean {
-  return !!id && !id.includes('/');
-}
 function driveEmbedUrl(id: string): string {
   return `https://drive.google.com/file/d/${id}/preview`;
 }
@@ -27,17 +24,6 @@ function driveDownloadUrl(id: string): string {
 }
 function driveProxyUrl(id: string): string {
   return `/api/drive-image?id=${id}`;
-}
-
-// ── Legacy Cloudinary proxy helpers ──────────────────────────────────────────
-
-function getProxyUrl(apiBasePath: string, attachment: Attachment, inline: boolean): string {
-  const base = `${apiBasePath}/attachments/${attachment.attachmentId}`;
-  return inline ? `${base}?inline=true` : base;
-}
-
-function isCloudinaryFile(attachment: Attachment): boolean {
-  return !!attachment.driveFileId && !isDriveFileId(attachment.driveFileId);
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -88,42 +74,20 @@ export function AttachmentsList({
 
   const handleDocumentClick = (e: React.MouseEvent, attachment: Attachment) => {
     e.preventDefault();
-
-    if (isDriveFileId(attachment.driveFileId)) {
-      // All Drive files open in Google's viewer (handles PDFs, Word, Excel, etc.)
-      window.open(driveEmbedUrl(attachment.driveFileId!), '_blank');
-      return;
-    }
-
-    // Legacy Cloudinary — proxy through server
-    const VIEWABLE_MIME = ['application/pdf'];
-    const VIEWABLE_EXT = ['.pdf'];
-    const mime = (attachment.mimeType || '').toLowerCase();
-    const name = (attachment.fileName || '').toLowerCase();
-    const isViewable = VIEWABLE_MIME.includes(mime) || VIEWABLE_EXT.some((e) => name.endsWith(e));
-
-    if (isViewable) {
-      window.open(getProxyUrl(apiBasePath, attachment, true), '_blank');
-    } else {
-      const a = document.createElement('a');
-      a.href = getProxyUrl(apiBasePath, attachment, false);
-      a.download = '';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setToast(`Downloaded "${attachment.fileName || attachment.description}"`);
-    }
+    if (!attachment.driveFileId) return;
+    // All Drive files open in Google's viewer (handles PDFs, Word, Excel, etc.)
+    window.open(driveEmbedUrl(attachment.driveFileId), '_blank');
   };
 
   const getThumbnailSrc = (attachment: Attachment): string | null => {
     if (attachment.type !== 'image' || attachment.isDeleted) return null;
-    if (isDriveFileId(attachment.driveFileId)) return driveProxyUrl(attachment.driveFileId!);
+    if (attachment.driveFileId) return driveProxyUrl(attachment.driveFileId);
     return attachment.url || null;
   };
 
   const openLightbox = (attachment: Attachment) => {
-    if (isDriveFileId(attachment.driveFileId)) {
-      setLightboxUrl(driveProxyUrl(attachment.driveFileId!));
+    if (attachment.driveFileId) {
+      setLightboxUrl(driveProxyUrl(attachment.driveFileId));
     } else {
       setLightboxUrl(attachment.url);
     }
@@ -230,9 +194,9 @@ export function AttachmentsList({
                   )}
 
                   {/* Drive download link for documents */}
-                  {isDocument && !attachment.isDeleted && isDriveFileId(attachment.driveFileId) && (
+                  {isDocument && !attachment.isDeleted && attachment.driveFileId && (
                     <a
-                      href={driveDownloadUrl(attachment.driveFileId!)}
+                      href={driveDownloadUrl(attachment.driveFileId)}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-xs text-gray-500 hover:text-gray-700 mt-0.5 inline-block"

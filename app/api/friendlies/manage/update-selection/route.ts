@@ -67,19 +67,53 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Transform request data from snake_case to camelCase for updateGameSheet function
-    // This maps the API contract (snake_case) to internal function parameters (camelCase)
-    const mappedSelections = selections.map(s => ({
-      rowNumber: s.row_number,       // Row number in game sheet
-      selected: s.selected,           // Selection status: Y=Playing, R=Reserve, T=Reserve Team
-      team: s.team,                   // Team number (1-4 typically)
-      position: s.position,           // Position code: S=Skip, 1=Lead, 2=Two, 3=Three
-      driving: s.driving,             // Driving status: D=Driver, B=Bar, blank=neither
-      carNumber: s.car_number,        // Car number for drivers
-      status: s.status,               // Confirmation status: Y=Confirmed, W=Withdrawn
-    }));
+    // Reconcile the save against a FRESH read of the game sheet. The captain's page
+    // may have been open while things changed underneath it — a player withdrew, or
+    // the captain used the manage-users tools to add/remove/withdraw someone. We key
+    // by player name (not the client's row_number, which shifts when a row is deleted):
+    //   - Player no longer on the sheet (removed via manage-users) → skip; don't recreate.
+    //   - Player now Withdrawn ('W') → keep them withdrawn (FORCE status='W'; a save can
+    //     never un-withdraw them). A withdrawn Reserve ('R') is cleared to blank (they no
+    //     longer hold a reserve slot); a withdrawn Playing player keeps 'Y' so the captain
+    //     still sees the vacancy to fill.
+    //   - Otherwise apply the captain's change at the player's CURRENT row number.
+    // Players added via manage-users after the page loaded aren't in the payload, so
+    // they're simply left untouched.
+    const livePlayers = await getGameSheet(game.tabName);
+    const liveByName = new Map(livePlayers.map(p => [p.name.toLowerCase(), p]));
 
-    // Update the game sheet with all selection changes in a single batch operation
+    const mappedSelections: Array<{
+      rowNumber: number;
+      selected?: string;
+      team?: number | null;
+      position?: string;
+      driving?: string;
+      carNumber?: string;
+      status?: string;
+    }> = [];
+    for (const s of selections) {
+      // Prefer name (robust to row shifts); fall back to row number for an older client.
+      const live = s.user_name
+        ? liveByName.get(s.user_name.toLowerCase())
+        : livePlayers.find(p => p.rowNumber === s.row_number);
+      if (!live) continue;              // removed via manage-users — don't recreate
+      const isWithdrawn = live.status === 'W';
+      mappedSelections.push({
+        rowNumber: live.rowNumber,       // current row (survives deletes shifting rows up)
+        // A withdrawn Reserve is cleared to blank; a withdrawn Playing player keeps 'Y'
+        // so the captain still sees the vacancy to fill.
+        selected: (isWithdrawn && s.selected === 'R') ? '' : s.selected,
+        team: s.team,
+        position: s.position,
+        driving: s.driving,
+        carNumber: s.car_number,
+        // A withdrawn player stays withdrawn — a selection save can never un-withdraw
+        // them (that's what the player's Re-join action is for).
+        status: isWithdrawn ? 'W' : s.status,
+      });
+    }
+
+    // Update the game sheet with all reconciled selection changes in a single batch
     await updateGameSheet(game.tabName, mappedSelections);
 
     // Write captain of the day to the Games sheet (captain_username = '' clears the field)
@@ -136,12 +170,13 @@ export async function POST(request: NextRequest) {
       return a.fullName.localeCompare(b.fullName);
     });
 
-    // Calculate updated counts for Games sheet summary columns
+    // Calculate updated counts for Games sheet summary columns. Withdrawn players keep
+    // their role now, so exclude status 'W' from both counts.
     // Count players marked as 'Y' (selected to play)
-    const selectedCount = allPlayers.filter(p => p.selected === 'Y').length;
+    const selectedCount = allPlayers.filter(p => p.selected === 'Y' && p.status !== 'W').length;
 
     // Count players marked as 'R' (reserve) or 'T' (reserve team)
-    const reservesCount = allPlayers.filter(p => ['R', 'T'].includes(p.selected)).length;
+    const reservesCount = allPlayers.filter(p => ['R', 'T'].includes(p.selected) && p.status !== 'W').length;
 
     // Update the selected and reserves count columns in Games sheet
     await updateGameCounts(game.tabName, {

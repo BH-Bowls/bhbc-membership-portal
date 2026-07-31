@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getGoogleDriveClient } from '@/lib/drive';
+import { getServiceAccountDriveClient } from '@/lib/drive';
 
 export async function GET(req: NextRequest) {
   const fileId = req.nextUrl.searchParams.get('id');
   if (!fileId) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
 
   try {
-    const drive = getGoogleDriveClient();
+    // Service-account (read-only) client — the OAuth client's token can lapse.
+    const drive = getServiceAccountDriveClient();
     const res = await drive.files.get(
       { fileId, alt: 'media' },
       { responseType: 'stream' },

@@ -441,6 +441,14 @@ export default function CleaningRotaPage() {
             <p className="text-gray-600 mt-1 print:text-sm">Saturday morning cleaning duties (before 10:00)</p>
           </div>
           <div className="flex gap-2 print:hidden">
+            <a
+              href="/api/guides/cleaning-duty"
+              target="_blank"
+              rel="noopener noreferrer"
+              className={getButtonClasses('secondary', 'md')}
+            >
+              Instructions
+            </a>
             <button
               onClick={handlePrint}
               className={getButtonClasses('secondary', 'md')}

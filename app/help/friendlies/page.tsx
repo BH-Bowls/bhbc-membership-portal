@@ -20,26 +20,31 @@ export default function HelpFriendliesPage() {
 
           <HelpSection title="The tabs">
             <Body>
-              The Friendlies page has four tabs to filter the game list:
+              The Friendlies page groups games under three main tabs, each with its own sub-filters
+              along the top:
             </Body>
             <Body>
-              <strong>All Games</strong> — every game in the list regardless of status.
+              <strong>All Games</strong> — every game, filtered by status:
             </Body>
+            <div className="mt-1 space-y-1 text-sm text-gray-700 mb-2">
+              <p><strong>Upcoming</strong> — not yet open for entry.</p>
+              <p><strong>Open</strong> — accepting entries. This is the default view when you arrive.</p>
+              <p><strong>Selecting</strong> — entries are closed and the Captain is picking the team.</p>
+              <p><strong>Played</strong> — games that have been played, cancelled, or abandoned.</p>
+            </div>
             <Body>
-              <strong>Open for Entry</strong> — only games currently accepting entries. This is the
-              default view.
+              <strong>My Games</strong> — only games you are in:
             </Body>
+            <div className="mt-1 space-y-1 text-sm text-gray-700 mb-2">
+              <p><strong>Not played</strong> — your upcoming games (open, selecting, or selected).</p>
+              <p><strong>Played</strong> — your games that have been played, cancelled, or abandoned.</p>
+            </div>
             <Body>
-              <strong>My Entries</strong> — games you have entered that have not yet been played or
-              cancelled. This includes games that are open, selecting, or selected.
-            </Body>
-            <Body>
-              <strong>My Played</strong> — games you entered that have been played, cancelled, or
-              abandoned.
+              <strong>My Stats</strong> — your full record across all friendlies (see below).
             </Body>
             <Note>
-              The tab you are on is remembered. If you open a game&apos;s details and then go back,
-              you will return to the same tab rather than the default Open for Entry view.
+              The tab and sub-filter you are on are remembered. If you open a game&apos;s details and
+              then go back, you return to the same view rather than the default All Games → Open.
             </Note>
           </HelpSection>
 
@@ -58,25 +63,38 @@ export default function HelpFriendliesPage() {
 
           <HelpSection title="Entering a game">
             <Step n={1}>
-              Go to <strong>Friendlies</strong> and make sure you are on the{' '}
-              <strong>Open for Entry</strong> tab.
+              Go to <strong>Friendlies</strong>. The default <strong>All Games → Open</strong> view
+              shows the games currently open for entry.
             </Step>
             <Step n={2}>
-              Find the game you want to enter and tick the checkbox on the game card.
+              On the game you want, tap <strong>Enter this game</strong>. A confirmation box appears
+              so you enter one game at a time.
             </Step>
             <Step n={3}>
-              Tick or untick as many games as you like. A green <strong>Update X Games</strong>{' '}
-              button will appear at the bottom of the screen showing how many changes are pending.
-            </Step>
-            <Step n={4}>
-              Tap the green <strong>Update X Games</strong> button to save your entries. Your
-              changes are not saved until you tap this button — ticking or unticking a checkbox alone
-              does nothing until you tap the button.
+              Tap <strong>Enter this game</strong> in the box to confirm. Your entry is saved
+              immediately and the card changes to <strong>Entered — tap to remove</strong>.
             </Step>
             <Note>
-              To remove yourself from an Open game, untick the checkbox and tap{' '}
-              <strong>Update X Games</strong>. Your name will be removed from the entry list
-              immediately. You can only do this while the game is still Open.
+              To remove yourself from an Open game, tap <strong>Entered — tap to remove</strong> on
+              the card and confirm. You can only do this while the game is still Open.
+            </Note>
+          </HelpSection>
+
+          <HelpSection title="Entering your buddy at the same time">
+            <Body>
+              If you have a <strong>buddy</strong> set up, you can enter them alongside yourself in
+              one step. When your buddy is eligible for that game (the right Ladies/Men category) and
+              not already entered, the confirmation box shows an{' '}
+              <strong>Enter {'{buddy}'} too?</strong> tick.
+            </Body>
+            <Body>
+              Tick it before confirming to enter both of you together. Leave it unticked to enter
+              only yourself. The same applies when removing — if your buddy is entered, the remove
+              box offers <strong>Remove {'{buddy}'} too?</strong>.
+            </Body>
+            <Note>
+              If your buddy is already entered, the tick simply won&apos;t appear — there is nothing
+              to do.
             </Note>
           </HelpSection>
 
@@ -113,9 +131,10 @@ export default function HelpFriendliesPage() {
               <p><strong>Petrol cost</strong> — shown next to the Away badge if a reimbursement amount has been set.</p>
             </div>
             <Body>
-              When you tick a checkbox to enter an away game, a <strong>Making my own way</strong> option
-              appears below the checkbox. Tick this if you are travelling to the venue yourself and are
-              not part of the car share — the Captain can see this when arranging lifts.
+              When you enter an away game, the confirmation box shows a{' '}
+              <strong>Making my own way</strong> option. Tick this if you are travelling to the venue
+              yourself and are not part of the car share — the Captain can see this when arranging
+              lifts.
             </Body>
           </HelpSection>
 
@@ -144,7 +163,7 @@ export default function HelpFriendliesPage() {
               are playing for the opposing team that day.
             </Body>
             <Body>
-              Use the <strong>My Entries</strong> tab to quickly find your upcoming games.
+              Use the <strong>My Games → Not played</strong> tab to quickly find your upcoming games.
             </Body>
           </HelpSection>
 
@@ -186,8 +205,35 @@ export default function HelpFriendliesPage() {
             <Body>
               <strong>Withdraw</strong> — if you can no longer play after being selected, tap
               Withdraw. Your name will be marked as withdrawn and an email will be sent to the
-              captains so they can rearrange the team. This is different from simply unticking an
-              Open game — withdrawing after selection always notifies the captains.
+              captains so they can rearrange the team. This is different from simply removing yourself
+              from an Open game — withdrawing after selection always notifies the captains.
+            </Body>
+          </HelpSection>
+
+          <HelpSection title="Confirming for your buddy too">
+            <Body>
+              If your <strong>buddy</strong> is also selected for the game, the confirm button lets
+              you confirm both of you at once — it reads <strong>Confirm you and {'{buddy}'}</strong>.
+              Tap it to confirm yourself and your buddy in a single step. If you have already
+              confirmed but your buddy hasn&apos;t, the button reads simply{' '}
+              <strong>Confirm {'{buddy}'}</strong>.
+            </Body>
+            <Note>
+              Withdrawing is personal — you can only withdraw yourself. To withdraw your buddy, use
+              <strong> Switch User</strong> (top-right menu) to act as them, then withdraw.
+            </Note>
+          </HelpSection>
+
+          <HelpSection title="Re-joining after withdrawing">
+            <Body>
+              Changed your mind, or freed up again? While the game is still published (the team has
+              been selected but not yet played), open the game details and you will see a green{' '}
+              <strong>Re-join</strong> button in place of Confirm and Withdraw.
+            </Body>
+            <Body>
+              Tap <strong>Re-join</strong> to put yourself back into the game. You return to the role
+              you held before (Playing or Reserve), and the captains are notified that you are
+              available again so they can update the team.
             </Body>
           </HelpSection>
 

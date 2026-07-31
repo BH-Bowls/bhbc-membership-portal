@@ -170,10 +170,17 @@ function parseCompetitionRow(
     r2PlayBy: normalizeDate(get('r2_play_by')),
     qfPlayBy: normalizeDate(get('qf_play_by')),
     sfPlayBy: normalizeDate(get('sf_play_by')),
-    compFixedDates: getBool('comp_fixed_dates'),
+    prelimFixed: getBool('prelim_fixed'),
+    r1Fixed: getBool('r1_fixed'),
+    r2Fixed: getBool('r2_fixed'),
+    qfFixed: getBool('qf_fixed'),
+    sfFixed: getBool('sf_fixed'),
+    finalsFixed: getBool('finals_fixed'),
     drawSideCount: get('draw_side_count') ? parseInt(get('draw_side_count')!, 10) : null,
     compStartDate: normalizeDate(get('comp_start')),
     compDescription: get('comp_description'),
+    extraDescription: get('extra_description'),
+    markersNotes: get('markers_notes'),
   };
 }
 
@@ -288,10 +295,17 @@ export async function updateCompetition(comp: Competition): Promise<void> {
   setCol('r2_play_by', comp.r2PlayBy || '');
   setCol('qf_play_by', comp.qfPlayBy || '');
   setCol('sf_play_by', comp.sfPlayBy || '');
-  setCol('comp_fixed_dates', comp.compFixedDates ? 'Y' : '');
+  setCol('prelim_fixed', comp.prelimFixed ? 'Y' : '');
+  setCol('r1_fixed', comp.r1Fixed ? 'Y' : '');
+  setCol('r2_fixed', comp.r2Fixed ? 'Y' : '');
+  setCol('qf_fixed', comp.qfFixed ? 'Y' : '');
+  setCol('sf_fixed', comp.sfFixed ? 'Y' : '');
+  setCol('finals_fixed', comp.finalsFixed ? 'Y' : '');
   setCol('draw_side_count', comp.drawSideCount != null ? String(comp.drawSideCount) : '');
   setCol('comp_start', comp.compStartDate || '');
   setCol('comp_description', comp.compDescription || '');
+  setCol('extra_description', comp.extraDescription || '');
+  setCol('markers_notes', comp.markersNotes || '');
 
   const endCol = getColumnLetter(maxCol - 1);
   await sheets.spreadsheets.values.update({
@@ -576,11 +590,20 @@ export async function saveCompetitionSetup(
     }
   }
 
-  // For fixed-date comps, pre-fill playedDate = playByDate on every Pending match
-  // that doesn't already have a played date, so they appear in home-page Coming Up.
-  if (comp?.compFixedDates) {
+  // For rounds flagged as fixed-day, pre-fill playedDate = playByDate on every
+  // Pending match in that round that doesn't already have a played date, so they
+  // appear in home-page Coming Up.
+  if (comp) {
+    const fixedByRound: { [round: string]: boolean } = {
+      Prelim: !!comp.prelimFixed,
+      R1: !!comp.r1Fixed,
+      R2: !!comp.r2Fixed,
+      QF: !!comp.qfFixed,
+      SF: !!comp.sfFixed,
+      F: !!comp.finalsFixed,
+    };
     for (const m of allMatches) {
-      if (m.status === 'Pending' && !m.playedDate && m.playByDate) {
+      if (fixedByRound[m.round] && m.status === 'Pending' && !m.playedDate && m.playByDate) {
         m.playedDate = m.playByDate;
       }
     }
@@ -935,30 +958,29 @@ export async function getMemberInfo(username: string): Promise<CompMemberInfo | 
 
 const SETTINGS_SHEET = 'CompetitionsSettings';
 
-export async function getCompetitionMessage(): Promise<string> {
-  const spreadsheetId = getCompetitionsSpreadsheetId();
-  const sheets = getGoogleSheetsClient();
-
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `${SETTINGS_SHEET}!A:B`,
-    valueRenderOption: 'UNFORMATTED_VALUE',
-  });
-
-  const rows = res.data.values ?? [];
-  for (const row of rows) {
-    if (String(row[0]).trim().toLowerCase() === 'message') {
-      return String(row[1] ?? '');
-    }
-  }
-  return '';
+// The three shared rules-text blocks live in CompetitionsSettings as Key | Value
+// rows. The rules page renders each under a fixed heading; the sheet holds only the
+// body text (light formatting: newlines + manual numbering + <b>/<i>/<u>).
+//   description       → General Rules            (renamed from the old 'message' key)
+//   extra_description → Standard Scoring Procedure
+//   markers_notes     → Marker Responsibilities
+export interface CompetitionRulesText {
+  generalRules: string;
+  scoringProcedure: string;
+  markerResponsibilities: string;
 }
 
-export async function setCompetitionMessage(message: string): Promise<void> {
+const RULES_TEXT_KEYS = {
+  generalRules: 'description',
+  scoringProcedure: 'extra_description',
+  markerResponsibilities: 'markers_notes',
+} as const;
+
+/** Read the three shared rules-text blocks from CompetitionsSettings. */
+export async function getCompetitionRulesText(): Promise<CompetitionRulesText> {
   const spreadsheetId = getCompetitionsSpreadsheetId();
   const sheets = getGoogleSheetsClient();
 
-  // Find the row with key 'message'
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
     range: `${SETTINGS_SHEET}!A:B`,
@@ -966,29 +988,74 @@ export async function setCompetitionMessage(message: string): Promise<void> {
   });
 
   const rows = res.data.values ?? [];
-  let targetRow = -1;
-  for (let i = 0; i < rows.length; i++) {
-    if (String(rows[i][0]).trim().toLowerCase() === 'message') {
-      targetRow = i + 1; // 1-indexed
-      break;
+  const byKey: { [key: string]: string } = {};
+  for (const row of rows) {
+    // Normalise the key cell the same way getColumnMap does: lowercase + spaces→_.
+    // So a sheet key of "Extra Description" matches the 'extra_description' key.
+    const key = String(row[0] ?? '').trim().toLowerCase().replace(/\s+/g, '_');
+    if (key) byKey[key] = String(row[1] ?? '');
+  }
+
+  return {
+    // Fall back to the old 'message' key so the value survives before the sheet cell
+    // is renamed to 'Description'.
+    generalRules: byKey[RULES_TEXT_KEYS.generalRules] ?? byKey['message'] ?? '',
+    scoringProcedure: byKey[RULES_TEXT_KEYS.scoringProcedure] ?? '',
+    markerResponsibilities: byKey[RULES_TEXT_KEYS.markerResponsibilities] ?? '',
+  };
+}
+
+/** Upsert the three shared rules-text blocks. */
+export async function setCompetitionRulesText(text: CompetitionRulesText): Promise<void> {
+  const spreadsheetId = getCompetitionsSpreadsheetId();
+  const sheets = getGoogleSheetsClient();
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SETTINGS_SHEET}!A:B`,
+    valueRenderOption: 'UNFORMATTED_VALUE',
+  });
+  const rows = res.data.values ?? [];
+
+  const desired: Array<[string, string]> = [
+    [RULES_TEXT_KEYS.generalRules, text.generalRules],
+    [RULES_TEXT_KEYS.scoringProcedure, text.scoringProcedure],
+    [RULES_TEXT_KEYS.markerResponsibilities, text.markerResponsibilities],
+  ];
+
+  const updates: { range: string; values: string[][] }[] = [];
+  const toAppend: string[][] = [];
+
+  for (const [key, value] of desired) {
+    let targetRow = -1;
+    for (let i = 0; i < rows.length; i++) {
+      // Match keys normalised (lowercase + spaces→_) so "Extra Description" in the
+      // sheet updates in place rather than appending a duplicate 'extra_description' row.
+      const rowKey = String(rows[i][0] ?? '').trim().toLowerCase().replace(/\s+/g, '_');
+      if (rowKey === key) {
+        targetRow = i + 1; // 1-indexed sheet row
+        break;
+      }
+    }
+    if (targetRow === -1) {
+      toAppend.push([key, value]);
+    } else {
+      updates.push({ range: `${SETTINGS_SHEET}!B${targetRow}`, values: [[value]] });
     }
   }
 
-  if (targetRow === -1) {
-    // Append a new row
+  if (updates.length > 0) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: { data: updates, valueInputOption: 'RAW' },
+    });
+  }
+  if (toAppend.length > 0) {
     await sheets.spreadsheets.values.append({
       spreadsheetId,
       range: `${SETTINGS_SHEET}!A:B`,
       valueInputOption: 'RAW',
-      requestBody: { values: [['message', message]] },
-    });
-  } else {
-    // Update existing row
-    await sheets.spreadsheets.values.update({
-      spreadsheetId,
-      range: `${SETTINGS_SHEET}!B${targetRow}`,
-      valueInputOption: 'RAW',
-      requestBody: { values: [[message]] },
+      requestBody: { values: toAppend },
     });
   }
 }

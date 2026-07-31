@@ -9,9 +9,10 @@ import { authOptions } from '@/lib/auth';
 import { getAppUrl } from '@/lib/app-url';
 import { getGames, getGameSheet, updateGameSheet, updatePlayerEntry, updateGameCounts, removePlayerFromGameSheet, getActiveEnteredCount } from '@/lib/friendlies-sheets';
 import { clearDiaryCache } from '@/lib/home-cache';
-import { sendWithdrawalEmail, sendWithdrawalNoticeEmail } from '@/lib/email/friendlies';
+import { sendWithdrawalEmail, sendWithdrawalNoticeEmail, sendLinkedWithdrawalNoticeEmail } from '@/lib/email/friendlies';
 import type { WithdrawRequest, Game } from '@/lib/types/friendlies';
 import { getUserByUsername } from '@/lib/sheets';
+import { canManageUser } from '@/lib/buddies-sheets';
 
 // POST handler - Withdraws user from a game
 export async function POST(request: NextRequest) {
@@ -55,10 +56,28 @@ export async function POST(request: NextRequest) {
     // Handle withdrawal differently based on game status
     // Scenario 1: Game is still Open - simple removal
     if (game.status === 'O') {
-      // Remove player's entry from Players sheet (set to empty string)
-      await updatePlayerEntry(userName, game.tabName, '');
-      // Remove player's row from the individual game sheet
-      await removePlayerFromGameSheet(game.tabName, userName);
+      // Optional: buddies to remove alongside the caller (authorised the same way as entry).
+      const onBehalfOf: string[] = Array.isArray(body.on_behalf_of) ? body.on_behalf_of : [];
+      const removeTargets: string[] = [userName];
+      for (const other of onBehalfOf) {
+        if (!other || other === userName || removeTargets.includes(other)) continue;
+        const allowed = await canManageUser(userName, session.user.role ?? '', other);
+        if (!allowed) {
+          return NextResponse.json(
+            { error: 'You can only remove your own partner' },
+            { status: 403 }
+          );
+        }
+        removeTargets.push(other);
+      }
+
+      // Remove each target's entry from the Players sheet and their row from the game
+      // sheet. A joint-game entry only ever lives on the lead game, so this removes
+      // only that game — no partner writes (keeps quota use down).
+      for (const target of removeTargets) {
+        await updatePlayerEntry(target, game.tabName, '');
+        await removePlayerFromGameSheet(game.tabName, target);
+      }
 
       // Recalculate entered count in Games sheet
       const { getGoogleSheetsClient } = await import('@/lib/sheets');
@@ -97,21 +116,33 @@ export async function POST(request: NextRequest) {
         await updateGameCounts(game.tabName, { entered: enteredCount });
       }
 
-      // Send withdrawal notice to the player (fire-and-forget)
-      try {
-        const user = await getUserByUsername(userName);
-        if (user?.emailAddress) {
-          const fullName = user.fullName || (user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : userName);
-          await sendWithdrawalNoticeEmail(user.emailAddress, userName, fullName, game, appUrl);
+      // Joint game: pair the removal email with both games (mirror of the entry
+      // email). The partner is found in the already-loaded games list — no extra
+      // reads, so no quota cost.
+      const emailPartner = (game.paired === 'Y' || game.paired === 'C')
+        ? games.find(g => g.tabName !== game.tabName && (g.paired === 'Y' || g.paired === 'C') && g.date === game.date)
+        : undefined;
+
+      // Send a removal notice to each removed player (fire-and-forget)
+      for (const target of removeTargets) {
+        try {
+          const user = await getUserByUsername(target);
+          if (user?.emailAddress) {
+            const fullName = user.fullName || (user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : target);
+            if (emailPartner) {
+              await sendLinkedWithdrawalNoticeEmail(user.emailAddress, target, fullName, game, emailPartner, appUrl);
+            } else {
+              await sendWithdrawalNoticeEmail(user.emailAddress, target, fullName, game, appUrl);
+            }
+          }
+        } catch (emailError) {
+          console.error('Error sending removal notice email:', emailError);
         }
-      } catch (emailError) {
-        console.error('Error sending withdrawal notice email:', emailError);
+        // Invalidate each removed user's diary cache so their home page updates
+        clearDiaryCache(target);
       }
 
-      // Invalidate the diary cache so the home page reflects the withdrawal
-      clearDiaryCache(userName);
-
-      // Return success for Open game withdrawal
+      // Return success for Open game removal
       return NextResponse.json({
         success: true,
         message: 'Entry removed',

@@ -57,24 +57,26 @@ function createCompetitionSheets() {
   var controlHeaders = [
     'Comp ID', 'Display Name', 'Comp Type', 'Status', 'Year',
     'Finals Date', 'Prelim Play By', 'R1 Play By', 'R2 Play By',
-    'QF Play By', 'SF Play By', 'Triples Fixed Day', 'Triples Fixed Date'
+    'QF Play By', 'SF Play By',
+    'Prelim Fixed', 'R1 Fixed', 'R2 Fixed', 'QF Fixed', 'SF Fixed', 'Finals Fixed',
+    'Comp Description', 'Extra Description', 'Markers Notes'
   ];
   writeHeaders(controlSheet, controlHeaders);
 
   // Only write data rows if the sheet was freshly created (no data below header)
   if (controlSheet.getLastRow() <= 1) {
     var competitions = [
-      ['mens-championship',  "Men's Championship", 'singles', 'Not Started', 2026, '', '', '', '', '', '', '', ''],
-      ['ladies-maynard',     'Ladies Maynard',      'singles', 'Not Started', 2026, '', '', '', '', '', '', '', ''],
-      ['mens-two-wood',      "Men's Two Wood",      'singles', 'Not Started', 2026, '', '', '', '', '', '', '', ''],
-      ['ladies-two-wood',    'Ladies Two Wood',     'singles', 'Not Started', 2026, '', '', '', '', '', '', '', ''],
-      ['handicap',           'Handicap',            'singles', 'Not Started', 2026, '', '', '', '', '', '', '', ''],
-      ['oldlands',           'Oldlands',            'singles', 'Not Started', 2026, '', '', '', '', '', '', '', ''],
-      ['veterans',           'Veterans',            'singles', 'Not Started', 2026, '', '', '', '', '', '', '', ''],
-      ['married-pairs',      'Married Pairs',       'pairs',   'Not Started', 2026, '', '', '', '', '', '', '', ''],
-      ['drawn-pairs',        'Drawn Pairs',         'pairs',   'Not Started', 2026, '', '', '', '', '', '', '', ''],
-      ['australian-pairs',   'Australian Pairs',    'pairs',   'Not Started', 2026, '', '', '', '', '', '', '', ''],
-      ['drawn-triples',      'Drawn Triples',       'triples', 'Not Started', 2026, '', '', '', '', '', '', '', ''],
+      ['mens-championship',  "Men's Championship", 'singles', 'Not Started', 2026, '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
+      ['ladies-maynard',     'Ladies Maynard',      'singles', 'Not Started', 2026, '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
+      ['mens-two-wood',      "Men's Two Wood",      'singles', 'Not Started', 2026, '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
+      ['ladies-two-wood',    'Ladies Two Wood',     'singles', 'Not Started', 2026, '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
+      ['handicap',           'Handicap',            'singles', 'Not Started', 2026, '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
+      ['oldlands',           'Oldlands',            'singles', 'Not Started', 2026, '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
+      ['veterans',           'Veterans',            'singles', 'Not Started', 2026, '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
+      ['married-pairs',      'Married Pairs',       'pairs',   'Not Started', 2026, '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
+      ['drawn-pairs',        'Drawn Pairs',         'pairs',   'Not Started', 2026, '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
+      ['australian-pairs',   'Australian Pairs',    'pairs',   'Not Started', 2026, '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
+      ['drawn-triples',      'Drawn Triples',       'triples', 'Not Started', 2026, '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
     ];
     controlSheet.getRange(2, 1, competitions.length, controlHeaders.length).setValues(competitions);
 

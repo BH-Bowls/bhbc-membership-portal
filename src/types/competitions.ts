@@ -65,8 +65,15 @@ export interface Competition {
   qfPlayBy?: string | null;
   sfPlayBy?: string | null;
 
-  // When true, all rounds are displayed as "play on" (fixed day) rather than "play by" (deadline)
-  compFixedDates?: boolean;
+  // Per-round "fixed day" flags. When a round's flag is true its date is a fixed
+  // "play on" day; when false it is a "play by" deadline. (Replaces the old single
+  // compFixedDates flag that applied to every round at once.)
+  prelimFixed?: boolean;
+  r1Fixed?: boolean;
+  r2Fixed?: boolean;
+  qfFixed?: boolean;
+  sfFixed?: boolean;
+  finalsFixed?: boolean;
 
   // Side count recorded when the bracket was last created/rebuilt
   drawSideCount?: number | null;
@@ -79,6 +86,13 @@ export interface Competition {
 
   // Short description shown to members, e.g. "Singles, play to 21 points"
   compDescription?: string | null;
+
+  // Longer rules text for this competition, shown on the public rules page and in the
+  // detail-page "full rules" popup. Light formatting only (newlines + manually-typed
+  // numbering + <b>/<i>/<u>). By convention: pairs/triples use extraDescription (scoring
+  // note), singles use markersNotes (markers' instructions); Handicap uses both.
+  extraDescription?: string | null;
+  markersNotes?: string | null;
 }
 
 /**

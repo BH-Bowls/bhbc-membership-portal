@@ -53,7 +53,7 @@ function isPublicRoute(pathname: string): boolean {
   const exactApis = [
     '/api/fixtures/games', '/api/tea-rota', '/api/cleaning-rota',
     '/api/sweeping-rota', '/api/members/lookup', '/api/friendlies/games',
-    '/api/competitions', '/api/rowland', '/api/rowland/message',
+    '/api/competitions', '/api/competitions/rules-text', '/api/rowland', '/api/rowland/message',
     '/api/leagues', '/api/leagues/message',
   ];
   if (exactApis.includes(pathname)) return true;
@@ -69,6 +69,9 @@ function isPublicRoute(pathname: string): boolean {
 
   // /api/clubs and all sub-paths
   if (pathname === '/api/clubs' || pathname.startsWith('/api/clubs/')) return true;
+
+  // /api/guides/[slug] — duty-instruction PDFs, viewable alongside the public rota pages
+  if (pathname.startsWith('/api/guides/')) return true;
 
   // /availability/guest — visitor token pages (no auth required)
   if (pathname.startsWith('/availability/guest/')) return true;
@@ -94,6 +97,11 @@ function isPublicRoute(pathname: string): boolean {
 function isPinExempt(pathname: string): boolean {
   if (pathname === '/rowland' || pathname.startsWith('/rowland/')) return true;
   if (pathname.startsWith('/api/rowland')) return true;
+  // Competition rules — a public page linked from the club website, plus the single
+  // endpoint that feeds it. Case-insensitive so a mis-cased link (/competitions/RULES)
+  // is exempt too; the detail page redirects it to the canonical lowercase URL.
+  if (pathname.toLowerCase() === '/competitions/rules') return true;
+  if (pathname === '/api/competitions/rules-text') return true;
   if (pathname.startsWith('/availability/guest/')) return true;
   if (pathname.startsWith('/api/availability/guest/')) return true;
   return false;

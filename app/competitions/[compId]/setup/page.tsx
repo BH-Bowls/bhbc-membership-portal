@@ -356,6 +356,15 @@ export default function CompetitionSetupPage({
   const [qfPlayBy, setQfPlayBy] = useState('');
   const [sfPlayBy, setSfPlayBy] = useState('');
 
+  // Per-round "fixed day" flags — when set, that round's date shows as
+  // "play on" (fixed day) rather than "play by" (deadline) on the bracket.
+  const [finalsFixed, setFinalsFixed] = useState(false);
+  const [prelimFixed, setPrelimFixed] = useState(false);
+  const [r1Fixed, setR1Fixed] = useState(false);
+  const [r2Fixed, setR2Fixed] = useState(false);
+  const [qfFixed, setQfFixed] = useState(false);
+  const [sfFixed, setSfFixed] = useState(false);
+
   // Comp start date (when the first round begins; leave blank if fixed-day like Triples)
   const [compStartDate, setCompStartDate] = useState('');
 
@@ -407,6 +416,12 @@ export default function CompetitionSetupPage({
         setR2PlayBy(comp.r2PlayBy || '');
         setQfPlayBy(comp.qfPlayBy || '');
         setSfPlayBy(comp.sfPlayBy || '');
+        setFinalsFixed(!!comp.finalsFixed);
+        setPrelimFixed(!!comp.prelimFixed);
+        setR1Fixed(!!comp.r1Fixed);
+        setR2Fixed(!!comp.r2Fixed);
+        setQfFixed(!!comp.qfFixed);
+        setSfFixed(!!comp.sfFixed);
         setCompStartDate(comp.compStartDate || '');
         if (comp.drawSideCount) setManualDrawCount(String(comp.drawSideCount));
 
@@ -640,6 +655,12 @@ export default function CompetitionSetupPage({
           r2PlayBy: r2PlayBy || null,
           qfPlayBy: qfPlayBy || null,
           sfPlayBy: sfPlayBy || null,
+          finalsFixed,
+          prelimFixed,
+          r1Fixed,
+          r2Fixed,
+          qfFixed,
+          sfFixed,
           compStartDate: compStartDate || null,
           ...(entrants.length === 0 && manualDrawCount
             ? { drawSideCount: parseInt(manualDrawCount, 10) || null }
@@ -1009,16 +1030,25 @@ export default function CompetitionSetupPage({
                       !finalsDate ? 'border-amber-300' : 'border-gray-300'
                     }`}
                   />
+                  <label className="mt-2 flex items-center gap-2 text-xs text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={finalsFixed}
+                      onChange={(e) => setFinalsFixed(e.target.checked)}
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    Fixed day — show as &ldquo;play on&rdquo;
+                  </label>
                 </div>
 
                 {/* Round play-by dates — only show rounds the bracket actually needs */}
                 {([
-                  { round: 'Prelim' as CompRound, label: 'Preliminary play by', value: prelimPlayBy, setter: setPrelimPlayBy },
-                  { round: 'R1'    as CompRound, label: 'Round 1 play by',       value: r1PlayBy,    setter: setR1PlayBy },
-                  { round: 'R2'    as CompRound, label: 'Round 2 play by',       value: r2PlayBy,    setter: setR2PlayBy },
-                  { round: 'QF'    as CompRound, label: 'Quarter Final play by', value: qfPlayBy,    setter: setQfPlayBy },
-                  { round: 'SF'    as CompRound, label: 'Semi Final play by',    value: sfPlayBy,    setter: setSfPlayBy },
-                ] as const).filter(({ round }) => requiredRounds.includes(round)).map(({ label, value, setter }) => (
+                  { round: 'Prelim' as CompRound, label: 'Preliminary play by', value: prelimPlayBy, setter: setPrelimPlayBy, fixed: prelimFixed, fixedSetter: setPrelimFixed },
+                  { round: 'R1'    as CompRound, label: 'Round 1 play by',       value: r1PlayBy,    setter: setR1PlayBy,    fixed: r1Fixed,     fixedSetter: setR1Fixed },
+                  { round: 'R2'    as CompRound, label: 'Round 2 play by',       value: r2PlayBy,    setter: setR2PlayBy,    fixed: r2Fixed,     fixedSetter: setR2Fixed },
+                  { round: 'QF'    as CompRound, label: 'Quarter Final play by', value: qfPlayBy,    setter: setQfPlayBy,    fixed: qfFixed,     fixedSetter: setQfFixed },
+                  { round: 'SF'    as CompRound, label: 'Semi Final play by',    value: sfPlayBy,    setter: setSfPlayBy,    fixed: sfFixed,     fixedSetter: setSfFixed },
+                ] as const).filter(({ round }) => requiredRounds.includes(round)).map(({ label, value, setter, fixed, fixedSetter }) => (
                   <div key={label}>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       {label}
@@ -1032,6 +1062,15 @@ export default function CompetitionSetupPage({
                         !value ? 'border-amber-300' : 'border-gray-300'
                       }`}
                     />
+                    <label className="mt-2 flex items-center gap-2 text-xs text-gray-700">
+                      <input
+                        type="checkbox"
+                        checked={fixed}
+                        onChange={(e) => fixedSetter(e.target.checked)}
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      />
+                      Fixed day — show as &ldquo;play on&rdquo;
+                    </label>
                   </div>
                 ))}
               </div>

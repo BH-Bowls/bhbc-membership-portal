@@ -778,6 +778,27 @@ export default function ManageGamesPage() {
     return new Date(year, month, day);
   }
 
+  /** Format a DD/MM/YYYY date with the day of the week, e.g. "Sun, 26/04/2026". */
+  function formatDateWithDay(dateStr: string): string {
+    const d = parseDDMMYYYY(dateStr);
+    if (!d) return dateStr;
+    return d.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' });
+  }
+
+  /** Badge colour + label for a game's Ladies/Men/Mixed classification. */
+  function ladiesMenBadge(ladiesMen: string) {
+    if (!ladiesMen) return null;
+    const color =
+      ladiesMen === 'Ladies' ? 'text-pink-700 bg-pink-100'
+      : ladiesMen === 'Men'  ? 'text-blue-700 bg-blue-100'
+      : 'text-purple-700 bg-purple-100'; // Mixed (and any other value)
+    return (
+      <span className={`inline-block mt-1 px-2 py-0.5 text-xs font-medium rounded ${color}`}>
+        {ladiesMen}
+      </span>
+    );
+  }
+
   // ============================================================================
   // Filtering and Display Logic
   // ============================================================================
@@ -1011,11 +1032,11 @@ export default function ManageGamesPage() {
             { key: 'reserve',     label: 'Reserve' },
             { key: 'reserveTeam', label: 'Res. Team' },
             { key: 'opposition',  label: 'Opposition' },
-            { key: 'withdrawn',   label: 'Withdrawn' },
             { key: 'cancelled',   label: 'Cancelled' },
             { key: 'abandoned',   label: 'Abandoned' },
             { key: 'entered',     label: 'Entered' },
             { key: 'total',       label: 'Total' },
+            { key: 'withdrawn',   label: 'Withdrawn' },
           ];
 
           return (
@@ -1052,11 +1073,11 @@ export default function ManageGamesPage() {
                       <td className="px-3 py-2 text-gray-700">{p.reserve || '-'}</td>
                       <td className="px-3 py-2 text-gray-700">{p.reserveTeam || '-'}</td>
                       <td className="px-3 py-2 text-gray-700">{p.opposition || '-'}</td>
-                      <td className="px-3 py-2 text-gray-700">{p.withdrawn || '-'}</td>
                       <td className="px-3 py-2 text-gray-700">{p.cancelled || '-'}</td>
                       <td className="px-3 py-2 text-gray-700">{p.abandoned || '-'}</td>
                       <td className="px-3 py-2 text-gray-700">{p.entered || '-'}</td>
                       <td className="px-3 py-2 font-semibold text-gray-900">{p.total}</td>
+                      <td className="px-3 py-2 text-gray-700">{p.withdrawn || '-'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1145,7 +1166,7 @@ export default function ManageGamesPage() {
                         className={`bg-purple-50 text-gray-900 ${isPairLoading ? 'opacity-50' : ''}`}
                       >
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          <div>{parseDDMMYYYY(gameA.date)?.toLocaleDateString('en-GB') || gameA.date}</div>
+                          <div>{formatDateWithDay(gameA.date)}</div>
                           <div className="text-gray-700">{gameA.time}</div>
                         </td>
                         <td className="px-6 py-4 text-sm font-medium text-gray-900">
@@ -1216,7 +1237,7 @@ export default function ManageGamesPage() {
                     >
                       {/* Date and time column */}
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        <div>{parseDDMMYYYY(game.date)?.toLocaleDateString('en-GB') || game.date}</div>
+                        <div>{formatDateWithDay(game.date)}</div>
                         <div className="text-gray-700">{game.time}</div>
                       </td>
 
@@ -1226,12 +1247,13 @@ export default function ManageGamesPage() {
                           {game.clubName}
                           {game.needsPlayers && <span title="Players needed">🟠</span>}
                         </div>
+                        {ladiesMenBadge(game.ladiesMen)}
                         {filter === 'played' && game.status === 'P' && game.bhbcScore !== null && game.opponentScore !== null && (
                           <div className="text-xs text-gray-500 font-normal mt-0.5">
                             {game.bhbcScore} – {game.opponentScore}
                           </div>
                         )}
-                        {filter === 'played' && (game.status === 'C' || game.status === 'A') && (
+                        {(game.status === 'C' || game.status === 'A') && (
                           <div className="text-xs text-gray-500 font-normal mt-0.5 space-y-0.5">
                             {game.status === 'A' && game.bhbcScore !== null && game.opponentScore !== null && (
                               <div>{game.bhbcScore} – {game.opponentScore}</div>

@@ -375,6 +375,18 @@ export interface EnterGamesRequest {
   user_name?: string;  // Optional - username (can be inferred from session)
   game_ids: string[];  // Array of game tabNames to enter (e.g., ["West Hoathly 25-Sep", "Lindfield 2-Oct"])
   car_numbers?: Record<string, string>;  // Optional per-game car number ('O' = own transport)
+  on_behalf_of?: string[];  // Optional buddy usernames to enter into the same game(s) alongside the caller
+}
+
+/**
+ * FriendliesBuddy - A buddy the current user may enter into games on behalf of.
+ * Returned by GET /api/friendlies/games so the enter dialog can offer "Enter {{name}} too?".
+ */
+export interface FriendliesBuddy {
+  userName: string;          // Buddy's username
+  name: string;              // Buddy's display name
+  memberType: string;        // Buddy's member type (drives gender eligibility per game)
+  enteredTabNames: string[]; // Games the buddy is already entered in (so we don't offer those)
 }
 
 /**
@@ -388,6 +400,7 @@ export interface EnterGamesResponse {
     game_id: string;   // Game tabName that was processed
     entered: boolean;  // True if successfully entered this game
     error?: string;    // Error message if entry failed
+    user_name?: string; // Which user this result is for (caller when omitted; set for buddies)
   }[];
 }
 
@@ -411,6 +424,7 @@ export interface ConfirmParticipationRequest {
 export interface WithdrawRequest {
   user_name?: string;  // Optional - username (can be inferred from session)
   tab_name: string;    // Game tabName to withdraw from
+  on_behalf_of?: string[]; // Optional buddy usernames to remove alongside the caller (Open games only)
 }
 
 /**
@@ -465,7 +479,10 @@ export interface UpdateSelectionRequest {
   tab_name: string;              // Game tabName to update
   captain_username?: string;     // userName of the captain of the day (written to Games sheet)
   selections: {
-    row_number: number;              // Row number in game sheet (required)
+    row_number: number;              // Row number in game sheet (client's snapshot — may be stale)
+    user_name?: string;              // Player identity — used to re-key against a fresh read so the
+                                     // save survives row shifts (a delete via manage-users) and never
+                                     // un-withdraws someone who withdrew while the page was open
     selected?: SelectionStatus;      // Selection status: '', Y, R, or T
     team?: number | null;            // Team number or null
     position?: Position;             // Position: S, 1, 2, 3, or ''

@@ -592,11 +592,25 @@ One row per competition. Metadata, status, and round play-by dates.
 | `r2_play_by` | String | Round 2 play-by date |
 | `qf_play_by` | String | Quarter final play-by date |
 | `sf_play_by` | String | Semi final play-by date |
-| `triples_fixed_day` | Boolean | `Y` — triples has a fixed first-round date |
-| `triples_fixed_date` | String | YYYY-MM-DD |
+| `prelim_fixed` | Boolean | `Y` — Preliminary date is a fixed "play on" day (else "play by" deadline) |
+| `r1_fixed` | Boolean | `Y` — Round 1 date is a fixed "play on" day |
+| `r2_fixed` | Boolean | `Y` — Round 2 date is a fixed "play on" day |
+| `qf_fixed` | Boolean | `Y` — Quarter Final date is a fixed "play on" day |
+| `sf_fixed` | Boolean | `Y` — Semi Final date is a fixed "play on" day |
+| `finals_fixed` | Boolean | `Y` — Finals date is a fixed "play on" day |
 | `draw_side_count` | Integer | Number of sides in the draw (determines bracket size) |
 | `comp_start` | String | Competition start date YYYY-MM-DD |
-| `comp_description` | String | Short description shown to members |
+| `comp_description` | String | Short description shown to members (rules page + detail page) |
+| `extra_description` | String | Longer rules text (pairs/triples scoring note; Handicap system). Light formatting: newlines + manual numbering + `<b>`/`<i>`/`<u>` |
+| `markers_notes` | String | Markers' instructions (singles). Same light formatting |
+
+**`CompetitionsSettings`** (Key | Value) — the three shared rules blocks on the public rules page. Same light formatting as above:
+
+| Key | Renders under heading |
+|---|---|
+| `description` (renamed from `message`) | General Rules |
+| `extra_description` | Standard Scoring Procedure |
+| `markers_notes` | Marker Responsibilities |
 
 ---
 
@@ -1356,11 +1370,17 @@ model Competition {
   r2PlayBy         String?  @map("r2_play_by")
   qfPlayBy         String?  @map("qf_play_by")
   sfPlayBy         String?  @map("sf_play_by")
-  triplesFixedDay  Boolean  @default(false) @map("triples_fixed_day")
-  triplesFixedDate String?  @map("triples_fixed_date")
+  prelimFixed      Boolean  @default(false) @map("prelim_fixed")
+  r1Fixed          Boolean  @default(false) @map("r1_fixed")
+  r2Fixed          Boolean  @default(false) @map("r2_fixed")
+  qfFixed          Boolean  @default(false) @map("qf_fixed")
+  sfFixed          Boolean  @default(false) @map("sf_fixed")
+  finalsFixed      Boolean  @default(false) @map("finals_fixed")
   drawSideCount    Int?     @map("draw_side_count")
   compStartDate    String?  @map("comp_start")
   compDescription  String?  @map("comp_description")
+  extraDescription String?  @map("extra_description")
+  markersNotes     String?  @map("markers_notes")
 
   matches  CompMatch[]
 }

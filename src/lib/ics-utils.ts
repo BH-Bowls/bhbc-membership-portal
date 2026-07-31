@@ -4,7 +4,7 @@
 
 export type ICSMethod = 'PUBLISH' | 'REQUEST' | 'CANCEL';
 export type ICSStatus = 'TENTATIVE' | 'CONFIRMED' | 'CANCELLED';
-export type ICSTrigger = 'entered' | 'published' | 'confirmed' | 'withdrawn' | 'cancelled';
+export type ICSTrigger = 'entered' | 'published' | 'confirmed' | 'withdrawn' | 'cancelled' | 'rejoined';
 
 export interface FriendlyICSParams {
   tabName: string;        // game.tabName — used in UID (e.g. "West Hoathly 25-Sep")
@@ -125,6 +125,7 @@ const TRIGGER_SUMMARY_PREFIX: Record<ICSTrigger, string> = {
   confirmed: 'Confirmed',
   withdrawn: 'Withdrawn',
   cancelled: 'Cancelled',
+  rejoined: 'Confirmed',
 };
 
 export function buildFriendlyICS(params: FriendlyICSParams): string {
@@ -205,8 +206,15 @@ export function buildLinkedFriendlyICSAttachment(params: {
   gameAHomeAway: 'H' | 'A';
   gameBClubName: string;
   gameBHomeAway: 'H' | 'A';
+  // Defaults describe the tentative entry event; pass method:'CANCEL' to remove it.
+  method?: 'PUBLISH' | 'CANCEL';
+  status?: 'TENTATIVE' | 'CANCELLED';
+  sequence?: number;
 }): ICSAttachment {
-  const { userName, dateStr, timeStr, gameAClubName, gameAHomeAway, gameBClubName, gameBHomeAway } = params;
+  const {
+    userName, dateStr, timeStr, gameAClubName, gameAHomeAway, gameBClubName, gameBHomeAway,
+    method = 'PUBLISH', status = 'TENTATIVE', sequence = 0,
+  } = params;
 
   const dtStart = londonDateToUTC(dateStr, timeStr);
   if (isNaN(dtStart.getTime())) {
@@ -216,26 +224,31 @@ export function buildLinkedFriendlyICSAttachment(params: {
   const dtstamp = formatICSDate(new Date());
 
   const safeDate = dateStr.replace(/\//g, '-').replace(/\s+/g, '_');
+  // Deterministic UID (date + user) so a later CANCEL removes the same calendar event.
   const uid = `BHBC-FRIENDLY-LINKED-${safeDate}-${userName}@bhbc.org.uk`;
 
   const labelA = gameAHomeAway === 'H' ? `Home vs ${gameAClubName}` : `Away at ${gameAClubName}`;
   const labelB = gameBHomeAway === 'H' ? `Home vs ${gameBClubName}` : `Away at ${gameBClubName}`;
 
+  const summary = method === 'CANCEL'
+    ? `Cancelled: Linked Friendly ${dateStr}`
+    : `Entered: Linked Friendly ${dateStr}`;
+
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
     'PRODID:-//BHBC Membership Portal//EN',
-    'METHOD:PUBLISH',
+    `METHOD:${method}`,
     'BEGIN:VEVENT',
     `UID:${uid}`,
-    'SEQUENCE:0',
+    `SEQUENCE:${sequence}`,
     `DTSTAMP:${dtstamp}`,
     `DTSTART:${formatICSDate(dtStart)}`,
     `DTEND:${formatICSDate(dtEnd)}`,
-    `SUMMARY:Entered: Linked Friendly ${dateStr}`,
+    `SUMMARY:${summary}`,
     `DESCRIPTION:Linked games — you will be allocated to one by the captain.\\n${labelA}\\n${labelB}`,
     'LOCATION:Burgess Hill Bowls Club, Leylands Road, Burgess Hill',
-    'STATUS:TENTATIVE',
+    `STATUS:${status}`,
     'END:VEVENT',
     'END:VCALENDAR',
   ];
@@ -243,6 +256,6 @@ export function buildLinkedFriendlyICSAttachment(params: {
   return {
     filename: `BHBC-Linked-${safeDate}.ics`,
     content: lines.join('\r\n'),
-    contentType: 'text/calendar; method=PUBLISH',
+    contentType: `text/calendar; method=${method}`,
   };
 }

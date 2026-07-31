@@ -263,6 +263,9 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
   if (comp?.sfPlayBy)     roundPlayByDates['SF']     = comp.sfPlayBy;
   if (comp?.fPlayBy)      roundPlayByDates['F']      = comp.fPlayBy;
 
+  // Finals day is a fixed "play ON" day, not a "play by" deadline.
+  const roundOnDates = new Set<string>(['F']);
+
   const firstRoundCount = inferFirstRoundCount(matches);
 
   // Active raw match for the dialog
@@ -364,7 +367,9 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
                     vs {opponentTeam ? rowlandTeamDisplayName(opponentTeam) : 'TBD'}
                   </p>
                   {match.playByDate && (
-                    <p className="text-xs text-gray-500 mt-0.5">Play by {match.playByDate}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {match.round === 'F' ? 'Play on' : 'Play by'} {match.playByDate}
+                    </p>
                   )}
 
                   {rowlandContacts.length > 0 && (
@@ -442,6 +447,7 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
               allowCompleteInteraction={!isGuest && (isClub || isRowlandPlayer)}
               onMatchClick={handleMatchClick}
               roundPlayByDates={roundPlayByDates}
+              roundOnDates={roundOnDates}
               printOrientation={printOrientation}
               onScoreSheetView={!isGuest && (isCommittee || isCaptain) ? (_matchId, url) => setScoreSheetPopup(url) : undefined}
             />

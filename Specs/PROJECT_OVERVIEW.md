@@ -101,7 +101,6 @@ Admins (and RowlandOrganisers) can impersonate other users via the Impersonation
 | Auth | NextAuth v4 (Credentials Provider) | JWT sessions; custom `userName` and `role` fields in token |
 | Database | Google Sheets (via `googleapis`) | All persistent data lives in Google Sheets spreadsheets |
 | File storage | Google Drive | Attachments for Invite Games, Leagues, Rowland, Member Suggestions |
-| Legacy file storage | Cloudinary | Earlier attachment system; still used for Member Suggestions if migrated data |
 | Email | Nodemailer (SMTP) | Gmail SMTP by default; Handlebars HTML templates |
 | PDF generation | Docxtemplater + LibreOffice | DOCX templates rendered and converted to PDF for renewal emails |
 | ICS/calendar | Custom `src/lib/ics-utils.ts` | Builds RFC 5545-compliant `.ics` files for friendly game emails |
@@ -127,7 +126,6 @@ Google Sheets (multiple spreadsheets — see §7)
     Also:
     ↕ Google Drive API (file attachments)
     ↕ SMTP (Nodemailer → Gmail)
-    ↕ Cloudinary (legacy attachment retrieval)
 ```
 
 All data access is server-side (API routes or Server Components). Client components call `/api/...` routes via `fetch`. There is no direct client-side Google API access.
@@ -456,7 +454,7 @@ The application reads from and writes to multiple Google Sheets spreadsheets. Ea
 
 **`src/lib/cleaning-sheets.ts` / `src/lib/sweeping-sheets.ts`** — Simple rota CRUD. Cleaning rota has 4 positions (Lead, Second, Third, Fourth). Sweeping rota supports blocked dates.
 
-**`src/lib/suggestions-sheets.ts`** / **`src/lib/attachments-sheets.ts`** — Member Suggestions and their file attachments (Drive file IDs or Cloudinary public IDs).
+**`src/lib/suggestions-sheets.ts`** / **`src/lib/attachments-sheets.ts`** — Member Suggestions and their Google Drive file attachments.
 
 **`src/lib/invite-games-sheets.ts`** — Invite Games CRUD.
 
@@ -534,15 +532,11 @@ All persistent data is stored in Google Sheets. The service account credentials 
 
 The upload flow uses **resumable upload sessions**: the server creates a pre-authenticated session URI and returns it to the browser; the browser PUTs bytes directly to Google's servers (avoiding server memory usage for large files). After upload, the server sets public-read permissions on the file.
 
-Authentication supports both service account (default) and OAuth2 refresh token (if `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN` are set). `isDriveFileId(id)` distinguishes Drive IDs (no slashes) from legacy Cloudinary public IDs (contain slashes).
+Authentication supports both service account (default) and OAuth2 refresh token (if `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN` are set). Read paths (e.g. `/documents`, guides) prefer the service-account client, since the OAuth refresh token can lapse (`invalid_grant`).
 
 ### Google OAuth / NextAuth
 
 NextAuth is configured with a single **Credentials Provider** — there is no Google OAuth sign-in for members. Members log in with username/password verified against the Members sheet. The Google APIs (Sheets, Drive) are accessed server-side using a service account, not per-user OAuth.
-
-### Cloudinary (Legacy File Storage)
-
-`src/lib/cloudinary.ts` handles upload, delete, and download for files previously stored in Cloudinary. The system is being migrated to Google Drive. New uploads go to Drive; Cloudinary is retained for reading existing attachments. `isDriveFileId()` in `drive.ts` is used to route reads to the correct storage backend.
 
 ### NextAuth (Authentication)
 
@@ -625,9 +619,7 @@ The following environment variables must be set in `.env.local` (never committed
 | Variable | Purpose |
 |----------|---------|
 | `GOOGLE_DRIVE_ATTACHMENTS_FOLDER_ID` | Root Google Drive folder for all attachments |
-| `CLOUDINARY_CLOUD_NAME` | Cloudinary cloud name (legacy) |
-| `CLOUDINARY_API_KEY` | Cloudinary API key (legacy) |
-| `CLOUDINARY_API_SECRET` | Cloudinary API secret (legacy) |
+| `PORTAL_DOCUMENTS_FOLDER_ID` | Root Drive folder for the /documents page (shared with the service account) |
 
 ### Optional
 
@@ -664,17 +656,9 @@ The following environment variables must be set in `.env.local` (never committed
 - **Gmail custom headers removed.** Comments in `mailer.ts` note that custom email headers were removed as a workaround because they appeared to cause Gmail to drop emails. This is unresolved.
 - **Gmail addresses and ICS.** The `ICS_UPDATE_EMAILS` flag defaults to `false`, meaning update/cancel ICS attachments are suppressed. The initial entry email always sends ICS. This is a known partial implementation.
 
-### Cloudinary migration
-
-- The system is mid-migration from Cloudinary to Google Drive for file attachments. New uploads go to Drive; existing files in Cloudinary are still served. The `isDriveFileId()` utility in `drive.ts` is the discriminator. This dual-backend state is a known debt item until all legacy files are migrated.
-
 ### Code duplication in column mapping
 
 - `getColumnMap` is re-implemented in multiple files: `src/lib/sheets.ts` (canonical), `src/lib/clubs-sheets.ts`, `src/lib/internal-games-sheets.ts`, `src/lib/social-events-sheets.ts`. The canonical version should be used everywhere but some files pre-date its extraction.
-
-### Mock data
-
-- `src/lib/mock-competitions-data.ts` contains hardcoded test data. This file is only used for UI development and should not be referenced in production code paths.
 
 ### Session refresh on all pages
 
@@ -778,6 +762,6 @@ _[Note any decisions that were made for practical reasons at the time but may ne
 
 ### Future Direction
 
-_[Describe planned features, pending work, or aspirations for the portal. Examples might include: the calendar email / ICS implementation currently on the `feature/calendar-emails` branch; migration of all Cloudinary attachments to Google Drive; any planned changes to the competitions or leagues systems; mobile app plans; etc.]_
+_[Describe planned features, pending work, or aspirations for the portal. Examples might include: the calendar email / ICS implementation currently on the `feature/calendar-emails` branch; any planned changes to the competitions or leagues systems; mobile app plans; etc.]_
 
 _[Note any known issues that have been deprioritised rather than fixed.]_

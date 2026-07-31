@@ -139,17 +139,25 @@ export async function GET(request: NextRequest) {
 
     const homeAway = game.homeAway as 'H' | 'A';
 
+    // Usernames withdrawn from this game — excluded from the "selected" tallies below,
+    // since withdrawn players keep their role but are no longer active.
+    const withdrawnNames = new Set(
+      gamePlayers.filter(p => p.status === 'W').map(p => p.name.toLowerCase())
+    );
+    const isActiveSelected = (p: SelectionHelperPlayer) =>
+      ['Y', 'R', 'T'].includes(p.selected) && !withdrawnNames.has(p.userName.toLowerCase());
+
     // -------------------------------------------------------------------------
     // Bar volunteers (home games)
     // -------------------------------------------------------------------------
     const barVolunteers = players.filter(p => p.driverBar.includes('B'));
-    const barVolunteersSelected = barVolunteers.filter(p => ['Y', 'R', 'T'].includes(p.selected)).length;
+    const barVolunteersSelected = barVolunteers.filter(isActiveSelected).length;
 
     // -------------------------------------------------------------------------
     // Drivers (away games)
     // -------------------------------------------------------------------------
     const drivers = players.filter(p => p.driverBar.includes('D'));
-    const driversSelected = drivers.filter(p => ['Y', 'R', 'T'].includes(p.selected)).length;
+    const driversSelected = drivers.filter(isActiveSelected).length;
 
     // Parse number of players expected from format (e.g. "4 Triples" → 4×3 = 12)
     const formatLower = (game.format || '').toLowerCase();

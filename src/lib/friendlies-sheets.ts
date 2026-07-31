@@ -2895,7 +2895,7 @@ export async function moveReservePlayers(
     const fromPlayers = await getGameSheet(fromTab);
     const reserveNames = new Set<string>();
     for (const p of fromPlayers) {
-      if (p.selected === 'R') {
+      if (p.selected === 'R' && p.status !== 'W') {
         reserveNames.add(p.name.toLowerCase());
       }
     }

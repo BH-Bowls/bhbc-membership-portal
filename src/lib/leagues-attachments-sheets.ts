@@ -12,7 +12,6 @@ function sid(): string {
   return getLeaguesSpreadsheetId();
 }
 import { createRowFieldGetter, createRowNumberGetter, wrapError } from './banking-sheets';
-import { checkDriveFileExists, isDriveFileId } from './drive';
 import type { LeagueAttachment, AttachmentType } from '@/types/attachments';
 
 const ATTACHMENTS_SHEET = 'LeagueAttachments';

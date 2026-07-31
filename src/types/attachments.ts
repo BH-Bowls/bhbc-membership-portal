@@ -13,7 +13,7 @@ export interface Attachment {
 
   // Attachment details
   type: AttachmentType;
-  driveFileId?: string | null; // Cloudinary publicId
+  driveFileId?: string | null; // Google Drive file ID (column is named drive_file_id)
   url: string;
   description: string;
   fileName?: string | null;

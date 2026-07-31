@@ -224,6 +224,15 @@ export async function GET(
       userConfirmed = currentUser.status === 'Y';
     }
 
+    // Whether the current user has withdrawn from this game. The withdrawal keeps
+    // their selection role (selected stays Y/R/T) and only sets status='W', so this
+    // is the reliable signal the game page needs to offer "Re-join" instead of
+    // Confirm/Withdraw.
+    let userWithdrawn = false;
+    if (currentUser) {
+      userWithdrawn = currentUser.status === 'W';
+    }
+
     const userAcknowledged = currentUser
       ? (currentUser.acknowledgedCancellation === 'Y')
       : false;
@@ -277,10 +286,14 @@ export async function GET(
         homeAway: game.homeAway,
         format: game.format,
         status: game.status,
+        // Cancellation/abandonment details (shown on the notice for C/A games)
+        reason: game.reason || '',
+        who: game.who || '',
         userStatus: userStatus,
         userTeam: userTeam,
         userPosition: userPosition,
         userConfirmed: userConfirmed,
+        userWithdrawn: userWithdrawn,
         userAcknowledged: userAcknowledged,
         userName: userName ?? '',  // Current user's userName for highlighting
         pickupInfo: game.pickupInfo || '',

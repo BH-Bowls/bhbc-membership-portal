@@ -11,6 +11,7 @@ import { clearDiaryCache } from '@/lib/home-cache';
 import { EnterGamesRequest, EnterGamesResponse } from '@/lib/types/friendlies';
 import { canEnterGame } from '@/lib/game-management/capacity';
 import { getUserByUsername } from '@/lib/sheets';
+import { canManageUser } from '@/lib/buddies-sheets';
 import { sendEntryConfirmedEmail, sendLinkedEntryConfirmedEmail } from '@/lib/email/friendlies';
 
 // POST handler - Enters user into one or more games
@@ -39,42 +40,76 @@ export async function POST(request: NextRequest) {
     // Get current user's username
     const userName = session.user.userName;
 
+    // Optional: buddies to enter alongside the caller (the same family members the
+    // caller can act for). Each is authorised with the same rule the confirm flow uses.
+    const onBehalfOf: string[] = Array.isArray(body.on_behalf_of) ? body.on_behalf_of : [];
+    const buddyTargets: string[] = [];
+    for (const other of onBehalfOf) {
+      if (!other || other === userName || buddyTargets.includes(other)) continue;
+      const allowed = await canManageUser(userName, session.user.role ?? '', other);
+      if (!allowed) {
+        return NextResponse.json(
+          { error: 'You can only enter your own partner' },
+          { status: 403 }
+        );
+      }
+      buddyTargets.push(other);
+    }
+
+    // Every user to enter into each game: the caller first, then any authorised buddies.
+    const targets: string[] = [userName, ...buddyTargets];
+
     // Fetch all games to verify each game exists and is open. Fresh read — the
     // open/closed status gates entry, so it must not come from the Games cache
     // (a member could otherwise enter a game the captain just closed).
     const allGames = await getGames(undefined, undefined, true);
 
-    // Process all game entries in parallel — each game writes to a different
-    // column in Players sheet and a different game sheet tab, so no conflicts.
-    const results: EnterGamesResponse['results'] = await Promise.all(
+    // Process every (game × target) entry. Games write to different columns/tabs so
+    // they run in parallel; targets within a game run in sequence to keep each game
+    // sheet's writes ordered. A joint-game entry always sends only the lead game's
+    // tabName (the client enters game 1), so no partner is entered here.
+    const nested = await Promise.all(
       game_ids.map(async (tabName) => {
+        const gameResults: EnterGamesResponse['results'] = [];
         try {
           const game = allGames.find(g => g.tabName === tabName);
 
-          if (!game) return { game_id: tabName, entered: false, error: 'Game not found' };
-          if (game.status !== 'O') return { game_id: tabName, entered: false, error: 'Game not open for entry' };
+          if (!game) {
+            for (const t of targets) gameResults.push({ game_id: tabName, entered: false, error: 'Game not found', user_name: t === userName ? undefined : t });
+            return gameResults;
+          }
+          if (game.status !== 'O') {
+            for (const t of targets) gameResults.push({ game_id: tabName, entered: false, error: 'Game not open for entry', user_name: t === userName ? undefined : t });
+            return gameResults;
+          }
 
           if (game.maxPlayers && game.maxPlayers > 0) {
             const capacityCheck = canEnterGame(game, false); // Friendlies don't allow waitlist
             if (!capacityCheck.canEnter) {
-              return { game_id: tabName, entered: false, error: capacityCheck.reason || 'Cannot enter game' };
+              for (const t of targets) gameResults.push({ game_id: tabName, entered: false, error: capacityCheck.reason || 'Cannot enter game', user_name: t === userName ? undefined : t });
+              return gameResults;
             }
           }
 
-          try {
-            await updatePlayerEntry(userName, game.tabName, 'E');
-            const gameCarNumber = car_numbers?.[tabName];
-            // Open-game entry — skip stat computation (stats are snapshotted at close)
-            await addPlayerToGameSheet(game.tabName, userName, 'R', gameCarNumber, false);
-            return { game_id: tabName, entered: true };
-          } catch (updateError: any) {
-            return { game_id: tabName, entered: false, error: updateError.message || 'Update failed' };
+          const gameCarNumber = car_numbers?.[tabName];
+          for (const target of targets) {
+            try {
+              await updatePlayerEntry(target, game.tabName, 'E');
+              // Open-game entry — skip stat computation (stats are snapshotted at close)
+              await addPlayerToGameSheet(game.tabName, target, 'R', gameCarNumber, false);
+              gameResults.push({ game_id: tabName, entered: true, user_name: target === userName ? undefined : target });
+            } catch (updateError: any) {
+              gameResults.push({ game_id: tabName, entered: false, error: updateError.message || 'Update failed', user_name: target === userName ? undefined : target });
+            }
           }
+          return gameResults;
         } catch {
-          return { game_id: tabName, entered: false, error: 'Processing failed' };
+          for (const t of targets) gameResults.push({ game_id: tabName, entered: false, error: 'Processing failed', user_name: t === userName ? undefined : t });
+          return gameResults;
         }
       })
     );
+    const results: EnterGamesResponse['results'] = nested.flat();
 
     // Update entered counts in Games sheet for all successfully entered games
     // This requires counting actual entries in Players sheet to get accurate totals
@@ -100,7 +135,12 @@ export async function POST(request: NextRequest) {
       // Collect all count updates for batch operation
       const countUpdates: { rowNumber: number; counts: { entered: number } }[] = [];
 
+      // A game may have several successful entries (caller + buddies) — only recount once.
+      const countedGames = new Set<string>();
       for (const result of successfulEntries) {
+        if (countedGames.has(result.game_id)) continue;
+        countedGames.add(result.game_id);
+
         // Find the game object for this entry
         const game = allGames.find(g => g.tabName === result.game_id);
 
@@ -135,37 +175,48 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Send entry confirmation emails (fire-and-forget — failures do not affect the response)
+    // Send entry confirmation emails (fire-and-forget — failures do not affect the response).
+    // Each entered user (caller and any buddies) gets their own confirmation to their address.
     if (successfulEntries.length > 0) {
       try {
-        const user = await getUserByUsername(userName);
-        if (user?.emailAddress) {
-          const fullName = user.fullName || (user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : userName);
-          const appUrl = await getAppUrl();
+        const appUrl = await getAppUrl();
 
-          // Group entries: paired games on the same date → one combined email; others individual
-          const successfulGames = successfulEntries
-            .map(r => allGames.find(g => g.tabName === r.game_id))
+        // Group the games each user was successfully entered into (caller uses their own username)
+        const gamesByUser = new Map<string, string[]>();
+        for (const r of successfulEntries) {
+          const who = r.user_name ?? userName;
+          const list = gamesByUser.get(who) ?? [];
+          list.push(r.game_id);
+          gamesByUser.set(who, list);
+        }
+
+        for (const [who, tabNames] of gamesByUser) {
+          const user = await getUserByUsername(who);
+          if (!user?.emailAddress) continue;
+          const fullName = user.fullName || (user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : who);
+
+          const successfulGames = tabNames
+            .map(t => allGames.find(g => g.tabName === t))
             .filter((g): g is typeof allGames[0] => !!g);
 
+          // The entry itself only lands on the lead of a linked pair (see resolveLeadTab),
+          // but for a joint game the confirmation should tell the player they've entered
+          // BOTH games — the captains allocate them to one nearer the time. Look up the
+          // partner from all games (it isn't entered, so it isn't in successfulGames).
           const emailed = new Set<string>();
           for (const game of successfulGames) {
             if (emailed.has(game.tabName)) continue;
             if (game.paired === 'Y') {
-              const partner = successfulGames.find(g =>
-                !emailed.has(g.tabName) &&
-                g.tabName !== game.tabName &&
-                g.paired === 'Y' &&
-                g.date === game.date
+              const partner = allGames.find(g =>
+                g.tabName !== game.tabName && g.paired === 'Y' && g.date === game.date
               );
               if (partner) {
-                await sendLinkedEntryConfirmedEmail(user.emailAddress, userName, fullName, game, partner, appUrl);
+                await sendLinkedEntryConfirmedEmail(user.emailAddress, who, fullName, game, partner, appUrl);
                 emailed.add(game.tabName);
-                emailed.add(partner.tabName);
                 continue;
               }
             }
-            await sendEntryConfirmedEmail(user.emailAddress, userName, fullName, game, appUrl);
+            await sendEntryConfirmedEmail(user.emailAddress, who, fullName, game, appUrl);
             emailed.add(game.tabName);
           }
         }
@@ -174,8 +225,10 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Invalidate the diary cache so the home page reflects the new entry
-    clearDiaryCache(userName);
+    // Invalidate the diary cache so the home page reflects the new entry — for every entered user
+    for (const who of new Set(successfulEntries.map(r => r.user_name ?? userName))) {
+      clearDiaryCache(who);
+    }
 
     // Return success response with results for each game
     return NextResponse.json({ success: true, results });

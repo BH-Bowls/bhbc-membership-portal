@@ -34,7 +34,6 @@ interface EnteredPlayersModalProps {
   isOpen: boolean;
   onClose: () => void;
   gameId: string; // tabName for the game
-  pairedGameIds?: string[]; // Additional tabNames for paired games (add players to all)
   gameType: 'friendlies' | 'internal-games' | 'social-events';
   gameName: string; // Display name (club name, game name, or event name)
   gameStatus?: string; // Current game status — used to offer Remove vs Withdraw choice on selected games
@@ -53,7 +52,6 @@ export function EnteredPlayersModal({
   isOpen,
   onClose,
   gameId,
-  pairedGameIds,
   gameType,
   gameName,
   gameStatus,
@@ -209,23 +207,9 @@ export function EnteredPlayersModal({
         const data = await response.json();
 
         if (data.success) {
-          // For paired games, also add to the partner game(s)
-          if (pairedGameIds && pairedGameIds.length > 0) {
-            for (const pairedId of pairedGameIds) {
-              try {
-                await fetch(`/api/${gameType}/add-players`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    gameId: pairedId,
-                    playerUserNames: selectedPlayers,
-                  }),
-                });
-              } catch (pairedErr) {
-                console.error(`Failed to add players to paired game ${pairedId}:`, pairedErr);
-              }
-            }
-          }
+          // Joint (paired) games share a single entry list on the lead game — the
+          // captain moves overflow into the second game during selection. So a
+          // player is added to the lead game only, never to both halves of the pair.
 
           // Refresh the entered players list
           await fetchEnteredPlayers();
@@ -262,23 +246,8 @@ export function EnteredPlayersModal({
       const data = await response.json();
 
       if (data.success) {
-        // For paired games, also remove from the partner game(s)
-        if (pairedGameIds && pairedGameIds.length > 0) {
-          for (const pairedId of pairedGameIds) {
-            try {
-              await fetch(`/api/${gameType}/remove-player`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  gameId: pairedId,
-                  playerUserName: userName,
-                }),
-              });
-            } catch (pairedErr) {
-              console.error(`Failed to remove player from paired game ${pairedId}:`, pairedErr);
-            }
-          }
-        }
+        // A joint-game entry only ever lives on the lead game, so removal touches
+        // that game only — no partner writes.
 
         // Refresh the entered players list
         await fetchEnteredPlayers();

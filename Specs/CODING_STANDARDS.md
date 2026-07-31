@@ -592,97 +592,52 @@ Print-specific CSS goes in a single `@media print` block in `globals.css` — no
 
 ---
 
-## 13. Cloudinary (File Storage)
+## 13. Google Drive (File Storage)
 
-Cloudinary is used to store all uploaded files (images, PDFs, documents). The Google Sheets row stores metadata; Cloudinary holds the actual file.
+All uploaded files (images, PDFs, documents) are stored in **Google Drive**. The Google Sheets row stores metadata; Drive holds the actual file. (Cloudinary was previously used and has been fully removed — don't reintroduce it.)
 
-### Environment variables
+### All operations go through `src/lib/drive.ts`
 
-Three variables must be set in `.env.local`:
-```
-CLOUDINARY_CLOUD_NAME=...
-CLOUDINARY_API_KEY=...
-CLOUDINARY_API_SECRET=...
-```
-
-### All operations go through `src/lib/cloudinary.ts`
-
-Never call the Cloudinary SDK directly from API routes. Use the four functions in `src/lib/cloudinary.ts`:
+Never call the Drive SDK directly from API routes. Key functions:
 
 | Function | Purpose |
 |----------|---------|
-| `uploadFileToCloudinary(entityId, buffer, fileName, mimeType, folderPrefix?)` | Upload a file |
-| `deleteFileFromCloudinary(publicId)` | Delete a file |
-| `fetchFileFromCloudinary(publicId, resourceType?)` | Download a file (server-side proxy) |
-| `checkFileExists(publicId)` | Check if a file still exists |
+| `getOrCreateEntityFolder(entityId, category?)` | Get/create the per-entity folder |
+| `createResumableUploadSession(fileName, mimeType, folderId, origin)` | Start an upload; the browser PUTs the bytes straight to Drive |
+| `setPublicReadPermission(fileId)` | Make a file "anyone with the link can view" (after upload) |
+| `deleteFileFromDrive(fileId)` | Delete a file (tolerates 404) |
+| `checkDriveFileExists(fileId)` | Check a file still exists |
 
 ### Folder structure
 
-Files are stored as: `{folderPrefix}/{entityId}/{cleanFileName}`
+`<attachments root>/<category>/<entityId>/` — e.g. `Member Suggestions/2026-001/`, `Invite Games/IG-2026-001/`. The root is `GOOGLE_DRIVE_ATTACHMENTS_FOLDER_ID`.
 
-```
-bhbc-suggestions/2026-001/meeting_notes.pdf
-bhbc-invite-games/IG-2026-001/photo.jpg
-```
+### Auth
 
-The `folderPrefix` parameter defaults to `'bhbc-suggestions'`. Pass a different prefix for each feature:
-
-```typescript
-await uploadFileToCloudinary(suggestionId, buffer, file.name, mimeType, 'bhbc-suggestions');
-await uploadFileToCloudinary(inviteGameId, buffer, file.name, mimeType, 'bhbc-invite-games');
-```
-
-### Resource types
-
-Cloudinary uses three resource types. The upload function detects these automatically from the MIME type:
-
-| MIME type | Cloudinary resource type |
-|-----------|--------------------------|
-| `image/*` | `image` |
-| `video/*` | `video` |
-| Everything else (PDFs, docs, etc.) | `raw` |
-
-`raw` resources cannot be served directly from the CDN without authentication — always proxy them through your own API route (see below).
-
-### File size limit
-
-50MB maximum, enforced in `AttachmentUpload.tsx`. Do not change this without checking Cloudinary plan limits.
+Service account (default) or OAuth2 refresh token if `GOOGLE_OAUTH_CLIENT_ID`/`_SECRET`/`_REFRESH_TOKEN` are set. **Prefer the service-account client for read paths** (`getServiceAccountDriveClient`) — the OAuth refresh token can lapse (`invalid_grant`). The `/documents` and guides features use the service account.
 
 ### Storing the reference in Google Sheets
 
-The Cloudinary `publicId` is stored in the `drive_file_id` column. Do not rename this column.
+The Drive **file ID** is stored in the `drive_file_id` column (legacy name — do not rename it). The `url` column holds the browser-facing link.
 
-```typescript
-// Store after upload
-const result = await uploadFileToCloudinary(...);
-// result.publicId  → store in drive_file_id column
-// result.secureUrl → store in url column (direct URL for images; proxied for raw)
-// result.thumbnailUrl → 200px-wide version for image previews
-```
+### Serving files to the client
 
-### Serving files to the client (proxy pattern)
-
-**Never give the client a direct Cloudinary URL for `raw` resources** — the CDN returns 401 for raw files without authentication. Always proxy through an API route:
+The per-entity attachment GET route redirects the browser straight to Drive:
 
 ```
-GET /api/suggestions/{id}/attachments/{attachmentId}         → triggers download
-GET /api/suggestions/{id}/attachments/{attachmentId}?inline=true → opens in browser
+GET /api/suggestions/{id}/attachments/{attachmentId}              → download
+GET /api/suggestions/{id}/attachments/{attachmentId}?inline=true  → open in browser (Drive preview)
 ```
 
-The API route calls `fetchFileFromCloudinary()` server-side and pipes the response back. This also hides Cloudinary credentials and public IDs from the client.
-
-Images can use their direct `secureUrl` for display (thumbnails etc.) since image resources are publicly accessible from the CDN.
+Image thumbnails are proxied through `/api/drive-image?id={fileId}` (streams the bytes so the `<img>` has a same-origin src).
 
 ### Delete pattern
 
-When deleting, try `image` resource type first, then `raw`. You may not know which type was used at upload time:
-
 ```typescript
-// deleteFileFromCloudinary handles this automatically — just pass the publicId
-await deleteFileFromCloudinary(attachment.driveFileId);
+await deleteFileFromDrive(attachment.driveFileId);
 ```
 
-Attachments use a **soft delete** in the sheet (`is_deleted = TRUE`) as well as deleting the actual file from Cloudinary. Always do both.
+Attachments use a **soft delete** in the sheet (`is_deleted = TRUE`) as well as deleting the actual file from Drive. Always do both.
 
 ### Reusable attachment components
 

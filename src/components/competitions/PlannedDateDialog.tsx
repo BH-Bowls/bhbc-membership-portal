@@ -46,10 +46,15 @@ export function PlannedDateDialog({ match, getInfo, onSave, onClose, isSingles =
   const side2Usernames = match.side2Usernames || [];
   const side2Label = side2Usernames.length > 0 ? getSideLabel(side2Usernames, getInfo) : 'TBD';
 
-  // Save handler — writes date (required) and marker (optional, singles only)
+  // Whether the match already has an arranged date — controls whether an empty
+  // value can be saved (to clear a date entered in error).
+  const hadExistingDate = !!match.playedDate;
+
+  // Save handler — writes date and marker (optional, singles only).
+  // An empty date clears an existing arrangement; it is only rejected when there
+  // was nothing to clear (i.e. arranging a brand-new date with no value entered).
   async function handleSave() {
-    // A date must be entered before saving
-    if (!dateValue) {
+    if (!dateValue && !hadExistingDate) {
       setError('Please select a date');
       return;
     }
@@ -96,9 +101,20 @@ export function PlannedDateDialog({ match, getInfo, onSave, onClose, isSingles =
 
           {/* Arranged date input */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Date arranged
-            </label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-sm font-medium text-gray-700">
+                Date arranged
+              </label>
+              {dateValue && (
+                <button
+                  type="button"
+                  onClick={() => { setDateValue(''); setError(null); }}
+                  className="text-xs text-blue-600 hover:text-blue-800"
+                >
+                  Clear date
+                </button>
+              )}
+            </div>
             <input
               type="date"
               value={dateValue}
@@ -145,10 +161,10 @@ export function PlannedDateDialog({ match, getInfo, onSave, onClose, isSingles =
             <button
               type="button"
               onClick={handleSave}
-              disabled={saving || !dateValue}
+              disabled={saving || (!dateValue && !hadExistingDate)}
               className="px-4 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
             >
-              {saving ? 'Saving…' : 'Save'}
+              {saving ? 'Saving…' : !dateValue && hadExistingDate ? 'Clear date' : 'Save'}
             </button>
           </div>
         </div>

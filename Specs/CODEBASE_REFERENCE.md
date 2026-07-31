@@ -23,8 +23,8 @@ Generated: 2026-05-14. For use when uploading context to Claude AI.
 - **Database**: Google Sheets (no SQL). All data access via `src/lib/sheets.ts` and per-feature `*-sheets.ts` files.
   - Column mapping: headers normalised to `snake_case` via `getColumnMap()` — positions are NOT hardcoded.
   - Retry: `withRetry()` is patched onto all `spreadsheets.values.*` calls automatically.
-- **File storage**: Google Drive (primary). Legacy Cloudinary for old attachments.
-  - Column still named `drive_file_id` even though it originally stored Cloudinary publicIds.
+- **File storage**: Google Drive (via `src/lib/drive.ts`). Cloudinary fully removed.
+  - Reference column is named `drive_file_id` and holds a Drive file ID (do not rename).
 - **Email**: Nodemailer + Gmail SMTP. Bulk sends use pooled transporter with `maxConnections: 1`.
 - **Dates**: Sheets store DD/MM/YYYY. Never use `new Date("DD/MM/YYYY")` — always use `src/lib/date-utils.ts` helpers.
 - **PWA**: `@ducanh2912/next-pwa`. Back-button cache uses `sessionStorage` pattern.
@@ -52,7 +52,7 @@ Generated: 2026-05-14. For use when uploading context to Claude AI.
 | `src/lib/date-utils.ts` | UK date parsing/formatting (`parseUKDate`, `normalizeToUKDate`, `formatGameDate`) |
 | `src/lib/role-utils.ts` | `parseRoles`, `hasRole`, `isCommitteeMember`, `isMember` |
 | `src/lib/email/mailer.ts` | `sendEmail`, `sendTemplateEmail`, `sendEmailWithAttachments`, `getEmailTransporter` |
-| `src/lib/cloudinary.ts` | Legacy Cloudinary upload/delete/fetch (new files go to Drive via `src/lib/drive.ts`) |
+| `src/lib/drive.ts` | Google Drive file storage — upload sessions, read redirects, delete, guides |
 | `src/config/theme.ts` | Brand colours, typography, layout — single source of truth |
 | `src/config/theme-helpers.ts` | `getButtonClasses`, `getInputClasses`, etc. — literal Tailwind classes (must match theme.ts) |
 | `middleware.ts` | Route protection, role guards, Club/impersonation restrictions |
@@ -346,7 +346,6 @@ src/
     banking-sheets.ts
     buddies-sheets.ts
     cleaning-sheets.ts
-    cloudinary.ts
     clubs-sheets.ts
     competitions-sheets.ts
     config-sheets.ts
@@ -383,7 +382,6 @@ src/
     leagues-attachments-sheets.ts
     leagues-sheets.ts
     member-type-utils.ts
-    mock-competitions-data.ts
     profile-sheets.ts
     renewals-sheets.ts
     role-utils.ts
@@ -624,26 +622,22 @@ export async function sendEmailWithAttachments(
 interface EmailAttachment { filename: string; content: string; contentType: string }
 ```
 
-### src/lib/cloudinary.ts
+### src/lib/drive.ts
 
 ```typescript
-// Legacy file storage — new uploads go to Google Drive via src/lib/drive.ts
-// The sheet column is still named "drive_file_id" even for Cloudinary publicIds
+// All file storage is Google Drive. The sheet column is named "drive_file_id".
 
-export async function uploadFileToCloudinary(
-  entityId: string, fileBuffer: Buffer, fileName: string, mimeType: string,
-  folderPrefix?: string  // default: 'bhbc-suggestions'
-): Promise<{ publicId, url, secureUrl, thumbnailUrl, format, bytes }>
+export async function getOrCreateEntityFolder(entityId: string, category?: string): Promise<string>
+export async function createResumableUploadSession(
+  fileName: string, mimeType: string, folderId: string, origin?: string
+): Promise<string>  // browser PUTs bytes to the returned session URI
+export async function setPublicReadPermission(fileId: string): Promise<void>
+export async function deleteFileFromDrive(fileId: string): Promise<void>  // tolerates 404
+export async function checkDriveFileExists(fileId: string): Promise<boolean>
 
-export async function deleteFileFromCloudinary(publicId: string): Promise<void>
-// Tries image resource type first, then raw
-
-export async function checkFileExists(publicId: string): Promise<boolean>
-
-export async function fetchFileFromCloudinary(
-  publicId: string, resourceType?: 'image' | 'raw'
-): Promise<{ buffer: Buffer; contentType: string }>
-// Uses authenticated download API (bypasses CDN restrictions)
+// Read paths prefer the service account (OAuth token can lapse → invalid_grant):
+export function getServiceAccountDriveClient(): drive_v3.Drive
+export async function findGuidePdf(name): Promise<{ fileId, name } | null>  // Guides folder
 // Tries multiple URL forms for raw/image compatibility
 ```
 
@@ -705,7 +699,7 @@ type AttachmentType = 'link' | 'image' | 'document'
 interface Attachment {
   attachmentId: string
   type: AttachmentType
-  driveFileId?: string | null  // Cloudinary publicId OR Drive file ID
+  driveFileId?: string | null  // Google Drive file ID
   url: string
   description: string
   fileName?, mimeType?, fileSize?: number | null
@@ -744,7 +738,7 @@ interface CompMatch {
 interface Competition {
   compId, displayName, compType, status, year, finalsDate?
   prelimPlayBy?, r1PlayBy?, r2PlayBy?, qfPlayBy?, sfPlayBy?
-  triplesFixedDay?, triplesFixedDate?
+  prelimFixed?, r1Fixed?, r2Fixed?, qfFixed?, sfFixed?, finalsFixed?
   drawSideCount?, compStartDate?, compDescription?
 }
 

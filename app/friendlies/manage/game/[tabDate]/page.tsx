@@ -72,8 +72,8 @@ function validateSelection(
 ): string[] {
   const warnings: string[] = [];
   const isAway = game.homeAway === 'A';
-  const playingPlayers = players.filter(p => p.selected === 'Y');
-  const selectedPlayers = players.filter(p => ['Y', 'R', 'T'].includes(p.selected));
+  const playingPlayers = players.filter(p => p.selected === 'Y' && p.status !== 'W');
+  const selectedPlayers = players.filter(p => ['Y', 'R', 'T'].includes(p.selected) && p.status !== 'W');
 
   // 1. No captain selected
   if (!players.some(p => p.captain === 'Y')) {
@@ -685,7 +685,10 @@ export default function TeamSelectionPage() {
       const captainUserName = players.find(p => p.captain === 'Y')?.name || '';
       const selections = players.map(p => ({
         row_number: p.rowNumber,
-        selected: p.status === 'W' ? '' : p.selected,
+        user_name: p.name,
+        // Keep the role for withdrawn players too (was previously blanked) so a
+        // captain can set a withdrawn player to Reserve etc. and have it stick.
+        selected: p.selected,
         team: p.team,
         position: p.position,
         driving: p.driving,
@@ -887,8 +890,9 @@ export default function TeamSelectionPage() {
   const previewData = useMemo(() => {
     const positionOrder: Record<string, number> = { '1': 0, '2': 1, '3': 2, 'S': 3 };
 
-    // Teams: selected === 'Y' with team assigned
-    const teamPlayers = players.filter(p => p.selected === 'Y' && p.team !== null);
+    // Teams: selected === 'Y' with team assigned (withdrawn players excluded — they
+    // appear only in the Withdrawn section, matching the player game view)
+    const teamPlayers = players.filter(p => p.selected === 'Y' && p.team !== null && p.status !== 'W');
     const teamMap = new Map<number, GameSheetPlayer[]>();
     teamPlayers.forEach(p => {
       const t = p.team!;
@@ -902,11 +906,11 @@ export default function TeamSelectionPage() {
         players: [...tPlayers].sort((a, b) => (positionOrder[a.position] ?? 99) - (positionOrder[b.position] ?? 99)),
       }));
 
-    // Reserves: selected === 'R'
-    const reserves = players.filter(p => p.selected === 'R');
+    // Reserves: selected === 'R' (withdrawn excluded — shown only under Withdrawn)
+    const reserves = players.filter(p => p.selected === 'R' && p.status !== 'W');
 
-    // Reserve teams: selected === 'T' with team assigned
-    const rtPlayers = players.filter(p => p.selected === 'T' && p.team !== null);
+    // Reserve teams: selected === 'T' with team assigned (withdrawn excluded)
+    const rtPlayers = players.filter(p => p.selected === 'T' && p.team !== null && p.status !== 'W');
     const rtMap = new Map<number, GameSheetPlayer[]>();
     rtPlayers.forEach(p => {
       const t = p.team!;
@@ -920,10 +924,10 @@ export default function TeamSelectionPage() {
         players: [...tPlayers].sort((a, b) => (positionOrder[a.position] ?? 99) - (positionOrder[b.position] ?? 99)),
       }));
 
-    // Car shares: Y and T only — reserves (R) are excluded
+    // Car shares: Y and T only — reserves (R) and withdrawn players are excluded
     const carMap = new Map<string, { driver: string; passengers: string[] }>();
     const ownTransport: string[] = [];
-    const allSelected = players.filter(p => p.selected === 'Y' || p.selected === 'T');
+    const allSelected = players.filter(p => (p.selected === 'Y' || p.selected === 'T') && p.status !== 'W');
     allSelected.forEach(p => {
       if (p.carNumber && p.carNumber.toUpperCase() === 'O') {
         // 'O' means own transport

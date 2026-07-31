@@ -11,7 +11,8 @@ import { BracketView } from '@/components/competitions/BracketView';
 import { ScoreDialog } from '@/components/competitions/ScoreDialog';
 import { PlannedDateDialog } from '@/components/competitions/PlannedDateDialog';
 import type { CompMatch, Competition, CompMemberInfo } from '@/types/competitions';
-import { ROUND_ORDER } from '@/types/competitions';
+import { rulesUrlFor } from '@/lib/competition-rules';
+import { RichText } from '@/components/RichText';
 
 // ============================================================================
 // HELPERS
@@ -51,8 +52,17 @@ export default function CompetitionBracketPage({
 
   const [compId, setCompId] = React.useState<string>('');
   React.useEffect(() => {
-    params.then((p) => setCompId(p.compId));
-  }, [params]);
+    params.then((p) => {
+      // "rules" is a static page (/competitions/rules). Next routing is
+      // case-sensitive, so a mis-cased link (e.g. /competitions/RULES) falls
+      // through to this dynamic route — send it to the canonical rules page.
+      if (p.compId.toLowerCase() === 'rules') {
+        router.replace('/competitions/rules');
+        return;
+      }
+      setCompId(p.compId);
+    });
+  }, [params, router]);
 
   const [competition, setCompetition] = useState<Competition | null>(null);
   const [matches, setMatches] = useState<CompMatch[]>([]);
@@ -63,6 +73,13 @@ export default function CompetitionBracketPage({
   const [pendingDateMatch, setPendingDateMatch] = useState<CompMatch | null>(null);
   const [saving, setSaving] = useState(false);
   const [printOrientation, setPrintOrientation] = useState<'landscape' | 'portrait'>('landscape');
+
+  // Rules text: view popup (all three blocks) + admin edit modal
+  const [rulesPopupOpen, setRulesPopupOpen] = useState(false);
+  const [rulesEditOpen, setRulesEditOpen] = useState(false);
+  const [rulesDraft, setRulesDraft] = useState({ compDescription: '', extraDescription: '', markersNotes: '' });
+  const [savingRules, setSavingRules] = useState(false);
+  const [rulesError, setRulesError] = useState<string | null>(null);
 
   function handlePrint() {
     const styleId = 'print-orientation-style';
@@ -241,6 +258,43 @@ export default function CompetitionBracketPage({
     }
   }
 
+  // ── Rules text edit (admin) ────────────────────────────────────────────────
+  function openRulesEdit() {
+    setRulesDraft({
+      compDescription: competition?.compDescription || '',
+      extraDescription: competition?.extraDescription || '',
+      markersNotes: competition?.markersNotes || '',
+    });
+    setRulesError(null);
+    setRulesEditOpen(true);
+  }
+
+  async function saveRules() {
+    setSavingRules(true);
+    setRulesError(null);
+    try {
+      const res = await fetch(`/api/competitions/${compId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          compDescription: rulesDraft.compDescription,
+          extraDescription: rulesDraft.extraDescription,
+          markersNotes: rulesDraft.markersNotes,
+        }),
+      });
+      if (!res.ok) {
+        const d = await res.json();
+        throw new Error(d.error || 'Failed to save rules');
+      }
+      setRulesEditOpen(false);
+      loadData();
+    } catch (err: any) {
+      setRulesError(err.message);
+    } finally {
+      setSavingRules(false);
+    }
+  }
+
   // ── Derived values ─────────────────────────────────────────────────────────
   const isHandicapComp = compId === 'handicap';
   const isSinglesComp = competition ? competition.compType === 'singles' : false;
@@ -270,10 +324,15 @@ export default function CompetitionBracketPage({
   if (competition?.finalsDate)   roundPlayByDates['F']      = competition.finalsDate;
 
   // Rounds where the date is a fixed "play ON" day rather than a "play BY" deadline.
-  // When compFixedDates is set, every round uses "play on" labelling.
+  // Each round has its own fixed flag on the competition.
   const roundOnDates = new Set<string>();
-  if (competition?.compFixedDates) {
-    ROUND_ORDER.forEach((r) => roundOnDates.add(r));
+  if (competition) {
+    if (competition.prelimFixed) roundOnDates.add('Prelim');
+    if (competition.r1Fixed)     roundOnDates.add('R1');
+    if (competition.r2Fixed)     roundOnDates.add('R2');
+    if (competition.qfFixed)     roundOnDates.add('QF');
+    if (competition.sfFixed)     roundOnDates.add('SF');
+    if (competition.finalsFixed) roundOnDates.add('F');
   }
 
   // My pending match (for "Your next match" callout)
@@ -310,8 +369,28 @@ export default function CompetitionBracketPage({
               <>
                 <h1 className="text-2xl font-bold text-gray-900">{competition?.displayName ?? compId}</h1>
                 <p className="text-gray-500 text-sm mt-0.5 capitalize">{competition?.compType}</p>
-                {competition?.compDescription && (
-                  <p className="text-gray-600 text-sm mt-1">{competition.compDescription}</p>
+                {competition && (
+                  <div className="mt-1">
+                    <RichText text={competition.compDescription} className="text-gray-700 text-sm" />
+                    <div className="flex gap-3 mt-1">
+                      {(competition.compDescription || competition.extraDescription || competition.markersNotes) && (
+                        <button
+                          onClick={() => setRulesPopupOpen(true)}
+                          className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
+                        >
+                          More
+                        </button>
+                      )}
+                      {isAdmin && (
+                        <button
+                          onClick={openRulesEdit}
+                          className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
+                        >
+                          Edit rules
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 )}
               </>
             )}
@@ -360,14 +439,6 @@ export default function CompetitionBracketPage({
         {error && (
           <div className="print:hidden mb-6 bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-700">
             {error}
-          </div>
-        )}
-
-        {/* Handicap note */}
-        {isHandicapComp && (
-          <div className="print:hidden mb-4 bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2 text-xs text-yellow-800">
-            Handicap is shown next to each player&apos;s name. The weaker player starts with the
-            stronger player&apos;s handicap added to their score.
           </div>
         )}
 
@@ -464,6 +535,88 @@ export default function CompetitionBracketPage({
           isSingles={isSinglesComp}
           playingMembers={playingMembers}
         />
+      )}
+
+      {/* Rules view popup — shows all three blocks for this competition */}
+      {rulesPopupOpen && competition && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 px-4" onClick={() => setRulesPopupOpen(false)}>
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-lg max-h-[85vh] overflow-y-auto p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between mb-3">
+              <h2 className="text-xl font-bold text-gray-900">{competition.displayName}</h2>
+              <button onClick={() => setRulesPopupOpen(false)} className="text-gray-500 hover:text-gray-800">✕</button>
+            </div>
+            <p className="text-sm text-gray-700 mb-2 capitalize">{competition.compType}</p>
+            <RichText text={competition.compDescription} className="text-gray-800 text-sm leading-relaxed" />
+            {competition.extraDescription && competition.extraDescription.trim() && (
+              <RichText text={competition.extraDescription} className="text-gray-800 text-sm leading-relaxed mt-3" />
+            )}
+            {competition.markersNotes && competition.markersNotes.trim() && (
+              <div className="mt-3">
+                <h3 className="text-sm font-semibold text-gray-900 mb-1">Markers&apos; Instructions</h3>
+                <RichText text={competition.markersNotes} className="text-gray-800 text-sm leading-relaxed" />
+              </div>
+            )}
+            <div className="mt-4 pt-3 border-t border-gray-200 flex justify-between items-center">
+              <a href={rulesUrlFor(compId)} className="text-sm text-blue-600 hover:text-blue-800 hover:underline">
+                View on full rules page →
+              </a>
+              <button onClick={() => setRulesPopupOpen(false)} className="px-4 py-1.5 text-sm rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50">
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Rules edit modal (admin) — edits this competition's three rules blocks */}
+      {rulesEditOpen && competition && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 px-4">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-lg max-h-[90vh] overflow-y-auto p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-1">Edit rules — {competition.displayName}</h2>
+            <p className="text-xs text-gray-600 mb-4">
+              Plain text. Type your own numbering (1, 2, 3 / a, b, c); line breaks are kept. You may use
+              &lt;b&gt;bold&lt;/b&gt;, &lt;i&gt;italic&lt;/i&gt; and &lt;u&gt;underline&lt;/u&gt;.
+            </p>
+            {rulesError && <p className="text-sm text-red-600 mb-3">{rulesError}</p>}
+            <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+            <textarea
+              value={rulesDraft.compDescription}
+              onChange={(e) => setRulesDraft({ ...rulesDraft, compDescription: e.target.value })}
+              rows={2}
+              className="w-full border border-gray-300 rounded px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 mb-3 resize-y"
+            />
+            <label className="block text-sm font-medium text-gray-700 mb-1">Extra Description</label>
+            <textarea
+              value={rulesDraft.extraDescription}
+              onChange={(e) => setRulesDraft({ ...rulesDraft, extraDescription: e.target.value })}
+              rows={5}
+              className="w-full border border-gray-300 rounded px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 mb-3 resize-y"
+            />
+            <label className="block text-sm font-medium text-gray-700 mb-1">Markers&apos; Notes</label>
+            <textarea
+              value={rulesDraft.markersNotes}
+              onChange={(e) => setRulesDraft({ ...rulesDraft, markersNotes: e.target.value })}
+              rows={6}
+              className="w-full border border-gray-300 rounded px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4 resize-y"
+            />
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setRulesEditOpen(false)}
+                disabled={savingRules}
+                className="px-4 py-2 text-sm rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveRules}
+                disabled={savingRules}
+                className="px-4 py-2 text-sm rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {savingRules ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

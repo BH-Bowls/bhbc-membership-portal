@@ -125,13 +125,15 @@ export async function GET(_request: NextRequest) {
         if (!cellValue) continue;
 
         hasAnyEntry = true;
-        stats.total++;
 
         if (cancelledTabNames.has(tabName)) {
           stats.cancelled++;
+          stats.total++;
         } else if (abandonedTabNames.has(tabName)) {
           stats.abandoned++;
+          stats.total++;
         } else if ((cellValue as string).endsWith('W')) {
+          // Withdrawals are tracked but excluded from the total
           stats.withdrawn++;
         } else {
           switch (cellValue) {
@@ -141,6 +143,7 @@ export async function GET(_request: NextRequest) {
             case 'O': stats.opposition++;  break;
             default:  stats.entered++;     break; // E, M, D, etc.
           }
+          stats.total++;
         }
       }
 

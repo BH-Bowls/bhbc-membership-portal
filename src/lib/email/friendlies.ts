@@ -254,6 +254,184 @@ Friendlies Management System
 }
 
 /**
+ * Notify the captains that a player who had withdrawn has re-joined a selected game.
+ * The mirror of sendWithdrawalEmail — captains may have arranged a replacement after
+ * the earlier withdrawal, so they need to know the player is available again.
+ */
+export async function sendRejoinEmail(
+  userName: string,
+  game: Game,
+  selection: {
+    selected: string;      // Selection status: Y=Playing, R=Reserve, T=Reserve Team
+    team: number | null;
+    position: string;
+  },
+  appUrl: string,
+): Promise<void> {
+  try {
+    const user = await getUserByUsername(userName);
+
+    let userFullName = '';
+    if (user && user.fullName) {
+      userFullName = user.fullName;
+    } else if (user && user.firstName && user.lastName) {
+      userFullName = `${user.firstName} ${user.lastName}`;
+    } else {
+      userFullName = userName;
+    }
+
+    const captainEmails = await getCaptainEmails();
+    if (captainEmails.length === 0) {
+      console.warn('No captain emails found for re-join notification');
+      return;
+    }
+
+    // Human-readable role text (matches the withdrawal email's wording)
+    let statusText = '';
+    let subjectStatusLabel = '';
+    if (selection.selected === 'Y') {
+      statusText = 'Playing (Regular team)';
+      subjectStatusLabel = 'Player';
+    } else if (selection.selected === 'R') {
+      statusText = 'Reserve';
+      subjectStatusLabel = 'Reserve';
+    } else if (selection.selected === 'T') {
+      statusText = 'Reserve Team';
+      subjectStatusLabel = 'Reserve Team';
+    } else {
+      statusText = 'Selected';
+    }
+
+    // Player name in the subject keeps each re-join in its own Gmail conversation.
+    const statusPart = subjectStatusLabel ? ` (${subjectStatusLabel})` : '';
+    const subject = `${userFullName} has re-joined${statusPart} - ${game.clubName} ${game.tabName}`;
+
+    const text = `
+${userFullName} has re-joined the ${game.clubName} game on ${game.date} at ${game.time} after previously withdrawing.
+
+Current status: ${statusText}
+Team: ${selection.team || 'N/A'}
+Position: ${selection.position || 'N/A'}
+
+Please review your selection — you may need to update the team.
+
+View game: ${appUrl}/friendlies/manage/game/${encodeURIComponent(game.tabName)}
+
+---
+Burgess Hill Bowls Club
+Friendlies Management System
+    `.trim();
+
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background-color: #16a34a; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+    .content { background-color: #f9f9f9; padding: 20px; border: 1px solid #ddd; }
+    .details { background-color: white; padding: 15px; margin: 15px 0; border-left: 4px solid #16a34a; }
+    .footer { text-align: center; padding: 15px; color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h2>Friendly Match Re-join</h2>
+    </div>
+    <div class="content">
+      <p><strong>${userFullName}</strong> has re-joined the <strong>${game.clubName}</strong> game after previously withdrawing.</p>
+      <div class="details">
+        <p><strong>Date:</strong> ${game.date} at ${game.time}</p>
+        <p><strong>Current status:</strong> ${statusText}</p>
+        <p><strong>Team:</strong> ${selection.team || 'N/A'}</p>
+        <p><strong>Position:</strong> ${selection.position || 'N/A'}</p>
+      </div>
+      <p>Please review your selection — you may need to update the team.</p>
+      <a href="${appUrl}/friendlies/manage/game/${encodeURIComponent(game.tabName)}" class="button" style="display:inline-block;background-color:#16a34a;color:#ffffff;padding:12px 24px;text-decoration:none;border-radius:5px;margin-top:15px;font-weight:bold;">View Game</a>
+    </div>
+    <div class="footer">
+      <p>Burgess Hill Bowls Club - Friendlies Management System</p>
+    </div>
+  </div>
+</body>
+</html>
+    `.trim();
+
+    await sendEmail(captainEmails.join(', '), subject, text, html);
+    console.log(`Re-join notification sent to ${captainEmails.length} captain(s)`);
+  } catch (error) {
+    console.error('Error sending re-join email:', error);
+  }
+}
+
+/**
+ * Send a re-join confirmation to the player — the mirror of sendWithdrawalNoticeEmail.
+ * A calendar re-invite is included (gated on icsUpdatesEnabled + non-Gmail) so the
+ * event returns to their calendar after the withdrawal cancelled it.
+ */
+export async function sendRejoinNoticeEmail(
+  emailAddress: string,
+  userName: string,
+  fullName: string,
+  game: Game,
+  appUrl: string,
+): Promise<void> {
+  const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}?me=${encodeURIComponent(userName)}`;
+  const venue = game.homeAway === 'H' ? 'Home' : `Away at ${game.clubName}`;
+  const subject = `Friendly Re-join — ${game.clubName} ${game.date}`;
+
+  const ics = (icsUpdatesEnabled() && !isGmailAddress(emailAddress))
+    ? buildFriendlyICSAttachment({
+        tabName: game.tabName,
+        userName,
+        sequence: 99,
+        method: 'REQUEST',
+        status: 'CONFIRMED',
+        dateStr: game.date,
+        timeStr: game.time,
+        clubName: game.clubName,
+        homeAway: game.homeAway,
+        format: game.format,
+        trigger: 'rejoined',
+        organizerEmail: process.env.SMTP_USER,
+        attendeeEmail: emailAddress,
+      })
+    : null;
+
+  const text = [
+    `Hi ${fullName},`,
+    '',
+    `You have re-joined the friendly against ${game.clubName} on ${game.date}.`,
+    '',
+    `Date: ${game.date}`,
+    `Time: ${game.time}`,
+    `Venue: ${venue}`,
+    `Format: ${game.format}`,
+    '',
+    ...(ics ? ['A calendar invitation is attached to add this event back to your calendar.', ''] : []),
+    `View game: ${gameUrl}`,
+    '',
+    '---',
+    'Burgess Hill Bowls Club',
+  ].join('\n');
+
+  const html = buildFriendlyPlayerHtml({
+    heading: 'Friendly Re-join',
+    headerColor: '#16a34a',
+    fullName,
+    introHtml: `You have re-joined the friendly against <strong>${game.clubName}</strong> on ${game.date}.`,
+    game,
+    noteHtml: ics ? '<p>A calendar invitation is attached to add this event back to your calendar.</p>' : undefined,
+    gameUrl,
+    buttonText: 'View Game',
+  });
+
+  await sendEmail(emailAddress, subject, text, html, ics ? [ics] : undefined);
+}
+
+/**
  * Send game published notification email to all entered players
  * Sends individual emails so each player sees their own selection status
  * @param game The game object containing match details
@@ -1113,8 +1291,11 @@ export async function sendEntryConfirmedEmail(
 }
 
 /**
- * Send a single combined entry confirmation for a linked game pair.
- * The player has entered both games and will be allocated to one by the captain.
+ * Send a single combined entry confirmation for a linked ("joint") game pair.
+ * The entry is recorded against the lead game (gameA) only, but the player has
+ * entered the joint game — the captains allocate them to one of the two nearer
+ * the time. Both games' venue/format are shown, with a single "View Game" button
+ * to the lead (game B has no players to view).
  */
 export async function sendLinkedEntryConfirmedEmail(
   emailAddress: string,
@@ -1124,13 +1305,23 @@ export async function sendLinkedEntryConfirmedEmail(
   gameB: Game,
   appUrl: string,
 ): Promise<void> {
-  const urlA = `${appUrl}/friendlies/game/${encodeURIComponent(gameA.tabName)}?me=${encodeURIComponent(userName)}`;
-  const urlB = `${appUrl}/friendlies/game/${encodeURIComponent(gameB.tabName)}?me=${encodeURIComponent(userName)}`;
-  const venueA = gameA.homeAway === 'H' ? 'Home' : `Away at ${gameA.clubName}`;
-  const venueB = gameB.homeAway === 'H' ? 'Home' : `Away at ${gameB.clubName}`;
-  const subject = `Friendly Entry Confirmed — ${gameA.date}`;
+  // Single "View Game" button pointing at the lead game (game A) — that's where the
+  // entry lives, so game B has no players to view. Use a token URL so the button
+  // opens without the public access PIN (falls back to ?me= if token generation fails).
+  let gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(gameA.tabName)}?me=${encodeURIComponent(userName)}`;
+  try {
+    const { ensurePlayerToken } = await import('../friendlies-sheets');
+    const token = await ensurePlayerToken(gameA.tabName, userName);
+    gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(gameA.tabName)}?token=${token}`;
+  } catch (tokenError) {
+    console.error('sendLinkedEntryConfirmedEmail: token generation failed (falling back to ?me= URL):', tokenError);
+  }
 
-  const allocationNote = 'These games are linked. You have been added to both and will be allocated to one by the captain.';
+  const venueA = `${gameA.homeAway === 'H' ? 'Home' : 'Away'} - ${gameA.clubName}`;
+  const venueB = `${gameB.homeAway === 'H' ? 'Home' : 'Away'} - ${gameB.clubName}`;
+  const subject = `Friendly Entry Confirmed — ${gameA.clubName} / ${gameB.clubName} ${gameA.date}`;
+
+  const allocationNote = 'These two games are linked. You have entered the joint game (both games shown below) — the captains will allocate you to one of them nearer the time.';
 
   // Use the earlier of the two game times for the calendar entry start
   const earlierTime = gameA.time <= gameB.time ? gameA.time : gameB.time;
@@ -1149,17 +1340,15 @@ export async function sendLinkedEntryConfirmedEmail(
     '',
     allocationNote,
     '',
-    `Game 1: ${venueA}`,
     `Date: ${gameA.date}`,
     `Time: ${gameA.time}`,
+    `Venue: ${venueA}`,
     `Format: ${gameA.format}`,
-    `View: ${urlA}`,
     '',
-    `Game 2: ${venueB}`,
-    `Date: ${gameB.date}`,
-    `Time: ${gameB.time}`,
+    `Venue: ${venueB}`,
     `Format: ${gameB.format}`,
-    `View: ${urlB}`,
+    '',
+    `View game: ${gameUrl}`,
     '',
     'A calendar attachment is included (tentative until you are allocated to a game).',
     '',
@@ -1187,22 +1376,17 @@ export async function sendLinkedEntryConfirmedEmail(
     <div class="content">
       <p>Hi <strong>${fullName}</strong>,</p>
       <div class="allocation-note">${allocationNote}</div>
-      <p><strong>Game 1</strong></p>
       <div class="details">
         <p><strong>Date:</strong> ${gameA.date}</p>
         <p><strong>Time:</strong> ${gameA.time}</p>
         <p><strong>Venue:</strong> ${venueA}</p>
         <p><strong>Format:</strong> ${gameA.format}</p>
       </div>
-      <a href="${urlA}" style="${PLAYER_BUTTON_STYLE}">View Game 1</a>
-      <p style="margin-top:20px"><strong>Game 2</strong></p>
       <div class="details">
-        <p><strong>Date:</strong> ${gameB.date}</p>
-        <p><strong>Time:</strong> ${gameB.time}</p>
         <p><strong>Venue:</strong> ${venueB}</p>
         <p><strong>Format:</strong> ${gameB.format}</p>
       </div>
-      <a href="${urlB}" style="${PLAYER_BUTTON_STYLE}">View Game 2</a>
+      <a href="${gameUrl}" style="${PLAYER_BUTTON_STYLE}">View Game</a>
       <p style="font-size:13px;margin-top:16px;">A calendar attachment is included (tentative until you are allocated to a game).</p>
       <p style="font-size:13px;color:#cc0000;">Please do not reply to this email.</p>
     </div>
@@ -1274,6 +1458,100 @@ export async function sendWithdrawalNoticeEmail(
     gameUrl,
     buttonText: 'View Game',
   });
+
+  await sendEmail(emailAddress, subject, text, html, ics ? [ics] : undefined);
+}
+
+/**
+ * Send a removal confirmation for a linked ("joint") game pair — the mirror of
+ * sendLinkedEntryConfirmedEmail. Shows both games' venue/format so the player
+ * knows exactly which joint entry they left. ICS cancel (of the tentative linked
+ * event) is gated on icsUpdatesEnabled() and the address not being Gmail.
+ */
+export async function sendLinkedWithdrawalNoticeEmail(
+  emailAddress: string,
+  userName: string,
+  fullName: string,
+  gameA: Game,
+  gameB: Game,
+  appUrl: string,
+): Promise<void> {
+  const venueA = `${gameA.homeAway === 'H' ? 'Home' : 'Away'} - ${gameA.clubName}`;
+  const venueB = `${gameB.homeAway === 'H' ? 'Home' : 'Away'} - ${gameB.clubName}`;
+  const subject = `Friendly Removal — ${gameA.clubName} / ${gameB.clubName} ${gameA.date}`;
+  const intro = 'You have been removed from this joint game (both games shown below).';
+
+  // Cancel the tentative linked calendar event created on entry (same UID).
+  const earlierTime = gameA.time <= gameB.time ? gameA.time : gameB.time;
+  const ics = (icsUpdatesEnabled() && !isGmailAddress(emailAddress))
+    ? buildLinkedFriendlyICSAttachment({
+        userName,
+        dateStr: gameA.date,
+        timeStr: earlierTime,
+        gameAClubName: gameA.clubName,
+        gameAHomeAway: gameA.homeAway,
+        gameBClubName: gameB.clubName,
+        gameBHomeAway: gameB.homeAway,
+        method: 'CANCEL',
+        status: 'CANCELLED',
+        sequence: 99,
+      })
+    : null;
+
+  const text = [
+    `Hi ${fullName},`,
+    '',
+    intro,
+    '',
+    `Date: ${gameA.date}`,
+    `Time: ${gameA.time}`,
+    `Venue: ${venueA}`,
+    `Format: ${gameA.format}`,
+    '',
+    `Venue: ${venueB}`,
+    `Format: ${gameB.format}`,
+    '',
+    ...(ics ? ['A calendar cancellation is attached to remove this tentative event from your calendar.', ''] : []),
+    '---',
+    'Burgess Hill Bowls Club',
+  ].join('\n');
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background-color: #d97706; color: #ffffff; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+    .header h2 { margin: 0; color: #ffffff; }
+    .content { background-color: #f9f9f9; padding: 20px; border: 1px solid #ddd; }
+    .details { background-color: #ffffff; padding: 15px; margin: 15px 0; border-left: 4px solid #d97706; }
+    .footer { text-align: center; padding: 15px; color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header"><h2>Friendly Removal</h2></div>
+    <div class="content">
+      <p>Hi <strong>${fullName}</strong>,</p>
+      <p>${intro}</p>
+      <div class="details">
+        <p><strong>Date:</strong> ${gameA.date}</p>
+        <p><strong>Time:</strong> ${gameA.time}</p>
+        <p><strong>Venue:</strong> ${venueA}</p>
+        <p><strong>Format:</strong> ${gameA.format}</p>
+      </div>
+      <div class="details">
+        <p><strong>Venue:</strong> ${venueB}</p>
+        <p><strong>Format:</strong> ${gameB.format}</p>
+      </div>
+      ${ics ? '<p style="font-size:13px;margin-top:16px;">A calendar cancellation is attached to remove this tentative event from your calendar.</p>' : ''}
+      <p style="font-size:13px;color:#cc0000;">Please do not reply to this email.</p>
+    </div>
+    <div class="footer"><p>Burgess Hill Bowls Club - Friendlies Management System</p></div>
+  </div>
+</body>
+</html>`.trim();
 
   await sendEmail(emailAddress, subject, text, html, ics ? [ics] : undefined);
 }

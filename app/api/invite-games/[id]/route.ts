@@ -10,7 +10,7 @@ import {
   deleteInviteGame,
 } from '@/lib/invite-games-sheets';
 import { getAttachmentsByInviteGameId, deleteInviteGameAttachment } from '@/lib/invite-games-attachments-sheets';
-import { deleteFileFromCloudinary } from '@/lib/cloudinary';
+import { deleteFileFromDrive } from '@/lib/drive';
 import { hasRole } from '@/lib/role-utils';
 
 /**
@@ -136,14 +136,14 @@ export async function DELETE(
       return NextResponse.json({ error: 'Invite game not found' }, { status: 404 });
     }
 
-    // Delete all attachments first (Cloudinary + sheet rows)
+    // Delete all attachments first (Drive files + sheet rows)
     const attachments = await getAttachmentsByInviteGameId(inviteGameId);
     for (const attachment of attachments) {
       if (attachment.driveFileId) {
         try {
-          await deleteFileFromCloudinary(attachment.driveFileId);
+          await deleteFileFromDrive(attachment.driveFileId);
         } catch (e) {
-          console.error('[DELETE invite game] Cloudinary delete failed:', e);
+          console.error('[DELETE invite game] Drive delete failed:', e);
         }
       }
       await deleteInviteGameAttachment(attachment.attachmentId);

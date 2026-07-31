@@ -8,7 +8,7 @@ import {
   getSpreadsheetId,
 } from './sheets';
 import { createRowFieldGetter, createRowNumberGetter, wrapError } from './banking-sheets';
-import { checkDriveFileExists, isDriveFileId } from './drive';
+import { checkDriveFileExists } from './drive';
 import type { SuggestionAttachment, AttachmentType } from '@/types/attachments';
 
 // ============================================================================
@@ -261,7 +261,7 @@ export async function deleteAttachment(
 }
 
 /**
- * Check all attachments for a suggestion and mark deleted Cloudinary files
+ * Check all attachments for a suggestion and mark any whose Drive file is gone.
  * Returns list of attachments with updated isDeleted status
  */
 export async function validateAttachments(
@@ -275,19 +275,19 @@ export async function validateAttachments(
     const updates: any[] = [];
 
     for (const attachment of attachments) {
-      // Only validate Drive files — Cloudinary legacy files are assumed present until migrated
-      if (attachment.isDeleted || !attachment.driveFileId) continue;
-      if (!isDriveFileId(attachment.driveFileId)) continue;
+      if (!attachment.driveFileId) continue; // links / no file to check
 
       const exists = await checkDriveFileExists(attachment.driveFileId);
+      const shouldBeDeleted = !exists;
 
-      if (!exists && attachment._rowNumber) {
-        // Mark as deleted
-        attachment.isDeleted = true;
+      // Sync the sheet flag both ways — this also self-heals rows that were wrongly
+      // flagged deleted when the existence check was failing on auth errors.
+      if (shouldBeDeleted !== attachment.isDeleted && attachment._rowNumber) {
+        attachment.isDeleted = shouldBeDeleted;
         const colLetter = getColumnLetter(colMap['is_deleted']);
         updates.push({
           range: `MemberSuggestionsAttachments!${colLetter}${attachment._rowNumber}`,
-          values: [['TRUE']],
+          values: [[shouldBeDeleted ? 'TRUE' : 'FALSE']],
         });
       }
     }

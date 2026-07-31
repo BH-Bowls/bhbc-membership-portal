@@ -215,26 +215,32 @@ export async function PATCH(
       // Validate and accept playedDate if provided
       if (body.playedDate !== undefined) {
         const playedDate = body.playedDate;
-        const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
 
-        // Reject dates that are not in YYYY-MM-DD format
-        if (!dateRegex.test(playedDate)) {
-          return NextResponse.json(
-            { error: 'playedDate must be a valid date in YYYY-MM-DD format' },
-            { status: 400 }
-          );
+        // Empty string clears an arranged date entered in error
+        if (playedDate === '') {
+          memberUpdates.playedDate = '';
+        } else {
+          const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+
+          // Reject dates that are not in YYYY-MM-DD format
+          if (!dateRegex.test(playedDate)) {
+            return NextResponse.json(
+              { error: 'playedDate must be a valid date in YYYY-MM-DD format' },
+              { status: 400 }
+            );
+          }
+
+          // Confirm the calendar date itself is valid (rejects e.g. 2025-13-01)
+          const dateObj = new Date(playedDate);
+          if (isNaN(dateObj.getTime())) {
+            return NextResponse.json(
+              { error: 'playedDate must be a valid date in YYYY-MM-DD format' },
+              { status: 400 }
+            );
+          }
+
+          memberUpdates.playedDate = playedDate;
         }
-
-        // Confirm the calendar date itself is valid (rejects e.g. 2025-13-01)
-        const dateObj = new Date(playedDate);
-        if (isNaN(dateObj.getTime())) {
-          return NextResponse.json(
-            { error: 'playedDate must be a valid date in YYYY-MM-DD format' },
-            { status: 400 }
-          );
-        }
-
-        memberUpdates.playedDate = playedDate;
       }
 
       // Validate and accept marker if provided

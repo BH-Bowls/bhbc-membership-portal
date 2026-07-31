@@ -33,10 +33,13 @@ interface GameDetails {
     homeAway: 'H' | 'A';          // Home or Away venue
     format: string;               // Game format (Triples, Pairs, etc.)
     status: string;               // Game status (O, X, S, P, C, A)
+    reason: string;               // Cancellation/abandonment reason
+    who: string;                  // Who cancelled/abandoned ('Burgess Hill' or 'Opponent')
     userStatus: string | null;    // Current user's status (Y, R, T, etc.)
     userTeam: number | null;      // Team number user is in (1, 2, etc.)
     userPosition: string | null;  // Position user is playing (S, 1, 2, 3)
     userConfirmed: boolean;       // Whether user has confirmed participation
+    userWithdrawn: boolean;       // Whether user has withdrawn (game-sheet status 'W')
     userAcknowledged: boolean;    // Whether user has acknowledged a cancellation
     userName: string;             // Current user's userName for highlighting
     pickupInfo: string;           // Pickup point information for away games
@@ -296,7 +299,9 @@ export default function GameDetailsPage() {
     const g = gameDetails?.game;
     const partners = gameDetails?.partners ?? [];
     const unconfirmed = partners.filter(p => !p.confirmed);
-    const iSelected = !!g && !!g.userStatus && ['Y', 'R', 'T'].includes(g.userStatus);
+    // A withdrawn player keeps their selection role (userStatus stays Y/R/T) but must
+    // not be offered self-confirmation — they re-join instead.
+    const iSelected = !!g && !!g.userStatus && ['Y', 'R', 'T'].includes(g.userStatus) && !g.userWithdrawn;
     const iNeed = !!g && g.status === 'S' && !g.userConfirmed && iSelected;
     const show = !!g && g.status === 'S' && (iNeed || unconfirmed.length > 0);
     const names = unconfirmed.map(p => p.name);
@@ -440,6 +445,55 @@ export default function GameDetailsPage() {
     } finally {
       setActionLoading(false);
       isWithdrawingRef.current = false;
+    }
+  }
+
+  /**
+   * Handle re-join button click — for a player who previously withdrew from this
+   * (still-selected) game and wants to return to it.
+   */
+  function handleRejoin() {
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Re-join Game',
+      message: 'Re-join this game? The captains will be notified that you are available again.',
+      onConfirm: () => {
+        closeConfirmDialog();
+        performRejoin();
+      },
+    });
+  }
+
+  /**
+   * Perform the actual re-join operation
+   */
+  async function performRejoin() {
+    setActionLoading(true);
+    setFlashMessage(null);
+
+    try {
+      const response = await fetch('/api/friendlies/rejoin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tab_name: tabDate }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setFlashMessage({ type: 'success', text: 'You have re-joined this game. Captains have been notified.' });
+        // Invalidate the friendlies games cache so the list re-fetches on return
+        sessionStorage.removeItem('friendlies_games_cache');
+        // Refresh so the page returns to the normal selected/confirm state
+        await fetchGameDetails();
+      } else {
+        setFlashMessage({ type: 'error', text: data.error || 'Failed to re-join' });
+      }
+    } catch (error) {
+      console.error('Error re-joining:', error);
+      setFlashMessage({ type: 'error', text: 'Failed to re-join' });
+    } finally {
+      setActionLoading(false);
     }
   }
 
@@ -733,11 +787,15 @@ export default function GameDetailsPage() {
         {game.status === 'C' && (
           <div className="mb-4 p-4 rounded-lg bg-red-50 border border-red-200 text-red-800">
             <span className="font-semibold">This game has been cancelled.</span>
+            {game.who && <div className="text-sm mt-1">By: {game.who}</div>}
+            {game.reason && <div className="text-sm mt-0.5">Reason: {game.reason}</div>}
           </div>
         )}
         {game.status === 'A' && (
           <div className="mb-4 p-4 rounded-lg bg-orange-50 border border-orange-200 text-orange-800">
             <span className="font-semibold">This game has been abandoned.</span>
+            {game.who && <div className="text-sm mt-1">By: {game.who}</div>}
+            {game.reason && <div className="text-sm mt-0.5">Reason: {game.reason}</div>}
           </div>
         )}
         {['O', 'X'].includes(game.status) && (
@@ -804,8 +862,10 @@ export default function GameDetailsPage() {
           </div>
         </div>
 
-        {/* User Status section - only meaningful once team selection has been published */}
-        {game.userStatus && !['O', 'X'].includes(game.status) ? (
+        {/* User Status section - only meaningful once team selection has been published.
+            Also show it for a withdrawn player even if their selection role was cleared
+            (a captain's save blanks `selected` for withdrawn players), so Re-join stays reachable. */}
+        {(game.userStatus || game.userWithdrawn) && !['O', 'X'].includes(game.status) ? (
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
             <div className="flex items-center justify-between">
               <div>
@@ -815,8 +875,10 @@ export default function GameDetailsPage() {
                 {/* User status badge (Playing/Reserve/Reserve Team) */}
                 {getUserStatusBadge()}
 
-                {/* Show confirmation status — confirmed, not yet confirmed, or withdrawn */}
-                {['PW', 'RW', 'TW'].includes(game.userStatus) ? (
+                {/* Show confirmation status — confirmed, not yet confirmed, or withdrawn.
+                    A withdrawal keeps the selection role and sets a separate flag, so
+                    check game.userWithdrawn (userStatus alone stays Y/R/T). */}
+                {game.userWithdrawn || ['PW', 'RW', 'TW'].includes(game.userStatus || '') ? (
                   <div className="mt-2 text-gray-600 text-sm font-medium">
                     ✗ Withdrawn
                   </div>
@@ -846,13 +908,24 @@ export default function GameDetailsPage() {
                 )}
 
                 {/* Withdraw button - show if game is Selected and player hasn't already withdrawn */}
-                {game.status === 'S' && !['PW', 'RW', 'TW'].includes(game.userStatus) && (
+                {game.status === 'S' && !game.userWithdrawn && !['PW', 'RW', 'TW'].includes(game.userStatus || '') && (
                   <button
                     onClick={handleWithdraw}
                     disabled={actionLoading}
                     className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors disabled:opacity-50"
                   >
                     {actionLoading ? 'Processing...' : 'Withdraw'}
+                  </button>
+                )}
+
+                {/* Re-join button - show if the player has withdrawn from a still-selected game */}
+                {game.status === 'S' && game.userWithdrawn && (
+                  <button
+                    onClick={handleRejoin}
+                    disabled={actionLoading}
+                    className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition-colors disabled:opacity-50"
+                  >
+                    {actionLoading ? 'Processing...' : 'Re-join'}
                   </button>
                 )}
 
@@ -983,8 +1056,24 @@ export default function GameDetailsPage() {
         {/* Captain of Day section */}
         {captainOfDay && (
           <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 mb-6">
-            <h3 className="font-semibold text-gray-900">Captain of the Day</h3>
-            <p className="text-lg text-gray-900">{captainOfDay}</p>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="font-semibold text-gray-900">Captain of the Day</h3>
+                <p className="text-lg text-gray-900">{captainOfDay}</p>
+              </div>
+              {/* Captain guide — HOME or AWAY version depending on the venue */}
+              <a
+                href={`/api/guides/${game.homeAway === 'H' ? 'captain-home' : 'captain-away'}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-purple-600 text-white rounded hover:bg-purple-700"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                </svg>
+                Guide
+              </a>
+            </div>
           </div>
         )}
 

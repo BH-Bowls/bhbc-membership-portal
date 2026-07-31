@@ -119,9 +119,14 @@ function PlannedDateInput({
     return () => clearTimeout(t);
   }, [saved]);
 
+  // Whether the match already has an arranged date — an empty value can then be
+  // saved to clear a date entered in error.
+  const hadExistingDate = !!initialDate;
+
   async function handleSave() {
-    // A date is required before saving
-    if (!dateValue) {
+    // A date is required to arrange a new match; an empty value is allowed only
+    // when clearing a date that was already set.
+    if (!dateValue && !hadExistingDate) {
       setError('Please select a date');
       return;
     }
@@ -142,17 +147,28 @@ function PlannedDateInput({
   return (
     <div className="mt-1.5 space-y-1.5">
       {/* Date input — full width so it's visually separate from the Save button */}
-      <input
-        type="date"
-        value={dateValue}
-        onChange={(e) => {
-          setDateValue(e.target.value);
-          setError(null);
-          setSaved(false);
-        }}
-        className={getInputClasses(!!error)}
-        aria-label="Planned match date"
-      />
+      <div className="flex items-center gap-2">
+        <input
+          type="date"
+          value={dateValue}
+          onChange={(e) => {
+            setDateValue(e.target.value);
+            setError(null);
+            setSaved(false);
+          }}
+          className={getInputClasses(!!error)}
+          aria-label="Planned match date"
+        />
+        {dateValue && (
+          <button
+            type="button"
+            onClick={() => { setDateValue(''); setError(null); setSaved(false); }}
+            className="text-xs text-blue-600 hover:text-blue-800 whitespace-nowrap"
+          >
+            Clear
+          </button>
+        )}
+      </div>
 
       {/* Marker dropdown — only shown for singles competitions */}
       {isSingles && playingMembers.length > 0 && (
@@ -177,10 +193,10 @@ function PlannedDateInput({
       <div className="flex items-center gap-2">
         <button
           onClick={handleSave}
-          disabled={saving || !dateValue}
+          disabled={saving || (!dateValue && !hadExistingDate)}
           className={getButtonClasses('primary', 'sm')}
         >
-          {saving ? '…' : 'Save'}
+          {saving ? '…' : !dateValue && hadExistingDate ? 'Clear' : 'Save'}
         </button>
         {error && <p className="text-[10px] text-red-600">{error}</p>}
         {saved && <p className="text-[10px] text-green-700">Saved</p>}

@@ -10,7 +10,7 @@ import { getGames, batchUpdatePlayerEntries, addPlayersToGameSheetDirect, update
 import { canEnterGame } from '@/lib/game-management/capacity';
 import { hasRole } from '@/lib/role-utils';
 import { getAllUsers } from '@/lib/sheets';
-import { sendEntryConfirmedEmail } from '@/lib/email/friendlies';
+import { sendEntryConfirmedEmail, sendLinkedEntryConfirmedEmail } from '@/lib/email/friendlies';
 
 // POST handler - Adds players with M (manually added) status
 export async function POST(request: NextRequest) {
@@ -116,11 +116,24 @@ export async function POST(request: NextRequest) {
           const addedUserNames = results.filter(r => r.added).map(r => r.userName);
           const allUsers = await getAllUsers();
           const appUrl = await getAppUrl();
+
+          // For a joint game still open for combined entry (paired='Y'), the added
+          // player is really entering the joint game — confirm both Game A (the lead,
+          // which they were added to) and Game B, with allocation to follow. Once the
+          // pair is split (X/S onward), the games are independent, so a single email.
+          const partner = game.paired === 'Y'
+            ? allGames.find(g => g.tabName !== game.tabName && g.paired === 'Y' && g.date === game.date)
+            : undefined;
+
           for (const userName of addedUserNames) {
             const user = allUsers.find(u => u.userName.toLowerCase() === userName.toLowerCase());
             if (!user?.emailAddress) continue;
             const fullName = user.fullName || (user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : userName);
-            await sendEntryConfirmedEmail(user.emailAddress, userName, fullName, game, appUrl, true);
+            if (partner) {
+              await sendLinkedEntryConfirmedEmail(user.emailAddress, userName, fullName, game, partner, appUrl);
+            } else {
+              await sendEntryConfirmedEmail(user.emailAddress, userName, fullName, game, appUrl, true);
+            }
           }
         } catch (emailError) {
           console.error('[add-players] Error sending entry confirmation emails:', emailError);

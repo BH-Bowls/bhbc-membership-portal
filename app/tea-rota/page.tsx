@@ -445,6 +445,14 @@ export default function TeaRotaPage() {
             <p className="text-gray-600 mt-1 print:text-sm">Tea duty assignments for home games</p>
           </div>
           <div className="flex gap-2 print:hidden">
+            <a
+              href="/api/guides/tea-duty"
+              target="_blank"
+              rel="noopener noreferrer"
+              className={getButtonClasses('secondary', 'md')}
+            >
+              Instructions
+            </a>
             <button
               onClick={handlePrint}
               className={getButtonClasses('secondary', 'md')}

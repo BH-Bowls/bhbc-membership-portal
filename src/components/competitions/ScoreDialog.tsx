@@ -76,6 +76,9 @@ export function ScoreDialog({
   // Disabled for corrections — a finished match must be given a score/walkover, not a date.
   const scoresEmpty = score1 === '' && score2 === '';
   const saveDateOnly = !isCompleted && onSaveDateOnly && scoresEmpty;
+  // Whether the match already has an arranged date — an empty value can then be
+  // saved to clear a date entered in error.
+  const hadExistingDate = !!match.playedDate;
 
   // Existing result summary shown when correcting
   const currentWinnerLabel = match.winnerSide === 1 ? side1Label : match.winnerSide === 2 ? side2Label : '';
@@ -84,9 +87,10 @@ export function ScoreDialog({
     e.preventDefault();
     setError(null);
 
-    // Date-only path: no scores entered — captain wants to record the agreed date (and optional marker)
+    // Date-only path: no scores entered — captain wants to record the agreed date (and optional marker),
+    // or clear a date entered in error. An empty date is only rejected when there was nothing to clear.
     if (saveDateOnly) {
-      if (!plannedDate) {
+      if (!plannedDate && !hadExistingDate) {
         setError('Please enter a date or fill in scores');
         return;
       }
@@ -153,9 +157,20 @@ export function ScoreDialog({
             {/* Optional date arranged field — only for pending matches (not corrections) */}
             {!isCompleted && onSaveDateOnly && (
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Date arranged <span className="font-normal text-gray-500">(leave scores blank to save date only)</span>
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Date arranged <span className="font-normal text-gray-500">(leave scores blank to save date only)</span>
+                  </label>
+                  {plannedDate && (
+                    <button
+                      type="button"
+                      onClick={() => { setPlannedDate(''); setError(null); }}
+                      className="text-xs text-blue-600 hover:text-blue-800 whitespace-nowrap"
+                    >
+                      Clear date
+                    </button>
+                  )}
+                </div>
                 <input
                   type="date"
                   value={plannedDate}
@@ -255,7 +270,7 @@ export function ScoreDialog({
                   disabled={saving}
                   className="px-4 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
                 >
-                  {saving ? 'Saving…' : isCompleted ? 'Save Correction' : saveDateOnly ? 'Save Date' : 'Save Score'}
+                  {saving ? 'Saving…' : isCompleted ? 'Save Correction' : saveDateOnly ? (!plannedDate && hadExistingDate ? 'Clear Date' : 'Save Date') : 'Save Score'}
                 </button>
               </div>
             </div>

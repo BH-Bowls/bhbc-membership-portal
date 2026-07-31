@@ -12,9 +12,11 @@ The project maintainer has a Google Apps Script / spreadsheet background, not a 
 
 ## Key watch-outs
 
-### `drive_file_id` stores Cloudinary public IDs — legacy naming
+### File storage is Google Drive (Cloudinary fully retired)
 
-File uploads originally used Google Drive, then migrated to Cloudinary. Every attachment sheet (`MemberSuggestionsAttachments`, `InviteGamesAttachments`, `LeagueAttachments`, …) has a column called `drive_file_id`. **This column now stores the Cloudinary `publicId`, not a Drive file ID.** Do not rename the column — rows in production use this name and renaming it would silently orphan all existing attachment records. The `isDriveFileId()` helper in `AttachmentsList.tsx` distinguishes between the two formats at runtime (a Drive ID contains no `/`; a Cloudinary public ID does).
+Attachments (`MemberSuggestionsAttachments`, `InviteGamesAttachments`, `LeagueAttachments`, …) are stored in **Google Drive** via `src/lib/drive.ts` — uploads use a resumable upload session, reads redirect the browser to Drive. The column holding the file reference is named `drive_file_id` and holds a **Drive file ID**. Do not rename the column — production rows use this name.
+
+History: uploads went Drive → Cloudinary → back to Drive. Cloudinary has now been **completely removed** (no `cloudinary` dependency, no `src/lib/cloudinary.ts`, no `isDriveFileId` branching) — every stored file is a Drive file. Don't reintroduce Cloudinary or any Drive-vs-Cloudinary distinction.
 
 ### Tailwind JIT requires literal class strings
 
@@ -76,7 +78,7 @@ A handful of older components still use `alert()` for error messages. This is le
 | `src/config/theme.ts` | Design tokens (human reference) — must stay in sync with `theme-helpers.ts` |
 | `src/lib/role-utils.ts` | `hasRole()` and friends — never parse the role string yourself |
 | `middleware.ts` | All route-level auth guards live here — not in individual pages |
-| `src/lib/cloudinary.ts` | All Cloudinary operations — never call the SDK directly from routes |
+| `src/lib/drive.ts` | All Google Drive operations (attachment upload/read/delete) — never call the SDK directly from routes |
 | `src/lib/email/mailer.ts` | All email sends — pooled transporter, sequential sends |
 
 ---

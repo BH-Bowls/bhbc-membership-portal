@@ -7,8 +7,10 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getGames, getPlayerEntries, getGameSheet, getTeaRotaList } from '@/lib/friendlies-sheets';
 import { getClubs } from '@/lib/clubs-sheets';
-import { GameStatus, GameType } from '@/lib/types/friendlies';
+import { GameStatus, GameType, FriendliesBuddy } from '@/lib/types/friendlies';
 import { hasRole } from '@/lib/role-utils';
+import { getAllUsers } from '@/lib/sheets';
+import { canManageUser } from '@/lib/buddies-sheets';
 
 // GET handler - Returns list of games with user's entry status for each
 export async function GET(request: NextRequest) {
@@ -21,13 +23,18 @@ export async function GET(request: NextRequest) {
     // Get optional status filter (e.g., ?status=O for Open games only)
     const statusFilter = searchParams.get('status') as GameStatus | null;
 
+    // ?fresh=1 bypasses the 90s Games cache — used by the client immediately after an
+    // enter/withdraw so the entered count it re-caches is guaranteed current (the
+    // in-memory cache invalidation is per-process and can't be relied on across them).
+    const forceFresh = searchParams.get('fresh') === '1';
+
     // Admins also see Test games; all other roles see Friendly only
     const isAdmin = hasRole(session?.user?.role, 'Admin');
     const typeFilter: GameType[] = isAdmin ? ['Friendly', 'Test'] : ['Friendly'];
 
     // Fetch games and club details in parallel
     const [games, clubs] = await Promise.all([
-      getGames(statusFilter ?? undefined, typeFilter),
+      getGames(statusFilter ?? undefined, typeFilter, forceFresh),
       getClubs().catch(() => []),   // petrol cost is non-critical; don't fail if clubs sheet absent
     ]);
 
@@ -101,8 +108,38 @@ export async function GET(request: NextRequest) {
       userConfirmed: confirmationMap.has(game.tabName) ? confirmationMap.get(game.tabName)! : null,
     }));
 
-    // Return success response with games array + the user's tea-duty dates
-    return NextResponse.json({ games: gamesWithUserStatus, teaDutyDates });
+    // Build the list of buddies the current user may enter on their behalf, so the
+    // enter dialog can offer "Enter {{name}} too?". A buddy is anyone who lists the
+    // current user as their buddy and who the user is authorised to manage (same rule
+    // the confirm flow uses). Each buddy carries their member type (for gender
+    // eligibility) and the games they are already in (so those are not re-offered).
+    const buddies: FriendliesBuddy[] = [];
+    try {
+      const allUsers = await getAllUsers();
+      const candidates = allUsers.filter(
+        (u) => u.buddyUserName === session.user.userName && u.userName !== session.user.userName
+      );
+      for (const cand of candidates) {
+        const allowed = await canManageUser(session.user.userName, session.user.role ?? '', cand.userName);
+        if (!allowed) continue;
+        const buddyEntries = await getPlayerEntries(cand.userName);
+        const enteredTabNames = buddyEntries
+          .filter((e) => e.status && !e.status.endsWith('W'))
+          .map((e) => e.tabName);
+        buddies.push({
+          userName: cand.userName,
+          name: cand.fullKnownAs || `${cand.firstName ?? ''} ${cand.lastName ?? ''}`.trim() || cand.userName,
+          memberType: cand.memberType ?? '',
+          enteredTabNames,
+        });
+      }
+    } catch (buddyErr) {
+      // Buddy info is a convenience — never fail the games list over it
+      console.error('Error building friendlies buddy list:', buddyErr);
+    }
+
+    // Return success response with games array + the user's tea-duty dates + buddies
+    return NextResponse.json({ games: gamesWithUserStatus, teaDutyDates, buddies });
   } catch (error) {
     // Log error and return 500 response
     return NextResponse.json(

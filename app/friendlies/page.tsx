@@ -12,8 +12,9 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 // On the server (SSR) it falls back to useEffect to avoid React warnings.
 const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
 import { useSession } from 'next-auth/react';
-import { GameWithUserStatus } from '@/lib/types/friendlies';
+import { GameWithUserStatus, FriendliesBuddy } from '@/lib/types/friendlies';
 import { Navbar } from '@/components/Navbar';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import Link from 'next/link';
 import { getButtonClasses } from '@/config/theme-helpers';
 import { canEnterGame, type GameGender } from '@/lib/member-type-utils';
@@ -34,7 +35,13 @@ import { hasRole } from '@/lib/role-utils';
  * 'entered' - Show only games the user has entered that haven't been played or cancelled
  * 'played'  - Show only games the user entered that have been played, cancelled, or abandoned
  */
-type FilterType = 'all' | 'O' | 'entered' | 'played' | 'stats';
+// Two-level tab model:
+//   Primary tab: All Games | My Games | My Stats
+//   All Games sub-filter:  Upcoming | Open | Selecting | Played
+//   My Games sub-filter:   Not played | Played
+type PrimaryTab = 'all' | 'mine' | 'stats';
+type AllSub = 'upcoming' | 'open' | 'selecting' | 'played';
+type MineSub = 'notplayed' | 'played';
 
 // ── Stats types ───────────────────────────────────────────────────────────────
 
@@ -92,15 +99,28 @@ export default function FriendliesPage() {
   // State: List of all games with user's entry status for each
   const [games, setGames] = useState<GameWithUserStatus[]>([]);
 
-  // State: Current filter selection (restored from sessionStorage in layout effect below)
-  const [filter, setFilter] = useState<FilterType>('O');
+  // State: Two-level tab selection (restored from sessionStorage in layout effect below).
+  // Defaults to All Games → Open so the page opens on games available to enter.
+  const [primaryTab, setPrimaryTab] = useState<PrimaryTab>('all');
+  const [allSub, setAllSub] = useState<AllSub>('open');
+  const [mineSub, setMineSub] = useState<MineSub>('notplayed');
 
-  // State: Set of game tab names that user has checked/selected
-  // Uses Set for efficient add/remove operations
-  const [selectedGames, setSelectedGames] = useState<Set<string>>(new Set());
+  // State: Buddies the current user can enter alongside themselves (from games API)
+  const [buddies, setBuddies] = useState<FriendliesBuddy[]>([]);
 
-  // State: Set of away game tab names where user has ticked "Own Transport"
-  const [ownTransportGames, setOwnTransportGames] = useState<Set<string>>(new Set());
+  // State: Enter-game confirm dialog. When set, the dialog is open for this game.
+  // For a paired-game card this is game 1 of the pair (entry always goes into game 1).
+  const [enterDialogGame, setEnterDialogGame] = useState<GameWithUserStatus | null>(null);
+  // Buddy usernames ticked inside the enter dialog (opt-in, cleared each open)
+  const [enterBuddySelected, setEnterBuddySelected] = useState<Set<string>>(new Set());
+  // Whether "Making my own way" is ticked inside the enter dialog (away games only)
+  const [enterOwnTransport, setEnterOwnTransport] = useState(false);
+
+  // State: Remove confirm dialog — the open game the user is removing themselves from.
+  // (Removal from an open game is distinct from a post-selection "withdrawal".)
+  const [removeDialogGame, setRemoveDialogGame] = useState<GameWithUserStatus | null>(null);
+  // Buddy usernames ticked inside the remove dialog (opt-in, cleared each open)
+  const [removeBuddySelected, setRemoveBuddySelected] = useState<Set<string>>(new Set());
 
   // State: Loading indicator while fetching games from API
   const [loading, setLoading] = useState(true);
@@ -123,7 +143,6 @@ export default function FriendliesPage() {
   // State: Modal for viewing and managing entered players
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedGameForModal, setSelectedGameForModal] = useState<GameWithUserStatus | null>(null);
-  const [pairedGameIdsForModal, setPairedGameIdsForModal] = useState<string[]>([]);
   const [modalGameName, setModalGameName] = useState('');
 
   // State: Dates (YYYY-MM-DD) where the current user has tea duty
@@ -172,10 +191,26 @@ export default function FriendliesPage() {
     if (initDoneRef.current) return;
     initDoneRef.current = true;
 
-    // Restore saved filter tab
-    const savedFilter = sessionStorage.getItem('friendlies_filter') as FilterType | null;
-    if (savedFilter === 'all' || savedFilter === 'O' || savedFilter === 'entered' || savedFilter === 'played') {
-      setFilter(savedFilter);
+    // Restore saved tab selection (with one-time migration from the old single filter)
+    const savedPrimary = sessionStorage.getItem('friendlies_primary_tab') as PrimaryTab | null;
+    const savedAllSub = sessionStorage.getItem('friendlies_all_sub') as AllSub | null;
+    const savedMineSub = sessionStorage.getItem('friendlies_mine_sub') as MineSub | null;
+    if (savedPrimary === 'all' || savedPrimary === 'mine' || savedPrimary === 'stats') {
+      setPrimaryTab(savedPrimary);
+    } else {
+      // Migrate old 'friendlies_filter' values to the new two-level model
+      const old = sessionStorage.getItem('friendlies_filter');
+      if (old === 'entered') { setPrimaryTab('mine'); setMineSub('notplayed'); }
+      else if (old === 'played') { setPrimaryTab('mine'); setMineSub('played'); }
+      else if (old === 'stats') { setPrimaryTab('stats'); }
+      else if (old === 'all') { setPrimaryTab('all'); setAllSub('upcoming'); }
+      // 'O' (or unset) keeps the default: All Games → Open
+    }
+    if (savedAllSub === 'upcoming' || savedAllSub === 'open' || savedAllSub === 'selecting' || savedAllSub === 'played') {
+      setAllSub(savedAllSub);
+    }
+    if (savedMineSub === 'notplayed' || savedMineSub === 'played') {
+      setMineSub(savedMineSub);
     }
 
     // Restore game list from cache for instant display, then background-refresh
@@ -199,25 +234,6 @@ export default function FriendliesPage() {
     fetchGames();
   }, []);
 
-  /**
-   * Effect: Initialize selected games checkboxes when games load
-   * Pre-checks games that user has already entered
-   * Runs whenever games list changes
-   */
-  useEffect(() => {
-    // Only initialize if we have games loaded
-    if (games.length > 0) {
-      // Find all open games that user has already entered
-      // Filter for status='O' (Open) and userEntered=true
-      const enteredTabNames = new Set(
-        games.filter(g => g.status === 'O' && g.userEntered).map(g => g.tabName)
-      );
-
-      // Pre-check these games in the UI
-      setSelectedGames(enteredTabNames);
-    }
-  }, [games]);
-
   // ============================================================================
   // API Functions
   // ============================================================================
@@ -227,12 +243,14 @@ export default function FriendliesPage() {
    * Saves result to sessionStorage so the next visit is instant.
    * Pass { silent: true } to skip the loading spinner (background refresh).
    */
-  async function fetchGames({ silent = false }: { silent?: boolean } = {}) {
+  async function fetchGames({ silent = false, fresh = false }: { silent?: boolean; fresh?: boolean } = {}) {
     const CACHE_KEY = 'friendlies_games_cache';
     if (!silent) setLoading(true);
 
     try {
-      const response = await fetch('/api/friendlies/games');
+      // fresh=true bypasses the server's Games cache so the entered count is current
+      // right after an enter/withdraw (see the games route).
+      const response = await fetch(`/api/friendlies/games${fresh ? '?fresh=1' : ''}`);
       const data = await response.json();
 
       if (data.games) {
@@ -244,6 +262,10 @@ export default function FriendliesPage() {
       if (Array.isArray(data.teaDutyDates)) {
         setTeaDutyDates(new Set<string>(data.teaDutyDates));
       }
+      // Buddies the user may enter alongside themselves (drives the enter dialog option)
+      if (Array.isArray(data.buddies)) {
+        setBuddies(data.buddies as FriendliesBuddy[]);
+      }
     } catch (error) {
       if (!silent) alert('Failed to load games. Please refresh the page.');
     } finally {
@@ -251,112 +273,115 @@ export default function FriendliesPage() {
     }
   }
 
-  /** Force a fresh fetch, bypassing the cache. */
+  /** Force a fresh fetch, bypassing both the client and server Games caches. */
   async function handleReload() {
     sessionStorage.removeItem('friendlies_games_cache');
     setReloading(true);
-    await fetchGames();
+    await fetchGames({ fresh: true });
     setReloading(false);
   }
 
   /**
-   * Update game entries based on checkbox changes
-   * Compares selected games vs currently entered games
-   * Enters new games and withdraws from unchecked games
-   * Shows errors if any updates fail
-   * Refreshes game list after all updates complete
+   * Buddies eligible to be entered into a specific game alongside the user.
+   * A buddy is eligible when their member type is allowed for the game's Ladies/Men
+   * classification and they are not already entered in that game.
    */
-  async function handleUpdateGames() {
-    // Show updating indicator on button
+  function eligibleBuddiesForGame(game: GameWithUserStatus): FriendliesBuddy[] {
+    return buddies.filter(b =>
+      canEnterGame(b.memberType, game.ladiesMen as GameGender) &&
+      !b.enteredTabNames.includes(game.tabName)
+    );
+  }
+
+  /** Buddies already entered in a game — offered for removal alongside the user. */
+  function enteredBuddiesForGame(game: GameWithUserStatus): FriendliesBuddy[] {
+    return buddies.filter(b => b.enteredTabNames.includes(game.tabName));
+  }
+
+  /** Open the enter-game confirm dialog for a single game (game 1 for a pair). */
+  function openEnterDialog(game: GameWithUserStatus) {
+    setEnterBuddySelected(new Set());   // buddy is opt-in each time
+    setEnterOwnTransport(false);
+    setEnterDialogGame(game);
+  }
+
+  /** Open the remove-from-game confirm dialog for a single game. */
+  function openRemoveDialog(game: GameWithUserStatus) {
+    setRemoveBuddySelected(new Set());  // buddy removal is opt-in each time
+    setRemoveDialogGame(game);
+  }
+
+  /**
+   * Confirm entry for exactly one game (plus any ticked buddies). One write path —
+   * this deliberately replaces the old batch "update all selected games" flow.
+   */
+  async function handleEnterConfirm() {
+    const game = enterDialogGame;
+    if (!game) return;
+
     setEntering(true);
-
     try {
-      // Get all open games (only these can be entered/withdrawn)
-      const openGames = games.filter(g => g.status === 'O');
+      const onBehalfOf = Array.from(enterBuddySelected);
+      const carNumbers = (game.homeAway === 'A' && enterOwnTransport)
+        ? { [game.tabName]: 'O' }
+        : undefined;
 
-      // Build set of games user is currently entered in
-      const currentlyEntered = new Set(openGames.filter(g => g.userEntered).map(g => g.tabName));
+      const response = await fetch('/api/friendlies/enter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          game_ids: [game.tabName],
+          ...(onBehalfOf.length > 0 ? { on_behalf_of: onBehalfOf } : {}),
+          ...(carNumbers ? { car_numbers: carNumbers } : {}),
+        }),
+      });
 
-      // Calculate changes needed:
-      // Games to enter: checked but not currently entered
-      const toEnter = Array.from(selectedGames).filter(id => !currentlyEntered.has(id));
-
-      // Games to withdraw: currently entered but not checked
-      const toRemove = openGames.filter(g => currentlyEntered.has(g.tabName) && !selectedGames.has(g.tabName)).map(g => g.tabName);
-
-      // Array to collect any error messages
-      let errors: string[] = [];
-
-      // Enter new games if any
-      if (toEnter.length > 0) {
-        // Build car_numbers map for games with own transport ticked
-        const carNumbers: Record<string, string> = {};
-        for (const tabName of toEnter) {
-          if (ownTransportGames.has(tabName)) {
-            carNumbers[tabName] = 'O';
-          }
-        }
-
-        // Call batch enter API with array of game IDs
-        const enterResponse = await fetch('/api/friendlies/enter', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            game_ids: toEnter,
-            ...(Object.keys(carNumbers).length > 0 ? { car_numbers: carNumbers } : {}),
-          }),
-        });
-
-        const enterData = await enterResponse.json();
-
-        // Check if enter was successful
-        if (enterData.success) {
-          // Check for individual game failures in batch
-          const failed = enterData.results?.filter((r: any) => !r.entered) || [];
-
-          // Add error message for each failed game
-          if (failed.length > 0) {
-            errors.push(...failed.map((f: any) => `Enter ${f.game_id}: ${f.error}`));
-          }
-        } else {
-          // Entire enter request failed
-          errors.push(`Enter failed: ${enterData.error}`);
+      const data = await response.json();
+      if (!response.ok || data.success === false) {
+        alert(data.error || 'Failed to enter game.');
+      } else {
+        const failed = (data.results || []).filter((r: any) => !r.entered);
+        if (failed.length > 0) {
+          alert(`Could not enter:\n\n${failed.map((f: any) => `${f.user_name ?? 'You'}: ${f.error}`).join('\n')}`);
         }
       }
 
-      // Withdraw from unchecked games
-      // Loop through each game to remove
-      for (const tabName of toRemove) {
-        try {
-          // Call withdraw API for this game
-          const removeResponse = await fetch('/api/friendlies/withdraw', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tab_name: tabName }),
-          });
-
-          // Check if withdraw was successful
-          if (!removeResponse.ok) {
-            errors.push(`Remove ${tabName}: Failed`);
-          }
-        } catch (error) {
-          // Network or other error during withdraw
-          errors.push(`Remove ${tabName}: Error`);
-        }
-      }
-
-      // Show error alert if any updates failed
-      if (errors.length > 0) {
-        alert(`Some updates failed:\n\n${errors.join('\n')}`);
-      }
-
-      // Refresh games list to show updated entry statuses
-      await fetchGames();
+      setEnterDialogGame(null);
+      sessionStorage.removeItem('friendlies_games_cache');
+      await fetchGames({ fresh: true }); // bypass server cache so the entered count is current
     } catch (error) {
-      // Show error alert if entire update process fails
-      alert('An error occurred while updating games.');
+      alert('An error occurred while entering the game.');
     } finally {
-      // Hide updating indicator whether success or failure
+      setEntering(false);
+    }
+  }
+
+  /** Confirm removal from a single open game (plus any ticked entered buddies). */
+  async function handleRemoveConfirm() {
+    const game = removeDialogGame;
+    if (!game) return;
+
+    setEntering(true);
+    try {
+      const onBehalfOf = Array.from(removeBuddySelected);
+      const response = await fetch('/api/friendlies/withdraw', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tab_name: game.tabName,
+          ...(onBehalfOf.length > 0 ? { on_behalf_of: onBehalfOf } : {}),
+        }),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        alert(data.error || 'Failed to remove you from the game.');
+      }
+      setRemoveDialogGame(null);
+      sessionStorage.removeItem('friendlies_games_cache');
+      await fetchGames({ fresh: true }); // bypass server cache so the entered count is current
+    } catch (error) {
+      alert('An error occurred while removing you from the game.');
+    } finally {
       setEntering(false);
     }
   }
@@ -395,31 +420,32 @@ export default function FriendliesPage() {
    * For "Open for entry" tab, also filters by member type and game gender eligibility
    */
   const filteredGames = games.filter(game => {
-    // Check which filter is active
-    switch (filter) {
-      case 'O':
-        // Show all Open games regardless of gender eligibility
-        // Ineligible members see the card but cannot enter (no checkbox shown)
-        return game.status === 'O';
-
-      case 'entered': {
-        // Games the user has entered that haven't been played or cancelled yet.
-        // Paired entry only lands on game 1, so also include a game whose paired
-        // partner is entered — otherwise the pair can't render together here.
-        const partnerEntered = game.paired === 'Y' && games.some(g =>
-          g.paired === 'Y' && g.date === game.date && g.tabName !== game.tabName && g.userEntered
-        );
-        return (!!game.userEntered || partnerEntered) && !['P', 'C', 'A'].includes(game.status);
+    if (primaryTab === 'all') {
+      // All Games → filter by game status (mirrors /manage)
+      switch (allSub) {
+        case 'upcoming':  return game.status === '';
+        case 'open':      return game.status === 'O';
+        case 'selecting': return ['X', 'S'].includes(game.status);
+        case 'played':    return ['P', 'C', 'A'].includes(game.status);
+        default:          return false;
       }
-
-      case 'played':
-        // Games the user entered that have been played, cancelled, or abandoned
-        return !!game.userEntered && ['P', 'C', 'A'].includes(game.status);
-
-      default:
-        // 'all' filter - show everything (don't filter by eligibility here)
-        return true;
     }
+
+    if (primaryTab === 'mine') {
+      // My Games → games the user is in. Paired entry only lands on game 1, so also
+      // include a game whose paired partner is entered, otherwise the pair can't
+      // render together here.
+      const partnerEntered = game.paired === 'Y' && games.some(g =>
+        g.paired === 'Y' && g.date === game.date && g.tabName !== game.tabName && g.userEntered
+      );
+      const isMine = !!game.userEntered || partnerEntered;
+      if (!isMine) return false;
+      return mineSub === 'played'
+        ? ['P', 'C', 'A'].includes(game.status)   // Played (incl. cancelled/abandoned)
+        : !['P', 'C', 'A'].includes(game.status); // Not played yet
+    }
+
+    return false; // stats view renders separately
   }).sort((a, b) => {
     // Sort by date (ascending) - earliest dates first using parseUKDate
     const dateA = parseUKDate(a.date);
@@ -526,13 +552,12 @@ export default function FriendliesPage() {
           )}
         </div>
 
-        {/* Filter tabs - allow user to switch between different views */}
-        <div className="flex gap-2 mb-6 border-b border-gray-200">
-          {/* All Games tab */}
+        {/* Primary tabs: All Games | My Games | My Stats */}
+        <div className="flex gap-2 mb-3 border-b border-gray-200">
           <button
-            onClick={() => { setFilter('all'); sessionStorage.setItem('friendlies_filter', 'all'); }}
+            onClick={() => { setPrimaryTab('all'); sessionStorage.setItem('friendlies_primary_tab', 'all'); }}
             className={`px-4 py-2 font-medium border-b-2 ${
-              filter === 'all'
+              primaryTab === 'all'
                 ? 'border-blue-500 text-blue-500'
                 : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
@@ -540,48 +565,27 @@ export default function FriendliesPage() {
             All Games
           </button>
 
-          {/* Open for Entry tab - shows games with status='O' */}
-          <button
-            onClick={() => { setFilter('O'); sessionStorage.setItem('friendlies_filter', 'O'); }}
-            className={`px-4 py-2 font-medium border-b-2 ${
-              filter === 'O'
-                ? 'border-blue-500 text-blue-500'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            Open for Entry
-          </button>
-
-          {/* My Entries / My Played / My Stats — hidden for guests and kiosk */}
+          {/* My Games / My Stats — hidden for guests and kiosk */}
           {!isLimitedView && (
             <>
               <button
-                onClick={() => { setFilter('entered'); sessionStorage.setItem('friendlies_filter', 'entered'); }}
+                onClick={() => { setPrimaryTab('mine'); sessionStorage.setItem('friendlies_primary_tab', 'mine'); }}
                 className={`px-4 py-2 font-medium border-b-2 ${
-                  filter === 'entered'
+                  primaryTab === 'mine'
                     ? 'border-blue-500 text-blue-500'
                     : 'border-transparent text-gray-600 hover:text-gray-800'
                 }`}
               >
-                My Entries
-              </button>
-              <button
-                onClick={() => { setFilter('played'); sessionStorage.setItem('friendlies_filter', 'played'); }}
-                className={`px-4 py-2 font-medium border-b-2 ${
-                  filter === 'played'
-                    ? 'border-blue-500 text-blue-500'
-                    : 'border-transparent text-gray-600 hover:text-gray-800'
-                }`}
-              >
-                My Played
+                My Games
               </button>
               <button
                 onClick={() => {
-                  setFilter('stats');
+                  setPrimaryTab('stats');
+                  sessionStorage.setItem('friendlies_primary_tab', 'stats');
                   if (!statsData) fetchStats();
                 }}
                 className={`px-4 py-2 font-medium border-b-2 ${
-                  filter === 'stats'
+                  primaryTab === 'stats'
                     ? 'border-blue-500 text-blue-500'
                     : 'border-transparent text-gray-600 hover:text-gray-800'
                 }`}
@@ -592,8 +596,52 @@ export default function FriendliesPage() {
           )}
         </div>
 
+        {/* Sub-filter row — status filters for All Games, played state for My Games */}
+        {primaryTab === 'all' && (
+          <div className="flex flex-wrap gap-2 mb-6">
+            {([
+              { value: 'upcoming',  label: 'Upcoming' },
+              { value: 'open',      label: 'Open' },
+              { value: 'selecting', label: 'Selecting' },
+              { value: 'played',    label: 'Played' },
+            ] as const).map(({ value, label }) => (
+              <button
+                key={value}
+                onClick={() => { setAllSub(value); sessionStorage.setItem('friendlies_all_sub', value); }}
+                className={`px-3 py-1.5 text-sm rounded-full font-medium ${
+                  allSub === value
+                    ? 'bg-blue-500 text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+        {primaryTab === 'mine' && (
+          <div className="flex flex-wrap gap-2 mb-6">
+            {([
+              { value: 'notplayed', label: 'Not played' },
+              { value: 'played',    label: 'Played' },
+            ] as const).map(({ value, label }) => (
+              <button
+                key={value}
+                onClick={() => { setMineSub(value); sessionStorage.setItem('friendlies_mine_sub', value); }}
+                className={`px-3 py-1.5 text-sm rounded-full font-medium ${
+                  mineSub === value
+                    ? 'bg-blue-500 text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* ── My Stats view ─────────────────────────────────────────────────── */}
-        {filter === 'stats' ? (
+        {primaryTab === 'stats' ? (
           <div>
             {/* Captain / Admin: player selector */}
             {hasRole(session?.user?.role, 'Captain', 'Admin') && (
@@ -649,13 +697,13 @@ export default function FriendliesPage() {
                 {/* ── Summary ───────────────────────────────────────────────── */}
                 {statsSubView === 'summary' && (() => {
                   const s = statsData.summary;
-                  const total = s.selected + s.reserve + s.reserveTeam + s.opposition + s.withdrawn + s.cancelled + s.abandoned + s.entered;
+                  // Withdrawals are excluded from the total (shown separately at the end)
+                  const total = s.selected + s.reserve + s.reserveTeam + s.opposition + s.cancelled + s.abandoned + s.entered;
                   const rows: { label: string; count: number; color: string }[] = [
                     { label: 'Selected',     count: s.selected,     color: 'bg-green-100 text-green-800 border-green-200' },
                     { label: 'Reserve',      count: s.reserve,      color: 'bg-yellow-100 text-yellow-800 border-yellow-200' },
                     { label: 'Reserve Team', count: s.reserveTeam,  color: 'bg-orange-100 text-orange-800 border-orange-200' },
                     { label: 'Opposition',   count: s.opposition,   color: 'bg-blue-100 text-blue-800 border-blue-200' },
-                    { label: 'Withdrawn',    count: s.withdrawn,    color: 'bg-gray-100 text-gray-700 border-gray-200' },
                     { label: 'Cancelled',    count: s.cancelled,    color: 'bg-red-100 text-red-700 border-red-200' },
                     { label: 'Abandoned',    count: s.abandoned,    color: 'bg-orange-100 text-orange-700 border-orange-200' },
                     { label: 'Entered',      count: s.entered,      color: 'bg-gray-50 text-gray-600 border-gray-200' },
@@ -674,6 +722,13 @@ export default function FriendliesPage() {
                           <div className="text-2xl font-bold">{total}</div>
                           <div className="text-sm font-medium mt-1">Total</div>
                         </div>
+                        {/* Withdrawn shown last, separate from (and excluded from) the total */}
+                        {s.withdrawn > 0 && (
+                          <div className="border rounded-lg p-4 bg-gray-100 text-gray-700 border-gray-200">
+                            <div className="text-2xl font-bold">{s.withdrawn}</div>
+                            <div className="text-sm font-medium mt-1">Withdrawn</div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
@@ -832,7 +887,6 @@ export default function FriendliesPage() {
                             <button
                               onClick={() => {
                                 setSelectedGameForModal(gameA);
-                                setPairedGameIdsForModal([gameB.tabName]);
                                 setModalGameName(
                                   gameA.clubName !== gameB.clubName
                                     ? `${gameA.clubName} + ${gameB.clubName} - ${gameA.date}`
@@ -875,35 +929,30 @@ export default function FriendliesPage() {
                       </p>
                     )}
 
-                    {/* Single checkbox enters BOTH games — hidden for guests and kiosk */}
+                    {/* Single button enters game 1 of the pair (captain moves overflow into
+                        game 2 during selection). Opens the same confirm dialog as single games. */}
                     {!isLimitedView && gameA.status === 'O' && memberType && !pairedIsOnTeaDuty && (
                       canEnterGame(memberType, gameA.ladiesMen as GameGender) ||
                       canEnterGame(memberType, gameB.ladiesMen as GameGender)
-                    ) && (() => {
-                      return (
-                        <label className="flex items-center space-x-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            // Entry goes into game 1 (the first of the pair) only; the
-                            // captain moves overflow into game 2 during selection.
-                            checked={selectedGames.has(gameA.tabName)}
-                            onChange={e => {
-                              const newSelected = new Set(selectedGames);
-                              if (e.target.checked) {
-                                newSelected.add(gameA.tabName);
-                              } else {
-                                newSelected.delete(gameA.tabName);
-                              }
-                              setSelectedGames(newSelected);
-                            }}
-                            className="w-4 h-4 text-blue-500 rounded focus:ring-blue-500"
-                          />
-                          <span className="text-sm font-medium text-blue-500">
-                            {gameA.userEntered ? 'Entered' : 'Enter'}
-                          </span>
-                        </label>
-                      );
-                    })()}
+                    ) && (
+                      gameA.userEntered ? (
+                        <button
+                          type="button"
+                          onClick={() => openRemoveDialog(gameA)}
+                          className="text-sm font-medium text-green-700 hover:text-red-600"
+                        >
+                          Entered <span className="text-gray-400">— tap to remove</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => openEnterDialog(gameA)}
+                          className={`${getButtonClasses('primary', 'sm')}`}
+                        >
+                          Enter this game
+                        </button>
+                      )
+                    )}
                   </div>
                 );
               }
@@ -991,7 +1040,6 @@ export default function FriendliesPage() {
                             <button
                               onClick={() => {
                                 setSelectedGameForModal(game);
-                                setPairedGameIdsForModal([]);
                                 setModalGameName(`${game.clubName} - ${game.date}`);
                                 setIsModalOpen(true);
                               }}
@@ -1044,72 +1092,39 @@ export default function FriendliesPage() {
                     </p>
                   )}
 
-                  {/* For open games, show checkbox to enter/withdraw — hidden for guests and kiosk */}
+                  {/* For open games, show a single-action button that opens a confirm dialog.
+                      Entering one game per action keeps writes low and removes the old
+                      multi-select + floating "Update" button that confused people. */}
                   {!isLimitedView && game.status === 'O' && memberType && canEnterGame(memberType, game.ladiesMen as GameGender) && !isOnTeaDuty && (() => {
                     // Check if game is full and user hasn't already entered
                     const capacity = calculateCapacity(game);
                     const isFull = capacity.isFull && !game.userEntered;
-                    const isChecked = selectedGames.has(game.tabName);
-                    const isAway = game.homeAway === 'A';
-                    const isOwnTransport = ownTransportGames.has(game.tabName);
+
+                    if (game.userEntered) {
+                      // Already entered — clicking opens the remove confirm dialog
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => openRemoveDialog(game)}
+                          className="text-sm font-medium text-green-700 hover:text-red-600"
+                        >
+                          Entered <span className="text-gray-400">— tap to remove</span>
+                        </button>
+                      );
+                    }
+
+                    if (isFull) {
+                      return <span className="text-sm font-medium text-gray-700">Game is full</span>;
+                    }
 
                     return (
-                      <div className="space-y-1">
-                        <label className={`flex items-center space-x-2 ${isFull ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
-                          <input
-                            type="checkbox"
-                            checked={isChecked}
-                            disabled={isFull}
-                            onChange={e => {
-                              // Create new Set to trigger state update
-                              const newSelected = new Set(selectedGames);
-
-                              // Add or remove game from selected set
-                              if (e.target.checked) {
-                                newSelected.add(game.tabName);
-                              } else {
-                                newSelected.delete(game.tabName);
-                                // Clear own transport when unchecking entry
-                                const newOwnTransport = new Set(ownTransportGames);
-                                newOwnTransport.delete(game.tabName);
-                                setOwnTransportGames(newOwnTransport);
-                              }
-
-                              // Update selected games state
-                              setSelectedGames(newSelected);
-                            }}
-                            className="w-4 h-4 text-blue-500 rounded focus:ring-blue-500 disabled:cursor-not-allowed"
-                          />
-
-                          {/* Label shows current entry status or full message */}
-                          <span className={`text-sm font-medium ${isFull ? 'text-gray-700' : 'text-blue-500'}`}>
-                            {isFull ? 'Game is full' : (game.userEntered ? 'Entered' : 'Enter this game')}
-                          </span>
-                        </label>
-
-                        {/* Own Transport checkbox — away games only, shown when entering a new game */}
-                        {isAway && isChecked && !game.userEntered && (
-                          <label className="flex items-center space-x-2 cursor-pointer ml-6">
-                            <input
-                              type="checkbox"
-                              checked={isOwnTransport}
-                              onChange={e => {
-                                const newOwnTransport = new Set(ownTransportGames);
-                                if (e.target.checked) {
-                                  newOwnTransport.add(game.tabName);
-                                } else {
-                                  newOwnTransport.delete(game.tabName);
-                                }
-                                setOwnTransportGames(newOwnTransport);
-                              }}
-                              className="w-4 h-4 text-gray-500 rounded focus:ring-gray-500"
-                            />
-                            <span className="text-sm text-gray-600">
-                              Making my own way <span className="text-gray-500">— not car sharing</span>
-                            </span>
-                          </label>
-                        )}
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => openEnterDialog(game)}
+                        className={`${getButtonClasses('primary', 'sm')}`}
+                      >
+                        Enter this game
+                      </button>
                     );
                   })()}
 
@@ -1122,6 +1137,14 @@ export default function FriendliesPage() {
                     >
                       View Details
                     </Link>
+                  )}
+
+                  {/* Cancellation / abandonment reason and who */}
+                  {['C', 'A'].includes(game.status) && (game.who || game.reason) && (
+                    <div className="text-xs text-gray-500 mt-1 space-y-0.5">
+                      {game.who && <div>By: {game.who}</div>}
+                      {game.reason && <div>Reason: {game.reason}</div>}
+                    </div>
                   )}
 
                   {/* Selection status badge — shown when team has been published */}
@@ -1151,51 +1174,96 @@ export default function FriendliesPage() {
           </div>
         )}
 
-        {/* Floating action button - only show when there are pending changes */}
-        {(() => {
-          // Get all open games
-          const openGames = games.filter(g => g.status === 'O');
+        {/* Enter-game confirm dialog — enters exactly one game, with opt-in buddy + own-transport */}
+        {enterDialogGame && (() => {
+          const g = enterDialogGame;
+          const eligibleBuddies = eligibleBuddiesForGame(g);
+          const isAway = g.homeAway === 'A';
+          return (
+            <ConfirmDialog
+              isOpen={true}
+              title="Enter this game"
+              message={`Enter ${g.clubName} on ${g.date}?`}
+              confirmLabel={entering ? 'Entering…' : 'Enter'}
+              cancelLabel="Cancel"
+              confirmVariant="primary"
+              confirmDisabled={entering}
+              onConfirm={handleEnterConfirm}
+              onCancel={() => { if (!entering) setEnterDialogGame(null); }}
+            >
+              <div className="mb-6 space-y-2 text-left">
+                {/* Buddy opt-in — only eligible buddies for this game */}
+                {eligibleBuddies.map((b) => (
+                  <label key={b.userName} className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={enterBuddySelected.has(b.userName)}
+                      onChange={(e) => {
+                        const next = new Set(enterBuddySelected);
+                        if (e.target.checked) next.add(b.userName); else next.delete(b.userName);
+                        setEnterBuddySelected(next);
+                      }}
+                      className="w-4 h-4 text-blue-500 rounded focus:ring-blue-500"
+                    />
+                    <span className="text-sm text-gray-700">Enter {b.name} too?</span>
+                  </label>
+                ))}
 
-          // Get set of games user is currently entered in
-          const currentlyEntered = new Set(openGames.filter(g => g.userEntered).map(g => g.tabName));
-
-          // Calculate number of changes
-          // Games to enter: checked but not currently entered
-          const toEnter = Array.from(selectedGames).filter(id => !currentlyEntered.has(id));
-
-          // Games to withdraw: currently entered but not checked
-          const toRemove = openGames.filter(g => currentlyEntered.has(g.tabName) && !selectedGames.has(g.tabName));
-
-          // Total number of changes
-          const changeCount = toEnter.length + toRemove.length;
-
-          // Only show button if there are pending changes
-          const hasChanges = changeCount > 0;
-
-          return hasChanges && (
-            <div className="fixed bottom-8 right-8 z-50">
-              <button
-                onClick={handleUpdateGames}
-                disabled={entering}
-                className="bg-green-600 text-white px-6 py-3 rounded-full shadow-lg hover:bg-green-700 transition-colors flex items-center space-x-2 disabled:opacity-50"
-              >
-                {/* Show spinner and "Updating..." text while submitting */}
-                {entering ? (
-                  <>
-                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                    <span>Updating...</span>
-                  </>
-                ) : (
-                  // Show number of changes and checkmark icon
-                  <>
-                    <span>Update {changeCount} Game{changeCount !== 1 ? 's' : ''}</span>
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                  </>
+                {/* Own transport — away games only */}
+                {isAway && (
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={enterOwnTransport}
+                      onChange={(e) => setEnterOwnTransport(e.target.checked)}
+                      className="w-4 h-4 text-gray-500 rounded focus:ring-gray-500"
+                    />
+                    <span className="text-sm text-gray-600">
+                      Making my own way <span className="text-gray-500">— not car sharing</span>
+                    </span>
+                  </label>
                 )}
-              </button>
-            </div>
+              </div>
+            </ConfirmDialog>
+          );
+        })()}
+
+        {/* Remove confirm dialog — removes the user from one open game, with opt-in buddy removal */}
+        {removeDialogGame && (() => {
+          const g = removeDialogGame;
+          const enteredBuddies = enteredBuddiesForGame(g);
+          return (
+            <ConfirmDialog
+              isOpen={true}
+              title="Remove from this game"
+              message={`Remove yourself from ${g.clubName} on ${g.date}?`}
+              confirmLabel={entering ? 'Removing…' : 'Remove'}
+              cancelLabel="Cancel"
+              confirmVariant="danger"
+              confirmDisabled={entering}
+              onConfirm={handleRemoveConfirm}
+              onCancel={() => { if (!entering) setRemoveDialogGame(null); }}
+            >
+              {enteredBuddies.length > 0 && (
+                <div className="mb-6 space-y-2 text-left">
+                  {enteredBuddies.map((b) => (
+                    <label key={b.userName} className="flex items-center space-x-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={removeBuddySelected.has(b.userName)}
+                        onChange={(e) => {
+                          const next = new Set(removeBuddySelected);
+                          if (e.target.checked) next.add(b.userName); else next.delete(b.userName);
+                          setRemoveBuddySelected(next);
+                        }}
+                        className="w-4 h-4 text-red-500 rounded focus:ring-red-500"
+                      />
+                      <span className="text-sm text-gray-700">Remove {b.name} too?</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </ConfirmDialog>
           );
         })()}
 
@@ -1230,11 +1298,9 @@ export default function FriendliesPage() {
             onClose={() => {
               setIsModalOpen(false);
               setSelectedGameForModal(null);
-              setPairedGameIdsForModal([]);
               setModalGameName('');
             }}
             gameId={selectedGameForModal.tabName}
-            pairedGameIds={pairedGameIdsForModal}
             gameType="friendlies"
             gameName={modalGameName}
             ladiesMen={selectedGameForModal.ladiesMen}

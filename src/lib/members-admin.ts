@@ -176,14 +176,23 @@ export async function createMember(input: CreateMemberInput): Promise<CreateMemb
     const nowIso = new Date().toISOString();
     const currentYear = new Date().getFullYear();
 
+    // Google Sheets with USER_ENTERED parses a pure-digit string as a number,
+    // stripping the leading zero from UK phone numbers. Prefixing with an
+    // apostrophe forces the cell to text (the marker is not stored and does not
+    // appear when read back), preserving the leading zero and any spaces.
+    const asPhoneText = (v: string | undefined) => {
+      const trimmed = v?.trim() || '';
+      return trimmed ? `'${trimmed}` : '';
+    };
+
     // Map normalized Members column name -> value. Columns not listed are left blank.
     const memberFields: { [key: string]: any } = {
       first_name: input.firstName,
       last_name: input.lastName,
       known_as: input.knownAs,
       email_address: input.emailAddress,
-      landline: input.landline,
-      mobile: input.mobile,
+      landline: asPhoneText(input.landline),
+      mobile: asPhoneText(input.mobile),
       address_1: input.address1,
       address_2: input.address2,
       address_3: input.address3,
