@@ -23,7 +23,8 @@ export async function POST(request: NextRequest) {
 
     // Parse request body
     const body = await request.json();
-    const { gameId, playerUserName, forceRemove = false } = body;
+    // sendEmail (default true) is set by the captain's "Send player email" checkbox.
+    const { gameId, playerUserName, forceRemove = false, sendEmail = true } = body;
 
     // Validate input
     if (!gameId || !playerUserName) {
@@ -64,8 +65,8 @@ export async function POST(request: NextRequest) {
 
     const appUrl = await getAppUrl();
 
-    if (game.status === 'S' && !forceRemove) {
-      // Published game — mark as withdrawn rather than delete.
+    if (['X', 'S'].includes(game.status) && !forceRemove) {
+      // Selecting/Published game — mark as withdrawn rather than delete.
       // Player stays on the game sheet so the captain can see who dropped out.
       const players = await getGameSheet(game.tabName);
       const playerInGame = players.find(p => p.name === playerUserName);
@@ -90,15 +91,17 @@ export async function POST(request: NextRequest) {
         console.error('[remove-player] Error updating entered count:', countError);
       }
 
-      // Send withdrawal notice to the player (fire-and-forget)
-      try {
-        const user = await getUserByUsername(playerUserName);
-        if (user?.emailAddress) {
-          const fullName = user.fullName || (user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : playerUserName);
-          await sendWithdrawnByAdminNoticeEmail(user.emailAddress, playerUserName, fullName, game, appUrl);
+      // Send withdrawal notice to the player (fire-and-forget), unless suppressed.
+      if (sendEmail) {
+        try {
+          const user = await getUserByUsername(playerUserName);
+          if (user?.emailAddress) {
+            const fullName = user.fullName || (user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : playerUserName);
+            await sendWithdrawnByAdminNoticeEmail(user.emailAddress, playerUserName, fullName, game, appUrl);
+          }
+        } catch (emailError) {
+          console.error('[remove-player] Error sending withdrawal notice email:', emailError);
         }
-      } catch (emailError) {
-        console.error('[remove-player] Error sending withdrawal notice email:', emailError);
       }
 
       return NextResponse.json({ success: true, withdrawn: true });
@@ -122,18 +125,20 @@ export async function POST(request: NextRequest) {
     const emailPartner = game.paired === 'Y'
       ? allGames.find(g => g.tabName !== game.tabName && g.paired === 'Y' && g.date === game.date)
       : undefined;
-    try {
-      const user = await getUserByUsername(playerUserName);
-      if (user?.emailAddress) {
-        const fullName = user.fullName || (user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : playerUserName);
-        if (emailPartner) {
-          await sendLinkedWithdrawalNoticeEmail(user.emailAddress, playerUserName, fullName, game, emailPartner, appUrl);
-        } else {
-          await sendRemovedNoticeEmail(user.emailAddress, playerUserName, fullName, game, appUrl);
+    if (sendEmail) {
+      try {
+        const user = await getUserByUsername(playerUserName);
+        if (user?.emailAddress) {
+          const fullName = user.fullName || (user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : playerUserName);
+          if (emailPartner) {
+            await sendLinkedWithdrawalNoticeEmail(user.emailAddress, playerUserName, fullName, game, emailPartner, appUrl);
+          } else {
+            await sendRemovedNoticeEmail(user.emailAddress, playerUserName, fullName, game, appUrl);
+          }
         }
+      } catch (emailError) {
+        console.error('[remove-player] Error sending removal notice email:', emailError);
       }
-    } catch (emailError) {
-      console.error('[remove-player] Error sending removal notice email:', emailError);
     }
 
     return NextResponse.json({ success: true });

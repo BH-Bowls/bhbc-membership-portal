@@ -14,8 +14,12 @@ import { clearDiaryCache } from '@/lib/home-cache';
 import { sendRejoinEmail, sendRejoinNoticeEmail } from '@/lib/email/friendlies';
 import type { WithdrawRequest } from '@/lib/types/friendlies';
 import { getUserByUsername } from '@/lib/sheets';
+import { hasRole } from '@/lib/role-utils';
 
-// POST handler - Re-joins the current user to a Selected game they had withdrawn from
+// POST handler - Re-joins a player who had withdrawn from a Selecting/Selected game.
+// Self-service: a member re-joins themselves (from the game page) — captains notified.
+// Captain "Restore": pass `playerUserName` (Captain/Admin only) to restore another
+// player; captains are not re-notified and the player email is gated by `sendPlayerEmail`.
 export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
@@ -23,9 +27,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const body: WithdrawRequest = await request.json();
+    const body: WithdrawRequest & { playerUserName?: string; sendPlayerEmail?: boolean } = await request.json();
     const tab_name = decodeURIComponent(body.tab_name);
-    const userName = session.user.userName;
+
+    // A captain-supplied playerUserName means "Restore this player"; otherwise the
+    // caller is re-joining themselves.
+    const explicitTarget = typeof body.playerUserName === 'string' && body.playerUserName.trim()
+      ? body.playerUserName.trim()
+      : null;
+    const isCaptainAction = explicitTarget !== null;
+    const target = explicitTarget ?? session.user.userName;
+    const sendPlayerEmail = body.sendPlayerEmail !== false; // default true
+
+    // Only Captains/Admins may restore someone other than themselves.
+    if (isCaptainAction && target !== session.user.userName && !hasRole(session.user.role, 'Captain', 'Admin')) {
+      return NextResponse.json({ error: 'Only captains can restore another player' }, { status: 403 });
+    }
 
     // Find the game
     const games = await getGames();
@@ -40,31 +57,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
 
-    // Re-join only makes sense for a published (Selected) game — the same state in
-    // which the game page offers a withdrawal to reverse.
-    if (game.status !== 'S') {
+    // Re-join / restore applies while the game is Selecting or Selected (the states
+    // in which a player can be withdrawn).
+    if (!['X', 'S'].includes(game.status)) {
       return NextResponse.json(
-        { error: 'You can only re-join a game that is still selected' },
+        { error: 'You can only re-join a game that is still selecting or selected' },
         { status: 400 }
       );
     }
 
-    // Find this user in the game sheet
+    // Find the target in the game sheet
     const players = await getGameSheet(game.tabName);
     let userPlayer = null;
     for (const p of players) {
-      if (p.name === userName) {
+      if (p.name === target) {
         userPlayer = p;
         break;
       }
     }
     if (!userPlayer) {
-      return NextResponse.json({ error: 'You are not in this game' }, { status: 404 });
+      return NextResponse.json({ error: 'Player is not in this game' }, { status: 404 });
     }
 
     // Must currently be withdrawn to re-join
     if (userPlayer.status !== 'W') {
-      return NextResponse.json({ error: 'You have not withdrawn from this game' }, { status: 400 });
+      return NextResponse.json({ error: 'Player has not withdrawn from this game' }, { status: 400 });
     }
 
     // Restore their selection role. Normally it was preserved on withdrawal (Y/R/T),
@@ -92,7 +109,7 @@ export async function POST(request: NextRequest) {
     } else {
       restoredStatus = 'R';
     }
-    await updatePlayerEntry(userName, game.tabName, restoredStatus as any);
+    await updatePlayerEntry(target, game.tabName, restoredStatus as any);
 
     // Recalculate entered count now that this player is active again
     try {
@@ -104,40 +121,45 @@ export async function POST(request: NextRequest) {
 
     const appUrl = await getAppUrl();
 
-    // Notify the captains that the player is back in (they may have arranged a
-    // replacement after the earlier withdrawal).
-    try {
-      await sendRejoinEmail(
-        userName,
-        game,
-        {
-          selected: userPlayer.selected,
-          team: userPlayer.team,
-          position: userPlayer.position,
-        },
-        appUrl
-      );
-    } catch (emailError) {
-      console.error('Error sending re-join captain email:', emailError);
+    // Notify the captains ONLY for a self re-join (a captain doing a Restore is already
+    // acting, so we don't re-notify them).
+    if (!isCaptainAction) {
+      try {
+        await sendRejoinEmail(
+          target,
+          game,
+          {
+            selected: userPlayer.selected,
+            team: userPlayer.team,
+            position: userPlayer.position,
+          },
+          appUrl
+        );
+      } catch (emailError) {
+        console.error('Error sending re-join captain email:', emailError);
+      }
     }
 
-    // Send a re-join confirmation to the player (fire-and-forget)
-    try {
-      const user = await getUserByUsername(userName);
-      if (user?.emailAddress) {
-        const fullName = user.fullName || (user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : userName);
-        await sendRejoinNoticeEmail(user.emailAddress, userName, fullName, game, appUrl);
+    // Send a re-join confirmation to the player (fire-and-forget), unless suppressed
+    // by the captain's "Send player email" checkbox.
+    if (sendPlayerEmail) {
+      try {
+        const user = await getUserByUsername(target);
+        if (user?.emailAddress) {
+          const fullName = user.fullName || (user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : target);
+          await sendRejoinNoticeEmail(user.emailAddress, target, fullName, game, appUrl);
+        }
+      } catch (emailError) {
+        console.error('Error sending re-join notice email:', emailError);
       }
-    } catch (emailError) {
-      console.error('Error sending re-join notice email:', emailError);
     }
 
     // Invalidate the diary cache so the home page reflects the re-join
-    clearDiaryCache(userName);
+    clearDiaryCache(target);
 
     return NextResponse.json({
       success: true,
-      message: 'Re-joined and captains notified',
+      message: isCaptainAction ? 'Player restored' : 'Re-joined and captains notified',
     });
   } catch (error) {
     console.error('POST /api/friendlies/rejoin error:', error);

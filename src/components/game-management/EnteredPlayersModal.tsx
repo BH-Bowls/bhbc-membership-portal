@@ -71,11 +71,16 @@ export function EnteredPlayersModal({
   const [selectedPlayers, setSelectedPlayers] = useState<string[]>([]);
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
-  const [removeDialog, setRemoveDialog] = useState<{ userName: string; fullName: string } | null>(null);
+  const [removeDialog, setRemoveDialog] = useState<{ userName: string; fullName: string; isWithdrawn: boolean } | null>(null);
+  const [sendEmail, setSendEmail] = useState(true);
   const [error, setError] = useState('');
 
   // Check if user is captain or admin (no capacity restrictions)
   const isCaptainOrAdmin = hasRole(currentUserRole, 'Captain', 'Admin');
+
+  // Friendlies get the richer flow (Selecting + Selected dialog, Send-player-email
+  // checkbox, and Restore for withdrawn players). Other game types keep the simpler flow.
+  const isFriendlies = gameType === 'friendlies';
 
   useEffect(() => {
     if (isOpen) {
@@ -227,7 +232,7 @@ export function EnteredPlayersModal({
     }
   }
 
-  async function handleRemovePlayer(userName: string, forceRemove = false) {
+  async function handleRemovePlayer(userName: string, forceRemove = false, emailPlayer = true) {
     setRemoveDialog(null);
     setRemoving(userName);
     setError('');
@@ -240,6 +245,7 @@ export function EnteredPlayersModal({
           gameId,
           playerUserName: userName,
           forceRemove,
+          sendEmail: emailPlayer,
         }),
       });
 
@@ -262,6 +268,39 @@ export function EnteredPlayersModal({
     }
   }
 
+  // Captain "Restore" of a withdrawn friendlies player — goes through the same
+  // /rejoin route a member uses, with the player email gated by the checkbox.
+  async function handleRestorePlayer(userName: string, emailPlayer = true) {
+    setRemoveDialog(null);
+    setRemoving(userName);
+    setError('');
+
+    try {
+      const response = await fetch('/api/friendlies/rejoin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tab_name: gameId,
+          playerUserName: userName,
+          sendPlayerEmail: emailPlayer,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        await fetchEnteredPlayers();
+        onPlayersChanged();
+      } else {
+        setError(data.error || 'Failed to restore player');
+      }
+    } catch (err) {
+      setError('Failed to restore player');
+    } finally {
+      setRemoving(null);
+    }
+  }
+
   const handleClose = () => {
     setShowAddDialog(false);
     setSelectedPlayers([]);
@@ -274,16 +313,42 @@ export function EnteredPlayersModal({
 
   return (
     <>
-      {/* Remove or Withdraw dialog — shown for selected games */}
+      {/* Action dialog — shown for Selecting/Selected games (Friendlies), or Selected
+          games for other game types. Withdrawn players get Restore/Delete. */}
       {removeDialog && (
         <div className="fixed inset-0 z-[110] overflow-y-auto">
           <div className="fixed inset-0 bg-black bg-opacity-60" onClick={() => setRemoveDialog(null)} />
           <div className="flex min-h-full items-center justify-center p-4">
             <div className="relative bg-white rounded-lg shadow-xl max-w-sm w-full p-6" onClick={e => e.stopPropagation()}>
-              <h3 className="text-lg font-semibold text-gray-900 mb-1">Remove {removeDialog.fullName}?</h3>
-              <p className="text-sm text-gray-600 mb-5">
-                This game has been selected. Do you want to <strong>withdraw</strong> the player (they appear as withdrawn in the sheet) or <strong>remove</strong> them completely (e.g. to move them to another game)?
-              </p>
+              {isFriendlies && removeDialog.isWithdrawn ? (
+                <>
+                  <h3 className="text-lg font-semibold text-gray-900 mb-1">Restore or remove {removeDialog.fullName}?</h3>
+                  <p className="text-sm text-gray-600 mb-4">
+                    This player has <strong>withdrawn</strong>. <strong>Restore</strong> puts them back in the game (as a member re-joining would), or <strong>Remove</strong> takes them out of the game completely.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <h3 className="text-lg font-semibold text-gray-900 mb-1">Remove {removeDialog.fullName}?</h3>
+                  <p className="text-sm text-gray-600 mb-4">
+                    Do you want to <strong>withdraw</strong> the player (they appear as withdrawn in the sheet) or <strong>remove</strong> them completely (e.g. to move them to another game)?
+                  </p>
+                </>
+              )}
+
+              {/* Send-player-email checkbox (Friendlies only) */}
+              {isFriendlies && (
+                <label className="flex items-center gap-2 text-sm text-gray-700 mb-5">
+                  <input
+                    type="checkbox"
+                    checked={sendEmail}
+                    onChange={(e) => setSendEmail(e.target.checked)}
+                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  Send player email
+                </label>
+              )}
+
               <div className="flex gap-3 justify-end">
                 <button
                   onClick={() => setRemoveDialog(null)}
@@ -291,18 +356,37 @@ export function EnteredPlayersModal({
                 >
                   Cancel
                 </button>
-                <button
-                  onClick={() => handleRemovePlayer(removeDialog.userName, false)}
-                  className="px-4 py-2 text-sm text-white bg-amber-600 rounded hover:bg-amber-700"
-                >
-                  Withdraw
-                </button>
-                <button
-                  onClick={() => handleRemovePlayer(removeDialog.userName, true)}
-                  className="px-4 py-2 text-sm text-white bg-red-600 rounded hover:bg-red-700"
-                >
-                  Remove
-                </button>
+                {isFriendlies && removeDialog.isWithdrawn ? (
+                  <>
+                    <button
+                      onClick={() => handleRemovePlayer(removeDialog.userName, true, sendEmail)}
+                      className="px-4 py-2 text-sm text-white bg-red-600 rounded hover:bg-red-700"
+                    >
+                      Remove
+                    </button>
+                    <button
+                      onClick={() => handleRestorePlayer(removeDialog.userName, sendEmail)}
+                      className="px-4 py-2 text-sm text-white bg-green-600 rounded hover:bg-green-700"
+                    >
+                      Restore
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => handleRemovePlayer(removeDialog.userName, false, sendEmail)}
+                      className="px-4 py-2 text-sm text-white bg-amber-600 rounded hover:bg-amber-700"
+                    >
+                      Withdraw
+                    </button>
+                    <button
+                      onClick={() => handleRemovePlayer(removeDialog.userName, true, sendEmail)}
+                      className="px-4 py-2 text-sm text-white bg-red-600 rounded hover:bg-red-700"
+                    >
+                      Remove
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -471,8 +555,17 @@ export function EnteredPlayersModal({
                       {isCaptainOrAdmin && (
                         <button
                           onClick={() => {
-                            if (gameStatus === 'S') {
-                              setRemoveDialog({ userName: player.userName, fullName: player.fullName });
+                            // Friendlies: dialog for Selecting/Selected; other types: Selected only.
+                            const useDialog = isFriendlies
+                              ? ['X', 'S'].includes(gameStatus ?? '')
+                              : gameStatus === 'S';
+                            if (useDialog) {
+                              setSendEmail(true); // reset the "Send player email" default each open
+                              setRemoveDialog({
+                                userName: player.userName,
+                                fullName: player.fullName,
+                                isWithdrawn: /W$/.test(player.status), // PW/RW/TW/EW/MW
+                              });
                             } else {
                               handleRemovePlayer(player.userName);
                             }

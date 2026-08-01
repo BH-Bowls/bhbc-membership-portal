@@ -1303,6 +1303,7 @@ export default function FriendliesPage() {
             gameId={selectedGameForModal.tabName}
             gameType="friendlies"
             gameName={modalGameName}
+            gameStatus={selectedGameForModal.status}
             ladiesMen={selectedGameForModal.ladiesMen}
             currentUserRole={session?.user?.role}
             maxPlayers={selectedGameForModal.maxPlayers}
