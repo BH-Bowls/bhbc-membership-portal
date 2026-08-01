@@ -6,6 +6,7 @@
 
 import bcrypt from 'bcryptjs';
 import { parseRoles } from './role-utils';
+import { isMaintenanceModeOn } from './maintenance';
 import {
   getUserByUsername,
   getUsersByEmail,
@@ -164,6 +165,19 @@ export async function authenticateUser(
 
       // Re-throw other errors
       throw error;
+    }
+
+    // Maintenance mode: non-Admin logins are blocked outright while the flag is set,
+    // even with fully correct credentials. Checked here (after resolving the user, so we
+    // know their role) rather than before the lookup, so a genuine Admin login still works.
+    if (await isMaintenanceModeOn()) {
+      const isUserAdmin = user ? parseRoles(user.role).includes('Admin') : false;
+      if (!isUserAdmin) {
+        return {
+          success: false,
+          error: 'The portal is temporarily down for maintenance. Please check back later.',
+        };
+      }
     }
 
     // Check if user was found

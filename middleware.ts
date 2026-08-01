@@ -7,6 +7,7 @@
 import { withAuth } from 'next-auth/middleware';
 import { NextResponse } from 'next/server';
 import { hasRole, isCommitteeMember } from './src/lib/role-utils';
+import { isMaintenanceModeOn } from './src/lib/maintenance';
 
 /**
  * Middleware function that runs on every protected route
@@ -114,12 +115,29 @@ export default withAuth(
    * @param req Request object with NextAuth token attached
    * @returns NextResponse to continue or redirect
    */
-  function middleware(req) {
+  async function middleware(req) {
     // Get authentication token from NextAuth
     const token = req.nextauth.token;
 
     // Get current URL pathname
     const pathname = req.nextUrl.pathname;
+
+    // Maintenance mode: an already-logged-in non-Admin session doesn't just keep working
+    // once the flag is flipped on — it gets redirected on its very next request. (New
+    // non-Admin logins are blocked separately, in authenticateUser().) Only checked when
+    // there's a non-Admin token on the request at all, so anonymous visitors to public
+    // pages and Admins never pay the extra lookup.
+    if (token && !hasRole(token.role as string, 'Admin') && pathname !== '/maintenance') {
+      if (await isMaintenanceModeOn()) {
+        if (pathname.startsWith('/api/')) {
+          return NextResponse.json(
+            { error: 'The portal is temporarily down for maintenance. Please check back later.' },
+            { status: 503 }
+          );
+        }
+        return NextResponse.redirect(new URL('/maintenance', req.url));
+      }
+    }
 
     // Public-access PIN gate. When PUBLIC_ACCESS_PIN is configured, the public
     // (no-login) pages require either a logged-in session or a valid PIN cookie.
