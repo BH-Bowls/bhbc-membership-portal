@@ -180,6 +180,8 @@ Either way it **wipes and re-seeds Dev from scratch each time it's run** — ful
 
 **Schema changes become versioned migration files, applied to Dev first, then Prod** — not ad hoc edits run by hand against whichever database. This is also the answer to "does every change need to go in this plan document": individual schema tweaks going forward (like the `worker_additional_info` column added above) don't need updating here indefinitely — this document covers the one-time Phase 0/1 migration itself; once that's done, ongoing schema evolution is "add a migration file, apply to Dev, verify, apply to Prod," normal engineering rather than a planning-document update.
 
+**Migration-branch deployments must point at Dev, never Prod.** Vercel supports separate env vars per deployment type (Production / Preview / Development). The migration work branch's **Preview** environment variables need to be set to the Dev Supabase project's credentials before the first push — otherwise a preview build could read or write real data through what's meant to be the safe sandbox. Confirm this in Vercel's project settings before pushing, not after. `main`'s Production env vars stay pointed at Sheets (and, later, Prod Postgres) throughout — the migration branch's preview deployments are fully isolated from production either way, per the existing branch/deploy workflow (`specs/CLAUDE.md`).
+
 ---
 
 ## Migration Sequencing
@@ -205,7 +207,11 @@ create table config (
   updated_at  timestamptz not null default now(),
   updated_by  text   -- username, informational only
 );
+
+alter table config enable row level security;
 ```
+
+**Standing rule from Step 0 onward, confirmed 2026-08-01: every table gets `enable row level security` with zero policies defined, no exceptions.** The app only ever talks to Postgres server-side via the `service_role` key (`src/lib/supabase.ts`), which bypasses RLS entirely regardless — so this costs nothing functionally. What it buys: Supabase auto-exposes every table via its REST API, gated by whichever key a caller uses; the `anon`/publishable key is meant to be safe to expose client-side *only if* RLS is locking down what it can touch. With RLS on and no policies, that key (and anything else that isn't `service_role`) is denied by default on every table — the correct posture given nothing client-side is ever meant to touch Postgres directly in this design.
 
 `config-supabase.ts` replaces `config-sheets.ts` with identical signatures (verified 2026-07-29: the real function names are `getLabelConfig`/`updateLabelConfig`, `src/lib/config-sheets.ts:13,30` — not `getConfigValue`/`setConfigValue` as an earlier pass of this plan assumed) — the lowest-risk possible first migration (nothing depends on its shape, just key lookups), and a genuine rehearsal of the whole pattern (Supabase client setup, an env-var getter matching the existing `getSpreadsheetId()` convention) before anything with real stakes.
 
