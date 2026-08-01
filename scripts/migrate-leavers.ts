@@ -28,30 +28,11 @@ import bcrypt from 'bcryptjs';
 import { getColumnMap, getGoogleSheetsClient, getSpreadsheetId } from '../src/lib/sheets';
 import { parseRoles } from '../src/lib/role-utils';
 import { getSupabaseClient } from '../src/lib/supabase';
+import { parseSheetTimestamp } from './lib/parse-sheet-timestamp';
 
 const REDACT_ALIASES = Array.from({ length: 9 }, (_, i) => `liamBH${i + 1}@dasey.org.uk`);
 const TEST_PASSWORD = 'DevTestPassword123!';
 const noRedact = process.argv.includes('--no-redact');
-
-/** Same DD/MM/YYYY [HH:MM:SS] parser as migrate-members.ts — see that file for why. */
-function parseSheetTimestamp(value: string | null): string | null {
-  if (!value) return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const ukMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
-  if (ukMatch) {
-    const [, day, month, year, hour, minute, second] = ukMatch;
-    const date = new Date(
-      parseInt(year), parseInt(month) - 1, parseInt(day),
-      hour ? parseInt(hour) : 0, minute ? parseInt(minute) : 0, second ? parseInt(second) : 0
-    );
-    return isNaN(date.getTime()) ? null : date.toISOString();
-  }
-  const parsed = new Date(trimmed);
-  if (!isNaN(parsed.getTime())) return parsed.toISOString();
-  console.warn(`   !! Could not parse timestamp "${trimmed}" — leaving null`);
-  return null;
-}
 
 interface RawLeaverRow {
   [field: string]: string | null;

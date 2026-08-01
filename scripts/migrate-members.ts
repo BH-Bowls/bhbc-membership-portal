@@ -35,38 +35,7 @@ import { getAllUsers, getColumnMap, getGoogleSheetsClient, getSpreadsheetId, typ
 import { getMarkers } from '../src/lib/markers-sheets';
 import { parseRoles } from '../src/lib/role-utils';
 import { getSupabaseClient } from '../src/lib/supabase';
-
-/**
- * Sheets stores timestamps as "DD/MM/YYYY HH:MM:SS" (UK format, not ISO despite what
- * SCHEMA.md's documentation claims) — passing these straight to a Postgres timestamptz
- * column fails outright (Postgres tries to parse "20/05/2025" as MM/DD and rejects day
- * 20 as an invalid month). This is the exact "new Date(sheetDateString) silently fails
- * on Sheets dates" trap CLAUDE.md warns about, just surfacing as a hard error here
- * instead of a silent misparse. Falls back to a generic Date parse for anything that
- * isn't the expected UK format, in case a field genuinely is already ISO.
- */
-function parseSheetTimestamp(value: string | null): string | null {
-  if (!value) return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-
-  const ukMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
-  if (ukMatch) {
-    const [, day, month, year, hour, minute, second] = ukMatch;
-    const date = new Date(
-      parseInt(year), parseInt(month) - 1, parseInt(day),
-      hour ? parseInt(hour) : 0, minute ? parseInt(minute) : 0, second ? parseInt(second) : 0
-    );
-    if (isNaN(date.getTime())) return null;
-    return date.toISOString();
-  }
-
-  const parsed = new Date(trimmed);
-  if (!isNaN(parsed.getTime())) return parsed.toISOString();
-
-  console.warn(`   !! Could not parse timestamp "${trimmed}" — leaving null`);
-  return null;
-}
+import { parseSheetTimestamp } from './lib/parse-sheet-timestamp';
 
 // Confirmed against live data 2026-08-01: the Captain shared login's actual username is
 // "captains" (lowercase, full_name "Captains Laptop") — the plan's "Captains" (capitalised)
