@@ -1,11 +1,12 @@
 // src/lib/auth.ts
 // NextAuth configuration for BHBC Members Portal
 // Handles user authentication, JWT token generation, and session management
-// Uses credentials provider to authenticate against Google Sheets database
+// Uses credentials provider to authenticate against Postgres (member login) with a
+// fallback to Google Sheets (club login, unmigrated — see clubs-sheets.ts)
 
 import { NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
-import { authenticateUser } from './auth-sheets';
+import { authenticateUser } from './auth-supabase';
 import { clearColumnMapCache } from './sheets';
 import { authenticateClub } from './clubs-sheets';
 import { parseRoles } from './role-utils';
