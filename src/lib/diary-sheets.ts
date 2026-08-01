@@ -33,7 +33,7 @@ function getAvailabilitySpreadsheetId(): string {
 // ─── Date Helpers ─────────────────────────────────────────────────────────────
 
 // Get today's date as a YYYY-MM-DD string, using local time (avoids UTC midnight drift)
-function getTodayIso(): string {
+export function getTodayIso(): string {
   const now = new Date();
   const y = now.getFullYear();
   const m = String(now.getMonth() + 1).padStart(2, '0');
@@ -72,8 +72,11 @@ function anyDateToIso(rawDate: string): string | null {
 }
 
 // Parse a CleaningRota display date string like "Sat, 05 September" to YYYY-MM-DD.
-// Because these strings have no year, this function picks the nearest upcoming
-// occurrence: current year if the date is today or future, else next year.
+// These strings have no year, so we interpret them as the current calendar year.
+// The caller filters out past dates, so a duty drops off "Coming Up" once its date
+// passes — we deliberately do NOT roll a passed date forward to next year (the rota
+// is seasonal and regenerated each year, so a rolled-forward date would wrongly keep
+// showing a duty that has already happened).
 function parseCleaningRotaDate(displayDate: string): string | null {
   if (!displayDate || !displayDate.trim()) {
     return null;
@@ -100,22 +103,11 @@ function parseCleaningRotaDate(displayDate: string): string | null {
     return null;
   }
 
-  const now = new Date();
-  const todayStr = getTodayIso();
-
-  // Build a candidate date for the current year
-  let year = now.getFullYear();
+  // Interpret the date as the current calendar year. The caller drops past dates.
+  const year = new Date().getFullYear();
   const mm = String(month + 1).padStart(2, '0');
   const dd = String(day).padStart(2, '0');
-  let candidate = `${year}-${mm}-${dd}`;
-
-  // If the candidate date is already in the past, advance to next year
-  if (candidate < todayStr) {
-    year += 1;
-    candidate = `${year}-${mm}-${dd}`;
-  }
-
-  return candidate;
+  return `${year}-${mm}-${dd}`;
 }
 
 // Convert a Google Sheets date serial number (integer days since 30 Dec 1899) to YYYY-MM-DD
