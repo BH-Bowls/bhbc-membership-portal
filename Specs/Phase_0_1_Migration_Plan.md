@@ -252,20 +252,32 @@ create table member_profiles (
 
 No `email_address` (or any other member field) duplicated onto `users` — see the join-cost reasoning above. Deliberately no `user_name` column here either, for the same reason: the standard lookup pattern is `users join member_profiles on member_profiles.user_id = users.id where users.username = $1`, cheap at this data volume, and it means `username` has exactly one place it's ever stored as a primary/unique value.
 
-**Applications — new scope, not a straight port.** Live code has one terminal status (`Rejected`) — no `Declined`/`Didn't Proceed` split. Adding it deliberately: applicants processed through approval sometimes go quiet with no payment, which the current single status can't distinguish from an active review-stage decline.
+**Applications — new scope, not a straight port.** Live code has one terminal status (`Rejected`) — no `Declined`/`Didn't Proceed` split. Adding it deliberately: applicants processed through approval sometimes go quiet with no payment, which the current single status can't distinguish from an active review-stage decline. **On migration, existing `Rejected` rows become `Declined`** — `Didn't Proceed` has no historical equivalent, it only applies going forward.
+
+**Corrected 2026-08-01 against the live `Application` TypeScript interface** (`src/lib/applications-sheets.ts`) — no `SCHEMA.md` documentation exists for Applications at all, so the live interface was the only source of truth, and the original block below was significantly incomplete (same gap-class as `member_profiles`/`users`/`leaver_reason`). `decision_reason` renamed to `decision_notes` to match the live column name exactly, rather than keep two overlapping fields. `reviewed_by`/`reviewed_at` have no source in the live sheet at all — kept as new capture going forward, nothing to backfill.
 
 ```sql
 create table applications (
   id                uuid primary key default gen_random_uuid(),
   status            text not null default 'Submitted'
                       check (status in ('Submitted','Listed','Approved','Paid','Converted','Declined','Didn''t Proceed')),
-  first_name text, last_name text, email text, mobile text,
-  address_1 text, address_2 text, post_code text,
+  first_name text, last_name text, known_as text, gender text,
+  email text, landline text, mobile text,
+  address_1 text, address_2 text, address_3 text, post_code text,
+  age_demographic text, dob text,          -- dob freeform, matches birthdate's treatment
+  ft_education text,
   requested_member_type text,
+  previous_experience text, disabilities text,
+  proposer_name text, seconder_name text,
+  decision_notes    text,          -- informal free text — covers objections and threshold-cap declines alike, no separate objections table
   submitted_at      timestamptz not null default now(),
+  listed_date       timestamptz,
+  fee_due numeric, fee_paid numeric,
+  payment_method text, payment_date timestamptz,
+  approved_at       timestamptz,
+  converted_at      timestamptz,
   reviewed_by       text references users(username) on update cascade,
   reviewed_at       timestamptz,
-  decision_reason   text,          -- informal free text — covers objections and threshold-cap declines alike, no separate objections table
   converted_user_id uuid references users(id)   -- set on Converted, links forward rather than deleting the application
 );
 ```
