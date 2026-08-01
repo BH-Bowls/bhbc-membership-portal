@@ -193,9 +193,17 @@ async function main() {
     // silently guess a correction, just flag it for you to review.
     let buddyUserName = u.buddyUserName;
     if (buddyUserName && !validUsernames.has(buddyUserName)) {
-      console.warn(`   !! ${u.userName}: buddy_user_name "${buddyUserName}" doesn't match any current username — nulled, needs review`);
-      buddyUserName = null;
-      buddyAnomalies++;
+      const trimmed = buddyUserName.trim();
+      if (trimmed !== buddyUserName && validUsernames.has(trimmed)) {
+        // Stray leading/trailing whitespace in the sheet cell — not a real mismatch,
+        // just a formatting artifact. Normalizing this isn't "guessing a correction",
+        // the content itself was already right.
+        buddyUserName = trimmed;
+      } else {
+        console.warn(`   !! ${u.userName}: buddy_user_name "${buddyUserName}" doesn't match any current username — nulled, needs review`);
+        buddyUserName = null;
+        buddyAnomalies++;
+      }
     }
     return {
       user_id: userIdByUsername.get(u.userName),
