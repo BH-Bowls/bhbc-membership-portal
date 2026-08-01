@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
-import { getLabelConfig, updateLabelConfig } from '@/lib/config-sheets';
+import { getLabelConfig, updateLabelConfig } from '@/lib/config-supabase';
 
 export async function GET() {
   try {
