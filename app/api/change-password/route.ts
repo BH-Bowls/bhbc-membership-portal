@@ -7,7 +7,8 @@ import { authOptions } from '@/lib/auth';
 import { changePassword } from '@/lib/auth-supabase';
 import { changeClubPassword } from '@/lib/clubs-sheets';
 import { sendTemplateEmail, isEmailConfigured } from '@/lib/email/mailer';
-import { getUserByUsername, updateEmailSentStatus, logMemberEmail } from '@/lib/sheets';
+import { getUserByUsername } from '@/lib/members-supabase';
+import { updateEmailSentStatus, logMemberEmail } from '@/lib/sheets';
 
 // ============================================================================
 // Type Definitions
