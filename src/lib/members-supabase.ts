@@ -51,7 +51,7 @@ function mapRow(row: any): User {
     postCode: profile?.post_code ?? null,
     lockerNo: profile?.locker_no ?? null,
     birthdate: profile?.birthdate ?? null,
-    ageDemographic: '',   // dropped/deferred per the plan — no Postgres consumer yet
+    ageDemographic: profile?.age_demographic ?? '',   // restored in 0020, directly editable — see profile-supabase.ts
     memberType: profile?.member_type ?? '',
     honorary: profile?.honorary ?? null,
     yearStarted: profile?.year_started ?? null,
@@ -332,5 +332,42 @@ export async function clearResetToken(userName: string): Promise<void> {
     else invalidateCache();
   } catch (error) {
     console.error('Error clearing reset token:', error);
+  }
+}
+
+// ============================================================================
+// IMPERSONATION LOG
+// ============================================================================
+
+export async function logImpersonationEvent(event: {
+  sessionId: string;
+  action: 'START' | 'STOP';
+  adminUserName: string;
+  adminName: string;
+  adminRole: string;
+  targetUserName?: string | null;
+  targetName?: string | null;
+  targetRole?: string | null;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+}): Promise<void> {
+  try {
+    const supabase = getSupabaseClient();
+    const { error } = await supabase.from('impersonation_log').insert({
+      session_id: event.sessionId,
+      action: event.action,
+      admin_user_name: event.adminUserName,
+      admin_name: event.adminName,
+      admin_role: event.adminRole,
+      target_user_name: event.targetUserName || null,
+      target_name: event.targetName || null,
+      target_role: event.targetRole || null,
+      ip_address: event.ipAddress || null,
+      user_agent: event.userAgent || null,
+    });
+    if (error) console.error('Error logging impersonation event:', error.message);
+  } catch (error) {
+    console.error('Error logging impersonation event:', error);
+    // Don't throw - logging failure shouldn't break impersonation
   }
 }
