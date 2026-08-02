@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { changePassword } from '@/lib/auth-sheets';
+import { changePassword } from '@/lib/auth-supabase';
 import { changeClubPassword } from '@/lib/clubs-sheets';
 import { sendTemplateEmail, isEmailConfigured } from '@/lib/email/mailer';
 import { getUserByUsername, updateEmailSentStatus, logMemberEmail } from '@/lib/sheets';

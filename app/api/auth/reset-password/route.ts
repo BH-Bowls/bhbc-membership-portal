@@ -2,13 +2,8 @@
 // API endpoint for resetting password with token
 
 import { NextRequest, NextResponse } from 'next/server';
-import {
-  validateResetToken,
-  updatePasswordHash,
-  clearResetToken,
-  logMemberEmail,
-  updateEmailSentStatus,
-} from '@/lib/sheets';
+import { validateResetToken, updatePasswordHash, clearResetToken } from '@/lib/members-supabase';
+import { logMemberEmail, updateEmailSentStatus } from '@/lib/sheets';
 import bcrypt from 'bcryptjs';
 import { sendTemplateEmail, isEmailConfigured } from '@/lib/email/mailer';
 

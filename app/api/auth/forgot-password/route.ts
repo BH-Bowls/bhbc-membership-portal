@@ -6,9 +6,8 @@ import {
   generatePasswordResetToken,
   countRecentResetRequests,
   getAllUsers,
-  updateEmailSentStatus,
-  logMemberEmail,
-} from '@/lib/sheets';
+} from '@/lib/members-supabase';
+import { updateEmailSentStatus, logMemberEmail } from '@/lib/sheets';
 import { sendTemplateEmail, isEmailConfigured } from '@/lib/email/mailer';
 import { getAppUrl } from '@/lib/app-url';
 

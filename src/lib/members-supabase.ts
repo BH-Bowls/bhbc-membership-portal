@@ -227,3 +227,110 @@ export async function getRecentFailedAttempts(
     return { byIdentifier: 0, byIp: 0 };
   }
 }
+
+// ============================================================================
+// PASSWORD RESET (forgot-password / reset-password flow)
+// ============================================================================
+
+export async function logPasswordResetRequest(identifier: string, userName?: string | null): Promise<void> {
+  try {
+    const supabase = getSupabaseClient();
+    const { error } = await supabase
+      .from('password_reset_requests')
+      .insert({ identifier, user_name: userName || null });
+    if (error) console.error('Error logging password reset request:', error.message);
+  } catch (error) {
+    console.error('Error logging password reset request:', error);
+  }
+}
+
+export async function countRecentResetRequests(identifier: string): Promise<number> {
+  try {
+    const supabase = getSupabaseClient();
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const { data, error } = await supabase
+      .from('password_reset_requests')
+      .select('identifier')
+      .gte('requested_at', oneHourAgo);
+    if (error) throw new Error(error.message);
+
+    const normalized = identifier.toLowerCase();
+    return (data ?? []).filter((r) => r.identifier?.toLowerCase() === normalized).length;
+  } catch (error) {
+    console.error('Error counting reset requests:', error);
+    return 0;
+  }
+}
+
+export async function generatePasswordResetToken(identifier: string): Promise<string | null> {
+  try {
+    const users = await getAllUsers();
+    const normalized = identifier.toLowerCase();
+    const normalizedWithDot = normalized.replace(/_/g, '.');
+
+    const user = users.find(
+      (u) =>
+        u.userName.toLowerCase() === normalized ||
+        u.userName.toLowerCase() === normalizedWithDot ||
+        (u.emailAddress && u.emailAddress.toLowerCase() === normalized)
+    );
+
+    if (!user) {
+      // Log the request even if the user wasn't found, for rate limiting.
+      await logPasswordResetRequest(identifier, null);
+      return null;
+    }
+
+    await logPasswordResetRequest(identifier, user.userName);
+
+    const crypto = require('crypto');
+    const token = crypto.randomBytes(32).toString('hex');
+    // 24-hour expiry — matches sheets.ts, extended for Gmail delivery delays.
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+    const supabase = getSupabaseClient();
+    const { error } = await supabase
+      .from('users')
+      .update({ reset_token: token, reset_token_expires: expiresAt })
+      .eq('username', user.userName);
+    if (error) throw new Error(error.message);
+    invalidateCache();
+
+    return token;
+  } catch (error) {
+    console.error('Error generating password reset token:', error);
+    return null;
+  }
+}
+
+export async function validateResetToken(token: string): Promise<User | null> {
+  try {
+    // Read fresh — the token was just written and may not be in another instance's cache.
+    const users = await getAllUsers(true);
+    const user = users.find((u) => u.resetToken === token);
+    if (!user) return null;
+
+    if (!user.resetTokenExpires) return null;
+    const expiresAt = new Date(user.resetTokenExpires).getTime();
+    if (Date.now() > expiresAt) return null;
+
+    return user;
+  } catch (error) {
+    console.error('Error validating reset token:', error);
+    return null;
+  }
+}
+
+export async function clearResetToken(userName: string): Promise<void> {
+  try {
+    const supabase = getSupabaseClient();
+    const { error } = await supabase
+      .from('users')
+      .update({ reset_token: null, reset_token_expires: null })
+      .eq('username', userName);
+    if (error) console.error('Error clearing reset token:', error.message);
+    else invalidateCache();
+  } catch (error) {
+    console.error('Error clearing reset token:', error);
+  }
+}
