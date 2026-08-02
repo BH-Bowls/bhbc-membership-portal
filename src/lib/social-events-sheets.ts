@@ -7,15 +7,7 @@ import { getAllGames, getGameByTabDate, getPlayersForGame, addPlayerToGame, upda
 import { parseSocialEventRow, parseSocialEventAttendeeRow, SOCIAL_EVENT_ATTENDEE_FIELD_MAP } from './game-management/social-events/parsers';
 import type { SocialEvent, SocialEventAttendee, GameStatus } from './game-management/types';
 import { getGoogleSheetsClient, getColumnLetter } from './sheets';
-
-// Helper to get Members spreadsheet ID
-function getMembersSpreadsheetId(): string {
-  const id = process.env.MEMBERS_SPREADSHEET_ID;
-  if (!id) {
-    throw new Error('MEMBERS_SPREADSHEET_ID environment variable is not set');
-  }
-  return id;
-}
+import { getAllUsers } from './members-supabase';
 
 // ============================================================================
 // COLUMN MAPPING
@@ -125,47 +117,16 @@ export async function updateSocialEventAttendee(
  * @returns Array of members with userName and fullName
  */
 export async function getSocialEventMembers(): Promise<Array<{ userName: string; fullName: string; memberType?: string }>> {
-  const sheets = getGoogleSheetsClient();
-  const membersSpreadsheetId = getMembersSpreadsheetId();
-  const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
+  const allUsers = await getAllUsers();
 
-  const membersResponse = await sheets.spreadsheets.values.get({
-    spreadsheetId: membersSpreadsheetId,
-    range: 'Members!A:ZZ',
-  });
-
-  const membersRows = membersResponse.data.values || [];
-
-  // Return empty array if only header row or no rows at all
-  if (membersRows.length <= 1) {
-    return [];
-  }
-
-  const memberUserNameCol = membersColMap['user_name'] ?? 0;
-  let memberFullNameCol = membersColMap['full_name'];
-  if (memberFullNameCol === undefined) {
-    memberFullNameCol = membersColMap['name'] ?? 1;
-  }
-  const memberTypeCol = membersColMap['member_type'];
-
-  // Build array of members (include all members for social events, not just playing)
-  const members: Array<{ userName: string; fullName: string; memberType?: string }> = [];
-
-  for (let i = 1; i < membersRows.length; i++) {
-    const memberRow = membersRows[i];
-    const userName = memberRow[memberUserNameCol];
-    const fullName = memberRow[memberFullNameCol];
-    const memberType = memberTypeCol !== undefined ? memberRow[memberTypeCol] : undefined;
-
-    // Only include members with a valid username
-    if (userName && userName.trim() !== '') {
-      members.push({
-        userName: userName.trim(),
-        fullName: (fullName || userName).trim(),
-        memberType,
-      });
-    }
-  }
+  // Include all members for social events, not just playing members
+  const members = allUsers
+    .filter((u) => u.userName && u.userName.trim() !== '')
+    .map((u) => ({
+      userName: u.userName.trim(),
+      fullName: (u.fullName || u.userName).trim(),
+      memberType: u.memberType || undefined,
+    }));
 
   // Sort members alphabetically by full name for easier dropdown selection
   members.sort((a, b) => a.fullName.localeCompare(b.fullName));
@@ -211,31 +172,11 @@ export async function getEnteredPlayers(
   const colMap = await getColumnMap(spreadsheetId, attendeesSheetName);
   const userNameColIndex = colMap['user_name'] ?? 0;
 
-  // Build a lookup map of userName -> fullName from Members sheet
-  const membersSpreadsheetId = getMembersSpreadsheetId();
-  const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
-
-  const membersResponse = await sheets.spreadsheets.values.get({
-    spreadsheetId: membersSpreadsheetId,
-    range: 'Members!A:ZZ',
-  });
-
-  const membersRows = membersResponse.data.values || [];
-  const memberUserNameCol = membersColMap['user_name'] ?? 0;
-  let memberFullNameCol = membersColMap['full_name'];
-  if (memberFullNameCol === undefined) {
-    memberFullNameCol = membersColMap['name'] ?? 1;
-  }
-
-  // Build lookup map
+  // Build a lookup map of userName -> fullName from Postgres members
+  const allUsers = await getAllUsers();
   const fullNameLookup: { [userName: string]: string } = {};
-  for (let i = 1; i < membersRows.length; i++) {
-    const memberRow = membersRows[i];
-    const memberUserName = memberRow[memberUserNameCol];
-    const memberFullName = memberRow[memberFullNameCol];
-    if (memberUserName) {
-      fullNameLookup[memberUserName] = memberFullName || memberUserName;
-    }
+  for (const u of allUsers) {
+    if (u.userName) fullNameLookup[u.userName] = u.fullName || u.userName;
   }
 
   const enteredPlayers: Array<{ userName: string; fullName: string; status: 'E' | 'M' }> = [];

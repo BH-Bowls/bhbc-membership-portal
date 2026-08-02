@@ -2,6 +2,7 @@
 // Banking reconciliation sheet operations
 
 import { getGoogleSheetsClient, getSpreadsheetId, getColumnMap } from './sheets';
+import { getAllUsers } from './members-supabase';
 
 // ============================================================================
 // Constants
@@ -621,35 +622,21 @@ export async function getRenewalsWithOutstanding(): Promise<RenewalForBanking[]>
 
     const rows = response.data.values || [];
 
-    // Also get Members sheet to lookup full names, last names, and buddy information
-    const membersColMap = await getColumnMap('Members');
-    const membersResponse = await sheets.spreadsheets.values.get({
-      spreadsheetId: getSpreadsheetId(),
-      range: 'Members!A2:AZ',
-    });
-    const membersRows = membersResponse.data.values || [];
-
-    // Build member lookup map: userName → { fullName, lastName, buddyUserName }
+    // Also get Postgres members to lookup full names, last names, and buddy information
     interface MemberInfo {
       fullName: string;
       lastName: string;
       buddyUserName: string | null;
     }
     const memberMap = new Map<string, MemberInfo>();
-    const userNameCol = membersColMap['user_name'];
-    const buddyCol = membersColMap['buddy_user_name'];
-    // Try multiple column names for full name (different sheets use different names)
-    // Members sheet typically uses 'full_name' column
-    const fullNameCol = membersColMap['full_name'] ?? membersColMap['full_known_as'] ?? membersColMap['name'];
-    const lastNameCol = membersColMap['last_name'] ?? membersColMap['surname'];
-
-    for (const memberRow of membersRows) {
-      const userName = memberRow[userNameCol];
-      if (userName) {
-        const fullName = (fullNameCol !== undefined ? memberRow[fullNameCol] : '') || userName;
-        const lastName = (lastNameCol !== undefined ? memberRow[lastNameCol] : '') || '';
-        const buddyUserName = memberRow[buddyCol] || null;
-        memberMap.set(userName.toLowerCase(), { fullName, lastName, buddyUserName });
+    const allUsers = await getAllUsers();
+    for (const u of allUsers) {
+      if (u.userName) {
+        memberMap.set(u.userName.toLowerCase(), {
+          fullName: u.fullName || u.userName,
+          lastName: u.lastName || '',
+          buddyUserName: u.buddyUserName || null,
+        });
       }
     }
 

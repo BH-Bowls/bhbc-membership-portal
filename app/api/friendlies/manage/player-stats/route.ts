@@ -10,8 +10,8 @@ import {
   getColumnMap,
   getSheetsClient,
   getFriendliesSpreadsheetId,
-  getMembersSpreadsheetId,
 } from '@/lib/friendlies-sheets';
+import { getAllUsers } from '@/lib/members-supabase';
 import { hasRole } from '@/lib/role-utils';
 
 export interface PlayerStatRow {
@@ -69,23 +69,12 @@ export async function GET(_request: NextRequest) {
     const playingMembers: { userName: string; fullName: string }[] = [];
 
     {
-      const membersId = getMembersSpreadsheetId();
-      const membersColMap = await getColumnMap(membersId, 'Members');
-      const membersResp = await sheets.spreadsheets.values.get({
-        spreadsheetId: membersId,
-        range: 'Members!A:ZZ',
-      });
-      const membersRows = membersResp.data.values || [];
-      const uCol = membersColMap['user_name'] ?? 0;
-      const fCol = membersColMap['full_name'] ?? membersColMap['name'] ?? 1;
-      const tCol = membersColMap['member_type'] ?? -1;
-      for (let i = 1; i < membersRows.length; i++) {
-        const r = membersRows[i];
-        if (!r[uCol] || !r[fCol]) continue;
-        fullNameLookup.set(r[uCol], r[fCol]);
-        const memberType: string = tCol >= 0 ? (r[tCol] || '') : '';
-        if (memberType === 'Playing Lady' || memberType === 'Playing Man') {
-          playingMembers.push({ userName: r[uCol], fullName: r[fCol] });
+      const allUsers = await getAllUsers();
+      for (const u of allUsers) {
+        if (!u.userName || !u.fullName) continue;
+        fullNameLookup.set(u.userName, u.fullName);
+        if (u.memberType === 'Playing Lady' || u.memberType === 'Playing Man') {
+          playingMembers.push({ userName: u.userName, fullName: u.fullName });
         }
       }
     }

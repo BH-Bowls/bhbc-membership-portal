@@ -6,8 +6,8 @@ import {
   getColumnLetter,
   getGoogleSheetsClient,
   getSpreadsheetId,
-  getUserByUsername,
 } from './sheets';
+import { getUserByUsername, getAllUsers } from './members-supabase';
 import { createRowFieldGetter, createRowNumberGetter, wrapError } from './banking-sheets';
 import type {
   MemberSuggestion,
@@ -349,26 +349,10 @@ export async function updateSuggestion(
  */
 export async function getAllMembersForCoordinator(): Promise<Array<{ userName: string; fullName: string }>> {
   try {
-    const colMap = await getColumnMap('Members');
-    const sheets = getGoogleSheetsClient();
-
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: getSpreadsheetId(),
-      range: 'Members!A2:AZ',
-    });
-
-    const rows = response.data.values || [];
-    const members: Array<{ userName: string; fullName: string }> = [];
-
-    for (const row of rows) {
-      const userName = row[colMap['user_name']] || '';
-      const fullName = row[colMap['full_name']] || '';
-
-      // Include all members with valid userName and fullName
-      if (userName && fullName) {
-        members.push({ userName, fullName });
-      }
-    }
+    const allUsers = await getAllUsers();
+    const members = allUsers
+      .filter((u) => u.userName && u.fullName)
+      .map((u) => ({ userName: u.userName, fullName: u.fullName }));
 
     return members.sort((a, b) => a.fullName.localeCompare(b.fullName));
   } catch (error) {

@@ -6,6 +6,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getGoogleSheetsClient, getSpreadsheetId, getColumnMap } from '@/lib/sheets';
 import { createRowFieldGetter, createRowNumberGetter } from '@/lib/banking-sheets';
+import { getAllUsers } from '@/lib/members-supabase';
 import { hasRole } from '@/lib/role-utils';
 
 export interface RenewalReportRow {
@@ -85,24 +86,11 @@ export async function GET(request: NextRequest) {
     });
     const renewalsRows = renewalsResponse.data.values || [];
 
-    // Fetch Members data for full names
-    const membersColMap = await getColumnMap('Members');
-    const membersResponse = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: 'Members!A2:AZ',
-    });
-    const membersRows = membersResponse.data.values || [];
-
-    // Build member name lookup
+    // Fetch Postgres members for full names
+    const allUsers = await getAllUsers();
     const memberNames = new Map<string, string>();
-    const userNameCol = membersColMap['user_name'];
-    const fullNameCol = membersColMap['full_name'] ?? membersColMap['full_known_as'] ?? membersColMap['name'];
-    for (const row of membersRows) {
-      const userName = row[userNameCol];
-      if (userName) {
-        const fullName = (fullNameCol !== undefined ? row[fullNameCol] : '') || userName;
-        memberNames.set(userName.toLowerCase(), fullName);
-      }
+    for (const u of allUsers) {
+      if (u.userName) memberNames.set(u.userName.toLowerCase(), u.fullName || u.userName);
     }
 
     // Parse renewals

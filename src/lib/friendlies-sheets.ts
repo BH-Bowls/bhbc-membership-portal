@@ -19,6 +19,7 @@ import {
 import { parseNormalizedDate, normalizeToUKDate } from './date-utils';
 import { withRetry, registerSheetCacheInvalidator } from './sheets';
 import { getPetrolBands } from './clubs-sheets';
+import { getAllUsers } from './members-supabase';
 
 // ============================================================================
 // ENVIRONMENT VARIABLE GETTERS
@@ -1268,14 +1269,14 @@ export async function addPlayersToGameSheetDirect(
   const sheets = getSheetsClient();
 
   // Fetch all needed data in parallel for efficiency
-  const [gameSheetColMap, playersColMap, membersColMap] = await Promise.all([
+  const [gameSheetColMap, playersColMap, driverBarLookup] = await Promise.all([
     getColumnMap(spreadsheetId, tabName),
     getColumnMap(spreadsheetId, 'Players'),
-    getColumnMap(getMembersSpreadsheetId(), 'Members'),
+    buildDriverBarLookup(),
   ]);
 
-  // Fetch game sheet, Players sheet, and Members sheet in parallel
-  const [gameSheetResponse, playersResponse, membersResponse] = await Promise.all([
+  // Fetch game sheet and Players sheet in parallel
+  const [gameSheetResponse, playersResponse] = await Promise.all([
     sheets.spreadsheets.values.get({
       spreadsheetId,
       range: `'${tabName}'!A:ZZ`,
@@ -1284,16 +1285,11 @@ export async function addPlayersToGameSheetDirect(
       spreadsheetId,
       range: 'Players!A:ZZ',
     }),
-    sheets.spreadsheets.values.get({
-      spreadsheetId: getMembersSpreadsheetId(),
-      range: 'Members!A:ZZ',
-    }),
   ]);
 
   const gameSheetRows = gameSheetResponse.data.values || [];
   const playersRows = playersResponse.data.values || [];
   const playersHeaders = playersRows[0] || [];
-  const membersRows = membersResponse.data.values || [];
 
   // Build set of existing players in game sheet (lowercase for comparison)
   const existingPlayers = new Set<string>();
@@ -1328,7 +1324,7 @@ export async function addPlayersToGameSheetDirect(
     try {
       // Get stats from cached data
       const stats = getPlayerStatsFromCache(userName, playersRows, playersColMap, playersHeaders, tabName);
-      const driverBar = getDriverBarInfoFromCache(userName, membersRows, membersColMap);
+      const driverBar = getDriverBarInfoFromCache(userName, driverBarLookup);
 
       // Add player name
       batchData.push({
@@ -1609,60 +1605,12 @@ async function getPlayerLookupValue(userName: string, spreadsheetId: string, col
     nameColumn = colMap['name'];
   }
 
-  // If Players sheet has a name-type column, look up full name from Members sheet
+  // If Players sheet has a name-type column, look up full name from Postgres members
   if (nameColumn !== undefined) {
-    // Initialize Google Sheets API client
-    const sheets = getSheetsClient();
-
-    // Get Members spreadsheet ID and column mappings
-    const membersSpreadsheetId = getMembersSpreadsheetId();
-    const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
-
-    // Fetch all rows from Members sheet
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: membersSpreadsheetId,
-      range: 'Members!A:ZZ',
-    });
-
-    // Extract rows from response
-    const rows = response.data.values || [];
-
-    // Find which column in Members sheet contains user_name
-    let userNameCol = membersColMap['user_name'];
-
-    // Default to first column if user_name column not found
-    if (userNameCol === undefined) {
-      userNameCol = 0;
-    }
-
-    // Find which column in Members sheet contains full_name
-    let fullNameCol = membersColMap['full_name'];
-
-    // Try 'name' column if full_name not found
-    if (fullNameCol === undefined) {
-      fullNameCol = membersColMap['name'];
-    }
-
-    // Default to second column if neither found
-    if (fullNameCol === undefined) {
-      fullNameCol = 1;
-    }
-
-    // Search Members sheet for this user's row
-    let memberRow = null;
-
-    // Loop through all data rows (skip header at index 0)
-    for (let i = 1; i < rows.length; i++) {
-      // Check if this row's user_name matches the userName we're looking for
-      if (rows[i][userNameCol] === userName) {
-        memberRow = rows[i];
-        break;
-      }
-    }
-
-    // If we found the member and they have a full name, return it
-    if (memberRow && memberRow[fullNameCol]) {
-      return memberRow[fullNameCol];
+    const allUsers = await getAllUsers();
+    const member = allUsers.find((u) => u.userName === userName);
+    if (member?.fullName) {
+      return member.fullName;
     }
   }
 
@@ -1919,27 +1867,13 @@ export async function batchUpdatePlayerEntries(
   const userNameColIndex = colMap['user_name'] ?? colMap['full_name'] ?? colMap['name'] ?? 0;
   const usesUserName = colMap['user_name'] !== undefined;
 
-  // If Players sheet uses full_name, fetch Members sheet ONCE for all lookups
+  // If Players sheet uses full_name, fetch Postgres members ONCE for all lookups
   let membersLookup: Map<string, string> | null = null;
   if (!usesUserName) {
-    const membersSpreadsheetId = getMembersSpreadsheetId();
-    const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
-    const membersResponse = await sheets.spreadsheets.values.get({
-      spreadsheetId: membersSpreadsheetId,
-      range: 'Members!A:ZZ',
-    });
-    const membersRows = membersResponse.data.values || [];
-    const memberUserNameCol = membersColMap['user_name'] ?? 0;
-    const memberFullNameCol = membersColMap['full_name'] ?? membersColMap['name'] ?? 1;
-
+    const allUsers = await getAllUsers();
     membersLookup = new Map();
-    for (let i = 1; i < membersRows.length; i++) {
-      const row = membersRows[i];
-      const userName = row[memberUserNameCol];
-      const fullName = row[memberFullNameCol];
-      if (userName && fullName) {
-        membersLookup.set(userName.toLowerCase(), fullName);
-      }
+    for (const u of allUsers) {
+      if (u.userName && u.fullName) membersLookup.set(u.userName.toLowerCase(), u.fullName);
     }
   }
 
@@ -2080,31 +2014,11 @@ export async function getEnteredPlayers(
   const colMap = await getColumnMap(spreadsheetId, 'Players');
   const userNameColIndex = colMap['user_name'] ?? 0;
 
-  // Build a lookup map of userName -> fullName from Members sheet
-  const membersSpreadsheetId = getMembersSpreadsheetId();
-  const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
-
-  const membersResponse = await sheets.spreadsheets.values.get({
-    spreadsheetId: membersSpreadsheetId,
-    range: 'Members!A:ZZ',
-  });
-
-  const membersRows = membersResponse.data.values || [];
-  const memberUserNameCol = membersColMap['user_name'] ?? 0;
-  let memberFullNameCol = membersColMap['full_name'];
-  if (memberFullNameCol === undefined) {
-    memberFullNameCol = membersColMap['name'] ?? 1;
-  }
-
-  // Build lookup map
+  // Build a lookup map of userName -> fullName from Postgres members
+  const allUsers = await getAllUsers();
   const fullNameLookup: { [userName: string]: string } = {};
-  for (let i = 1; i < membersRows.length; i++) {
-    const memberRow = membersRows[i];
-    const memberUserName = memberRow[memberUserNameCol];
-    const memberFullName = memberRow[memberFullNameCol];
-    if (memberUserName) {
-      fullNameLookup[memberUserName] = memberFullName || memberUserName;
-    }
+  for (const u of allUsers) {
+    if (u.userName) fullNameLookup[u.userName] = u.fullName || u.userName;
   }
 
   // Skip header row, iterate through players
@@ -2345,57 +2259,26 @@ export async function getPlayerStats(userName: string): Promise<PlayerStats> {
  * Used by captains when adding offline players to a game
  */
 export async function getAllPlayers(playingMembersOnly: boolean = true): Promise<{ userName: string; fullName: string; memberType: string }[]> {
-  // Get all members from Members sheet (not Players sheet)
-  // This allows adding any club member to a game, not just those who have previously entered
-  const sheets = getSheetsClient();
-  const membersSpreadsheetId = getMembersSpreadsheetId();
-  const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
+  // Sourced from the same Postgres member data every other feature reads (not the
+  // Players sheet) — allows adding any club member to a game, not just those who have
+  // previously entered.
+  const allUsers = await getAllUsers();
 
-  const membersResponse = await sheets.spreadsheets.values.get({
-    spreadsheetId: membersSpreadsheetId,
-    range: 'Members!A:ZZ',
-  });
-
-  const membersRows = membersResponse.data.values || [];
-
-  // Return empty array if only header row or no rows at all
-  if (membersRows.length <= 1) {
-    return [];
-  }
-
-  const memberUserNameCol = membersColMap['user_name'] ?? 0;
-  let memberFullNameCol = membersColMap['full_name'];
-  if (memberFullNameCol === undefined) {
-    memberFullNameCol = membersColMap['name'] ?? 1;
-  }
-  const memberTypeCol = membersColMap['member_type'];
-
-  // Build array of members
-  const players: { userName: string; fullName: string; memberType: string }[] = [];
-
-  for (let i = 1; i < membersRows.length; i++) {
-    const memberRow = membersRows[i];
-    const userName = memberRow[memberUserNameCol];
-    const fullName = memberRow[memberFullNameCol];
-    const memberType = memberTypeCol !== undefined ? memberRow[memberTypeCol] : '';
-
-    // Only include members with a valid username
-    if (userName && userName.trim() !== '') {
-      // Filter by playing members if requested (PL=Playing Lady, PM=Playing Man)
-      if (playingMembersOnly && memberType) {
-        const isPlaying = memberType.startsWith('P') || memberType === 'Full';
-        if (!isPlaying) {
-          continue; // Skip social members for friendlies/internal games
-        }
+  const players = allUsers
+    .filter((u) => {
+      if (!u.userName || !u.userName.trim()) return false;
+      // Filter by playing members if requested (Playing Lady/Playing Man, or legacy "Full")
+      if (playingMembersOnly && u.memberType) {
+        const isPlaying = u.memberType.startsWith('P') || u.memberType === 'Full';
+        if (!isPlaying) return false; // Skip social members for friendlies/internal games
       }
-
-      players.push({
-        userName: userName.trim(),
-        fullName: (fullName || userName).trim(),
-        memberType: memberType || '',
-      });
-    }
-  }
+      return true;
+    })
+    .map((u) => ({
+      userName: u.userName.trim(),
+      fullName: (u.fullName || u.userName).trim(),
+      memberType: u.memberType || '',
+    }));
 
   // Sort players alphabetically by full name for easier dropdown selection
   players.sort((a, b) => a.fullName.localeCompare(b.fullName));
@@ -2622,18 +2505,11 @@ export async function createGameSheet(tabName: string, playerFilter?: string[], 
     const driverBarColIndex = gameSheetColMap['driver_bar'];
     const selectedColIndex = gameSheetColMap['selected'];
 
-    // Fetch Members sheet for driver/bar lookups — only when computing stats.
+    // Fetch driver/bar lookup — only when computing stats.
     // At open we skip stats (they're snapshotted at close), so this read is avoided.
-    let membersColMap: { [key: string]: number } = {};
-    let membersRows: any[] = [];
+    let driverBarLookup: Map<string, { driver: boolean; bar: boolean }> = new Map();
     if (!skipStats) {
-      const membersSpreadsheetId = getMembersSpreadsheetId();
-      membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
-      const membersResponse = await sheets.spreadsheets.values.get({
-        spreadsheetId: membersSpreadsheetId,
-        range: 'Members!A:ZZ',
-      });
-      membersRows = membersResponse.data.values || [];
+      driverBarLookup = await buildDriverBarLookup();
     }
 
     // Sort players alphabetically for easier captain selection
@@ -2655,7 +2531,7 @@ export async function createGameSheet(tabName: string, playerFilter?: string[], 
         // Add stats if columns exist (skipped for open games — filled at close)
         if (!skipStats) {
           const stats = getPlayerStatsFromCache(userName, rows, playersColMap, headers, tabName);
-          const driverBar = getDriverBarInfoFromCache(userName, membersRows, membersColMap);
+          const driverBar = getDriverBarInfoFromCache(userName, driverBarLookup);
 
           if (nameDownColIndex !== undefined) {
             batchUpdates.push({ range: `'${tabName}'!${getColumnLetter(nameDownColIndex)}${currentRow}`, values: [[stats.nameDown]] });
@@ -2783,16 +2659,10 @@ export async function addPlayerToGameSheet(tabName: string, userName: string, se
     const playersRows = playersResponse.data.values || [];
     const playersHeaders = playersRows[0] || [];
 
-    const membersSpreadsheetId = getMembersSpreadsheetId();
-    const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
-    const membersResponse = await sheets.spreadsheets.values.get({
-      spreadsheetId: membersSpreadsheetId,
-      range: 'Members!A:ZZ',
-    });
-    const membersRows = membersResponse.data.values || [];
+    const driverBarLookup = await buildDriverBarLookup();
 
     const stats = getPlayerStatsFromCache(userName, playersRows, playersColMap, playersHeaders, tabName);
-    const driverBar = getDriverBarInfoFromCache(userName, membersRows, membersColMap);
+    const driverBar = getDriverBarInfoFromCache(userName, driverBarLookup);
 
     if (nameDownColIndex !== undefined) {
       batchUpdates.push({
@@ -3020,13 +2890,12 @@ export async function addPlayersToGameSheet(
   const existing = new Set(existingRows.map((r: any[]) => (r[0] || '').toLowerCase()));
   let nextRow = 2 + existingRows.length;
 
-  // Read Players and Members sheets once for stat lookups — only when stats were
-  // not supplied by the caller (the move flow passes them in).
+  // Read Players sheet and driver/bar lookup once for stat lookups — only when stats
+  // were not supplied by the caller (the move flow passes them in).
   let playersRows: any[] = [];
   let playersHeaders: any[] = [];
   let playersColMap: { [key: string]: number } = {};
-  let membersRows: any[] = [];
-  let membersColMap: { [key: string]: number } = {};
+  let driverBarLookup: Map<string, { driver: boolean; bar: boolean }> = new Map();
   if (!statsByName) {
     playersColMap = await getColumnMap(spreadsheetId, 'Players');
     const playersResponse = await sheets.spreadsheets.values.get({
@@ -3036,13 +2905,7 @@ export async function addPlayersToGameSheet(
     playersRows = playersResponse.data.values || [];
     playersHeaders = playersRows[0] || [];
 
-    const membersSpreadsheetId = getMembersSpreadsheetId();
-    membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
-    const membersResponse = await sheets.spreadsheets.values.get({
-      spreadsheetId: membersSpreadsheetId,
-      range: 'Members!A:ZZ',
-    });
-    membersRows = membersResponse.data.values || [];
+    driverBarLookup = await buildDriverBarLookup();
   }
 
   const batchUpdates: { range: string; values: (string | number)[][] }[] = [];
@@ -3066,7 +2929,7 @@ export async function addPlayersToGameSheet(
       }
     } else {
       const stats = getPlayerStatsFromCache(userName, playersRows, playersColMap, playersHeaders, tabName);
-      const driverBar = getDriverBarInfoFromCache(userName, membersRows, membersColMap);
+      const driverBar = getDriverBarInfoFromCache(userName, driverBarLookup);
       nameDown = stats.nameDown;
       picked = stats.picked;
       percentPlayed = stats.percentPlayed;
@@ -3332,33 +3195,16 @@ export async function getGameSheet(tabName: string): Promise<GameSheetPlayer[]> 
   const playersRows = playersResponse.data.values || [];
   const playersHeaders = playersRows[0] || [];
 
-  // Fetch Members sheet to look up full names for display
-  const membersSpreadsheetId = getMembersSpreadsheetId();
-  const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
-  const membersResponse = await sheets.spreadsheets.values.get({
-    spreadsheetId: membersSpreadsheetId,
-    range: 'Members!A:ZZ',
-  });
-  const membersRows = membersResponse.data.values || [];
+  // Fetch Postgres members to look up full names for display
+  const allUsers = await getAllUsers();
 
   // Build lookup maps: userName -> fullName and userName -> lastName
   const fullNameLookup: Record<string, string> = {};
   const lastNameLookup: Record<string, string> = {};
-  const memberUserNameCol = membersColMap['user_name'];
-  const memberFullNameCol = membersColMap['full_name'] ?? membersColMap['full_known_as'] ?? membersColMap['name'];
-  const memberLastNameCol = membersColMap['last_name'] ?? membersColMap['surname'];
-
-  if (memberUserNameCol !== undefined && memberFullNameCol !== undefined) {
-    for (let j = 1; j < membersRows.length; j++) {
-      const memberRow = membersRows[j];
-      const memberUserName = memberRow[memberUserNameCol];
-      const memberFullName = memberRow[memberFullNameCol];
-      if (memberUserName) {
-        fullNameLookup[memberUserName.toLowerCase()] = memberFullName || memberUserName;
-        if (memberLastNameCol !== undefined) {
-          lastNameLookup[memberUserName.toLowerCase()] = memberRow[memberLastNameCol] || '';
-        }
-      }
+  for (const u of allUsers) {
+    if (u.userName) {
+      fullNameLookup[u.userName.toLowerCase()] = u.fullName || u.userName;
+      lastNameLookup[u.userName.toLowerCase()] = u.lastName || '';
     }
   }
 
@@ -3662,14 +3508,8 @@ export async function updateGameSheetStats(tabName: string): Promise<number> {
   // Track newly added player names (lowercase) to only update stats for these players
   const newlyAddedPlayers = new Set(playersToAdd.map(name => name.toLowerCase()));
 
-  // Fetch Members sheet ONCE for all driver/bar lookups (used by both add and update sections)
-  const membersSpreadsheetId = getMembersSpreadsheetId();
-  const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
-  const membersResponse = await sheets.spreadsheets.values.get({
-    spreadsheetId: membersSpreadsheetId,
-    range: 'Members!A:ZZ',
-  });
-  const membersRows = membersResponse.data.values || [];
+  // Fetch driver/bar lookup ONCE (used by both add and update sections)
+  const driverBarLookup = await buildDriverBarLookup();
 
   // Add missing players to the game sheet
   if (playersToAdd.length > 0) {
@@ -3694,7 +3534,7 @@ export async function updateGameSheetStats(tabName: string): Promise<number> {
         // Get stats from cached Players sheet data
         const stats = getPlayerStatsFromCache(userName, playersRows, playersColMap, playersHeaders, tabName);
         // Get driver/bar info from cached Members data
-        const driverBar = getDriverBarInfoFromCache(userName, membersRows, membersColMap);
+        const driverBar = getDriverBarInfoFromCache(userName, driverBarLookup);
 
         // Add player name
         addUpdates.push({
@@ -3743,7 +3583,7 @@ export async function updateGameSheetStats(tabName: string): Promise<number> {
     try {
       // Get stats for this player from cached Players sheet
       const stats = getPlayerStatsFromCache(player.name, playersRows, playersColMap, playersHeaders, tabName);
-      const driverBar = getDriverBarInfoFromCache(player.name, membersRows, membersColMap);
+      const driverBar = getDriverBarInfoFromCache(player.name, driverBarLookup);
 
       // Check if required columns exist in the game sheet
       const nameDownIdx = colMap['name_down'];
@@ -4031,47 +3871,30 @@ function getPlayerStatsFromCache(
 }
 
 // Helper function to get driver/bar info from cached data
+/** Build a userName (lowercase) -> driver/bar-availability lookup from Postgres members. */
+async function buildDriverBarLookup(): Promise<Map<string, { driver: boolean; bar: boolean }>> {
+  const allUsers = await getAllUsers();
+  const lookup = new Map<string, { driver: boolean; bar: boolean }>();
+  for (const u of allUsers) {
+    if (!u.userName) continue;
+    const driver = u.drivingAwayMatches === 'Yes' || u.drivingAwayMatches === 'Y';
+    const bar = u.barDuty === 'Yes' || u.barDuty === 'Y';
+    lookup.set(u.userName.trim().toLowerCase(), { driver, bar });
+  }
+  return lookup;
+}
+
 function getDriverBarInfoFromCache(
   userName: string,
-  membersRows: any[][],
-  colMap: { [key: string]: number }
+  driverBarLookup: Map<string, { driver: boolean; bar: boolean }>
 ): { code: string; driver: boolean; bar: boolean } {
-  // Look up by user_name column in Members sheet (we're passed userName, not fullName)
-  const userNameCol = colMap['user_name'];
-  if (userNameCol === undefined) {
-    console.warn('getDriverBarInfoFromCache: user_name column not found in Members sheet');
+  const entry = driverBarLookup.get(userName.trim().toLowerCase());
+  if (!entry) {
+    // User not found - return defaults
     return { code: '-', driver: false, bar: false };
   }
 
-  // Find the row for this user by userName
-  let userRowIndex = -1;
-  for (let i = 1; i < membersRows.length; i++) {
-    const memberUserName = membersRows[i][userNameCol];
-    if (!memberUserName) continue;
-
-    // Case-insensitive and trimmed comparison
-    if (memberUserName.toString().trim().toLowerCase() === userName.trim().toLowerCase()) {
-      userRowIndex = i;
-      break;
-    }
-  }
-
-  if (userRowIndex === -1) {
-    // User not in Members sheet - return defaults
-    return { code: '-', driver: false, bar: false };
-  }
-
-  const userRow = membersRows[userRowIndex];
-
-  const get = (field: string): string | null => {
-    const index = colMap[field];
-    return index !== undefined ? (userRow[index] || null) : null;
-  };
-
-  const driverValue = get('driving_away_matches');
-  const barValue = get('bar_duty');
-  const driver = driverValue === 'Yes' || driverValue === 'Y';
-  const bar = barValue === 'Yes' || barValue === 'Y';
+  const { driver, bar } = entry;
 
   let code = '-';
   if (driver && bar) {
@@ -4219,101 +4042,16 @@ export async function batchAddPlayersToGameSheet(
  * Used to display D/B indicators on game sheets and match cards
  */
 export async function getDriverBarInfo(userName: string): Promise<DriverBarInfo> {
-  // Initialize Google Sheets API client
-  const sheets = getSheetsClient();
-
-  // Fetch all data from Members sheet (up to 1000 rows)
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId: getMembersSpreadsheetId(),
-    range: 'Members!1:1000',
-  });
-
-  // Extract rows and headers from response
-  const rows = response.data.values || [];
-  const headers = rows[0] || [];
-
-  // Find column indices by searching through header row
-  // We manually search rather than using getColumnMap to avoid caching issues
-  let userNameCol = -1;
-  let drivingCol = -1;
-  let barCol = -1;
-
-  // Loop through all header cells to find the columns we need
-  for (let i = 0; i < headers.length; i++) {
-    // Normalize header text (lowercase, replace spaces with underscores)
-    const normalized = headers[i].toLowerCase().replace(/\s+/g, '_');
-
-    // Check if this is the user_name column
-    if (normalized === 'user_name') {
-      userNameCol = i;
-    }
-
-    // Check if this is the driving_away_matches column
-    if (normalized === 'driving_away_matches') {
-      drivingCol = i;
-    }
-
-    // Check if this is the bar_duty column
-    if (normalized === 'bar_duty') {
-      barCol = i;
-    }
-  }
-
-  // Throw error if user_name column not found (critical for lookups)
-  if (userNameCol === -1) {
-    throw new Error('user_name column not found in Members sheet');
-  }
-
-  // Search for this user's row in the Members sheet
-  let userRow = null;
-
-  // Loop through all data rows (skip header at index 0)
-  for (let i = 1; i < rows.length; i++) {
-    // Check if this row's username matches the requested user
-    if (rows[i][userNameCol] === userName) {
-      userRow = rows[i];
-      break;
-    }
-  }
+  const allUsers = await getAllUsers();
+  const member = allUsers.find((u) => u.userName === userName);
 
   // If user not found, return defaults (not a driver, no bar duty)
-  if (!userRow) {
+  if (!member) {
     return { driver: false, bar: false, code: '' };
   }
 
-  // Check if user is willing to drive to away matches
-  let driver = false;
-
-  // Only check if driving column exists in sheet
-  if (drivingCol !== -1) {
-    // Get the driving value from user's row
-    const drivingValue = userRow[drivingCol];
-
-    if (drivingValue) {
-      // Convert to lowercase for case-insensitive comparison
-      const lowerValue = drivingValue.toLowerCase();
-
-      // Accept "Yes" or "Y" as positive responses
-      driver = lowerValue === 'yes' || lowerValue === 'y';
-    }
-  }
-
-  // Check if user does bar duty
-  let bar = false;
-
-  // Only check if bar duty column exists in sheet
-  if (barCol !== -1) {
-    // Get the bar duty value from user's row
-    const barValue = userRow[barCol];
-
-    if (barValue) {
-      // Convert to lowercase for case-insensitive comparison
-      const lowerValue = barValue.toLowerCase();
-
-      // Accept "Yes" or "Y" as positive responses
-      bar = lowerValue === 'yes' || lowerValue === 'y';
-    }
-  }
+  const driver = member.drivingAwayMatches === 'Yes' || member.drivingAwayMatches === 'Y';
+  const bar = member.barDuty === 'Yes' || member.barDuty === 'Y';
 
   // Build display code based on driver and bar status
   // Code appears next to player name on game sheets and match cards

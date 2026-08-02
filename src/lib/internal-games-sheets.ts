@@ -7,15 +7,7 @@ import { getAllGames, getGameByTabDate, getPlayersForGame, addPlayerToGame, upda
 import { parseInternalGameRow, parseInternalGamePlayerRow, INTERNAL_GAME_PLAYER_FIELD_MAP } from './game-management/internal-games/parsers';
 import type { InternalGame, InternalGamePlayer, GameStatus } from './game-management/types';
 import { getGoogleSheetsClient, getColumnLetter } from './sheets';
-
-// Helper to get Members spreadsheet ID
-function getMembersSpreadsheetId(): string {
-  const id = process.env.MEMBERS_SPREADSHEET_ID;
-  if (!id) {
-    throw new Error('MEMBERS_SPREADSHEET_ID environment variable is not set');
-  }
-  return id;
-}
+import { getAllUsers } from './members-supabase';
 
 // ============================================================================
 // COLUMN MAPPING
@@ -126,55 +118,23 @@ export async function updateInternalGamePlayer(
  * @returns Array of members with userName and fullName
  */
 export async function getInternalGameMembers(playingMembersOnly: boolean = true): Promise<Array<{ userName: string; fullName: string; memberType?: string }>> {
-  const sheets = getGoogleSheetsClient();
-  const membersSpreadsheetId = getMembersSpreadsheetId();
-  const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
+  const allUsers = await getAllUsers();
 
-  const membersResponse = await sheets.spreadsheets.values.get({
-    spreadsheetId: membersSpreadsheetId,
-    range: 'Members!A:ZZ',
-  });
-
-  const membersRows = membersResponse.data.values || [];
-
-  // Return empty array if only header row or no rows at all
-  if (membersRows.length <= 1) {
-    return [];
-  }
-
-  const memberUserNameCol = membersColMap['user_name'] ?? 0;
-  let memberFullNameCol = membersColMap['full_name'];
-  if (memberFullNameCol === undefined) {
-    memberFullNameCol = membersColMap['name'] ?? 1;
-  }
-  const memberTypeCol = membersColMap['member_type'];
-
-  // Build array of members
-  const players: Array<{ userName: string; fullName: string; memberType?: string }> = [];
-
-  for (let i = 1; i < membersRows.length; i++) {
-    const memberRow = membersRows[i];
-    const userName = memberRow[memberUserNameCol];
-    const fullName = memberRow[memberFullNameCol];
-    const memberType = memberTypeCol !== undefined ? memberRow[memberTypeCol] : undefined;
-
-    // Only include members with a valid username
-    if (userName && userName.trim() !== '') {
+  const players = allUsers
+    .filter((u) => {
+      if (!u.userName || !u.userName.trim()) return false;
       // Filter by playing members if requested (PL=Playing Lady, PM=Playing Man)
-      if (playingMembersOnly && memberType) {
-        const isPlaying = memberType.startsWith('P') || memberType === 'Full';
-        if (!isPlaying) {
-          continue; // Skip social members for internal games
-        }
+      if (playingMembersOnly && u.memberType) {
+        const isPlaying = u.memberType.startsWith('P') || u.memberType === 'Full';
+        if (!isPlaying) return false; // Skip social members for internal games
       }
-
-      players.push({
-        userName: userName.trim(),
-        fullName: (fullName || userName).trim(),
-        memberType,
-      });
-    }
-  }
+      return true;
+    })
+    .map((u) => ({
+      userName: u.userName.trim(),
+      fullName: (u.fullName || u.userName).trim(),
+      memberType: u.memberType || undefined,
+    }));
 
   // Sort players alphabetically by full name for easier dropdown selection
   players.sort((a, b) => a.fullName.localeCompare(b.fullName));
@@ -220,31 +180,11 @@ export async function getEnteredPlayers(
   const colMap = await getColumnMap(spreadsheetId, playersSheetName);
   const userNameColIndex = colMap['user_name'] ?? 0;
 
-  // Build a lookup map of userName -> fullName from Members sheet
-  const membersSpreadsheetId = getMembersSpreadsheetId();
-  const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
-
-  const membersResponse = await sheets.spreadsheets.values.get({
-    spreadsheetId: membersSpreadsheetId,
-    range: 'Members!A:ZZ',
-  });
-
-  const membersRows = membersResponse.data.values || [];
-  const memberUserNameCol = membersColMap['user_name'] ?? 0;
-  let memberFullNameCol = membersColMap['full_name'];
-  if (memberFullNameCol === undefined) {
-    memberFullNameCol = membersColMap['name'] ?? 1;
-  }
-
-  // Build lookup map
+  // Build a lookup map of userName -> fullName from Postgres members
+  const allUsers = await getAllUsers();
   const fullNameLookup: { [userName: string]: string } = {};
-  for (let i = 1; i < membersRows.length; i++) {
-    const memberRow = membersRows[i];
-    const memberUserName = memberRow[memberUserNameCol];
-    const memberFullName = memberRow[memberFullNameCol];
-    if (memberUserName) {
-      fullNameLookup[memberUserName] = memberFullName || memberUserName;
-    }
+  for (const u of allUsers) {
+    if (u.userName) fullNameLookup[u.userName] = u.fullName || u.userName;
   }
 
   const enteredPlayers: Array<{ userName: string; fullName: string; status: 'E' | 'M' }> = [];
