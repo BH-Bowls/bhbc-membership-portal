@@ -6,6 +6,7 @@ import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import { Providers } from './providers';
 import { OfflineBanner } from '@/components/OfflineBanner';
+import { ChunkErrorRecovery } from '@/components/ChunkErrorRecovery';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -32,6 +33,7 @@ export default function RootLayout({
         <meta name="theme-color" content="#1d4ed8" />
       </head>
       <body className={inter.className}>
+        <ChunkErrorRecovery />
         <OfflineBanner />
         <Providers>{children}</Providers>
       </body>

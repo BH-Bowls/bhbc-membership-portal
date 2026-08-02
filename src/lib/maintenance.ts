@@ -23,7 +23,10 @@ export async function isMaintenanceModeOn(): Promise<boolean> {
   }
 
   const config = await getConfig();
-  cachedValue = config.maintenance_mode === 'true';
+  // Case-insensitive: whoever last toggled this by hand in Supabase's Table Editor might
+  // have typed "TRUE"/"True" — don't rely on exact-case matching for a human-edited value.
+  const rawValue = config.maintenance_mode || '';
+  cachedValue = rawValue.trim().toLowerCase() === 'true';
   cachedAt = now;
   return cachedValue;
 }

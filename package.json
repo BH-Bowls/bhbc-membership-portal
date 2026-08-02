@@ -4,8 +4,8 @@
   "previewVersion": "8",
   "private": true,
   "scripts": {
-    "dev": "next dev --port 3001",
-    "build": "next build",
+    "dev": "next dev --port 3001 --webpack",
+    "build": "next build --webpack",
     "start": "next start",
     "lint": "next lint",
     "update-version": "node scripts/update-version.js",
