@@ -21,7 +21,12 @@ const USERS_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours, matches sheets.ts
 
 let _usersCache: { users: User[]; at: number } | null = null;
 
-function invalidateCache() {
+// Exported so other files that write to users/member_profiles directly
+// (members-admin-supabase.ts, profile-supabase.ts) can invalidate this shared cache —
+// found necessary after createMember() left the cache stale for up to 24h following a
+// real Create Member test, since it writes via its own Supabase client rather than
+// through this file's functions.
+export function invalidateCache() {
   _usersCache = null;
 }
 

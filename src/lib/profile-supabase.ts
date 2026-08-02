@@ -6,7 +6,7 @@
 // booleans in Postgres now, not Y/N strings, so they're written as-is, not converted.
 
 import { getSupabaseClient } from './supabase';
-import { getUserByUsername as getMemberByUsername } from './members-supabase';
+import { getUserByUsername as getMemberByUsername, invalidateCache } from './members-supabase';
 import { parseRoles } from './role-utils';
 import type { User } from './sheets';
 
@@ -159,6 +159,7 @@ export async function updateUserProfile(
       if (error) return { success: false, error: error.message };
     }
 
+    invalidateCache();
     return { success: true };
   } catch (error) {
     console.error(`[updateUserProfile] Failed to update profile for ${userName}:`, error);

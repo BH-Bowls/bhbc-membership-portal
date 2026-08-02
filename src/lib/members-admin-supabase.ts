@@ -4,7 +4,7 @@
 // password generation, member_type translation) — see specs/Phase_0_1_Migration_Plan.md.
 
 import { getSupabaseClient } from './supabase';
-import { getAllUsers } from './members-supabase';
+import { getAllUsers, invalidateCache } from './members-supabase';
 import { hashPassword } from './auth-sheets'; // pure, data-source-agnostic — see auth-supabase.ts
 
 const TEMP_PASSWORD_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
@@ -124,6 +124,7 @@ export async function createMember(input: CreateMemberInput): Promise<CreateMemb
     const { error: roleError } = await supabase.from('user_roles').insert({ user_id: user.id, role: 'Member' });
     if (roleError) throw new Error(roleError.message);
 
+    invalidateCache();
     return { success: true, userName, tempPassword };
   } catch (error) {
     console.error('[createMember] Failed:', error);
@@ -159,6 +160,7 @@ export async function bulkUpdateInclude(
       if (!error) updated++;
     }
 
+    if (updated > 0) invalidateCache();
     return { success: true, updated };
   } catch (error) {
     console.error('[bulkUpdateInclude] Failed:', error);
