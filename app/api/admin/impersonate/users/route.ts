@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getImpersonatableUsers } from '@/lib/buddies-sheets';
+import { getImpersonatableUsers } from '@/lib/buddies-supabase';
 
 /**
  * GET /api/admin/impersonate/users
