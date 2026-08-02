@@ -49,7 +49,7 @@ async function fetchLeaverRows(): Promise<RawLeaverRow[]> {
 
   const fields = [
     'user_name', 'first_name', 'last_name', 'known_as', 'email_address', 'landline', 'mobile',
-    'address_1', 'address_2', 'address_3', 'post_code', 'locker_no', 'birthdate', 'member_type',
+    'address_1', 'address_2', 'address_3', 'post_code', 'locker_no', 'birthdate', 'age_demographic', 'member_type',
     'honorary', 'year_started', 'handicap', 'buddy_user_name', 'role',
     'password_hash', 'is_temp_password', 'reset_token', 'reset_token_expires',
     'last_login_date', 'last_login_failed_date', 'last_password_reset_date',
@@ -142,6 +142,7 @@ async function main() {
       post_code: l.post_code,
       locker_no: l.locker_no,
       birthdate: l.birthdate,
+      age_demographic: l.age_demographic,
       member_type: l.member_type,
       honorary: l.honorary,
       year_started: l.year_started ? parseInt(l.year_started, 10) : null,

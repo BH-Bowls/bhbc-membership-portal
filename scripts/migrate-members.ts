@@ -118,9 +118,29 @@ async function main() {
   const supabase = getSupabaseClient();
 
   console.log('3. Wiping existing users/member_profiles/user_roles (dependency order)...');
-  await supabase.from('user_roles').delete().neq('user_id', '00000000-0000-0000-0000-000000000000');
-  await supabase.from('member_profiles').delete().neq('user_id', '00000000-0000-0000-0000-000000000000');
-  await supabase.from('users').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+  // Every table with an FK into users blocks the users delete unless cleared first (no
+  // silent failure here — found the hard way: real interactive testing populates
+  // login_attempts/impersonation_log with real usernames, and migrate-applications.ts
+  // populates applications.reviewed_by/converted_user_id, none of which cascade on
+  // delete by design (member_profiles.user_id deliberately has no ON DELETE CASCADE —
+  // see the plan's reasoning). Clearing applications here too is consistent with the
+  // documented refresh order (migrate-members -> migrate-leavers -> migrate-applications)
+  // — it always gets fully repopulated by the next script in the sequence anyway.
+  // games/game_players/handicap_history/cleaning_rota/sweeping_rota aren't cleared here
+  // since nothing populates them yet; extend this list if that changes.
+  const wipeSteps: { table: string; column: string }[] = [
+    { table: 'login_attempts', column: 'id' },
+    { table: 'impersonation_log', column: 'id' },
+    { table: 'password_reset_requests', column: 'id' },
+    { table: 'applications', column: 'id' },
+    { table: 'user_roles', column: 'user_id' },
+    { table: 'member_profiles', column: 'user_id' },
+    { table: 'users', column: 'id' },
+  ];
+  for (const step of wipeSteps) {
+    const { error } = await supabase.from(step.table).delete().neq(step.column, '00000000-0000-0000-0000-000000000000');
+    if (error) throw new Error(`Failed to wipe ${step.table}: ${error.message}`);
+  }
 
   console.log('4. Building users rows...');
   const usersToInsert = sheetUsers.map((u: User, i: number) => ({
@@ -189,6 +209,7 @@ async function main() {
       post_code: u.postCode,
       locker_no: u.lockerNo,
       birthdate: u.birthdate,
+      age_demographic: u.ageDemographic || null,
       member_type: u.memberType,
       honorary: u.honorary,
       year_started: u.yearStarted,

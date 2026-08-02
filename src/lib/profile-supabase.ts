@@ -83,6 +83,7 @@ const FIELD_TO_COLUMN: Record<string, string> = {
   address1: 'address_1',
   address2: 'address_2',
   address3: 'address_3',
+  postCode: 'post_code',
   lockerNo: 'locker_no',
   buddyUserName: 'buddy_user_name',
   emailAddress: 'email_address',
