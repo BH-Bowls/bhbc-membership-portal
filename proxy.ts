@@ -1,8 +1,10 @@
-// middleware.ts
-// NextAuth middleware for route protection and role-based access control
-// Runs on every request to protected pages before they are rendered
-// Redirects unauthenticated users to login page
-// Enforces role-based permissions (e.g., Captain-only routes)
+// proxy.ts (formerly middleware.ts — Next.js 16 renamed the convention and deprecated
+// the old filename; not forced here since this branch's maintenance check reads
+// Supabase, which is Edge-compatible, but worth renaming ahead of the deprecation).
+// NextAuth request handling for route protection and role-based access control.
+// Runs on every request to protected pages before they are rendered.
+// Redirects unauthenticated users to login page.
+// Enforces role-based permissions (e.g., Captain-only routes).
 
 import { withAuth } from 'next-auth/middleware';
 import { NextResponse } from 'next/server';
@@ -110,12 +112,12 @@ function isPinExempt(pathname: string): boolean {
 
 export default withAuth(
   /**
-   * Custom middleware logic for role-based access control
+   * Custom proxy logic for role-based access control
    * Called after NextAuth verifies user is authenticated
    * @param req Request object with NextAuth token attached
    * @returns NextResponse to continue or redirect
    */
-  async function middleware(req) {
+  async function proxy(req) {
     // Get authentication token from NextAuth
     const token = req.nextauth.token;
 

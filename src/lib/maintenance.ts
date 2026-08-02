@@ -1,7 +1,11 @@
 // src/lib/maintenance.ts
 // Maintenance-mode flag, checked at two enforcement points:
-//   1. authenticateUser() (src/lib/auth-sheets.ts) — blocks new non-Admin logins
-//   2. middleware.ts — redirects already-logged-in non-Admin sessions on their next request
+//   1. authenticateUser() — blocks new non-Admin logins. Checked in both
+//      auth-sheets.ts and auth-supabase.ts (the latter added when auth.ts's
+//      authorize() was cut over to Postgres; Club login still falls back to
+//      auth-sheets.ts's authenticateClub(), an independent path).
+//   2. proxy.ts (formerly middleware.ts) — redirects already-logged-in non-Admin
+//      sessions on their next request
 // See specs/Phase_0_1_Migration_Plan.md, Step 0.
 //
 // In-memory TTL cache to avoid hitting Postgres on every request/login attempt. Same
