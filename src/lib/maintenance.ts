@@ -9,7 +9,7 @@
 // plan): a cold serverless instance does one fresh fetch, which is fine — this only needs
 // to be *eventually* consistent within a few seconds, not instantaneous.
 
-import { getLabelConfig } from './config-supabase';
+import { getConfig } from './config-supabase';
 
 const CACHE_TTL_MS = 20_000; // 20s, within the plan's 15-30s range
 
@@ -22,7 +22,7 @@ export async function isMaintenanceModeOn(): Promise<boolean> {
     return cachedValue;
   }
 
-  const config = await getLabelConfig();
+  const config = await getConfig();
   cachedValue = config.maintenance_mode === 'true';
   cachedAt = now;
   return cachedValue;

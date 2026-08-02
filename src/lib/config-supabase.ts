@@ -1,12 +1,13 @@
 // src/lib/config-supabase.ts
-// Read and write key-value config from the Postgres `config` table.
-// Same function names and signatures as config-sheets.ts so call sites don't need to change
-// when this replaces it — see specs/Phase_0_1_Migration_Plan.md, Step 0.
+// Read and write key-value config from the Postgres `config` table. Holds every app-wide
+// setting, not just Labels — maintenance_mode, age_reference_date, min_friendlies_for_
+// competitions, and the Labels printing fields all live in the same table. See
+// specs/Phase_0_1_Migration_Plan.md, Step 0.
 
 import { getSupabaseClient } from './supabase';
 
 /** Fetch all key-value pairs from the config table as a plain Record. */
-export async function getLabelConfig(): Promise<Record<string, string>> {
+export async function getConfig(): Promise<Record<string, string>> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase.from('config').select('key, value');
   if (error) {
@@ -24,7 +25,7 @@ export async function getLabelConfig(): Promise<Record<string, string>> {
  * Update specific keys in the config table. Only updates rows whose key already exists —
  * matches config-sheets.ts's behaviour (it does not insert new keys either).
  */
-export async function updateLabelConfig(updates: Record<string, string>): Promise<void> {
+export async function updateConfig(updates: Record<string, string>): Promise<void> {
   const supabase = getSupabaseClient();
 
   for (const [key, value] of Object.entries(updates)) {

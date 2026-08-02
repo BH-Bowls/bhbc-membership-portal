@@ -190,6 +190,11 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
       items.push({ name: 'Print Labels', href: '/labels' });
     }
 
+    // Admin only — app-wide config (maintenance mode, labels, etc.)
+    if (isAdmin) {
+      items.push({ name: 'Config', href: '/admin/config' });
+    }
+
     // Admin only — Availability (still testing). The pages stay reachable by direct
     // link, so members can complete their availability without a nav entry.
     if (isAdmin) {

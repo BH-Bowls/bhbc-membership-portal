@@ -6,6 +6,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { Navbar } from '@/components/Navbar';
 import { hasRole } from '@/lib/role-utils';
 
@@ -145,9 +146,6 @@ export default function LabelsPage() {
   const router = useRouter();
 
   const [config, setConfig] = useState<LabelConfig>(DEFAULT_CONFIG);
-  const [editConfig, setEditConfig] = useState<LabelConfig>(DEFAULT_CONFIG);
-  const [isEditingConfig, setIsEditingConfig] = useState(false);
-  const [savingConfig, setSavingConfig] = useState(false);
   const [configLoading, setConfigLoading] = useState(true);
 
   const [members, setMembers] = useState<LabelMember[]>([]);
@@ -169,15 +167,13 @@ export default function LabelsPage() {
     }
   }, [session, status, router]);
 
-  // Load config
+  // Load config (read-only here — edited at /admin/config's Labels tab)
   useEffect(() => {
-    fetch('/api/admin/labels/config')
+    fetch('/api/admin/config')
       .then((r) => r.json())
       .then((data) => {
         if (data.config) {
-          const merged = { ...DEFAULT_CONFIG, ...data.config };
-          setConfig(merged);
-          setEditConfig(merged);
+          setConfig({ ...DEFAULT_CONFIG, ...data.config });
         }
       })
       .catch(() => {})
@@ -246,23 +242,6 @@ export default function LabelsPage() {
       else next.add(name);
       return next;
     });
-  }
-
-  async function saveConfig() {
-    setSavingConfig(true);
-    try {
-      await fetch('/api/admin/labels/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editConfig),
-      });
-      setConfig(editConfig);
-      setIsEditingConfig(false);
-    } catch {
-      alert('Failed to save config');
-    } finally {
-      setSavingConfig(false);
-    }
   }
 
   if (status === 'loading' || configLoading) {
@@ -426,50 +405,9 @@ export default function LabelsPage() {
           </div>
 
           {/* ── Config ── */}
-          <div className="bg-white shadow rounded-lg p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-medium text-gray-700">Label configuration</h2>
-              {!isEditingConfig ? (
-                <button onClick={() => setIsEditingConfig(true)} className="text-sm text-blue-600 hover:text-blue-800">Edit</button>
-              ) : (
-                <div className="flex gap-3">
-                  <button onClick={() => { setEditConfig(config); setIsEditingConfig(false); }} className="text-sm text-gray-500 hover:text-gray-700">Cancel</button>
-                  <button onClick={saveConfig} disabled={savingConfig} className="text-sm text-blue-600 hover:text-blue-800 disabled:opacity-50">
-                    {savingConfig ? 'Saving...' : 'Save'}
-                  </button>
-                </div>
-              )}
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-              {([
-                ['booklet_label_message', 'Booklet label message'],
-                ['banner_url', 'Banner image URL'],
-                ['label_width_mm', 'Label width (mm)'],
-                ['label_height_mm', 'Label height (mm)'],
-                ['top_margin_mm', 'Top margin (mm)'],
-                ['left_margin_mm', 'Left margin (mm)'],
-                ['column_gap_mm', 'Column gap (mm)'],
-                ['row_gap_mm', 'Row gap (mm)'],
-                ['labels_per_row', 'Labels per row'],
-                ['labels_per_col', 'Labels per column'],
-                ['printer_margin_mm', 'Printer margin (mm)'],
-              ] as [keyof LabelConfig, string][]).map(([key, label]) => (
-                <div key={key}>
-                  <span className="text-gray-500">{label}: </span>
-                  {isEditingConfig ? (
-                    <input
-                      type="text"
-                      value={editConfig[key]}
-                      onChange={(e) => setEditConfig((prev) => ({ ...prev, [key]: e.target.value }))}
-                      className="border border-gray-300 rounded px-2 py-0.5 text-sm w-full mt-0.5"
-                    />
-                  ) : (
-                    <span className="text-gray-900">{config[key]}</span>
-                  )}
-                </div>
-              ))}
-            </div>
+          <div className="bg-white shadow rounded-lg p-4 flex items-center justify-between">
+            <span className="text-sm text-gray-500">Label dimensions, margins, and booklet message are configured in Admin &gt; Config.</span>
+            <Link href="/admin/config" className="text-sm text-blue-600 hover:text-blue-800 whitespace-nowrap">Edit label config →</Link>
           </div>
 
           {/* ── Preview ── */}
