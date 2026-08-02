@@ -7,8 +7,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
-import { getAllUsers } from '@/lib/sheets';
-import { createMember } from '@/lib/members-admin';
+import { getAllUsers } from '@/lib/members-supabase';
+import { createMember } from '@/lib/members-admin-supabase';
 import { sendWelcomeEmail } from '@/lib/email/application-mailer';
 
 // GET handler — returns a trimmed list of active members

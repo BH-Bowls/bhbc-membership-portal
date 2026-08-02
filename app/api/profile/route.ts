@@ -4,8 +4,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getUserByUsername, updateUserProfile } from '@/lib/profile-sheets';
-import { canManageUser, canEditProfileField } from '@/lib/buddies-sheets';
+import { getUserByUsername, updateUserProfile } from '@/lib/profile-supabase';
+import { canManageUser, canEditProfileField } from '@/lib/buddies-supabase';
 
 // GET /api/profile
 // Now works with JWT impersonation - session.user.userName is automatically correct

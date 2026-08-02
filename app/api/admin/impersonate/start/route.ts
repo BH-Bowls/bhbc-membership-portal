@@ -4,9 +4,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getUserByUsername } from '@/lib/sheets';
-import { canImpersonate } from '@/lib/buddies-sheets';
-import { logImpersonationEvent } from '@/lib/sheets';
+import { getUserByUsername, logImpersonationEvent } from '@/lib/members-supabase';
+import { canImpersonate } from '@/lib/buddies-supabase';
 import { getClubLoginRecord } from '@/lib/clubs-sheets';
 import { v4 as uuidv4 } from 'uuid';
 

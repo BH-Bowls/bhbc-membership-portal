@@ -4,7 +4,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getAllUsers, updateEmailSentStatus, logMemberEmail } from '@/lib/sheets';
+import { getAllUsers } from '@/lib/members-supabase';
+import { updateEmailSentStatus, logMemberEmail } from '@/lib/sheets';
 import { sendMemberEmail } from '@/lib/email/member-mailer';
 import { getEmailTemplates } from '@/lib/email/template-reader';
 import { getEmailTransporter } from '@/lib/email/mailer';

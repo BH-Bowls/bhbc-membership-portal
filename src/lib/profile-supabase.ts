@@ -6,11 +6,17 @@
 // booleans in Postgres now, not Y/N strings, so they're written as-is, not converted.
 
 import { getSupabaseClient } from './supabase';
-import { getUserByUsername } from './members-supabase';
+import { getUserByUsername as getMemberByUsername } from './members-supabase';
 import { parseRoles } from './role-utils';
 import type { User } from './sheets';
 
 export { type User };
+
+// Thin re-export, matching profile-sheets.ts's own API — kept here for the same reason
+// the original had it: a clear, profile-scoped name for consumers of this file.
+export async function getUserByUsername(userName: string): Promise<User | null> {
+  return getMemberByUsername(userName);
+}
 
 function validateProfileField(field: string, value: any): string | undefined {
   if (field === 'emailAddress' && value) {
@@ -103,7 +109,7 @@ export async function updateUserProfile(
   updates: Partial<User>
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const user = await getUserByUsername(userName, true);
+    const user = await getMemberByUsername(userName, true);
     if (!user) return { success: false, error: 'User not found' };
 
     const allowedFields = [
