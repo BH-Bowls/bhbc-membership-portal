@@ -9,7 +9,7 @@ import { getAppUrl } from '@/lib/app-url';
 import { getGames, batchUpdatePlayerEntries, addPlayersToGameSheetDirect, updateGameCounts, getActiveEnteredCount } from '@/lib/friendlies-sheets';
 import { canEnterGame } from '@/lib/game-management/capacity';
 import { hasRole } from '@/lib/role-utils';
-import { getAllUsers } from '@/lib/sheets';
+import { getAllUsers } from '@/lib/members-supabase';
 import { sendEntryConfirmedEmail, sendLinkedEntryConfirmedEmail } from '@/lib/email/friendlies';
 
 // POST handler - Adds players with M (manually added) status

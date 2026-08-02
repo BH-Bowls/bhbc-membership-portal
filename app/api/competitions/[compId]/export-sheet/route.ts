@@ -7,7 +7,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompetitionById, getCompetitionMatches } from '@/lib/competitions-sheets';
 import { hasRole } from '@/lib/role-utils';
-import { getAllUsers } from '@/lib/sheets';
+import { getAllUsers } from '@/lib/members-supabase';
 import { exportBracketToSheet } from '@/lib/sheet-export';
 import type { CompMemberInfo } from '@/types/competitions';
 import type { SheetExportConfig } from '@/lib/sheet-export';

@@ -9,7 +9,7 @@ import { getAppUrl } from '@/lib/app-url';
 import { getGames, getGameSheet } from '@/lib/friendlies-sheets';
 import { GameSheetPlayer } from '@/lib/types/friendlies';
 import { sendGamePublishedEmail } from '@/lib/email/friendlies';
-import { getAllUsers } from '@/lib/sheets';
+import { getAllUsers } from '@/lib/members-supabase';
 import { hasRole } from '@/lib/role-utils';
 
 export async function POST(request: NextRequest) {

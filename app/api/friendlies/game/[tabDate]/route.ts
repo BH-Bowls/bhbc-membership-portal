@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getGames, getGameSheet, getClubDetails, getTeaRotaList, validateGameToken } from '@/lib/friendlies-sheets';
-import { getUserByUsername, getAllUsers } from '@/lib/sheets';
+import { getUserByUsername, getAllUsers } from '@/lib/members-supabase';
 
 export async function GET(
   request: NextRequest,

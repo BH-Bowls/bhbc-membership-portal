@@ -10,8 +10,8 @@ import { getGames, updatePlayerEntry, batchUpdateGameCounts, addPlayerToGameShee
 import { clearDiaryCache } from '@/lib/home-cache';
 import { EnterGamesRequest, EnterGamesResponse } from '@/lib/types/friendlies';
 import { canEnterGame } from '@/lib/game-management/capacity';
-import { getUserByUsername } from '@/lib/sheets';
-import { canManageUser } from '@/lib/buddies-sheets';
+import { getUserByUsername } from '@/lib/members-supabase';
+import { canManageUser } from '@/lib/buddies-supabase';
 import { sendEntryConfirmedEmail, sendLinkedEntryConfirmedEmail } from '@/lib/email/friendlies';
 
 // POST handler - Enters user into one or more games

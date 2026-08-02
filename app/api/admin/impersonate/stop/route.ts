@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { logImpersonationEvent } from '@/lib/sheets';
+import { logImpersonationEvent } from '@/lib/members-supabase';
 
 export async function POST(request: NextRequest) {
   try {

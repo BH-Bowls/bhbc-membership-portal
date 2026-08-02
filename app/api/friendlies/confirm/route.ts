@@ -7,8 +7,8 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getGames, getGameSheet, updateGameSheet } from '@/lib/friendlies-sheets';
 import { ConfirmParticipationRequest } from '@/lib/types/friendlies';
-import { getUserByUsername } from '@/lib/sheets';
-import { canManageUser } from '@/lib/buddies-sheets';
+import { getUserByUsername } from '@/lib/members-supabase';
+import { canManageUser } from '@/lib/buddies-supabase';
 import { buildFriendlyICSAttachment, isGmailAddress, icsUpdatesEnabled } from '@/lib/ics-utils';
 import { sendEmail } from '@/lib/email/mailer';
 

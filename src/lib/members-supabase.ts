@@ -376,3 +376,40 @@ export async function logImpersonationEvent(event: {
     // Don't throw - logging failure shouldn't break impersonation
   }
 }
+
+// ============================================================================
+// HANDICAPS
+// ============================================================================
+
+/**
+ * Update handicaps for multiple members. Sheets' version batched writes into a single
+ * spreadsheets.values.batchUpdate call to stay under its per-minute write quota — that
+ * constraint doesn't exist in Postgres, so this just issues one update per member.
+ */
+export async function batchUpdateMemberHandicaps(
+  updates: { userName: string; handicap: number | null }[]
+): Promise<void> {
+  if (updates.length === 0) return;
+
+  const supabase = getSupabaseClient();
+  const usernames = updates.map((u) => u.userName);
+  const { data: userRows, error: fetchError } = await supabase
+    .from('users')
+    .select('id, username')
+    .in('username', usernames);
+  if (fetchError) throw new Error(`Failed to look up users for handicap update: ${fetchError.message}`);
+
+  const idByUsername = new Map((userRows ?? []).map((u) => [u.username.toLowerCase(), u.id]));
+
+  for (const { userName, handicap } of updates) {
+    const userId = idByUsername.get(userName.toLowerCase());
+    if (!userId) continue;
+    const { error } = await supabase
+      .from('member_profiles')
+      .update({ handicap, profile_updated_at: new Date().toISOString() })
+      .eq('user_id', userId);
+    if (error) throw new Error(`Failed to update handicap for ${userName}: ${error.message}`);
+  }
+
+  invalidateCache();
+}

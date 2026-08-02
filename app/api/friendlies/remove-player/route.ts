@@ -8,7 +8,7 @@ import { authOptions } from '@/lib/auth';
 import { getAppUrl } from '@/lib/app-url';
 import { getGames, updatePlayerEntry, updateGameCounts, removePlayerFromGameSheet, getGameSheet, updateGameSheet, getActiveEnteredCount } from '@/lib/friendlies-sheets';
 import { hasRole } from '@/lib/role-utils';
-import { getUserByUsername } from '@/lib/sheets';
+import { getUserByUsername } from '@/lib/members-supabase';
 import { sendWithdrawnByAdminNoticeEmail, sendRemovedNoticeEmail, sendLinkedWithdrawalNoticeEmail } from '@/lib/email/friendlies';
 
 // POST handler - Removes a player from a game (Players column + game sheet row)

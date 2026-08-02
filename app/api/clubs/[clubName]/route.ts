@@ -9,7 +9,7 @@ import { UpdateClubRequest, ClubContact } from '@/lib/types/clubs';
 import { isMember, hasRole } from '@/lib/role-utils';
 import { sendClubChangeNotification } from '@/lib/email/club-change-notifier';
 import { getGames } from '@/lib/friendlies-sheets';
-import { getUserByUsername } from '@/lib/sheets';
+import { getUserByUsername } from '@/lib/members-supabase';
 
 /** Returns true if a Club-role user is viewing their own club. */
 function isOwnClub(session: any, clubName: string): boolean {

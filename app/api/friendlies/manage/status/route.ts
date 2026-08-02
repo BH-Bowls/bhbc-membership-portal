@@ -24,7 +24,7 @@ import {
 } from '@/lib/friendlies-sheets';
 // addPlayerToGameSheet / removePlayerFromGameSheet imported below in enter/withdraw routes
 import { sendGamePublishedEmail, sendTeaRotaEmail, sendGameCancelledEmail, sendTeaRotaCancelledEmail } from '@/lib/email/friendlies';
-import { getAllUsers } from '@/lib/sheets';
+import { getAllUsers } from '@/lib/members-supabase';
 import { clearAllDiaryCaches, clearSheetDataCacheByPrefix } from '@/lib/home-cache';
 import { ChangeStatusRequest, ChangeStatusResponse, GameStatus } from '@/lib/types/friendlies';
 import { hasRole } from '@/lib/role-utils';

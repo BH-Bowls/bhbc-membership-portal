@@ -13,7 +13,7 @@ import { getGames, getGameSheet, updateGameSheet, updatePlayerEntry, updateGameC
 import { clearDiaryCache } from '@/lib/home-cache';
 import { sendRejoinEmail, sendRejoinNoticeEmail } from '@/lib/email/friendlies';
 import type { WithdrawRequest } from '@/lib/types/friendlies';
-import { getUserByUsername } from '@/lib/sheets';
+import { getUserByUsername } from '@/lib/members-supabase';
 import { hasRole } from '@/lib/role-utils';
 
 // POST handler - Re-joins a player who had withdrawn from a Selecting/Selected game.

@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { swapTeaAssignment, getTeaRotaEntry } from '@/lib/friendlies-sheets';
-import { getUserByUsername } from '@/lib/sheets';
+import { getUserByUsername } from '@/lib/members-supabase';
 import { sendTemplateEmail } from '@/lib/email/mailer';
 
 interface SwapRequest {

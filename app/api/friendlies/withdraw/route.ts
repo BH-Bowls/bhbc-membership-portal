@@ -11,8 +11,8 @@ import { getGames, getGameSheet, updateGameSheet, updatePlayerEntry, updateGameC
 import { clearDiaryCache } from '@/lib/home-cache';
 import { sendWithdrawalEmail, sendWithdrawalNoticeEmail, sendLinkedWithdrawalNoticeEmail } from '@/lib/email/friendlies';
 import type { WithdrawRequest, Game } from '@/lib/types/friendlies';
-import { getUserByUsername } from '@/lib/sheets';
-import { canManageUser } from '@/lib/buddies-sheets';
+import { getUserByUsername } from '@/lib/members-supabase';
+import { canManageUser } from '@/lib/buddies-supabase';
 
 // POST handler - Withdraws user from a game
 export async function POST(request: NextRequest) {

@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
 import { getMarkers, addMarker } from '@/lib/markers-sheets';
-import { getAllUsers } from '@/lib/sheets';
+import { getAllUsers } from '@/lib/members-supabase';
 
 /** GET /api/markers — all authenticated users */
 export async function GET() {

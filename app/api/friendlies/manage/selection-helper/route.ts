@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getGames, getGameSheet, getFriendliesSpreadsheetId, getSelectionHelperCache, setSelectionHelperCache } from '@/lib/friendlies-sheets';
-import { getAllUsers } from '@/lib/sheets';
+import { getAllUsers } from '@/lib/members-supabase';
 import { hasRole } from '@/lib/role-utils';
 
 export interface SelectionHelperPlayer {

@@ -9,8 +9,8 @@ import { getGames, getPlayerEntries, getGameSheet, getTeaRotaList } from '@/lib/
 import { getClubs } from '@/lib/clubs-sheets';
 import { GameStatus, GameType, FriendliesBuddy } from '@/lib/types/friendlies';
 import { hasRole } from '@/lib/role-utils';
-import { getAllUsers } from '@/lib/sheets';
-import { canManageUser } from '@/lib/buddies-sheets';
+import { getAllUsers } from '@/lib/members-supabase';
+import { canManageUser } from '@/lib/buddies-supabase';
 
 // GET handler - Returns list of games with user's entry status for each
 export async function GET(request: NextRequest) {

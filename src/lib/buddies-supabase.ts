@@ -102,3 +102,29 @@ export async function getImpersonatableUsers(
 
   return allUsers.filter((u) => u.buddyUserName === currentUserName);
 }
+
+/**
+ * Users the current user can manage (dropdowns in Profile/Renewals): admins get
+ * everyone, others get self + anyone who lists them as buddy.
+ */
+export async function getManageableUsers(
+  currentUserName: string,
+  currentUserRole: string
+): Promise<User[]> {
+  const allUsers = await getAllUsers();
+  const sortByName = (users: User[]) =>
+    [...users].sort((a, b) => {
+      const nameA = a.fullKnownAs || a.firstName;
+      const nameB = b.fullKnownAs || b.firstName;
+      return nameA.localeCompare(nameB);
+    });
+
+  if (hasRole(currentUserRole, 'Admin')) {
+    return sortByName(allUsers);
+  }
+
+  const manageableUsers = allUsers.filter(
+    (u) => u.userName === currentUserName || u.buddyUserName === currentUserName
+  );
+  return sortByName(manageableUsers);
+}
