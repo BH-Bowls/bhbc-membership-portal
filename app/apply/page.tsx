@@ -81,13 +81,8 @@ export default function ApplyPage() {
         throw new Error(data.error || 'Failed to submit application');
       }
 
-      // Success - show confirmation then redirect
+      // Success - show confirmation, wait for the user to continue
       setSubmitted(true);
-
-      // Redirect after 3 seconds
-      setTimeout(() => {
-        window.location.href = 'https://www.burgesshillbowlsclub.com/';
-      }, 3000);
 
     } catch (err: any) {
       setError(err.message || 'An error occurred. Please try again.');
@@ -107,12 +102,15 @@ export default function ApplyPage() {
             </svg>
           </div>
           <h1 className="text-2xl font-bold text-gray-900 mb-2">Application Submitted!</h1>
-          <p className="text-gray-600 mb-4">
+          <p className="text-gray-600 mb-6">
             Thank you for your application. A confirmation email has been sent to your email address.
           </p>
-          <p className="text-sm text-gray-500">
-            Redirecting to our website...
-          </p>
+          <button
+            onClick={() => { window.location.href = 'https://www.burgesshillbowlsclub.com/'; }}
+            className="inline-block bg-green-700 text-white px-6 py-2 rounded-md font-medium hover:bg-green-800"
+          >
+            Continue
+          </button>
         </div>
       </div>
     );
