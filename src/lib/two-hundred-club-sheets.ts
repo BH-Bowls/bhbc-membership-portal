@@ -7,7 +7,8 @@
 // The full pool of numbers (1..Numbers) is rendered by the page; the entries tab
 // only stores which numbers are assigned to whom.
 
-import { getGoogleSheetsClient, getSpreadsheetId, getColumnMap, getColumnLetter, getAllUsers } from './sheets';
+import { getGoogleSheetsClient, getSpreadsheetId, getColumnMap, getColumnLetter } from './sheets';
+import { getAllUsers } from './members-supabase';
 
 const ENTRIES_SHEET = '200 Club';
 const SETTINGS_SHEET = '200 Club Settings';

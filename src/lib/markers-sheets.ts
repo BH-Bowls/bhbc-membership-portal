@@ -2,7 +2,8 @@
 // Data access functions for the Markers list
 // Data is stored in the Markers sheet of the Member List spreadsheet
 
-import { getGoogleSheetsClient, getSpreadsheetId, getAllUsers } from './sheets';
+import { getGoogleSheetsClient, getSpreadsheetId } from './sheets';
+import { getAllUsers } from './members-supabase';
 
 const SHEET_NAME = 'Markers';
 

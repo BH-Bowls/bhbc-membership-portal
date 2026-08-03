@@ -16,8 +16,8 @@ import {
   getGoogleSheetsClient,
   getColumnMap,
   getColumnLetter,
-  getAllUsers,
 } from './sheets';
+import { getAllUsers } from './members-supabase';
 import type { Competition, CompMatch, CompType, CompStatus, CompRound, CompMemberInfo } from '@/types/competitions';
 import { ROUND_ORDER } from '@/types/competitions';
 
