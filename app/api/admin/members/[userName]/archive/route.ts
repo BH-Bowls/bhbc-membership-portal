@@ -8,8 +8,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
 import { clearDiaryCache } from '@/lib/home-cache';
-import { normalizeToUKDate } from '@/lib/date-utils';
-import { archiveMember } from '@/lib/leavers-sheets';
+import { archiveMember } from '@/lib/leavers-supabase';
 
 // Allowed reasons for archiving a member
 const VALID_REASONS = ['Lapsed', 'Resigned', 'Deceased'];
@@ -58,10 +57,11 @@ export async function POST(
       notes = body.notes.trim();
     }
 
-    // Move the member to the Leavers sheet (DD/MM/YYYY date)
+    // body.leftDate is already YYYY-MM-DD (from an <input type="date">), which
+    // Postgres parses natively.
     const result = await archiveMember(
       userName,
-      normalizeToUKDate(body.leftDate),
+      body.leftDate,
       body.reason,
       notes
     );

@@ -10,7 +10,7 @@ import { useSession } from 'next-auth/react';
 import { Navbar } from '@/components/Navbar';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { getButtonClasses, getCardClasses, getInputClasses } from '@/config/theme-helpers';
-import type { Leaver } from '@/lib/leavers-sheets';
+import type { Leaver } from '@/lib/leavers-supabase';
 
 // sessionStorage key for the leavers list (back-button cache).
 const LEAVERS_CACHE_KEY = 'AdminLeaversCache';

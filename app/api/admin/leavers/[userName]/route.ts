@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
-import { getLeaverByUserName } from '@/lib/leavers-sheets';
+import { getLeaverByUserName } from '@/lib/leavers-supabase';
 
 // GET handler — returns a single leaver's details
 export async function GET(

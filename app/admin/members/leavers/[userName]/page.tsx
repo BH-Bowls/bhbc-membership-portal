@@ -9,7 +9,7 @@ import { useSession } from 'next-auth/react';
 import { Navbar } from '@/components/Navbar';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { getButtonClasses, getCardClasses } from '@/config/theme-helpers';
-import type { LeaverDetail } from '@/lib/leavers-sheets';
+import type { LeaverDetail } from '@/lib/leavers-supabase';
 
 export default function LeaverViewPage() {
   const { data: session } = useSession();
