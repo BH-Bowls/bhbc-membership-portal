@@ -31,6 +31,7 @@ export interface CreateMemberResult {
   success: boolean;
   userName?: string;
   tempPassword?: string;
+  userId?: string; // the new users.id — needed by callers that must link to it afterward (e.g. Applications conversion)
   error?: string;
 }
 
@@ -113,6 +114,7 @@ export async function createMember(input: CreateMemberInput): Promise<CreateMemb
       address_3: input.address3 || null,
       post_code: input.postCode || null,
       birthdate: input.dob || null,
+      age_demographic: input.ageDemographic || null,
       member_type: memberTypeFullName,
       year_started: currentYear,
       include: 'Y',
@@ -125,7 +127,7 @@ export async function createMember(input: CreateMemberInput): Promise<CreateMemb
     if (roleError) throw new Error(roleError.message);
 
     invalidateCache();
-    return { success: true, userName, tempPassword };
+    return { success: true, userName, tempPassword, userId: user.id };
   } catch (error) {
     console.error('[createMember] Failed:', error);
     return { success: false, error: error instanceof Error ? error.message : 'Failed to create member' };
