@@ -1,7 +1,7 @@
 {
   "name": "bhbc-membership-portal",
   "version": "1.24.1",
-  "previewVersion": "8",
+  "previewVersion": "9",
   "private": true,
   "scripts": {
     "dev": "next dev --port 3001 --webpack",
