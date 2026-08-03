@@ -2,7 +2,7 @@
 // API endpoint for membership applications (public - no auth required)
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getGoogleSheetsClient, getSpreadsheetId, getColumnMap } from '@/lib/sheets';
+import { createApplication } from '@/lib/applications-supabase';
 import { calculateMembershipFee } from '@/lib/renewals-sheets';
 import { sendEmailWithAttachments, isEmailConfigured, getEmailTransporter } from '@/lib/email/mailer';
 import { processEmailTemplate } from '@/lib/email/template-processor';
@@ -97,19 +97,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: errors.join(', ') }, { status: 400 });
     }
 
-    // Get current timestamp
-    const createdAt = new Date().toLocaleString('en-GB', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-
-    // Write to Application sheet
-    const sheets = getGoogleSheetsClient();
-    const spreadsheetId = getSpreadsheetId();
-
     // Derive the full member type name from gender + Playing/Social so the
     // membership fee can be calculated. The Members sheet later stores this same
     // full-name form (e.g. "Playing Man").
@@ -131,78 +118,37 @@ export async function POST(request: NextRequest) {
       null
     );
 
-    // Build the new row by column name so the workflow columns (Status, Fee Due)
-    // land correctly regardless of their physical position in the sheet.
-    const appColMap = await getColumnMap('Applications');
-
-    // Google Sheets with USER_ENTERED parses a pure-digit string as a number,
-    // which strips the leading zero from UK phone numbers (e.g. "07771833837"
-    // becomes 7771833837). Prefixing with an apostrophe forces the cell to be
-    // stored as text, preserving the leading zero and any spaces the applicant
-    // typed. The apostrophe is a Sheets text marker — it is not stored and does
-    // not appear when the value is read back via the API.
-    const asPhoneText = (v: string | undefined) => {
-      const trimmed = v?.trim() || '';
-      return trimmed ? `'${trimmed}` : '';
-    };
-
-    // Map normalized column name -> value for every field we want to write
-    const fieldValues: { [key: string]: any } = {
-      first_name: data.firstName?.trim() || '',
-      last_name: data.lastName?.trim() || '',
-      known_as: data.knownAs?.trim() || '',
+    const createResult = await createApplication({
+      firstName: data.firstName?.trim() || '',
+      lastName: data.lastName?.trim() || '',
+      knownAs: data.knownAs?.trim() || '',
       gender: data.gender || '',
-      email_address: data.email?.trim() || '',
-      landline: asPhoneText(data.landline),
-      mobile: asPhoneText(data.mobile),
-      address_1: data.address1?.trim() || '',
-      address_2: data.address2?.trim() || '',
-      address_3: data.address3?.trim() || '',
-      post_code: data.postCode?.trim() || '',
-      age_demographic: data.ageDemographic || '',
+      emailAddress: data.email?.trim() || '',
+      landline: data.landline?.trim() || '',
+      mobile: data.mobile?.trim() || '',
+      address1: data.address1?.trim() || '',
+      address2: data.address2?.trim() || '',
+      address3: data.address3?.trim() || '',
+      postCode: data.postCode?.trim() || '',
+      ageDemographic: data.ageDemographic || '',
       dob: data.dob || '',
-      ft_education: data.ftEducation || '',
-      member_type: data.memberType || '',
-      previous_experience: data.previousExperience?.trim() || '',
+      ftEducation: data.ftEducation || '',
+      memberType: data.memberType || '',
+      previousExperience: data.previousExperience?.trim() || '',
       disabilities: data.disabilities?.trim() || '',
-      proposer_name: data.proposerName?.trim() || '',
-      seconder_name: data.seconderName?.trim() || '',
+      proposerName: data.proposerName?.trim() || '',
+      seconderName: data.seconderName?.trim() || '',
       comments: data.comments?.trim() || '',
-      created_at: createdAt,
-      // Workflow columns set at submission time
-      status: 'Submitted',
-      fee_due: feeDue,
-    };
-
-    // Determine how wide the row needs to be (highest mapped column index)
-    let maxIndex = 0;
-    for (const index of Object.values(appColMap)) {
-      if (index > maxIndex) {
-        maxIndex = index;
-      }
-    }
-
-    // Start with a fully blank row so the append has no undefined holes, then
-    // place each value at its mapped column index
-    const rowData: any[] = [];
-    for (let i = 0; i <= maxIndex; i++) {
-      rowData[i] = '';
-    }
-    for (const [columnName, value] of Object.entries(fieldValues)) {
-      const colIndex = appColMap[columnName];
-      if (colIndex !== undefined) {
-        rowData[colIndex] = value;
-      }
-    }
-
-    await sheets.spreadsheets.values.append({
-      spreadsheetId,
-      range: 'Applications!A:ZZ',
-      valueInputOption: 'USER_ENTERED',
-      requestBody: {
-        values: [rowData],
-      },
+      feeDue,
     });
+
+    if (!createResult.success) {
+      console.error('[Apply] Failed to save application:', createResult.error);
+      return NextResponse.json(
+        { error: 'Failed to submit application. Please try again.' },
+        { status: 500 }
+      );
+    }
 
     console.log(`[Apply] Application saved for ${data.firstName} ${data.lastName}`);
 

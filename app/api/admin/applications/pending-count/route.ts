@@ -6,7 +6,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
-import { getPendingApplicationsCount } from '@/lib/applications-sheets';
+import { getPendingApplicationsCount } from '@/lib/applications-supabase';
 
 // GET handler — returns { count } of applications awaiting admin action
 export async function GET() {

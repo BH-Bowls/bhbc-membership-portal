@@ -16,7 +16,7 @@ import { COMP_SHEET_CONFIG } from './competitions-sheets';
 import { parseUKDate } from './date-utils';
 import { getSheetDataCache, setSheetDataCache } from './home-cache';
 import { hasRole } from './role-utils';
-import { getPendingApplicationsCount } from './applications-sheets';
+import { getPendingApplicationsCount } from './applications-supabase';
 import type { DiaryItem } from '@/types/diary';
 
 // ─── Environment Variable Getter ─────────────────────────────────────────────

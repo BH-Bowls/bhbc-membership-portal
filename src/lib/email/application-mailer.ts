@@ -6,7 +6,7 @@
 
 import { sendTemplateEmail } from './mailer';
 import { getAppUrl } from '../app-url';
-import type { Application } from '../applications-sheets';
+import type { Application } from '../applications-supabase';
 
 // Club inbox copied on the payment request and used as the applicant contact.
 const CLUB_EMAIL = 'burgesshillbc@gmail.com';
