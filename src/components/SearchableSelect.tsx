@@ -34,8 +34,24 @@ export function SearchableSelect({
   const [searchTerm, setSearchTerm] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
+  // Whether the dropdown should open above the input instead of below — set when
+  // there isn't enough room below in the viewport (e.g. the bottom row of a long
+  // table), so the option list doesn't render off-screen.
+  const [openUpward, setOpenUpward] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Decide which way to open whenever the dropdown becomes visible. Matches the
+  // dropdown's own max-h-80 (320px) cap when checking available space below.
+  useEffect(() => {
+    if (isOpen && containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const spaceAbove = rect.top;
+      const dropdownHeight = 320;
+      setOpenUpward(spaceBelow < dropdownHeight && spaceAbove > spaceBelow);
+    }
+  }, [isOpen]);
 
   // Auto-focus on mount if requested
   useEffect(() => {
@@ -161,7 +177,9 @@ export function SearchableSelect({
 
       {/* Dropdown */}
       {isOpen && !disabled && (
-        <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-80 overflow-auto">
+        <div className={`absolute z-10 w-full bg-white border border-gray-300 rounded-md shadow-lg max-h-80 overflow-auto ${
+          openUpward ? 'bottom-full mb-1' : 'top-full mt-1'
+        }`}>
           {filteredOptions.length === 0 ? (
             <div className="px-3 py-2 text-sm text-gray-500">No matches found</div>
           ) : (
