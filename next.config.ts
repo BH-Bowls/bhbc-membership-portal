@@ -8,6 +8,12 @@ const withPWA = withPWAInit({
   disable: process.env.NODE_ENV === "development",
 });
 
-const nextConfig: NextConfig = {};
+const nextConfig: NextConfig = {
+  // handlebars registers require.extensions internally (used for email templating,
+  // server-only) — webpack doesn't support that pattern and warns on every recompile.
+  // Excluding it from bundling avoids the warning entirely: Node resolves it directly
+  // at runtime instead, which handles require.extensions natively.
+  serverExternalPackages: ["handlebars"],
+};
 
 export default withPWA(nextConfig);
