@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
-import { getMarkers, addMarker } from '@/lib/markers-sheets';
-import { getAllUsers } from '@/lib/members-supabase';
+import { getMarkers, setMarkerStatus, getUserByUsername } from '@/lib/members-supabase';
 
 /** GET /api/markers — all authenticated users */
 export async function GET() {
@@ -41,23 +40,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Username is required' }, { status: 400 });
     }
 
-    // Validate the username exists in Members sheet
-    const allUsers = await getAllUsers();
-    const user = allUsers.find(u => u.userName?.toLowerCase() === username.trim().toLowerCase());
+    const user = await getUserByUsername(username.trim());
     if (!user) {
       return NextResponse.json({ error: 'Member not found' }, { status: 400 });
     }
 
-    // Check not already in the list
-    const existing = await getMarkers();
-    const alreadyListed = existing.some(
-      m => m.userName?.toLowerCase() === username.trim().toLowerCase()
-    );
-    if (alreadyListed) {
+    if (user.isMarker) {
       return NextResponse.json({ error: 'Member is already in the markers list' }, { status: 400 });
     }
 
-    await addMarker(user.userName!, !!isWorker);
+    await setMarkerStatus(user.userName, { isMarker: true, isWorker: !!isWorker });
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('POST /api/markers error:', error);

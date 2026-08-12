@@ -32,8 +32,35 @@
 
 import bcrypt from 'bcryptjs';
 import { getAllUsers, getColumnMap, getGoogleSheetsClient, getSpreadsheetId, type User } from '../src/lib/sheets';
-import { getMarkers } from '../src/lib/markers-sheets';
 import { parseRoles } from '../src/lib/role-utils';
+
+/**
+ * Reads the live Markers sheet directly (name + worker flag only — the old
+ * markers-sheets.ts's full CRUD module was retired once /markers moved to reading/
+ * writing member_profiles.is_marker/is_worker directly, but THIS read still has to
+ * come from the sheet: production is still Sheets-only until the real cutover, so
+ * the Markers sheet remains the actual source of truth for every Dev refresh until
+ * then, not whatever's already sitting in Dev's Postgres.
+ */
+async function fetchMarkers(): Promise<Map<string, { isWorker: boolean }>> {
+  const spreadsheetId = getSpreadsheetId();
+  const sheets = getGoogleSheetsClient();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: 'Markers!A:B',
+    valueRenderOption: 'FORMATTED_VALUE',
+  });
+
+  const rows = response.data.values ?? [];
+  const byUsername = new Map<string, { isWorker: boolean }>();
+  for (let i = 1; i < rows.length; i++) {
+    const name = (rows[i][0] || '').toString().trim();
+    if (!name) continue;
+    const isWorker = (rows[i][1] || '').toString().trim().toUpperCase() === 'Y';
+    byUsername.set(name.toLowerCase(), { isWorker });
+  }
+  return byUsername;
+}
 import { getSupabaseClient } from '../src/lib/supabase';
 import { parseSheetTimestamp } from './lib/parse-sheet-timestamp';
 
@@ -102,15 +129,13 @@ async function fetchSupplementaryFields(): Promise<Map<string, SupplementaryFiel
 }
 
 async function main() {
-  console.log('1. Reading live Members data from Google Sheets...');
-  const [sheetUsers, markers, supplementary] = await Promise.all([
+  console.log('1. Reading live Members + Markers data from Google Sheets...');
+  const [sheetUsers, markerByUsername, supplementary] = await Promise.all([
     getAllUsers(true),
-    getMarkers(),
+    fetchMarkers(),
     fetchSupplementaryFields(),
   ]);
-  console.log(`   -> ${sheetUsers.length} members, ${markers.length} marker entries`);
-
-  const markerByUsername = new Map(markers.map((m) => [m.userName?.toLowerCase(), m]));
+  console.log(`   -> ${sheetUsers.length} members, ${markerByUsername.size} marker entries`);
 
   console.log('2. Preparing a shared test password hash...');
   const testPasswordHash = await bcrypt.hash(TEST_PASSWORD, 12);
@@ -125,20 +150,23 @@ async function main() {
   // delete by design (member_profiles.user_id deliberately has no ON DELETE CASCADE —
   // see the plan's reasoning). Clearing applications here too is consistent with the
   // documented refresh order (migrate-members -> migrate-leavers -> migrate-applications
-  // -> migrate-fixtures) — it always gets fully repopulated by the next script in the
-  // sequence anyway. fixtures (renamed from games, 0023) joined this list once
-  // migrate-fixtures.ts started populating captain_username/locked_by/
-  // last_modified_by/tea_*_username — same reasoning as applications: fully wiped
-  // here, so migrate-fixtures.ts MUST be re-run after this script or those columns
-  // stay permanently null until it is. game_players/handicap_history/cleaning_rota/
-  // sweeping_rota still aren't cleared since nothing populates them yet; extend this
-  // list if that changes.
+  // -> migrate-fixtures -> migrate-rotas) — it always gets fully repopulated by the
+  // next script in the sequence anyway. fixtures (renamed from games, 0023) joined
+  // this list once migrate-fixtures.ts started populating captain_username/locked_by/
+  // last_modified_by/tea_*_username; cleaning_rota/sweeping_rota joined once
+  // migrate-rotas.ts started populating their username FK columns — same reasoning as
+  // applications: fully wiped here, so migrate-fixtures.ts/migrate-rotas.ts MUST be
+  // re-run after this script or those columns stay permanently null until they are.
+  // game_players/handicap_history still aren't cleared since nothing populates them
+  // yet; extend this list if that changes.
   const wipeSteps: { table: string; column: string }[] = [
     { table: 'login_attempts', column: 'id' },
     { table: 'impersonation_log', column: 'id' },
     { table: 'password_reset_requests', column: 'id' },
     { table: 'applications', column: 'id' },
     { table: 'fixtures', column: 'id' },
+    { table: 'cleaning_rota', column: 'id' },
+    { table: 'sweeping_rota', column: 'id' },
     { table: 'user_roles', column: 'user_id' },
     { table: 'member_profiles', column: 'user_id' },
     { table: 'users', column: 'id' },
@@ -222,7 +250,7 @@ async function main() {
       handicap: u.handicap,
       buddy_user_name: buddyUserName,
       is_marker: !!marker,
-      is_worker: marker ? marker.isWorker : false,
+      is_worker: marker?.isWorker ?? false,
       worker_additional_info: null, // new capture, no source data to port
       left_at: null,
       leaver_reason: null,

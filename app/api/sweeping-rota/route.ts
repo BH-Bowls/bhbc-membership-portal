@@ -6,9 +6,8 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import {
   getSweepingRotaForDateRange,
-  getSweepingRotaList,
   batchAddSweepingAssignments,
-} from '@/lib/sweeping-sheets';
+} from '@/lib/sweeping-rota-supabase';
 import { generatePatternDates, parseDate, formatDate } from '@/lib/sweeping-patterns';
 import { AddEntriesRequest, AddEntriesResponse } from '@/lib/types/sweeping';
 import { hasRole, isMember } from '@/lib/role-utils';

@@ -4,16 +4,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { swapCleaningAssignment, getCleaningRotaEntry } from '@/lib/cleaning-sheets';
+import { swapCleaningAssignment, getCleaningRotaEntry } from '@/lib/cleaning-rota-supabase';
 import { getUserByUsername } from '@/lib/members-supabase';
 import { sendTemplateEmail } from '@/lib/email/mailer';
-import { CleaningPosition } from '@/lib/types/cleaning';
+import { CleaningPosition } from '@/lib/cleaning-rota-supabase';
 
 interface SwapRequest {
-  rowNumber: number;
+  id: string;
   position: CleaningPosition;
   newUsername: string;
-  targetRowNumber?: number;
+  targetId?: string;
   targetPosition?: CleaningPosition;
 }
 
@@ -31,11 +31,11 @@ export async function POST(request: NextRequest) {
     }
 
     const body: SwapRequest = await request.json();
-    const { rowNumber, position, newUsername, targetRowNumber, targetPosition } = body;
+    const { id, position, newUsername, targetId, targetPosition } = body;
 
-    if (!rowNumber || !position || !newUsername) {
+    if (!id || !position || !newUsername) {
       return NextResponse.json(
-        { error: 'Missing required fields: rowNumber, position, newUsername' },
+        { error: 'Missing required fields: id, position, newUsername' },
         { status: 400 }
       );
     }
@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Get the current cleaning rota entry to verify the current user is assigned
-    const currentEntry = await getCleaningRotaEntry(rowNumber);
+    const currentEntry = await getCleaningRotaEntry(id);
     if (!currentEntry) {
       return NextResponse.json(
         { error: 'Cleaning rota entry not found' },
@@ -70,17 +70,17 @@ export async function POST(request: NextRequest) {
 
     // Get the target entry details before the swap (if recipient had an assignment)
     let targetEntry = null;
-    if (targetRowNumber) {
-      targetEntry = await getCleaningRotaEntry(targetRowNumber);
+    if (targetId) {
+      targetEntry = await getCleaningRotaEntry(targetId);
     }
 
     // Perform the swap
     const updatedEntry = await swapCleaningAssignment(
-      rowNumber,
+      id,
       position,
       currentUsername,
       newUsername,
-      targetRowNumber,
+      targetId,
       targetPosition
     );
 

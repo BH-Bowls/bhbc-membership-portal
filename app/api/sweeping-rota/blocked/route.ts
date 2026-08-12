@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { batchBlockSweepingDates } from '@/lib/sweeping-sheets';
+import { batchBlockSweepingDates } from '@/lib/sweeping-rota-supabase';
 import { generatePatternDates, parseDate } from '@/lib/sweeping-patterns';
 import { BlockDaysRequest, BlockDaysResponse } from '@/lib/types/sweeping';
 import { hasRole } from '@/lib/role-utils';

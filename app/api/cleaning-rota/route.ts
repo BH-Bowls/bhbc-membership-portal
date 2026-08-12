@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getCleaningRotaList } from '@/lib/cleaning-sheets';
+import { getCleaningRotaList } from '@/lib/cleaning-rota-supabase';
 
 /**
  * GET /api/cleaning-rota

@@ -239,6 +239,9 @@ export interface User {
   gmc: string | null; // "GMC" or blank - General Management Committee member
   profileUpdatedDate: string | null;
   handicap: number | null; // Integer 0-10, null if not set (Playing members only)
+  isMarker: boolean;
+  isWorker: boolean; // daytime worker — usually unavailable to mark day games
+  workerAdditionalInfo: string | null; // exceptions to the default 9-5 weekday assumption
 
   // Renewal Email Fields
   include: string | null; // "Y" or "N" - controls whether member receives renewal emails
@@ -882,6 +885,11 @@ function parseUserRow(row: any[], rowNumber: number, colMap: { [key: string]: nu
       const parsed = parseInt(val, 10);
       return isNaN(parsed) ? null : parsed;
     })(),
+    // Markers lives on a separate sheet, not a Members-row column — not derivable here.
+    // This whole function is superseded by members-supabase.ts for live reads.
+    isMarker: false,
+    isWorker: false,
+    workerAdditionalInfo: null,
 
     // Renewal Email Fields
     include: get('include'), // "Y" or "N" - controls who receives renewal emails

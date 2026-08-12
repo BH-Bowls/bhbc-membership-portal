@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { removeSweepingAssignment, getSweepingRotaEntry } from '@/lib/sweeping-sheets';
+import { removeSweepingAssignment, getSweepingRotaEntry } from '@/lib/sweeping-rota-supabase';
 import { parseDate } from '@/lib/sweeping-patterns';
 import { isMember } from '@/lib/role-utils';
 

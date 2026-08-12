@@ -77,6 +77,9 @@ function mapRow(row: any): User {
     gmc: profile?.gmc ?? null,
     profileUpdatedDate: profile?.profile_updated_at ?? null,
     handicap: profile?.handicap ?? null,
+    isMarker: profile?.is_marker ?? false,
+    isWorker: profile?.is_worker ?? false,
+    workerAdditionalInfo: profile?.worker_additional_info ?? null,
     include: profile?.include ?? null,
     renewalEmailSentStatus: profile?.renewal_email_sent_status ?? null,
     buddyUserName: profile?.buddy_user_name ?? null,
@@ -410,6 +413,61 @@ export async function batchUpdateMemberHandicaps(
       .eq('user_id', userId);
     if (error) throw new Error(`Failed to update handicap for ${userName}: ${error.message}`);
   }
+
+  invalidateCache();
+}
+
+export interface MarkerEntry {
+  userName: string;
+  fullName: string;
+  isWorker: boolean;
+  workerAdditionalInfo: string | null;
+  mobile: string | null;
+  landline: string | null;
+  emailAddress: string | null;
+}
+
+/**
+ * Markers is a member attribute (is_marker/is_worker/worker_additional_info on
+ * member_profiles), not a separate assignment record — no markers table.
+ */
+export async function getMarkers(): Promise<MarkerEntry[]> {
+  const users = await getAllUsers();
+  return users
+    .filter((u) => u.isMarker)
+    .map((u) => ({
+      userName: u.userName,
+      fullName: u.fullName,
+      isWorker: u.isWorker,
+      workerAdditionalInfo: u.workerAdditionalInfo,
+      mobile: u.mobile,
+      landline: u.landline,
+      emailAddress: u.emailAddress,
+    }))
+    .sort((a, b) => a.fullName.localeCompare(b.fullName));
+}
+
+/** Sets marker/worker fields directly on a member's own profile row. */
+export async function setMarkerStatus(
+  userName: string,
+  fields: { isMarker?: boolean; isWorker?: boolean; workerAdditionalInfo?: string | null }
+): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { data: userRow, error: fetchError } = await supabase
+    .from('users')
+    .select('id')
+    .ilike('username', userName)
+    .maybeSingle();
+  if (fetchError) throw new Error(`Failed to look up user: ${fetchError.message}`);
+  if (!userRow) throw new Error(`Member not found: ${userName}`);
+
+  const updates: Record<string, any> = { profile_updated_at: new Date().toISOString() };
+  if (fields.isMarker !== undefined) updates.is_marker = fields.isMarker;
+  if (fields.isWorker !== undefined) updates.is_worker = fields.isWorker;
+  if (fields.workerAdditionalInfo !== undefined) updates.worker_additional_info = fields.workerAdditionalInfo;
+
+  const { error } = await supabase.from('member_profiles').update(updates).eq('user_id', userRow.id);
+  if (error) throw new Error(`Failed to update marker status for ${userName}: ${error.message}`);
 
   invalidateCache();
 }
