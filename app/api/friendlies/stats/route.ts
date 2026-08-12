@@ -8,12 +8,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import {
-  getGames,
   getPlayerEntries,
   getColumnMap,
   getSheetsClient,
   getFriendliesSpreadsheetId,
 } from '@/lib/friendlies-sheets';
+import { getFixtures } from '@/lib/fixtures-supabase';
 import { getAllUsers } from '@/lib/members-supabase';
 import { hasRole } from '@/lib/role-utils';
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -73,7 +73,7 @@ export async function GET(request: NextRequest) {
     // Fetch player entries and games in parallel
     const [entries, games] = await Promise.all([
       getPlayerEntries(targetUser),
-      getGames(),
+      getFixtures(),
     ]);
 
     // Build a fast tabName → game lookup

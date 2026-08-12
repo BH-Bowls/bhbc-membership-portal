@@ -20,7 +20,7 @@ function driveImageSrc(url: string): string {
   const m = url?.match(/\/file\/d\/([^/]+)/);
   return m ? `/api/drive-image?id=${m[1]}` : url;
 }
-import type { ClubContact } from '@/lib/types/clubs';
+import type { ClubContact } from '@/lib/clubs-supabase';
 
 const LS_KEY = 'rowland_selected_club';
 

@@ -5,7 +5,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, updateGameSheetStats, getGameSheet, sortGameSheetPlayers } from '@/lib/friendlies-sheets';
+import { updateGameSheetStats, getGameSheet, sortGameSheetPlayers } from '@/lib/friendlies-sheets';
+import { getFixtureByTabName } from '@/lib/fixtures-supabase';
 import { GetStatsRequest } from '@/lib/types/friendlies';
 import { hasRole } from '@/lib/role-utils';
 
@@ -29,17 +30,8 @@ export async function POST(request: NextRequest) {
     const body: GetStatsRequest = await request.json();
     const { tab_name } = body;
 
-    // Fetch all games from Games sheet
-    const games = await getGames();
-
-    // Search for the game by tabName
-    let game = null;
-    for (const g of games) {
-      if (g.tabName === tab_name) {
-        game = g;
-        break;
-      }
-    }
+    // Fetch the fixture
+    const game = await getFixtureByTabName(tab_name);
 
     // Return 404 if game doesn't exist
     if (!game) {

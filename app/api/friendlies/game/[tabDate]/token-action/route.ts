@@ -1,7 +1,8 @@
 // POST /api/friendlies/game/[tabDate]/token-action
 // Public endpoint — performs confirm, withdraw, or acknowledge actions via email link token.
 import { NextRequest, NextResponse } from 'next/server';
-import { getGames, validateGameToken, updateGameSheet, acknowledgeGameCancellation } from '@/lib/friendlies-sheets';
+import { validateGameToken, updateGameSheet, acknowledgeGameCancellation } from '@/lib/friendlies-sheets';
+import { getFixtureByTabName } from '@/lib/fixtures-supabase';
 import { sendWithdrawalEmail } from '@/lib/email/friendlies';
 import { getAppUrl } from '@/lib/app-url';
 
@@ -72,14 +73,7 @@ export async function POST(
     const tabName = decodeURIComponent(tabDate);
 
     // Verify game exists
-    const games = await getGames();
-    let game = null;
-    for (const g of games) {
-      if (g.tabName === tabName) {
-        game = g;
-        break;
-      }
-    }
+    const game = await getFixtureByTabName(tabName);
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }

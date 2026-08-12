@@ -6,7 +6,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getAppUrl } from '@/lib/app-url';
-import { getGames, batchUpdatePlayerEntries, addPlayersToGameSheetDirect, updateGameCounts, getActiveEnteredCount } from '@/lib/friendlies-sheets';
+import { batchUpdatePlayerEntries, addPlayersToGameSheetDirect, getActiveEnteredCount } from '@/lib/friendlies-sheets';
+import { getFixtures, updateFixture } from '@/lib/fixtures-supabase';
 import { canEnterGame } from '@/lib/game-management/capacity';
 import { hasRole } from '@/lib/role-utils';
 import { getAllUsers } from '@/lib/members-supabase';
@@ -34,9 +35,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Fetch all games to verify game exists and is open. Fresh read — status gates
-    // whether players can be added, so it must not come from the Games cache.
-    const allGames = await getGames(undefined, undefined, true);
+    // Fetch all fixtures to verify game exists and is open. Postgres reads are
+    // always fresh, unlike the old Sheets Games cache this used to need bypassing.
+    const allGames = await getFixtures();
     const game = allGames.find(g => g.tabName === gameId);
 
     if (!game) {
@@ -103,7 +104,7 @@ export async function POST(request: NextRequest) {
     if (addedCount > 0) {
       try {
         const activeCount = await getActiveEnteredCount(game.tabName);
-        await updateGameCounts(game.tabName, { entered: activeCount });
+        await updateFixture(game.id, { entered: activeCount });
       } catch (countError) {
         console.error('[Friendlies API] Error updating entered count:', countError);
       }

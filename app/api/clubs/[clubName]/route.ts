@@ -4,11 +4,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getClubWithContacts, updateClub, deleteClub } from '@/lib/clubs-sheets';
-import { UpdateClubRequest, ClubContact } from '@/lib/types/clubs';
+import { getClubWithContacts, updateClub, deleteClub, UpdateClubRequest, ClubContact } from '@/lib/clubs-supabase';
 import { isMember, hasRole } from '@/lib/role-utils';
 import { sendClubChangeNotification } from '@/lib/email/club-change-notifier';
-import { getGames } from '@/lib/friendlies-sheets';
+import { getFixtures } from '@/lib/fixtures-supabase';
 import { getUserByUsername } from '@/lib/members-supabase';
 
 /** Returns true if a Club-role user is viewing their own club. */
@@ -48,7 +47,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     let extraContacts: ClubContact[] = [];
     if (decodedClubName.toLowerCase() === 'burgess hill') {
       try {
-        const games = await getGames();
+        const games = await getFixtures();
         const selectedWithCaptain = games.filter(g => g.status === 'S' && g.captain);
         const captainContacts = await Promise.all(
           selectedWithCaptain.map(async (game, i) => {
@@ -59,7 +58,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
               const firstName = nameParts[0] || '';
               const lastName = nameParts.slice(1).join(' ') || '';
               return {
-                _rowNumber: -1 - i,
+                id: `captain-${i}`,
                 clubName: decodedClubName,
                 role: `Captain of the day - ${game.tabName}`,
                 firstName,

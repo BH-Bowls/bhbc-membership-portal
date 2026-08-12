@@ -6,7 +6,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getAppUrl } from '@/lib/app-url';
-import { getGames, updatePlayerEntry, batchUpdateGameCounts, addPlayerToGameSheet } from '@/lib/friendlies-sheets';
+import { updatePlayerEntry, addPlayerToGameSheet } from '@/lib/friendlies-sheets';
+import { getFixtures, updateFixture } from '@/lib/fixtures-supabase';
 import { clearDiaryCache } from '@/lib/home-cache';
 import { EnterGamesRequest, EnterGamesResponse } from '@/lib/types/friendlies';
 import { canEnterGame } from '@/lib/game-management/capacity';
@@ -59,10 +60,11 @@ export async function POST(request: NextRequest) {
     // Every user to enter into each game: the caller first, then any authorised buddies.
     const targets: string[] = [userName, ...buddyTargets];
 
-    // Fetch all games to verify each game exists and is open. Fresh read — the
-    // open/closed status gates entry, so it must not come from the Games cache
-    // (a member could otherwise enter a game the captain just closed).
-    const allGames = await getGames(undefined, undefined, true);
+    // Fetch all fixtures to verify each game exists and is open. Postgres reads are
+    // always fresh — no cache layer to bypass here (unlike the old Sheets Games
+    // cache, which forceFresh used to skip so a member couldn't enter a game the
+    // captain just closed).
+    const allGames = await getFixtures();
 
     // Process every (game × target) entry. Games write to different columns/tabs so
     // they run in parallel; targets within a game run in sequence to keep each game
@@ -132,8 +134,8 @@ export async function POST(request: NextRequest) {
       const rows = playersResponse.data.values || [];
       const headers = rows[0] || [];
 
-      // Collect all count updates for batch operation
-      const countUpdates: { rowNumber: number; counts: { entered: number } }[] = [];
+      // Collect all count updates
+      const countUpdates: { id: string; entered: number }[] = [];
 
       // A game may have several successful entries (caller + buddies) — only recount once.
       const countedGames = new Set<string>();
@@ -160,18 +162,14 @@ export async function POST(request: NextRequest) {
               }
             }
 
-            // Add to batch updates
-            countUpdates.push({
-              rowNumber: game.rowNumber,
-              counts: { entered: enteredCount },
-            });
+            countUpdates.push({ id: game.id, entered: enteredCount });
           }
         }
       }
 
-      // Batch update all counts in a single API call
+      // Update all counts on the fixtures
       if (countUpdates.length > 0) {
-        await batchUpdateGameCounts(countUpdates);
+        await Promise.all(countUpdates.map(u => updateFixture(u.id, { entered: u.entered })));
       }
     }
 

@@ -10,7 +10,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Navbar } from '@/components/Navbar';
 import { getButtonClasses } from '@/config/theme-helpers';
-import { CreateClubRequest } from '@/lib/types/clubs';
+import { CreateClubRequest } from '@/lib/clubs-supabase';
 import { saveDraft, restoreDraft, clearDraft } from '@/lib/form-draft-utils';
 
 export default function NewClubPage() {

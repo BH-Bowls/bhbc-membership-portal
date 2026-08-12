@@ -9,7 +9,8 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Navbar } from '@/components/Navbar';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
-import { Game, GameType, ALL_GAME_TYPES } from '@/lib/types/friendlies';
+import { GameType, ALL_GAME_TYPES } from '@/lib/types/friendlies';
+import { Fixture as Game } from '@/lib/fixtures-supabase';
 import { hasRole } from '@/lib/role-utils';
 import { getButtonClasses } from '@/config/theme-helpers';
 
@@ -446,7 +447,7 @@ export default function FixturesManagePage() {
     try {
       if (editGame) {
         // PATCH
-        const res = await fetch(`/api/fixtures/manage/game/${editGame.rowNumber}`, {
+        const res = await fetch(`/api/fixtures/manage/game/${editGame.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(form),
@@ -481,7 +482,7 @@ export default function FixturesManagePage() {
     if (!confirmDelete) return;
     setDeleting(true);
     try {
-      const res = await fetch(`/api/fixtures/manage/game/${confirmDelete.rowNumber}`, {
+      const res = await fetch(`/api/fixtures/manage/game/${confirmDelete.id}`, {
         method: 'DELETE',
       });
       if (!res.ok) {
@@ -553,7 +554,7 @@ export default function FixturesManagePage() {
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {games.map(game => (
-                    <tr key={game.rowNumber} className="hover:bg-gray-50 transition-colors">
+                    <tr key={game.id} className="hover:bg-gray-50 transition-colors">
                       <td className="px-4 py-3 whitespace-nowrap text-gray-900">
                         {formatDisplayDate(game.date)}
                         {game.time && <span className="text-gray-400 text-xs ml-1">{game.time}</span>}

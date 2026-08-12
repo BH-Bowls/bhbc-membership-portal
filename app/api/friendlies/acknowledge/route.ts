@@ -3,7 +3,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, getGameSheet, acknowledgeGameCancellation } from '@/lib/friendlies-sheets';
+import { getGameSheet, acknowledgeGameCancellation } from '@/lib/friendlies-sheets';
+import { getFixtureByTabName } from '@/lib/fixtures-supabase';
 
 export async function POST(request: NextRequest) {
   try {
@@ -21,14 +22,7 @@ export async function POST(request: NextRequest) {
     const tabName = decodeURIComponent(tabDate);
     const userName = session.user.userName;
 
-    const games = await getGames();
-    let game = null;
-    for (const g of games) {
-      if (g.tabName === tabName) {
-        game = g;
-        break;
-      }
-    }
+    const game = await getFixtureByTabName(tabName);
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }

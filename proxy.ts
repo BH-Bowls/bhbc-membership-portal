@@ -107,6 +107,10 @@ function isPinExempt(pathname: string): boolean {
   if (pathname === '/api/competitions/rules-text') return true;
   if (pathname.startsWith('/availability/guest/')) return true;
   if (pathname.startsWith('/api/availability/guest/')) return true;
+  // Duty-instruction PDFs (Tea Duty, Cleaning Duty, Captain guidelines) — non-sensitive,
+  // and linked from token-authenticated email pages (e.g. /friendlies/game/[tabDate])
+  // where the visitor has no PIN cookie.
+  if (pathname.startsWith('/api/guides/')) return true;
   return false;
 }
 

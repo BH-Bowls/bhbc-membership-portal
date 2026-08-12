@@ -13,8 +13,11 @@ import { useState, useEffect } from 'react';
 export type InstructionsDialogMode = 'open' | 'close' | 'publish' | 'instructions';
 
 interface GameSummary {
+  id?: string;   // Fixture UUID — the reliable identifier, always present once cut over to Postgres,
+                 // even before tabName exists (unopened games). Absent for the still-Sheets-backed
+                 // selection page (manage/game/[tabDate]), which falls back to tabName/rowNumber.
   tabName: string;
-  rowNumber: number;
+  rowNumber?: number; // only present for still-Sheets-backed callers; fixture-only routes use id instead
   clubName: string;
   date: string;         // DD/MM/YYYY display date
   time: string;         // HH:MM
@@ -181,8 +184,8 @@ export function GameInstructionsDialog({
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            id: game.id,
             tab_name: game.tabName,
-            row_number: game.rowNumber,
             message: specialInstructions,
           }),
         }),
@@ -193,8 +196,8 @@ export function GameInstructionsDialog({
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+              id: game.id,
               tab_name: game.tabName,
-              row_number: game.rowNumber,
               pickup_info: pickupInfo,
             }),
           })
@@ -224,7 +227,7 @@ export function GameInstructionsDialog({
         fetch('/api/friendlies/manage/message', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tab_name: game.tabName, row_number: game.rowNumber, message: specialInstructions }),
+          body: JSON.stringify({ id: game.id, tab_name: game.tabName, message: specialInstructions }),
         }),
       ];
       if (game.homeAway === 'A') {
@@ -232,7 +235,7 @@ export function GameInstructionsDialog({
           fetch('/api/friendlies/manage/pickup-info', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tab_name: game.tabName, row_number: game.rowNumber, pickup_info: pickupInfo }),
+            body: JSON.stringify({ id: game.id, tab_name: game.tabName, pickup_info: pickupInfo }),
           })
         );
       }
@@ -249,7 +252,7 @@ export function GameInstructionsDialog({
       const res = await fetch('/api/friendlies/manage/status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tab_name: game.tabName, row_number: game.rowNumber, action: 'open', expected_status: game.status ?? '' }),
+        body: JSON.stringify({ id: game.id, tab_name: game.tabName, row_number: game.rowNumber, action: 'open', expected_status: game.status ?? '' }),
       });
       if (!res.ok) {
         const data = await res.json();
@@ -272,7 +275,7 @@ export function GameInstructionsDialog({
         fetch('/api/friendlies/manage/message', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tab_name: game.tabName, row_number: game.rowNumber, message: specialInstructions }),
+          body: JSON.stringify({ id: game.id, tab_name: game.tabName, message: specialInstructions }),
         }),
       ];
       if (game.homeAway === 'A') {
@@ -280,7 +283,7 @@ export function GameInstructionsDialog({
           fetch('/api/friendlies/manage/pickup-info', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tab_name: game.tabName, row_number: game.rowNumber, pickup_info: pickupInfo }),
+            body: JSON.stringify({ id: game.id, tab_name: game.tabName, pickup_info: pickupInfo }),
           })
         );
       }
@@ -297,7 +300,7 @@ export function GameInstructionsDialog({
       const res = await fetch('/api/friendlies/manage/status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tab_name: game.tabName, row_number: game.rowNumber, action: 'close', expected_status: game.status ?? 'O' }),
+        body: JSON.stringify({ id: game.id, tab_name: game.tabName, row_number: game.rowNumber, action: 'close', expected_status: game.status ?? 'O' }),
       });
       if (!res.ok) {
         const data = await res.json();
@@ -320,7 +323,7 @@ export function GameInstructionsDialog({
         fetch('/api/friendlies/manage/message', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tab_name: game.tabName, row_number: game.rowNumber, message: specialInstructions }),
+          body: JSON.stringify({ id: game.id, tab_name: game.tabName, message: specialInstructions }),
         }),
       ];
       if (game.homeAway === 'A') {
@@ -328,7 +331,7 @@ export function GameInstructionsDialog({
           fetch('/api/friendlies/manage/pickup-info', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tab_name: game.tabName, row_number: game.rowNumber, pickup_info: pickupInfo }),
+            body: JSON.stringify({ id: game.id, tab_name: game.tabName, pickup_info: pickupInfo }),
           })
         );
       }
@@ -352,6 +355,7 @@ export function GameInstructionsDialog({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          id: game.id,
           tab_name: game.tabName,
           action,
           expected_status: game.status ?? 'X',

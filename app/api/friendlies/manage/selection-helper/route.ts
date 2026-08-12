@@ -5,7 +5,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, getGameSheet, getFriendliesSpreadsheetId, getSelectionHelperCache, setSelectionHelperCache } from '@/lib/friendlies-sheets';
+import { getGameSheet, getFriendliesSpreadsheetId, getSelectionHelperCache, setSelectionHelperCache } from '@/lib/friendlies-sheets';
+import { getFixtureByTabName } from '@/lib/fixtures-supabase';
 import { getAllUsers } from '@/lib/members-supabase';
 import { hasRole } from '@/lib/role-utils';
 
@@ -84,13 +85,12 @@ export async function GET(request: NextRequest) {
     }
 
     // Load game metadata + game-sheet players in parallel with Members data
-    const [games, gamePlayers, allUsers] = await Promise.all([
-      getGames(),
+    const [game, gamePlayers, allUsers] = await Promise.all([
+      getFixtureByTabName(tabName),
       getGameSheet(tabName),
       getAllUsers(),
     ]);
 
-    const game = games.find(g => g.tabName === tabName);
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }

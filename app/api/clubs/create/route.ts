@@ -5,8 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { createClub } from '@/lib/clubs-sheets';
-import { CreateClubRequest } from '@/lib/types/clubs';
+import { createClub, CreateClubRequest } from '@/lib/clubs-supabase';
 import { isMember } from '@/lib/role-utils';
 
 /**

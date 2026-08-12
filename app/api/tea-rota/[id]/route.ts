@@ -1,11 +1,11 @@
-// app/api/tea-rota/[rowNumber]/route.ts
+// app/api/tea-rota/[id]/route.ts
 // API route for updating tea rota assignments
 // Only committee members (non-Members) can update
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { updateTeaRotaAssignment, getTeaRotaEntry } from '@/lib/friendlies-sheets';
+import { updateTeaRotaAssignment, getTeaRotaEntry } from '@/lib/fixtures-supabase';
 
 interface UpdateRequest {
   teaLead: string;
@@ -14,12 +14,12 @@ interface UpdateRequest {
 }
 
 /**
- * GET /api/tea-rota/[rowNumber]
+ * GET /api/tea-rota/[id]
  * Returns a single tea rota entry
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ rowNumber: string }> }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await getServerSession(authOptions);
@@ -28,17 +28,9 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { rowNumber } = await params;
-    const rowNum = parseInt(rowNumber);
+    const { id } = await params;
 
-    if (isNaN(rowNum)) {
-      return NextResponse.json(
-        { error: 'Invalid row number' },
-        { status: 400 }
-      );
-    }
-
-    const entry = await getTeaRotaEntry(rowNum);
+    const entry = await getTeaRotaEntry(id);
 
     if (!entry) {
       return NextResponse.json(
@@ -49,7 +41,7 @@ export async function GET(
 
     return NextResponse.json({ entry });
   } catch (error) {
-    console.error('[GET /api/tea-rota/[rowNumber]] Error:', error);
+    console.error('[GET /api/tea-rota/[id]] Error:', error);
     return NextResponse.json(
       { error: 'Failed to fetch tea rota entry' },
       { status: 500 }
@@ -58,13 +50,13 @@ export async function GET(
 }
 
 /**
- * PUT /api/tea-rota/[rowNumber]
+ * PUT /api/tea-rota/[id]
  * Updates tea rota assignments for a game
  * Only committee members (non-Members) can update
  */
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ rowNumber: string }> }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await getServerSession(authOptions);
@@ -82,15 +74,7 @@ export async function PUT(
       );
     }
 
-    const { rowNumber } = await params;
-    const rowNum = parseInt(rowNumber);
-
-    if (isNaN(rowNum)) {
-      return NextResponse.json(
-        { error: 'Invalid row number' },
-        { status: 400 }
-      );
-    }
+    const { id } = await params;
 
     const body: UpdateRequest = await request.json();
     const { teaLead, teaFirst, teaSecond } = body;
@@ -104,17 +88,17 @@ export async function PUT(
     }
 
     // Update the tea assignments
-    await updateTeaRotaAssignment(rowNum, teaLead, teaFirst, teaSecond);
+    await updateTeaRotaAssignment(id, teaLead, teaFirst, teaSecond);
 
     // Fetch the updated entry
-    const updatedEntry = await getTeaRotaEntry(rowNum);
+    const updatedEntry = await getTeaRotaEntry(id);
 
     return NextResponse.json({
       success: true,
       entry: updatedEntry,
     });
   } catch (error) {
-    console.error('[PUT /api/tea-rota/[rowNumber]] Error:', error);
+    console.error('[PUT /api/tea-rota/[id]] Error:', error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to update tea rota' },
       { status: 500 }

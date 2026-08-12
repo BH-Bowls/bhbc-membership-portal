@@ -6,7 +6,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getAppUrl } from '@/lib/app-url';
-import { getGames, getGameSheet } from '@/lib/friendlies-sheets';
+import { getGameSheet } from '@/lib/friendlies-sheets';
+import { getFixtureByTabName } from '@/lib/fixtures-supabase';
 import { GameSheetPlayer } from '@/lib/types/friendlies';
 import { sendGamePublishedEmail } from '@/lib/email/friendlies';
 import { getAllUsers } from '@/lib/members-supabase';
@@ -31,8 +32,7 @@ export async function POST(request: NextRequest) {
 
     const { tab_name } = await request.json();
 
-    const games = await getGames();
-    const game = games.find(g => g.tabName === tab_name);
+    const game = await getFixtureByTabName(tab_name);
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }

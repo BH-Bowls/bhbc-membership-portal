@@ -62,7 +62,7 @@ export async function getCaptainEmails(): Promise<string[]> {
  */
 export async function sendWithdrawalEmail(
   userName: string,
-  game: Game,
+  game: Omit<Game, 'rowNumber'>,
   selection: {
     selected: string;      // Selection status: Y=Playing, R=Reserve, T=Reserve Team
     team: number | null;   // Team number (1-4 typically)
@@ -260,7 +260,7 @@ Friendlies Management System
  */
 export async function sendRejoinEmail(
   userName: string,
-  game: Game,
+  game: Omit<Game, 'rowNumber'>,
   selection: {
     selected: string;      // Selection status: Y=Playing, R=Reserve, T=Reserve Team
     team: number | null;
@@ -375,7 +375,7 @@ export async function sendRejoinNoticeEmail(
   emailAddress: string,
   userName: string,
   fullName: string,
-  game: Game,
+  game: Omit<Game, 'rowNumber'>,
   appUrl: string,
 ): Promise<void> {
   const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}?me=${encodeURIComponent(userName)}`;
@@ -440,7 +440,7 @@ export async function sendRejoinNoticeEmail(
  * @returns Object with success status, count of emails sent, and any players without emails
  */
 export async function sendGamePublishedEmail(
-  game: Game,
+  game: Omit<Game, 'rowNumber'>,
   players: Array<{
     userName?: string;   // Used in ICS UID — optional for backwards compatibility
     fullName: string;
@@ -745,7 +745,7 @@ Friendlies Management System
  * @returns Object with success status, count of emails sent, and any members without emails
  */
 export async function sendTeaRotaEmail(
-  game: Game,
+  game: Omit<Game, 'rowNumber'>,
   teaMembers: Array<{ role: string; fullName: string; email: string | null; phone: string | null }>,
   appUrl: string
 ): Promise<{ success: boolean; emailsSent: number; membersWithoutEmail: string[]; error?: string }> {
@@ -881,7 +881,7 @@ Friendlies Management System
  * Includes a METHOD:CANCEL ICS attachment to remove the event from their calendar
  */
 export async function sendGameCancelledEmail(
-  game: Game,
+  game: Omit<Game, 'rowNumber'>,
   players: Array<{ userName: string; fullName: string; email: string | null }>,
   appUrl: string,
   reason?: string,
@@ -1022,7 +1022,7 @@ export async function sendGameCancelledEmail(
  * Plain notification — no ICS needed since the tea rota email has no calendar event
  */
 export async function sendTeaRotaCancelledEmail(
-  game: Game,
+  game: Omit<Game, 'rowNumber'>,
   teaMembers: Array<{ role: string; fullName: string; email: string | null }>,
   reason?: string,
 ): Promise<{ success: boolean; emailsSent: number; membersWithoutEmail: string[]; error?: string }> {
@@ -1154,7 +1154,7 @@ function buildFriendlyPlayerHtml(opts: {
   headerColor: string;
   fullName: string;
   introHtml: string;
-  game: Game;
+  game: Omit<Game, 'rowNumber'>;
   noteHtml?: string;
   gameUrl: string;
   buttonText: string;
@@ -1214,7 +1214,7 @@ export async function sendEntryConfirmedEmail(
   emailAddress: string,
   userName: string,
   fullName: string,
-  game: Game,
+  game: Omit<Game, 'rowNumber'>,
   appUrl: string,
   addedByAdmin = false,
 ): Promise<void> {
@@ -1301,8 +1301,8 @@ export async function sendLinkedEntryConfirmedEmail(
   emailAddress: string,
   userName: string,
   fullName: string,
-  gameA: Game,
-  gameB: Game,
+  gameA: Omit<Game, 'rowNumber'>,
+  gameB: Omit<Game, 'rowNumber'>,
   appUrl: string,
 ): Promise<void> {
   // Single "View Game" button pointing at the lead game (game A) — that's where the
@@ -1406,7 +1406,7 @@ export async function sendWithdrawalNoticeEmail(
   emailAddress: string,
   userName: string,
   fullName: string,
-  game: Game,
+  game: Omit<Game, 'rowNumber'>,
   appUrl: string,
 ): Promise<void> {
   const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}?me=${encodeURIComponent(userName)}`;
@@ -1472,8 +1472,8 @@ export async function sendLinkedWithdrawalNoticeEmail(
   emailAddress: string,
   userName: string,
   fullName: string,
-  gameA: Game,
-  gameB: Game,
+  gameA: Omit<Game, 'rowNumber'>,
+  gameB: Omit<Game, 'rowNumber'>,
   appUrl: string,
 ): Promise<void> {
   const venueA = `${gameA.homeAway === 'H' ? 'Home' : 'Away'} - ${gameA.clubName}`;
@@ -1564,7 +1564,7 @@ export async function sendRemovedNoticeEmail(
   emailAddress: string,
   userName: string,
   fullName: string,
-  game: Game,
+  game: Omit<Game, 'rowNumber'>,
   appUrl: string,
 ): Promise<void> {
   const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}?me=${encodeURIComponent(userName)}`;
@@ -1628,7 +1628,7 @@ export async function sendWithdrawnByAdminNoticeEmail(
   emailAddress: string,
   userName: string,
   fullName: string,
-  game: Game,
+  game: Omit<Game, 'rowNumber'>,
   appUrl: string,
 ): Promise<void> {
   const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}?me=${encodeURIComponent(userName)}`;

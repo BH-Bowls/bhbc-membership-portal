@@ -2,7 +2,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, getGameSheet, getClubDetails, getTeaRotaList, validateGameToken } from '@/lib/friendlies-sheets';
+import { getGameSheet, getClubDetails, validateGameToken } from '@/lib/friendlies-sheets';
+import { getFixtureByTabName, getTeaRotaList } from '@/lib/fixtures-supabase';
 import { getUserByUsername, getAllUsers } from '@/lib/members-supabase';
 
 export async function GET(
@@ -43,17 +44,8 @@ export async function GET(
       return fullName.split(' ')[0];
     }
 
-    // Get game details
-    const games = await getGames();
-
-    // Find the game with this tabName (URL parameter is called tabDate but contains tabName)
-    let game = null;
-    for (const g of games) {
-      if (g.tabName === tabDate) {
-        game = g;
-        break;
-      }
-    }
+    // Get game details (URL parameter is called tabDate but contains tabName)
+    const game = await getFixtureByTabName(tabDate);
 
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });

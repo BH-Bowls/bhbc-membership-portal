@@ -1,16 +1,16 @@
-// app/api/fixtures/manage/game/[rowNumber]/route.ts
+// app/api/fixtures/manage/game/[id]/route.ts
 // Captain-only: PATCH to update, DELETE to remove a specific fixture row
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { updateFixture, deleteFixtureRow, getGames } from '@/lib/friendlies-sheets';
+import { updateFixture, deleteFixture, getFixtures } from '@/lib/fixtures-supabase';
 import { GameType } from '@/lib/types/friendlies';
 import { hasRole } from '@/lib/role-utils';
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ rowNumber: string }> }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await getServerSession(authOptions);
@@ -23,10 +23,9 @@ export async function PATCH(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const { rowNumber: rowNumberStr } = await params;
-    const rowNumber = parseInt(rowNumberStr);
-    if (isNaN(rowNumber) || rowNumber < 2) {
-      return NextResponse.json({ error: 'Invalid row number' }, { status: 400 });
+    const { id } = await params;
+    if (!id) {
+      return NextResponse.json({ error: 'Invalid id' }, { status: 400 });
     }
 
     const body = await request.json();
@@ -39,12 +38,12 @@ export async function PATCH(
     // the same date must be the same section (Ladies/Men — usually both Mixed). Pairing
     // a Mixed game with a Ladies game is almost always a mistake.
     if (paired === 'Y') {
-      const games = await getGames();
+      const games = await getFixtures();
       const thisSection = (ladiesMen || '').trim().toLowerCase();
       // Look for another paired game on the same date (a closed link 'C' counts too)
       for (let i = 0; i < games.length; i++) {
         const other = games[i];
-        if (other.rowNumber === rowNumber) continue;
+        if (other.id === id) continue;
         const otherPaired = other.paired === 'Y' || other.paired === 'C';
         if (otherPaired && other.date === date) {
           const otherSection = (other.ladiesMen || '').trim().toLowerCase();
@@ -61,7 +60,7 @@ export async function PATCH(
       }
     }
 
-    await updateFixture(rowNumber, {
+    await updateFixture(id, {
       date,
       time,
       type: type as GameType | undefined,
@@ -89,7 +88,7 @@ export async function PATCH(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ rowNumber: string }> }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await getServerSession(authOptions);
@@ -102,13 +101,12 @@ export async function DELETE(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const { rowNumber: rowNumberStr } = await params;
-    const rowNumber = parseInt(rowNumberStr);
-    if (isNaN(rowNumber) || rowNumber < 2) {
-      return NextResponse.json({ error: 'Invalid row number' }, { status: 400 });
+    const { id } = await params;
+    if (!id) {
+      return NextResponse.json({ error: 'Invalid id' }, { status: 400 });
     }
 
-    await deleteFixtureRow(rowNumber);
+    await deleteFixture(id);
 
     return NextResponse.json({ success: true });
   } catch (error) {

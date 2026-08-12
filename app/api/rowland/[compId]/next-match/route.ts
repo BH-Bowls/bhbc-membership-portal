@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getRowlandMatches } from '@/lib/rowland-sheets';
-import { getContactsForClub } from '@/lib/clubs-sheets';
+import { getContactsForClub } from '@/lib/clubs-supabase';
 import type { RowlandCompId } from '@/types/rowland';
 
 /** Maps compId to the Rowland contact role prefix stored in the Contacts sheet */

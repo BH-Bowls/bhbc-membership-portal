@@ -200,12 +200,12 @@ export default function AdminConfigPage() {
                   />
                   <span className="font-medium text-gray-900">Maintenance mode</span>
                 </label>
-                <p className="text-xs text-gray-500 mt-1 ml-6">Blocks new non-Admin logins and redirects active non-Admin sessions to the maintenance page.</p>
+                <p className="text-xs text-gray-700 mt-1 ml-6">Blocks new non-Admin logins and redirects active non-Admin sessions to the maintenance page.</p>
               </div>
 
               {/* Age anchor */}
               <div>
-                <label className="block text-gray-500 mb-1">Age anchor (MM-DD)</label>
+                <label className="block text-gray-900 mb-1">Age anchor (MM-DD)</label>
                 {isEditingGeneral ? (
                   <input
                     type="text"
@@ -217,12 +217,12 @@ export default function AdminConfigPage() {
                 ) : (
                   <span className="text-gray-900">{config.age_reference_date || '—'}</span>
                 )}
-                <p className="text-xs text-gray-500 mt-1">The date each year age bands are calculated against. Not yet used anywhere in the app.</p>
+                <p className="text-xs text-gray-700 mt-1">The date each year age bands are calculated against. Not yet used anywhere in the app.</p>
               </div>
 
               {/* Min friendlies for competitions */}
               <div>
-                <label className="block text-gray-500 mb-1">Min friendlies for competitions eligibility</label>
+                <label className="block text-gray-900 mb-1">Min friendlies for competitions eligibility</label>
                 {isEditingGeneral ? (
                   <input
                     type="number"
@@ -234,7 +234,7 @@ export default function AdminConfigPage() {
                 ) : (
                   <span className="text-gray-900">{config.min_friendlies_for_competitions || '—'}</span>
                 )}
-                <p className="text-xs text-gray-500 mt-1">Not yet used anywhere in the app — Renewals' eligibility check still reads this threshold from Sheets.</p>
+                <p className="text-xs text-gray-700 mt-1">Not yet used anywhere in the app — Renewals' eligibility check still reads this threshold from Sheets.</p>
               </div>
             </div>
           </div>
@@ -261,12 +261,12 @@ export default function AdminConfigPage() {
               )}
             </div>
 
-            <p className="text-xs text-gray-500">Used by Print Labels to lay out address, booklet, and locker labels.</p>
+            <p className="text-xs text-gray-700">Used by Print Labels to lay out address, booklet, and locker labels.</p>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
               {LABELS_FIELDS.map(([key, label]) => (
                 <div key={key}>
-                  <span className="text-gray-500">{label}: </span>
+                  <span className="text-gray-700">{label}: </span>
                   {isEditingLabels ? (
                     <input
                       type="text"

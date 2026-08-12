@@ -1,10 +1,14 @@
 // app/api/friendlies/manage/message/route.ts
 // PUT — update special instructions message for a game (Captain/Admin only)
+//
+// Accepts either `id` (preferred — the fixture's UUID, always present) or `tab_name`
+// (fallback, resolved to an id) — the still-Sheets-backed selection page doesn't have
+// an id available yet.
 
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { updateGameMessage } from '@/lib/friendlies-sheets';
+import { updateFixtureMessage, getFixtures } from '@/lib/fixtures-supabase';
 import { hasRole } from '@/lib/role-utils';
 
 export async function PUT(req: Request) {
@@ -18,16 +22,23 @@ export async function PUT(req: Request) {
   }
 
   const body = await req.json();
+  let id = typeof body.id === 'string' ? body.id : '';
   const tabName = typeof body.tab_name === 'string' ? body.tab_name : '';
-  const rowNumber = typeof body.row_number === 'number' ? body.row_number : undefined;
   const message = typeof body.message === 'string' ? body.message : '';
 
-  if (!tabName && !rowNumber) {
-    return NextResponse.json({ error: 'tab_name or row_number is required' }, { status: 400 });
+  if (!id && !tabName) {
+    return NextResponse.json({ error: 'id or tab_name is required' }, { status: 400 });
   }
 
   try {
-    await updateGameMessage(tabName, message, rowNumber, session.user?.userName);
+    if (!id) {
+      const games = await getFixtures();
+      const game = games.find(g => g.tabName === tabName);
+      if (!game) return NextResponse.json({ error: 'Fixture not found' }, { status: 404 });
+      id = game.id;
+    }
+
+    await updateFixtureMessage(id, message);
     return NextResponse.json({ ok: true });
   } catch (err: any) {
     console.error('PUT /api/friendlies/manage/message error:', err);

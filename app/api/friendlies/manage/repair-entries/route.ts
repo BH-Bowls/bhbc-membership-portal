@@ -6,7 +6,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, addPlayerToGameSheet } from '@/lib/friendlies-sheets';
+import { addPlayerToGameSheet } from '@/lib/friendlies-sheets';
+import { getFixtureByTabName } from '@/lib/fixtures-supabase';
 import { hasRole } from '@/lib/role-utils';
 
 export async function POST(request: NextRequest) {
@@ -24,8 +25,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing tab_name or user_names' }, { status: 400 });
     }
 
-    const games = await getGames();
-    const game = games.find(g => g.tabName === tab_name);
+    const game = await getFixtureByTabName(tab_name);
     if (!game) return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     if (!['X', 'S'].includes(game.status)) {
       return NextResponse.json({ error: 'Game must be in Selecting or Selected status' }, { status: 400 });

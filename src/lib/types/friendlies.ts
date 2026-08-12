@@ -82,7 +82,6 @@ export type HomeAway = 'H' | 'A';
  * Used to filter games on different pages and in different management workflows
  */
 export type GameType = 'Friendly' | 'N/S A' | 'N/S B' | 'MSL' | 'JSL' | 'BL' | 'Event' | 'Test';
-export const LEAGUE_GAME_TYPES: GameType[] = ['N/S A', 'N/S B', 'MSL', 'JSL', 'BL'];
 export const ALL_GAME_TYPES: GameType[] = ['Friendly', 'N/S A', 'N/S B', 'MSL', 'JSL', 'BL', 'Event'];
 // Test type is intentionally excluded from ALL_GAME_TYPES — it is only shown to Admin role
 
@@ -435,7 +434,8 @@ export interface WithdrawRequest {
  */
 export interface ChangeStatusRequest {
   tab_name: string;    // Game tabName to update (may be empty for unopened games)
-  row_number?: number; // Row number in Games sheet (used to identify unopened games)
+  row_number?: number; // Row number in Games sheet (used to identify unopened games) — legacy, Sheets-only
+  id?: string;         // Fixture UUID (fixtures-supabase.ts) — preferred identifier, always present even before a tabName exists
   action: 'open' | 'close' | 'publish' | 'republish' | 'played' | 'cancel' | 'abandon' | 'reopen' | 'reopen-entries' | 'unpublish' | 'revert-to-selected' | 'flag-needs-players' | 'unflag-needs-players'; // Status transition action
   expected_status?: string; // Client's known current status — server rejects with 409 if it doesn't match
   bhbc_score?: number;      // Burgess Hill score (required for 'played' and 'abandon')

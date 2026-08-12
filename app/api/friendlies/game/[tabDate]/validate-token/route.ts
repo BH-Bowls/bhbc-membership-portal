@@ -2,7 +2,8 @@
 // Public endpoint — validates a player token for a specific game.
 // Returns { valid: false } on invalid/expired token; never returns 401 (avoids brute-force signal).
 import { NextRequest, NextResponse } from 'next/server';
-import { getGames, validateGameToken } from '@/lib/friendlies-sheets';
+import { validateGameToken } from '@/lib/friendlies-sheets';
+import { getFixtureByTabName } from '@/lib/fixtures-supabase';
 
 // In-memory rate limit: 30 requests per minute per IP
 const requestTimes: Map<string, number[]> = new Map();
@@ -37,14 +38,7 @@ export async function GET(
     const tabName = decodeURIComponent(tabDate);
 
     // Verify the game exists
-    const games = await getGames();
-    let game = null;
-    for (const g of games) {
-      if (g.tabName === tabName) {
-        game = g;
-        break;
-      }
-    }
+    const game = await getFixtureByTabName(tabName);
     if (!game) {
       return NextResponse.json({ valid: false });
     }

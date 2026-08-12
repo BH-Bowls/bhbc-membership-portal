@@ -6,11 +6,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import {
-  getGames,
   getColumnMap,
   getSheetsClient,
   getFriendliesSpreadsheetId,
 } from '@/lib/friendlies-sheets';
+import { getFixtures } from '@/lib/fixtures-supabase';
 import { getAllUsers } from '@/lib/members-supabase';
 import { hasRole } from '@/lib/role-utils';
 
@@ -44,7 +44,7 @@ export async function GET(_request: NextRequest) {
     // Read Players sheet and Games sheet in parallel
     const [playersResponse, games, colMap] = await Promise.all([
       sheets.spreadsheets.values.get({ spreadsheetId, range: 'Players!A:ZZ' }),
-      getGames(),
+      getFixtures(),
       getColumnMap(spreadsheetId, 'Players'),
     ]);
 

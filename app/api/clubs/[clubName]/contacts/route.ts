@@ -4,8 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { addContact } from '@/lib/clubs-sheets';
-import { CreateContactRequest } from '@/lib/types/clubs';
+import { addContact, CreateContactRequest } from '@/lib/clubs-supabase';
 import { isMember } from '@/lib/role-utils';
 import { sendClubChangeNotification } from '@/lib/email/club-change-notifier';
 

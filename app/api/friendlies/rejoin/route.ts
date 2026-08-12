@@ -9,7 +9,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getAppUrl } from '@/lib/app-url';
-import { getGames, getGameSheet, updateGameSheet, updatePlayerEntry, updateGameCounts, getActiveEnteredCount } from '@/lib/friendlies-sheets';
+import { getGameSheet, updateGameSheet, updatePlayerEntry, getActiveEnteredCount } from '@/lib/friendlies-sheets';
+import { getFixtures, updateFixture } from '@/lib/fixtures-supabase';
 import { clearDiaryCache } from '@/lib/home-cache';
 import { sendRejoinEmail, sendRejoinNoticeEmail } from '@/lib/email/friendlies';
 import type { WithdrawRequest } from '@/lib/types/friendlies';
@@ -45,7 +46,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Find the game
-    const games = await getGames();
+    const games = await getFixtures();
     let game = null;
     for (const g of games) {
       if (g.tabName === tab_name) {
@@ -114,7 +115,7 @@ export async function POST(request: NextRequest) {
     // Recalculate entered count now that this player is active again
     try {
       const activeCount = await getActiveEnteredCount(game.tabName);
-      await updateGameCounts(game.tabName, { entered: activeCount });
+      await updateFixture(game.id, { entered: activeCount });
     } catch (countError) {
       console.error('[rejoin] Error updating entered count:', countError);
     }

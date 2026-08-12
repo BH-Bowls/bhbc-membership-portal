@@ -124,15 +124,21 @@ async function main() {
   // populates applications.reviewed_by/converted_user_id, none of which cascade on
   // delete by design (member_profiles.user_id deliberately has no ON DELETE CASCADE —
   // see the plan's reasoning). Clearing applications here too is consistent with the
-  // documented refresh order (migrate-members -> migrate-leavers -> migrate-applications)
-  // — it always gets fully repopulated by the next script in the sequence anyway.
-  // games/game_players/handicap_history/cleaning_rota/sweeping_rota aren't cleared here
-  // since nothing populates them yet; extend this list if that changes.
+  // documented refresh order (migrate-members -> migrate-leavers -> migrate-applications
+  // -> migrate-fixtures) — it always gets fully repopulated by the next script in the
+  // sequence anyway. fixtures (renamed from games, 0023) joined this list once
+  // migrate-fixtures.ts started populating captain_username/locked_by/
+  // last_modified_by/tea_*_username — same reasoning as applications: fully wiped
+  // here, so migrate-fixtures.ts MUST be re-run after this script or those columns
+  // stay permanently null until it is. game_players/handicap_history/cleaning_rota/
+  // sweeping_rota still aren't cleared since nothing populates them yet; extend this
+  // list if that changes.
   const wipeSteps: { table: string; column: string }[] = [
     { table: 'login_attempts', column: 'id' },
     { table: 'impersonation_log', column: 'id' },
     { table: 'password_reset_requests', column: 'id' },
     { table: 'applications', column: 'id' },
+    { table: 'fixtures', column: 'id' },
     { table: 'user_roles', column: 'user_id' },
     { table: 'member_profiles', column: 'user_id' },
     { table: 'users', column: 'id' },

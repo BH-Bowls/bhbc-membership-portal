@@ -5,8 +5,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, getPlayerEntries, getGameSheet, getTeaRotaList } from '@/lib/friendlies-sheets';
-import { getClubs } from '@/lib/clubs-sheets';
+import { getPlayerEntries, getGameSheet } from '@/lib/friendlies-sheets';
+import { getFixtures, getTeaRotaList } from '@/lib/fixtures-supabase';
+import { getClubs } from '@/lib/clubs-supabase';
 import { GameStatus, GameType, FriendliesBuddy } from '@/lib/types/friendlies';
 import { hasRole } from '@/lib/role-utils';
 import { getAllUsers } from '@/lib/members-supabase';
@@ -23,18 +24,15 @@ export async function GET(request: NextRequest) {
     // Get optional status filter (e.g., ?status=O for Open games only)
     const statusFilter = searchParams.get('status') as GameStatus | null;
 
-    // ?fresh=1 bypasses the 90s Games cache — used by the client immediately after an
-    // enter/withdraw so the entered count it re-caches is guaranteed current (the
-    // in-memory cache invalidation is per-process and can't be relied on across them).
-    const forceFresh = searchParams.get('fresh') === '1';
-
     // Admins also see Test games; all other roles see Friendly only
     const isAdmin = hasRole(session?.user?.role, 'Admin');
     const typeFilter: GameType[] = isAdmin ? ['Friendly', 'Test'] : ['Friendly'];
 
-    // Fetch games and club details in parallel
+    // Fetch games and club details in parallel. Postgres reads are always fresh —
+    // no cache layer to bypass here (unlike the old Sheets Games cache, which the
+    // ?fresh=1 param used to force past after an enter/withdraw).
     const [games, clubs] = await Promise.all([
-      getGames(statusFilter ?? undefined, typeFilter, forceFresh),
+      getFixtures(statusFilter ?? undefined, typeFilter),
       getClubs().catch(() => []),   // petrol cost is non-critical; don't fail if clubs sheet absent
     ]);
 
@@ -43,10 +41,8 @@ export async function GET(request: NextRequest) {
       clubs.filter(c => c.petrolCost > 0).map(c => [c.clubName, c.petrolCost])
     );
 
-    // Tea rota is derived from the same Games sheet. The getGames call above already
-    // warmed the 90s Games cache, so this reuses it (no extra read) — merged here so the
-    // friendlies page gets its tea-duty info in this response instead of a separate
-    // /api/tea-rota call (which was a second, un-shareable Games read per page load).
+    // Tea rota is merged into this response so the friendlies page gets its tea-duty
+    // info here instead of a separate /api/tea-rota call.
     const userName = session?.user?.userName ?? '';
     const teaDutyDates: string[] = [];
     if (userName) {

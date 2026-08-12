@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames } from '@/lib/friendlies-sheets';
+import { getFixtures } from '@/lib/fixtures-supabase';
 import { hasRole } from '@/lib/role-utils';
 
 export async function GET(request: NextRequest) {
@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
     const isAdmin = hasRole(session?.user?.role, 'Admin');
 
     // Return all game types (no type filter), then exclude Test games for non-admins
-    const allGames = await getGames();
+    const allGames = await getFixtures();
     const games = isAdmin ? allGames : allGames.filter(g => g.gameType !== 'Test');
 
     // Sort by date ascending (upcoming first)

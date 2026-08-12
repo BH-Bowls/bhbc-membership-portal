@@ -5,7 +5,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, getGameSheet, updateGameSheet } from '@/lib/friendlies-sheets';
+import { getGameSheet, updateGameSheet } from '@/lib/friendlies-sheets';
+import { getFixtureByTabName } from '@/lib/fixtures-supabase';
 import { ConfirmParticipationRequest } from '@/lib/types/friendlies';
 import { getUserByUsername } from '@/lib/members-supabase';
 import { canManageUser } from '@/lib/buddies-supabase';
@@ -35,17 +36,8 @@ export async function POST(request: NextRequest) {
     // the same people they can "switch user" to). Each is authorised below.
     const onBehalfOf: string[] = Array.isArray(body.onBehalfOf) ? body.onBehalfOf : [];
 
-    // Fetch all games from Games sheet
-    const games = await getGames();
-
-    // Search for the game by tabName
-    let game = null;
-    for (const g of games) {
-      if (g.tabName === tab_name) {
-        game = g;
-        break;
-      }
-    }
+    // Fetch the fixture
+    const game = await getFixtureByTabName(tab_name);
 
     // Return 404 if game doesn't exist
     if (!game) {

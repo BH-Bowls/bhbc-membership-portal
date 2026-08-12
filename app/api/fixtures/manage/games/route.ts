@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, createFixture } from '@/lib/friendlies-sheets';
+import { getFixtures, createFixture } from '@/lib/fixtures-supabase';
 import { GameType } from '@/lib/types/friendlies';
 import { hasRole } from '@/lib/role-utils';
 import { parseNormalizedDate } from '@/lib/date-utils';
@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const games = await getGames();
+    const games = await getFixtures();
 
     // game.date is DD/MM/YYYY — must use parseNormalizedDate, not new Date()
     const sortedGames = games.sort((a, b) => {
@@ -94,7 +94,6 @@ export async function POST(request: NextRequest) {
       maxPlayers: maxPlayers ? parseInt(maxPlayers) : undefined,
       message,
       pickupInfo,
-      tabDate,
       tabName,
       status: '',
     });
