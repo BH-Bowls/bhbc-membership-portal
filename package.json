@@ -1,7 +1,7 @@
 {
   "name": "bhbc-membership-portal",
   "version": "1.24.1",
-  "previewVersion": "12",
+  "previewVersion": "13",
   "private": true,
   "scripts": {
     "dev": "next dev --port 3001",
