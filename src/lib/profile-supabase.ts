@@ -63,7 +63,7 @@ function validateProfileField(field: string, value: any): string | undefined {
     if (!validStatuses.includes(value)) return 'renewStatus must be Renew-Email or Renew-Post';
   }
 
-  const booleanFields = ['socialEmails', 'handbookEntry'];
+  const booleanFields = ['socialEmails', 'handbookEntry', 'competitionsEligibleOverride'];
   if (booleanFields.includes(field) && value !== undefined && value !== null) {
     if (typeof value !== 'boolean') return `${field} must be a boolean value`;
   }
@@ -103,6 +103,7 @@ const FIELD_TO_COLUMN: Record<string, string> = {
   firstName: 'first_name',
   lastName: 'last_name',
   knownAs: 'known_as',
+  competitionsEligibleOverride: 'competitions_eligible_override',
 };
 
 export async function updateUserProfile(
@@ -120,6 +121,7 @@ export async function updateUserProfile(
       'honorary', 'handicap', 'include', 'gmc', 'renewStatus', 'socialEmails',
       'handbookEntry', 'drivingAwayMatches', 'drivingAdditionalInfo', 'greenMaintenance',
       'greenAdditionalInfo', 'barDuty', 'barAdditionalInfo', 'otherSkills',
+      'competitionsEligibleOverride',
     ];
 
     for (const field of allowedFields) {
@@ -143,10 +145,20 @@ export async function updateUserProfile(
       }
     }
 
+    // Fields where '' needs converting to null before the write — unlike most text
+    // columns, where '' is a legitimate value, these reject it outright:
+    //   - yearStarted/handicap: real Postgres integer columns ("invalid input syntax
+    //     for type integer")
+    //   - buddyUserName: has a foreign key to users(username) — '' isn't NULL, so it's
+    //     checked against real usernames and fails ("violates foreign key constraint"),
+    //     instead of being treated as "no buddy set"
+    const emptyStringToNullFields = ['yearStarted', 'handicap', 'buddyUserName'];
+
     const profileUpdate: Record<string, any> = {};
     for (const field of allowedFields) {
       if (field === 'role' || !(field in updates)) continue;
-      const value = updates[field as keyof User];
+      let value = updates[field as keyof User];
+      if (emptyStringToNullFields.includes(field) && value === '') value = null;
       const column = FIELD_TO_COLUMN[field] ?? field;
       profileUpdate[column] = value === undefined ? null : value;
     }

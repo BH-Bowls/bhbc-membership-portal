@@ -226,6 +226,7 @@ export interface User {
   friendlies2023: number;
   friendlies2024: number;
   friendliesLastYear: number | string; // Can be number or "X" for manual override
+  competitionsEligibleOverride: boolean | null; // Admin-set club-competitions entry eligibility override (0032) — null = no override set, defaults to not eligible; see renewals eligibility check
   comments: string | null;
   socialEmails: boolean;
   handbookEntry: boolean;
@@ -868,6 +869,7 @@ function parseUserRow(row: any[], rowNumber: number, colMap: { [key: string]: nu
       if (!value) return 0;
       return parseInt(value, 10) || 0;
     })(),
+    competitionsEligibleOverride: null, // Postgres-only field (0032), no Sheets equivalent
     comments: get('comments'),
     socialEmails: getBool('social_emails'),
     handbookEntry: getBool('handbook_entry'),

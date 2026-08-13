@@ -45,7 +45,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    // Get user profile (for age_demographic, friendlies_last_year, member_type)
+    // Get user profile (for age_demographic, member_type, competitionsEligibleOverride)
     const profile = await getUserByUsername(targetUserName);
 
     if (!profile) {
@@ -88,18 +88,15 @@ export async function GET(request: NextRequest) {
       renewal
     );
 
-    // Calculate eligibility
-    // Allow competitions if:
-    // - friendliesLastYear >= 8 (met requirement)
-    // - friendliesLastYear === "X" (manual override for illness/exceptional circumstances)
-    const friendliesValue = profile.friendliesLastYear;
-    const canEnterCompetitions =
-      friendliesValue === 'X' ||
-      (typeof friendliesValue === 'number' && friendliesValue >= 8);
+    // Calculate eligibility. The original rule ("played >= 8 friendlies last season, or
+    // an admin manually approved an exception") needs a real friendlies-attendance count
+    // that doesn't exist in Postgres yet (Friendlies migration is deferred — see
+    // supabase/migrations/0032_competitions_eligible_override.sql). Until then, eligibility
+    // is admin-set per member; defaults to NOT eligible when no override has been set.
+    const canEnterCompetitions = profile.competitionsEligibleOverride === true;
 
     const eligibility = {
       canEnterCompetitions,
-      friendliesLastYear: friendliesValue,
     };
 
     return NextResponse.json({
@@ -110,7 +107,6 @@ export async function GET(request: NextRequest) {
         ageDemographic: profile.ageDemographic,
         memberType: profile.memberType,
         honorary: profile.honorary,
-        friendliesLastYear: profile.friendliesLastYear,
         emailAddress: profile.emailAddress,
         title: profile.title,
       },

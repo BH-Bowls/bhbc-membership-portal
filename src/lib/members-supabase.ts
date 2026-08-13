@@ -64,6 +64,7 @@ function mapRow(row: any): User {
     friendlies2023: 0,     // dropped entirely per the plan
     friendlies2024: 0,     // dropped entirely per the plan
     friendliesLastYear: 0, // dropped entirely per the plan
+    competitionsEligibleOverride: profile?.competitions_eligible_override ?? null,
     comments: profile?.comments ?? null,
     socialEmails: profile?.social_emails ?? false,
     handbookEntry: profile?.handbook_entry ?? false,
