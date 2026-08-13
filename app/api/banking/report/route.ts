@@ -4,8 +4,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getGoogleSheetsClient, getSpreadsheetId, getColumnMap } from '@/lib/sheets';
-import { createRowFieldGetter, createRowNumberGetter } from '@/lib/banking-sheets';
+import { getSupabaseClient } from '@/lib/supabase';
+import { getCurrentSeasonYear } from '@/lib/renewals-supabase';
 import { getAllUsers } from '@/lib/members-supabase';
 import { hasRole } from '@/lib/role-utils';
 
@@ -63,6 +63,14 @@ export interface PaymentTotals {
   total: { amount: number; count: number };
 }
 
+function zeroTotals(count: number): ReportTotals {
+  return {
+    playingFee: 0, socialFee: 0, competitionsFee: 0, club200Fee: 0, totalFeeDue: 0,
+    outstanding: 0, banking: 0, difference: 0, donations: 0,
+    cardMachine: 0, bankTransfer: 0, cheque: 0, cash: 0, count,
+  };
+}
+
 export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
@@ -75,16 +83,15 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const sheets = getGoogleSheetsClient();
-    const spreadsheetId = getSpreadsheetId();
+    const supabase = getSupabaseClient();
+    const seasonYear = getCurrentSeasonYear();
 
-    // Fetch Renewals data
-    const renewalsColMap = await getColumnMap('Renewals');
-    const renewalsResponse = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: 'Renewals!A2:AP',
-    });
-    const renewalsRows = renewalsResponse.data.values || [];
+    // Fetch Renewals data (current season only — this table is real multi-year history now)
+    const { data: renewalsRows, error: renewalsError } = await supabase
+      .from('renewals')
+      .select('username, renewing_membership, playing_fee, social_fee, competitions_fee, club_200_fee, total_fee_due, outstanding, banking, difference, donations, card_machine, bank_transfer, cheque, cash')
+      .eq('season_year', seasonYear);
+    if (renewalsError) throw new Error(renewalsError.message);
 
     // Fetch Postgres members for full names
     const allUsers = await getAllUsers();
@@ -97,64 +104,44 @@ export async function GET(request: NextRequest) {
     const paidSubs: RenewalReportRow[] = [];
     const unpaidSubs: RenewalReportRow[] = [];
 
-    for (const row of renewalsRows) {
-      const get = createRowFieldGetter(row, renewalsColMap);
-      const getNumber = createRowNumberGetter(get);
-
-      const userName = get('user_name');
+    for (const row of renewalsRows ?? []) {
+      const userName = row.username as string;
       if (!userName) continue;
 
-      const outstanding = getNumber('outstanding');
+      const outstanding = row.outstanding === null ? null : Number(row.outstanding) || 0;
       const fullName = memberNames.get(userName.toLowerCase()) || userName;
 
       const renewalRow: RenewalReportRow = {
         userName,
         fullName,
-        renewingMembership: get('renewing_membership'),
-        playingFee: getNumber('playing_fee'),
-        socialFee: getNumber('social_fee'),
-        competitionsFee: getNumber('competitions_fee'),
-        club200Fee: getNumber('club_200_fee'),
-        totalFeeDue: getNumber('total_fee_due'),
-        outstanding,
-        banking: getNumber('banking'),
-        difference: getNumber('difference'),
-        donations: getNumber('donations'),
-        cardMachine: getNumber('card_machine'),
-        bankTransfer: getNumber('bank_transfer'),
-        cheque: getNumber('cheque'),
-        cash: getNumber('cash'),
+        renewingMembership: row.renewing_membership === true ? 'Y' : row.renewing_membership === false ? 'N' : '',
+        playingFee: Number(row.playing_fee) || 0,
+        socialFee: Number(row.social_fee) || 0,
+        competitionsFee: Number(row.competitions_fee) || 0,
+        club200Fee: Number(row.club_200_fee) || 0,
+        totalFeeDue: Number(row.total_fee_due) || 0,
+        outstanding: outstanding ?? 0,
+        banking: Number(row.banking) || 0,
+        difference: Number(row.difference) || 0,
+        donations: Number(row.donations) || 0,
+        cardMachine: Number(row.card_machine) || 0,
+        bankTransfer: Number(row.bank_transfer) || 0,
+        cheque: Number(row.cheque) || 0,
+        cash: Number(row.cash) || 0,
       };
 
-      // Check if outstanding field has a value (not null/empty)
-      const outstandingStr = get('outstanding');
-      const hasOutstanding = outstandingStr !== '';
+      // Only rows where outstanding has actually been set (not null) count as paid/unpaid
+      const hasOutstanding = outstanding !== null;
 
       if (hasOutstanding && outstanding === 0) {
         paidSubs.push(renewalRow);
-      } else if (hasOutstanding && outstanding > 0) {
+      } else if (hasOutstanding && outstanding! > 0) {
         unpaidSubs.push(renewalRow);
       }
     }
 
     // Calculate paid subs totals
-    const paidTotals: ReportTotals = {
-      playingFee: 0,
-      socialFee: 0,
-      competitionsFee: 0,
-      club200Fee: 0,
-      totalFeeDue: 0,
-      outstanding: 0,
-      banking: 0,
-      difference: 0,
-      donations: 0,
-      cardMachine: 0,
-      bankTransfer: 0,
-      cheque: 0,
-      cash: 0,
-      count: paidSubs.length,
-    };
-
+    const paidTotals = zeroTotals(paidSubs.length);
     for (const row of paidSubs) {
       paidTotals.playingFee += row.playingFee;
       paidTotals.socialFee += row.socialFee;
@@ -172,23 +159,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Calculate unpaid subs totals
-    const unpaidTotals: ReportTotals = {
-      playingFee: 0,
-      socialFee: 0,
-      competitionsFee: 0,
-      club200Fee: 0,
-      totalFeeDue: 0,
-      outstanding: 0,
-      banking: 0,
-      difference: 0,
-      donations: 0,
-      cardMachine: 0,
-      bankTransfer: 0,
-      cheque: 0,
-      cash: 0,
-      count: unpaidSubs.length,
-    };
-
+    const unpaidTotals = zeroTotals(unpaidSubs.length);
     for (const row of unpaidSubs) {
       unpaidTotals.playingFee += row.playingFee;
       unpaidTotals.socialFee += row.socialFee;
@@ -199,38 +170,28 @@ export async function GET(request: NextRequest) {
     }
 
     // Fetch Payments data
-    const paymentsColMap = await getColumnMap('RenewalPayments');
-    const paymentsResponse = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: 'RenewalPayments!A2:G',
-    });
-    const paymentsRows = paymentsResponse.data.values || [];
+    const { data: paymentsRows, error: paymentsError } = await supabase
+      .from('renewal_payments')
+      .select('payment_id, date, type, reference, amount, status, matched_users')
+      .neq('status', 'Deleted');
+    if (paymentsError) throw new Error(paymentsError.message);
 
     // Parse payments
     const allocatedPayments: PaymentReportRow[] = [];
     const unallocatedPayments: PaymentReportRow[] = [];
 
-    for (const row of paymentsRows) {
-      const get = createRowFieldGetter(row, paymentsColMap);
-      const getNumber = createRowNumberGetter(get);
-
-      const paymentId = get('payment_id');
-      if (!paymentId) continue;
-
-      const status = get('status');
-      if (status === 'Deleted') continue; // Skip deleted payments
-
+    for (const row of paymentsRows ?? []) {
       const paymentRow: PaymentReportRow = {
-        paymentId,
-        date: get('date'),
-        type: get('type') as PaymentReportRow['type'],
-        reference: get('reference'),
-        amount: getNumber('amount'),
-        status,
-        matchedUsers: get('matched_users'),
+        paymentId: row.payment_id,
+        date: row.date,
+        type: row.type as PaymentReportRow['type'],
+        reference: row.reference ?? '',
+        amount: Number(row.amount) || 0,
+        status: row.status,
+        matchedUsers: row.matched_users ?? '',
       };
 
-      if (status === 'Matched') {
+      if (row.status === 'Matched') {
         allocatedPayments.push(paymentRow);
       } else {
         unallocatedPayments.push(paymentRow);
