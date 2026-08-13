@@ -4,8 +4,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getUserByUsername } from '@/lib/sheets';
-import { updateUserProfile } from '@/lib/profile-sheets';
+import { getUserByUsername } from '@/lib/members-supabase';
+import { updateUserProfile } from '@/lib/profile-supabase';
 import {
   getRenewalByUsername,
   updateRenewal,
@@ -14,8 +14,8 @@ import {
   sendCancellationConfirmation,
   type Renewal,
   type FeeBreakdown,
-} from '@/lib/renewals-sheets';
-import { canManageUser, canEditPaymentFields } from '@/lib/buddies-sheets';
+} from '@/lib/renewals-supabase';
+import { canManageUser, canEditPaymentFields } from '@/lib/buddies-supabase';
 
 // GET /api/renewals?userName=target
 // Returns renewal data + profile data for calculations (buddy system)

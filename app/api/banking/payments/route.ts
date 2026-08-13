@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getUnmatchedPayments } from '@/lib/banking-sheets';
+import { getUnmatchedPayments } from '@/lib/banking-supabase';
 import { hasRole } from '@/lib/role-utils';
 
 export async function GET(request: NextRequest) {

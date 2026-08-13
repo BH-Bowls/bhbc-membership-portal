@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { generateNextPaymentId, addPaymentsToSheet } from '@/lib/banking-sheets';
+import { generateNextPaymentId, addPayments } from '@/lib/banking-supabase';
 import { hasRole } from '@/lib/role-utils';
 
 export async function POST(request: NextRequest) {
@@ -82,8 +82,8 @@ export async function POST(request: NextRequest) {
       paymentIds.push(payment_id);
     }
 
-    // Add all payments in a single batch operation (avoids write quota limit)
-    await addPaymentsToSheet(paymentsToAdd);
+    // Add all payments in a single batch operation
+    await addPayments(paymentsToAdd);
 
     return NextResponse.json({
       success: true,

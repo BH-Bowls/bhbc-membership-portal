@@ -5,9 +5,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import {
-  updatePaymentInSheet,
+  updatePayment,
   updateRenewalPayment,
-} from '@/lib/banking-sheets';
+} from '@/lib/banking-supabase';
 import { hasRole } from '@/lib/role-utils';
 
 interface MatchedRenewal {
@@ -75,7 +75,7 @@ export async function POST(request: NextRequest) {
     // Track successes and failures for better error reporting
     for (const payment of matchedPayments as MatchedPayment[]) {
       try {
-        await updatePaymentInSheet(payment.payment_id, {
+        await updatePayment(payment.payment_id, {
           status: 'Matched',
           matched_users: payment.matched_users,
         });
@@ -113,9 +113,9 @@ export async function POST(request: NextRequest) {
       const validatedOutstanding = Math.max(0, newOutstanding);
 
       try {
-        // Format date as dd/mm/yyyy for Google Sheets
+        // date_paid is a real Postgres date column now — ISO format, not the old dd/mm/yyyy
         const now = new Date();
-        const dateReceived = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`;
+        const dateReceived = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
         await updateRenewalPayment(renewal.userName, {
           outstanding: validatedOutstanding,

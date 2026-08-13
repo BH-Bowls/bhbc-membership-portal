@@ -161,6 +161,10 @@ async function main() {
   // migrate-availability.ts started populating their username FK columns — same
   // reasoning, in child-to-parent order so the availability FKs don't block each
   // other's own delete; migrate-availability.ts MUST be re-run after this script.
+  // renewals joined once migrate-renewals.ts started populating its username FK column —
+  // same reasoning, migrate-renewals.ts MUST be re-run after this script. renewal_payments
+  // doesn't need to be here — matched_users is plain text, no FK into users, so it never
+  // blocks the users wipe.
   // game_players/handicap_history still aren't cleared since nothing populates them
   // yet; extend this list if that changes.
   const wipeSteps: { table: string; column: string }[] = [
@@ -176,6 +180,7 @@ async function main() {
     { table: 'availability_events', column: 'id' },
     { table: 'availability_group_members', column: 'id' },
     { table: 'availability_groups', column: 'id' },
+    { table: 'renewals', column: 'id' },
     { table: 'user_roles', column: 'user_id' },
     { table: 'member_profiles', column: 'user_id' },
     { table: 'users', column: 'id' },

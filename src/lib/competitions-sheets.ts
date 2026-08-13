@@ -18,6 +18,7 @@ import {
   getColumnLetter,
 } from './sheets';
 import { getAllUsers } from './members-supabase';
+import { getRenewalCompetitionEntries, getCurrentSeasonYear } from './renewals-supabase';
 import type { Competition, CompMatch, CompType, CompStatus, CompRound, CompMemberInfo } from '@/types/competitions';
 import { ROUND_ORDER } from '@/types/competitions';
 
@@ -864,40 +865,23 @@ export async function getEntrantsFromRenewals(compId: string): Promise<{
     return { entrants: [], subs: [] };
   }
 
-  const colMap = await getColumnMap('Renewals');
-  const sheets = getGoogleSheetsClient();
-
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId: getSpreadsheetId(),
-    range: 'Renewals!A2:AZ',
-    valueRenderOption: 'FORMATTED_VALUE',
-  });
-
-  const rows = response.data.values || [];
+  const rows = await getRenewalCompetitionEntries(getCurrentSeasonYear());
 
   const entrantUsernames: string[] = [];
   const subUsernames: string[] = [];
 
-  const entrantColIdx = colMap[cfg.renewalColumn];
-  const subColIdx = cfg.subRenewalColumn ? colMap[cfg.subRenewalColumn] : undefined;
-  const userNameColIdx = colMap['user_name'];
-
-  if (entrantColIdx === undefined || userNameColIdx === undefined) {
-    throw new Error(`Required columns not found in Renewals sheet for competition ${compId}`);
-  }
-
   for (const row of rows) {
-    const username = row[userNameColIdx];
+    const username = row['username'];
     if (!username) continue;
 
-    const entrantVal = row[entrantColIdx];
-    if (entrantVal === 'Y' || entrantVal === 'Yes' || entrantVal === 'TRUE') {
+    const entrantVal = row[cfg.renewalColumn];
+    if (entrantVal === true) {
       entrantUsernames.push(String(username));
     }
 
-    if (subColIdx !== undefined) {
-      const subVal = row[subColIdx];
-      if (subVal === 'Y' || subVal === 'Yes' || subVal === 'TRUE') {
+    if (cfg.subRenewalColumn !== undefined) {
+      const subVal = row[cfg.subRenewalColumn];
+      if (subVal === true) {
         subUsernames.push(String(username));
       }
     }

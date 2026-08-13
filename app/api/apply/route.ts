@@ -3,7 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createApplication } from '@/lib/applications-supabase';
-import { calculateMembershipFee } from '@/lib/renewals-sheets';
+import { calculateMembershipFee } from '@/lib/renewals-supabase';
 import { sendEmailWithAttachments, isEmailConfigured, getEmailTransporter } from '@/lib/email/mailer';
 import { processEmailTemplate } from '@/lib/email/template-processor';
 import { readFileSync } from 'fs';
