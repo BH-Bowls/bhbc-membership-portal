@@ -12,8 +12,8 @@ import {
   isGroupMember,
   canManageGroupMembers,
   ensureGroupMemberTokens,
-} from '@/lib/availability-groups-sheets';
-import { getGroupEvents } from '@/lib/availability-events-sheets';
+} from '@/lib/availability-groups-supabase';
+import { getGroupEvents } from '@/lib/availability-events-supabase';
 import type { AddGroupMembersPayload } from '@/types/availability';
 
 // GET /api/availability/groups/[groupId]/members

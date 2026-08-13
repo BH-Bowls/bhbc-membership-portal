@@ -10,8 +10,8 @@ import { hasRole } from '@/lib/role-utils';
 import {
   getEventById,
   getResponsesForEvent,
-} from '@/lib/availability-events-sheets';
-import { ensureGroupMemberTokens } from '@/lib/availability-groups-sheets';
+} from '@/lib/availability-events-supabase';
+import { ensureGroupMemberTokens } from '@/lib/availability-groups-supabase';
 import { isEmailConfigured } from '@/lib/email/mailer';
 import type { AvailabilityGroupMember } from '@/types/availability';
 

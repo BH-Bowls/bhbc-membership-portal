@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGroups, createGroup, addGroupMembers } from '@/lib/availability-groups-sheets';
+import { getGroups, createGroup, addGroupMembers } from '@/lib/availability-groups-supabase';
 import type { CreateGroupPayload } from '@/types/availability';
 
 // GET /api/availability/groups

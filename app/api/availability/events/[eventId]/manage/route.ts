@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
-import { getEventById, getEventManageDetail } from '@/lib/availability-events-sheets';
+import { getEventById, getEventManageDetail } from '@/lib/availability-events-supabase';
 
 // GET /api/availability/events/[eventId]/manage
 // Returns full manage detail (all responses, invitees, summary counts)

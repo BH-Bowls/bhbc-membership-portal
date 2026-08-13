@@ -10,9 +10,9 @@ import {
   getSlotsForEvent,
   upsertMemberResponse,
   deleteMemberResponse,
-} from '@/lib/availability-events-sheets';
+} from '@/lib/availability-events-supabase';
 import { clearDiaryCache } from '@/lib/home-cache';
-import { isGroupMember, getGroupById, canManageGroupMembers } from '@/lib/availability-groups-sheets';
+import { isGroupMember, getGroupById, canManageGroupMembers } from '@/lib/availability-groups-supabase';
 import type { MemberRespondPayload, AvailabilityResponse } from '@/types/availability';
 
 // POST /api/availability/events/[eventId]/respond

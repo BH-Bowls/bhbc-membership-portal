@@ -441,7 +441,7 @@ export default function ManageEventPage({
     }
   }
 
-  // Archive the event
+  // Permanently delete the event (cascades to its slots/responses)
   async function handleArchive() {
     if (!eventId) return;
     setArchiving(true);
@@ -451,10 +451,10 @@ export default function ManageEventPage({
       });
       if (!res.ok) {
         const d = await res.json();
-        setError(d.error || 'Failed to archive event.');
+        setError(d.error || 'Failed to delete event.');
         return;
       }
-      // Navigate back after archiving
+      // Navigate back after deleting
       if (detail && detail.event.groupId) {
         router.push(`/availability/groups/${detail.event.groupId}`);
       } else {
@@ -462,7 +462,7 @@ export default function ManageEventPage({
       }
     } catch (err) {
       console.error('[ManageEventPage] handleArchive error:', err);
-      setError('Failed to archive event.');
+      setError('Failed to delete event.');
     } finally {
       setArchiving(false);
       setShowArchiveConfirm(false);
@@ -810,26 +810,26 @@ export default function ManageEventPage({
                   </button>
                 )}
 
-                {/* Archive — always available (for non-archived events) */}
+                {/* Delete — always available */}
                 {detail.event.status !== 'archived' && (
                   <button
                     onClick={() => setShowArchiveConfirm(true)}
                     className={getButtonClasses('danger', 'sm')}
                   >
-                    Archive Poll
+                    Delete Poll
                   </button>
                 )}
               </div>
             </div>
 
-            {/* ── Archive confirmation ──────────────────────────────── */}
+            {/* ── Delete confirmation ──────────────────────────────── */}
             {showArchiveConfirm && (
               <div className={getAlertClasses('warning') + ' mb-4'}>
-                <p className="font-medium text-gray-900 mb-1">Archive this poll?</p>
-                <p className="text-sm text-gray-700 mb-3">Archiving removes the poll from all views.</p>
+                <p className="font-medium text-gray-900 mb-1">Delete this poll?</p>
+                <p className="text-sm text-gray-700 mb-3">This permanently deletes the poll AND all of its options and responses. This cannot be undone.</p>
                 <div className="flex gap-2">
                   <button onClick={handleArchive} disabled={archiving} className={getButtonClasses('danger', 'sm')}>
-                    {archiving ? 'Archiving…' : 'Confirm Archive'}
+                    {archiving ? 'Deleting…' : 'Confirm Delete'}
                   </button>
                   <button onClick={() => setShowArchiveConfirm(false)} className={getButtonClasses('secondary', 'sm')}>Cancel</button>
                 </div>

@@ -17,18 +17,9 @@ import { parseUKDate } from './date-utils';
 import { getSheetDataCache, setSheetDataCache } from './home-cache';
 import { hasRole } from './role-utils';
 import { getPendingApplicationsCount } from './applications-supabase';
+import { getCommitments } from './member-availability';
+import { getSupabaseClient } from './supabase';
 import type { DiaryItem } from '@/types/diary';
-
-// ─── Environment Variable Getter ─────────────────────────────────────────────
-
-// Returns the Availability spreadsheet ID, throwing a helpful error if missing
-function getAvailabilitySpreadsheetId(): string {
-  const id = process.env.AVAILABILITY_SPREADSHEET_ID;
-  if (!id) {
-    throw new Error('AVAILABILITY_SPREADSHEET_ID environment variable is not set. Check your .env.local file.');
-  }
-  return id;
-}
 
 // ─── Date Helpers ─────────────────────────────────────────────────────────────
 
@@ -786,120 +777,40 @@ async function fetchAvailabilityItems(
   const nudgeItems: DiaryItem[] = [];
   const confirmedItems: DiaryItem[] = [];
 
-  let availabilitySpreadsheetId: string;
-  try {
-    availabilitySpreadsheetId = getAvailabilitySpreadsheetId();
-  } catch (_err) {
-    // AVAILABILITY_SPREADSHEET_ID not configured — skip availability items
-    return { nudgeItems, confirmedItems };
-  }
+  // ── Availability nudge: open events in a group this member belongs to, where they
+  // haven't yet responded. The roster is the group's members (there is no invitees
+  // table), so we read availability_group_members to find the member's groups.
+  const supabase = getSupabaseClient();
 
-  const sheets = getGoogleSheetsClient();
-
-  // Fetch the availability sheets in one batchGet call. The roster is the group's members
-  // (there is no invitees sheet), so we read AvailabilityGroupMembers to find the member's
-  // groups.
-  const batchResponse = await sheets.spreadsheets.values.batchGet({
-    spreadsheetId: availabilitySpreadsheetId,
-    ranges: [
-      'AvailabilityEvents!A2:P',
-      'AvailabilitySlots!A2:F',
-      'AvailabilityResponses!A2:K',
-      'AvailabilityGroupMembers!A2:N',
-    ],
-  });
-
-  const valueRanges = batchResponse.data.valueRanges;
-  if (!valueRanges || valueRanges.length < 4) {
-    return { nudgeItems, confirmedItems };
-  }
-
-  // Get column maps for each sheet so we access by name
-  const [eventsColMap, slotsColMap, responsesColMap, membersColMap] = await Promise.all([
-    getColumnMap('AvailabilityEvents', availabilitySpreadsheetId),
-    getColumnMap('AvailabilitySlots', availabilitySpreadsheetId),
-    getColumnMap('AvailabilityResponses', availabilitySpreadsheetId),
-    getColumnMap('AvailabilityGroupMembers', availabilitySpreadsheetId),
+  const [eventsResp, responsesResp, membersResp] = await Promise.all([
+    supabase.from('availability_events').select('id, title, status, group_id, created_at').eq('status', 'open'),
+    supabase.from('availability_responses').select('event_id, username').eq('respondent_type', 'member'),
+    supabase.from('availability_group_members').select('group_id, username').eq('member_type', 'member'),
   ]);
-
-  // Build safe cell accessor for a given column map
-  function makeGetter(colMap: Record<string, number>) {
-    return function get(row: string[], field: string): string {
-      const idx = colMap[field];
-      if (idx === undefined) {
-        return '';
-      }
-      const val = row[idx];
-      return val !== undefined && val !== null ? String(val).trim() : '';
-    };
-  }
-
-  const getEvent = makeGetter(eventsColMap);
-  const getSlot = makeGetter(slotsColMap);
-  const getResponse = makeGetter(responsesColMap);
-  const getMember = makeGetter(membersColMap);
-
-  const eventsRows = valueRanges[0].values || [];
-  const slotsRows = valueRanges[1].values || [];
-  const responsesRows = valueRanges[2].values || [];
-  const memberRows = valueRanges[3].values || [];
-
-  // Build a map from eventId → member's response record(s) for quick lookups
-  // Map: eventId → slotId → response value ('yes' | 'maybe' | 'no')
-  const memberResponseMap: Map<string, Map<string, string>> = new Map();
-  for (let i = 0; i < responsesRows.length; i++) {
-    const row = responsesRows[i] as string[];
-    const respUserName = getResponse(row, 'user_name');
-    if (respUserName.toLowerCase() !== userName.toLowerCase()) {
-      continue;
-    }
-    const eventId = getResponse(row, 'event_id');
-    const slotId = getResponse(row, 'slot_id');
-    const response = getResponse(row, 'response');
-    if (!eventId || !slotId) {
-      continue;
-    }
-    if (!memberResponseMap.has(eventId)) {
-      memberResponseMap.set(eventId, new Map());
-    }
-    const slotMap = memberResponseMap.get(eventId);
-    if (slotMap) {
-      slotMap.set(slotId, response);
-    }
-  }
+  if (eventsResp.error) throw new Error(`Failed to fetch open availability events: ${eventsResp.error.message}`);
+  if (responsesResp.error) throw new Error(`Failed to fetch availability responses: ${responsesResp.error.message}`);
+  if (membersResp.error) throw new Error(`Failed to fetch availability group members: ${membersResp.error.message}`);
 
   // Build the set of groupIds this member belongs to (the roster = group members)
   const callerGroupIds = new Set<string>();
-  for (let i = 0; i < memberRows.length; i++) {
-    const row = memberRows[i] as string[];
-    const memberUserName = getMember(row, 'user_name');
-    if (memberUserName.toLowerCase() === userName.toLowerCase()) {
-      const groupId = getMember(row, 'group_id');
-      if (groupId) {
-        callerGroupIds.add(groupId);
-      }
+  for (const row of membersResp.data || []) {
+    if (row.username && row.username.toLowerCase() === userName.toLowerCase() && row.group_id) {
+      callerGroupIds.add(row.group_id);
     }
   }
 
-  // Build a map from slotId → slot object for quick concluded-slot lookups
-  const slotMap: Map<string, string[]> = new Map();
-  for (let i = 0; i < slotsRows.length; i++) {
-    const row = slotsRows[i] as string[];
-    const slotId = getSlot(row, 'slot_id');
-    if (slotId) {
-      slotMap.set(slotId, row as string[]);
+  // Events this member has already responded to (any slot)
+  const respondedEventIds = new Set<string>();
+  for (const row of responsesResp.data || []) {
+    if (row.username && row.username.toLowerCase() === userName.toLowerCase() && row.event_id) {
+      respondedEventIds.add(row.event_id);
     }
   }
 
-  // Process each event row
-  for (let i = 0; i < eventsRows.length; i++) {
-    const row = eventsRows[i] as string[];
-    const eventId = getEvent(row, 'event_id');
-    const title = getEvent(row, 'title');
-    const status = getEvent(row, 'status');       // 'open' | 'closed' | 'concluded' | 'archived'
-    const groupId = getEvent(row, 'group_id');    // blank = public event
-    const concludedSlotId = getEvent(row, 'concluded_slot_id');
-    const createdAt = getEvent(row, 'created_at');
+  // Process each open event row
+  for (const row of eventsResp.data || []) {
+    const eventId = row.id;
+    const groupId = row.group_id; // null = public event
 
     if (!eventId) {
       continue;
@@ -910,64 +821,55 @@ async function fetchAvailabilityItems(
       continue;
     }
 
-    // ── Availability nudge: open event, member has not responded ──
-    if (status === 'open') {
-      const memberResponses = memberResponseMap.get(eventId);
-      const hasResponded = memberResponses !== undefined && memberResponses.size > 0;
-
-      if (!hasResponded) {
-        // Use createdAt as the sort date — nudges sort by event creation date
-        // Extract just the YYYY-MM-DD portion from the ISO timestamp
-        let nudgeDate = todayStr;
-        if (createdAt && createdAt.length >= 10) {
-          nudgeDate = createdAt.substring(0, 10);
-        }
-
-        nudgeItems.push({
-          type: 'availability_nudge',
-          date: nudgeDate,
-          displayDate: formatDiaryDate(nudgeDate),
-          label: title || 'Availability Event',
-          subLabel: 'Awaiting your response',
-          linkUrl: `/availability/${eventId}`,
-        });
-      }
+    if (respondedEventIds.has(eventId)) {
+      continue;
     }
 
-    // ── Availability confirmed: concluded event, member said Yes to winning slot ──
-    if (status === 'concluded' && concludedSlotId) {
-      // Check if the member responded 'yes' to the winning slot
-      const memberResponses = memberResponseMap.get(eventId);
-      let respondedYes = false;
-      if (memberResponses) {
-        const slotResponse = memberResponses.get(concludedSlotId);
-        if (slotResponse === 'yes') {
-          respondedYes = true;
-        }
-      }
-
-      if (respondedYes) {
-        // Get the winning slot to extract its datetime
-        const winningSlotRow = slotMap.get(concludedSlotId);
-        if (winningSlotRow) {
-          const slotDatetime = getSlot(winningSlotRow, 'slot_datetime');
-          if (slotDatetime) {
-            // Extract just the date portion (YYYY-MM-DD) from the ISO timestamp
-            const slotDate = slotDatetime.length >= 10 ? slotDatetime.substring(0, 10) : '';
-            if (slotDate && slotDate >= todayStr) {
-              confirmedItems.push({
-                type: 'availability_confirmed',
-                date: slotDate,
-                displayDate: formatDiaryDate(slotDate),
-                label: title || 'Availability Event',
-                subLabel: 'Confirmed — you said Yes',
-                linkUrl: `/availability/events/${eventId}`,
-              });
-            }
-          }
-        }
-      }
+    // Use createdAt as the sort date — nudges sort by event creation date
+    // Extract just the YYYY-MM-DD portion from the ISO timestamp
+    let nudgeDate = todayStr;
+    if (row.created_at && row.created_at.length >= 10) {
+      nudgeDate = row.created_at.substring(0, 10);
     }
+
+    nudgeItems.push({
+      type: 'availability_nudge',
+      date: nudgeDate,
+      displayDate: formatDiaryDate(nudgeDate),
+      label: row.title || 'Availability Event',
+      subLabel: 'Awaiting your response',
+      linkUrl: `/availability/${eventId}`,
+    });
+  }
+
+  // ── Availability confirmed: read from the member-availability commitments table.
+  // These are written by the conclude route's writeback (source='availability') — one
+  // row per member who said Yes to the winning slot — so this is now a straight
+  // Postgres read instead of re-deriving from Sheets events/slots/responses.
+  try {
+    const farFuture = new Date();
+    farFuture.setDate(farFuture.getDate() + 365);
+    const [y, m, d] = todayStr.split('-');
+    const todayUK = `${d}/${m}/${y}`;
+    const farFutureUK = `${farFuture.getDate().toString().padStart(2, '0')}/${(farFuture.getMonth() + 1).toString().padStart(2, '0')}/${farFuture.getFullYear()}`;
+
+    const commitments = await getCommitments([userName], todayUK, farFutureUK);
+    for (const c of commitments) {
+      if (c.source !== 'availability') continue;
+      const [cd, cm, cy] = c.date.split('/');
+      const isoDate = `${cy}-${cm}-${cd}`;
+      confirmedItems.push({
+        type: 'availability_confirmed',
+        date: isoDate,
+        displayDate: formatDiaryDate(isoDate),
+        label: c.label || 'Availability Event',
+        subLabel: c.subLabel || 'Confirmed',
+        linkUrl: c.linkUrl || '',
+      });
+    }
+  } catch (commitmentsError) {
+    // Commitments are a convenience layer here — never fail the whole diary over it.
+    console.error('[fetchAvailabilityItems] Failed to read commitments:', commitmentsError);
   }
 
   return { nudgeItems, confirmedItems };

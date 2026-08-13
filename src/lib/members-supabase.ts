@@ -80,6 +80,7 @@ function mapRow(row: any): User {
     isMarker: profile?.is_marker ?? false,
     isWorker: profile?.is_worker ?? false,
     workerAdditionalInfo: profile?.worker_additional_info ?? null,
+    maxGamesPerDay: profile?.max_games_per_day ?? 2,
     include: profile?.include ?? null,
     renewalEmailSentStatus: profile?.renewal_email_sent_status ?? null,
     buddyUserName: profile?.buddy_user_name ?? null,
@@ -468,6 +469,26 @@ export async function setMarkerStatus(
 
   const { error } = await supabase.from('member_profiles').update(updates).eq('user_id', userRow.id);
   if (error) throw new Error(`Failed to update marker status for ${userName}: ${error.message}`);
+
+  invalidateCache();
+}
+
+/** Sets a member's own max_games_per_day preference (1 or 2) — member-availability pre-fill only. */
+export async function setMaxGamesPerDay(userName: string, maxGamesPerDay: 1 | 2): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { data: userRow, error: fetchError } = await supabase
+    .from('users')
+    .select('id')
+    .ilike('username', userName)
+    .maybeSingle();
+  if (fetchError) throw new Error(`Failed to look up user: ${fetchError.message}`);
+  if (!userRow) throw new Error(`Member not found: ${userName}`);
+
+  const { error } = await supabase
+    .from('member_profiles')
+    .update({ max_games_per_day: maxGamesPerDay, profile_updated_at: new Date().toISOString() })
+    .eq('user_id', userRow.id);
+  if (error) throw new Error(`Failed to update max games per day for ${userName}: ${error.message}`);
 
   invalidateCache();
 }

@@ -8,7 +8,7 @@ import {
   getGroupById,
   removeGroupMember,
   canManageGroupMembers,
-} from '@/lib/availability-groups-sheets';
+} from '@/lib/availability-groups-supabase';
 
 // DELETE /api/availability/groups/[groupId]/members/[memberId]
 // Remove a member from the group (does not cascade to past event invitees)

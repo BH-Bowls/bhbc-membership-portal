@@ -157,6 +157,10 @@ async function main() {
   // migrate-rotas.ts started populating their username FK columns — same reasoning as
   // applications: fully wiped here, so migrate-fixtures.ts/migrate-rotas.ts MUST be
   // re-run after this script or those columns stay permanently null until they are.
+  // availability_responses/slots/events/group_members/groups joined once
+  // migrate-availability.ts started populating their username FK columns — same
+  // reasoning, in child-to-parent order so the availability FKs don't block each
+  // other's own delete; migrate-availability.ts MUST be re-run after this script.
   // game_players/handicap_history still aren't cleared since nothing populates them
   // yet; extend this list if that changes.
   const wipeSteps: { table: string; column: string }[] = [
@@ -167,6 +171,11 @@ async function main() {
     { table: 'fixtures', column: 'id' },
     { table: 'cleaning_rota', column: 'id' },
     { table: 'sweeping_rota', column: 'id' },
+    { table: 'availability_responses', column: 'id' },
+    { table: 'availability_slots', column: 'id' },
+    { table: 'availability_events', column: 'id' },
+    { table: 'availability_group_members', column: 'id' },
+    { table: 'availability_groups', column: 'id' },
     { table: 'user_roles', column: 'user_id' },
     { table: 'member_profiles', column: 'user_id' },
     { table: 'users', column: 'id' },

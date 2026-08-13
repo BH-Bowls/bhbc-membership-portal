@@ -13,16 +13,16 @@ import {
   htmlToPlainText,
 } from './mailer';
 import { getAppUrl } from '../app-url';
-import { getUserByUsername, getAllUsers } from '../sheets';
+import { getUserByUsername, getAllUsers } from '../members-supabase';
 import {
   getGroupById,
   getGroupMembers,
-} from '../availability-groups-sheets';
+} from '../availability-groups-supabase';
 import {
   getEventById,
   getSlotsForEvent,
   getResponsesForEvent,
-} from '../availability-events-sheets';
+} from '../availability-events-supabase';
 import type {
   AvailabilityGroupMember,
 } from '@/types/availability';

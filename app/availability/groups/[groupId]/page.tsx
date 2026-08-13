@@ -57,9 +57,21 @@ function relativeTime(iso: string): string {
 // Badge variant for event status
 function statusBadgeVariant(status: string): 'success' | 'warning' | 'primary' | 'secondary' {
   if (status === 'open') return 'success';
-  if (status === 'closed') return 'warning';
+  if (status === 'closed' || status === 'expired') return 'warning';
   if (status === 'concluded') return 'primary';
   return 'secondary';
+}
+
+// An 'open' event past its expiry is still stored as 'open' (still logically readable,
+// just no longer accepting responses — see the guest respond route's own expiry check),
+// but showing a green "Open" badge for something that's actually closed is what confused
+// a real user testing this. Compute a display-only status so the badge/background reflect
+// reality without changing the underlying data model.
+function displayStatus(ev: AvailabilityEventSummary): string {
+  if (ev.status === 'open' && ev.expiresAt && new Date(ev.expiresAt) < new Date()) {
+    return 'expired';
+  }
+  return ev.status;
 }
 
 // Badge variant for event type
@@ -253,7 +265,7 @@ export default function GroupPage({
     }
   }
 
-  // Archive the group (soft-delete)
+  // Permanently delete the group (cascades to its polls/slots/responses)
   async function handleArchive() {
     if (!groupId) return;
     setArchiving(true);
@@ -263,14 +275,14 @@ export default function GroupPage({
       });
       if (!res.ok) {
         const d = await res.json();
-        setError(d.error || 'Failed to archive group.');
+        setError(d.error || 'Failed to delete group.');
         return;
       }
-      // Navigate back to hub after archiving
+      // Navigate back to hub after deleting
       router.push('/availability');
     } catch (err) {
       console.error('[GroupPage] handleArchive error:', err);
-      setError('Failed to archive group.');
+      setError('Failed to delete group.');
     } finally {
       setArchiving(false);
       setShowArchiveConfirm(false);
@@ -499,24 +511,34 @@ export default function GroupPage({
                   </Link>
                 )}
 
-                {/* Archive — shown to creator or admin */}
+                {/* Availability heatmap — creator/Admin only, no poll needed */}
+                {(detail.isCreator || currentUserRole.indexOf('Admin') !== -1) && detail.group.status === 'active' && (
+                  <Link
+                    href={`/availability/groups/${groupId}/heatmap`}
+                    className={getButtonClasses('secondary', 'sm')}
+                  >
+                    View Heatmap
+                  </Link>
+                )}
+
+                {/* Delete — shown to creator or admin */}
                 {(detail.isCreator || currentUserRole.indexOf('Admin') !== -1) && detail.group.status === 'active' && (
                   <button
                     onClick={() => setShowArchiveConfirm(true)}
                     className={getButtonClasses('danger', 'sm')}
                   >
-                    Archive Group
+                    Delete Group
                   </button>
                 )}
               </div>
             </div>
 
-            {/* ── Archive confirmation ──────────────────────────────── */}
+            {/* ── Delete confirmation ──────────────────────────────── */}
             {showArchiveConfirm && (
               <div className={getAlertClasses('warning') + ' mb-4'}>
-                <p className="font-medium text-gray-900 mb-2">Archive this group?</p>
+                <p className="font-medium text-gray-900 mb-2">Delete this group?</p>
                 <p className="text-sm text-gray-700 mb-3">
-                  Archiving removes the group from all views. Events within the group are not automatically archived.
+                  This permanently deletes the group AND all of its polls, options, and responses. This cannot be undone.
                 </p>
                 <div className="flex gap-2">
                   <button
@@ -524,7 +546,7 @@ export default function GroupPage({
                     disabled={archiving}
                     className={getButtonClasses('danger', 'sm')}
                   >
-                    {archiving ? 'Archiving…' : 'Confirm Archive'}
+                    {archiving ? 'Deleting…' : 'Confirm Delete'}
                   </button>
                   <button
                     onClick={() => setShowArchiveConfirm(false)}
@@ -808,7 +830,7 @@ export default function GroupPage({
                       key={ev.eventId}
                       className={
                         'rounded-lg border p-4 ' +
-                        (ev.status === 'open'
+                        (displayStatus(ev) === 'open'
                           ? 'bg-white border-gray-200'
                           : 'bg-gray-50 border-gray-100')
                       }
@@ -825,8 +847,8 @@ export default function GroupPage({
                           <span className={getBadgeClasses(typeBadgeVariant(ev.type), 'sm')}>
                             {cap(ev.type)}
                           </span>
-                          <span className={getBadgeClasses(statusBadgeVariant(ev.status), 'sm')}>
-                            {cap(ev.status)}
+                          <span className={getBadgeClasses(statusBadgeVariant(displayStatus(ev)), 'sm')}>
+                            {cap(displayStatus(ev))}
                           </span>
                           {/* Tick if user has responded */}
                           {ev.hasResponded && (

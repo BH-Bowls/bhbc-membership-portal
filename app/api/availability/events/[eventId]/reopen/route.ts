@@ -5,7 +5,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
-import { getEventById, updateEvent, clearConclusionFields } from '@/lib/availability-events-sheets';
+import { getEventById, updateEvent, clearConclusionFields } from '@/lib/availability-events-supabase';
+import { deleteCommitmentsBySourceRef } from '@/lib/member-availability';
 
 // POST /api/availability/events/[eventId]/reopen
 // Reopen a closed or concluded event (sets status back to open, clears conclusion data)
@@ -50,9 +51,18 @@ export async function POST(
     // Set status back to open
     await updateEvent(eventId, { status: 'open' });
 
-    // If the event was concluded, clear the conclusion fields
+    // If the event was concluded, clear the conclusion fields and the commitments its
+    // conclusion emitted (idempotent — a later re-conclude re-creates them from scratch).
     if (event.status === 'concluded') {
       await clearConclusionFields(eventId);
+      try {
+        await deleteCommitmentsBySourceRef('availability', eventId);
+      } catch (writebackError) {
+        console.error(
+          `[POST /api/availability/events/[eventId]/reopen] Failed to clear commitments for event ${eventId}:`,
+          writebackError
+        );
+      }
     }
 
     return NextResponse.json({ success: true });

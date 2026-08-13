@@ -1,5 +1,5 @@
 // app/api/availability/events/[eventId]/route.ts
-// API endpoints for reading, updating, and archiving a single availability event
+// API endpoints for reading, updating, and deleting a single availability event
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
@@ -9,9 +9,9 @@ import {
   getEventById,
   getEventDetailForMember,
   updateEvent,
-  archiveEvent,
-} from '@/lib/availability-events-sheets';
-import { isGroupMember } from '@/lib/availability-groups-sheets';
+  deleteEvent,
+} from '@/lib/availability-events-supabase';
+import { isGroupMember } from '@/lib/availability-groups-supabase';
 
 // GET /api/availability/events/[eventId]
 // Returns full event detail for the member response page
@@ -173,7 +173,8 @@ export async function PUT(
 }
 
 // DELETE /api/availability/events/[eventId]
-// Archive (soft-delete) an event
+// Permanently delete an event and everything in it (slots/responses) — irreversible,
+// the frontend must confirm with the user before calling this.
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ eventId: string }> }
@@ -199,17 +200,16 @@ export async function DELETE(
     const isAdmin = hasRole(userRole, 'Admin');
     const isCreator = event.createdByUsername === userName;
 
-    // Access check: only event creator or Admin can archive
+    // Access check: only event creator or Admin can delete
     if (!isCreator && !isAdmin) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    // Archive the event (soft-delete — sets status to 'archived')
-    await archiveEvent(eventId);
+    await deleteEvent(eventId);
 
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[DELETE /api/availability/events/[eventId]] Error:', error);
-    return NextResponse.json({ error: 'Failed to archive event' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to delete event' }, { status: 500 });
   }
 }

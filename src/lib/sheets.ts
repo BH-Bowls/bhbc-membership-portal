@@ -242,6 +242,7 @@ export interface User {
   isMarker: boolean;
   isWorker: boolean; // daytime worker — usually unavailable to mark day games
   workerAdditionalInfo: string | null; // exceptions to the default 9-5 weekday assumption
+  maxGamesPerDay: number; // 1 or 2 — member-availability pre-fill preference, default 2
 
   // Renewal Email Fields
   include: string | null; // "Y" or "N" - controls whether member receives renewal emails
@@ -890,6 +891,7 @@ function parseUserRow(row: any[], rowNumber: number, colMap: { [key: string]: nu
     isMarker: false,
     isWorker: false,
     workerAdditionalInfo: null,
+    maxGamesPerDay: 2, // member_profiles column, not a Sheets column — not derivable here
 
     // Renewal Email Fields
     include: get('include'), // "Y" or "N" - controls who receives renewal emails

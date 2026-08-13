@@ -9,12 +9,12 @@ import {
   getGroupById,
   isGroupMember,
   ensureGroupMemberTokens,
-} from '@/lib/availability-groups-sheets';
+} from '@/lib/availability-groups-supabase';
 import {
   getGroupEvents,
   createEvent,
   addSlots,
-} from '@/lib/availability-events-sheets';
+} from '@/lib/availability-events-supabase';
 import type { CreateEventPayload } from '@/types/availability';
 
 // GET /api/availability/groups/[groupId]/events

@@ -9,7 +9,7 @@ import {
   getEventById,
   addSlot,
   getSlotsForEvent,
-} from '@/lib/availability-events-sheets';
+} from '@/lib/availability-events-supabase';
 import type { AvailabilitySlotType } from '@/types/availability';
 
 // POST /api/availability/events/[eventId]/slots
