@@ -17,23 +17,17 @@ export function useImpersonation() {
   const [error, setError] = useState<string | null>(null);
 
   /**
-   * Start impersonating a target user or club.
-   * @param id Username (user) or club_id (club)
-   * @param type 'user' (default) or 'club'
+   * Start impersonating a target user.
    */
-  const startImpersonation = async (id: string, type: 'user' | 'club' = 'user') => {
+  const startImpersonation = async (userName: string) => {
     setIsLoading(true);
     setError(null);
-
-    const body = type === 'club'
-      ? { targetClubId: id, targetType: 'club' }
-      : { targetUserName: id };
 
     try {
       const response = await fetch('/api/admin/impersonate/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ targetUserName: userName }),
       });
 
       const data = await response.json();

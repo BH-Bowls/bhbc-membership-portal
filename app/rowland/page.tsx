@@ -13,10 +13,7 @@ import { ROWLAND_COMP_NAMES } from '@/types/rowland';
 const LS_KEY = 'rowland_selected_club';
 
 const ROWLAND_GUEST_BUTTONS = (
-  <>
-    <a href="/clublogin" className="px-3 py-1.5 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-md transition-colors">Club Login</a>
-    <a href="/login"     className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600  hover:bg-blue-700  rounded-md transition-colors">Member Login</a>
-  </>
+  <a href="/login" className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors">Member Login</a>
 );
 
 const STATUS_STYLES: Record<RowlandCompStatus, { badge: string; label: string }> = {
@@ -39,14 +36,14 @@ export default function RowlandPage() {
   const router = useRouter();
 
   const role = session?.user?.role ?? '';
-  const isCommittee = role !== 'Member' && role !== 'Kiosk' && role !== 'Club' && role !== '';
+  const isCommittee = role !== 'Member' && role !== 'Kiosk' && role !== '';
 
   const [comps, setComps] = useState<RowlandComp[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Club selector (for guests / non-club members)
-  const isClubSession = role === 'Club' || role.split(',').map(r => r.trim()).includes('RowlandPlayer');
+  // Club selector shown to guests/plain members (a RowlandPlayer is already identified, no picker needed)
+  const isClubSession = role.split(',').map(r => r.trim()).includes('RowlandPlayer');
   const [clubs, setClubs] = useState<{ clubId: string; clubName: string }[]>([]);
   const [selectedClub, setSelectedClub] = useState<{ clubId: string; clubName: string } | null>(null);
   const [guestContactName, setGuestContactName] = useState('');

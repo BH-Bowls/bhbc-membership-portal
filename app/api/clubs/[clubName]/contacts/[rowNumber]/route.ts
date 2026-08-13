@@ -1,5 +1,5 @@
 // app/api/clubs/[clubName]/contacts/[rowNumber]/route.ts
-// PUT, DELETE — update or remove a contact (committee or own Club role)
+// PUT, DELETE — update or remove a contact (committee only)
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
@@ -10,13 +10,6 @@ import { sendClubChangeNotification } from '@/lib/email/club-change-notifier';
 
 interface RouteParams {
   params: Promise<{ clubName: string; rowNumber: string }>;
-}
-
-function isOwnClub(session: any, clubName: string): boolean {
-  return (
-    session?.user?.role === 'Club' &&
-    (session?.user?.name ?? '').toLowerCase() === clubName.toLowerCase()
-  );
 }
 
 export async function PUT(request: NextRequest, { params }: RouteParams) {
@@ -32,11 +25,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     const contactId = decodeURIComponent(rowNumber);
     const role = session.user.role ?? '';
 
-    if (role === 'Club') {
-      if (!isOwnClub(session, decodedClubName)) {
-        return NextResponse.json({ error: 'You can only edit your own club' }, { status: 403 });
-      }
-    } else if (isMember(role)) {
+    if (isMember(role)) {
       return NextResponse.json({ error: 'Only committee members can update contacts' }, { status: 403 });
     }
 
@@ -89,11 +78,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     const contactId = decodeURIComponent(rowNumber);
     const role = session.user.role ?? '';
 
-    if (role === 'Club') {
-      if (!isOwnClub(session, decodedClubName)) {
-        return NextResponse.json({ error: 'You can only edit your own club' }, { status: 403 });
-      }
-    } else if (isMember(role)) {
+    if (isMember(role)) {
       return NextResponse.json({ error: 'Only committee members can delete contacts' }, { status: 403 });
     }
 

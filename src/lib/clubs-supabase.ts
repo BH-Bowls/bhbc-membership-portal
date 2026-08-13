@@ -1,9 +1,9 @@
 // src/lib/clubs-supabase.ts
 // Postgres-backed replacement for clubs-sheets.ts's real Clubs & Contacts data (NOT
-// club login — authenticateClub/getClubLoginRecord/changeClubPassword/
-// getAllClubsForImpersonation stay on clubs-sheets.ts deliberately, since club login is
-// being removed entirely per the migration plan, not migrated; getClubContactsToEmail
-// also stays, since it pulls in raw club-login credentials for its bulk-email feature).
+// club login — that concept has been removed entirely, code and all, since Rowland is
+// moving to a token-based access design instead. getAllClubsForImpersonation stays on
+// clubs-sheets.ts deliberately — it's also used by /api/rowland/clubs, unrelated to
+// login or impersonation).
 //
 // club_name is the sole identifier (matches the plan's decision to drop club_id
 // entirely — it only ever existed as a login identifier). Club lookups are

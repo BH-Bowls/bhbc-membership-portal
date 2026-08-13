@@ -27,16 +27,15 @@ export async function PATCH(
     const BHBC_CLUB_ID = 'burgess.hill';
 
     const role = session.user.role;
-    const isClub = hasRole(role, 'Club');
     const isRowlandPlayer = hasRole(role, 'RowlandPlayer');
     // RowlandPlayer acts like a club (restricted to BHBC matches). Committee =
     // general committee or the Rowland organiser — multi-role aware (the previous
     // raw string compare let Kiosk / multi-role member strings through).
     const isCommittee =
-      !isClub && !isRowlandPlayer &&
+      !isRowlandPlayer &&
       (isCommitteeMember(role) || hasRole(role, 'RowlandOrganiser'));
 
-    if (!isCommittee && !isClub && !isRowlandPlayer) {
+    if (!isCommittee && !isRowlandPlayer) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -48,9 +47,9 @@ export async function PATCH(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    // For clubs and RowlandPlayer, verify their club is a participant in the match
-    if (isClub || isRowlandPlayer) {
-      const clubId = isRowlandPlayer ? BHBC_CLUB_ID : session.user.clubId;
+    // For RowlandPlayer, verify their club is a participant in the match
+    if (isRowlandPlayer) {
+      const clubId = BHBC_CLUB_ID;
       const matches = await getRowlandMatches(compId as RowlandCompId);
       const match = matches.find((m) => m.matchId === matchId);
       if (!match) {

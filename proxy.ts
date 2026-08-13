@@ -197,14 +197,6 @@ export default withAuth(
       }
     }
 
-    // Restrict Club role to /clubs and /rowland (not when admin is impersonating)
-    if (token?.role === 'Club' && !token?.isImpersonating) {
-      const allowed = ['/clubs', '/rowland', '/api/', '/change-password', '/help'];
-      if (!allowed.some((p) => pathname.startsWith(p))) {
-        return NextResponse.redirect(new URL('/clubs', req.url));
-      }
-    }
-
     // Protect /friendlies/manage routes - Captain or Admin only
     if (pathname.startsWith('/friendlies/manage')) {
       if (!token || !hasRole(token.role as string, 'Captain', 'Admin')) {
@@ -308,6 +300,6 @@ export default withAuth(
  */
 export const config = {
   matcher: [
-    '/((?!api/auth|api/apply|api/unlock|unlock|login|clublogin|forgot-password|reset-password|kiosk|apply|help/login|_next/static|_next/image|favicon.ico|bhbc-logo.jpg|manifest.json|icons/).*)',
+    '/((?!api/auth|api/apply|api/unlock|unlock|login|forgot-password|reset-password|kiosk|apply|help/login|_next/static|_next/image|favicon.ico|bhbc-logo.jpg|manifest.json|icons/).*)',
   ],
 };

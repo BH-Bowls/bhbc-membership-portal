@@ -2,8 +2,9 @@
 // Maintenance-mode flag, checked at two enforcement points:
 //   1. authenticateUser() — blocks new non-Admin logins. Checked in both
 //      auth-sheets.ts and auth-supabase.ts (the latter added when auth.ts's
-//      authorize() was cut over to Postgres; Club login still falls back to
-//      auth-sheets.ts's authenticateClub(), an independent path).
+//      authorize() was cut over to Postgres; club login, which used to fall back
+//      to auth-sheets.ts's authenticateClub(), has since been removed entirely —
+//      Rowland is moving to a token-based access design instead).
 //   2. proxy.ts (formerly middleware.ts) — redirects already-logged-in non-Admin
 //      sessions on their next request
 // See specs/Phase_0_1_Migration_Plan.md, Step 0.

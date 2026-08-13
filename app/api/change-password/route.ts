@@ -5,7 +5,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { changePassword } from '@/lib/auth-supabase';
-import { changeClubPassword } from '@/lib/clubs-sheets';
 import { sendTemplateEmail, isEmailConfigured } from '@/lib/email/mailer';
 import { getUserByUsername } from '@/lib/members-supabase';
 import { updateEmailSentStatus, logMemberEmail } from '@/lib/sheets';
@@ -63,29 +62,6 @@ export async function POST(request: NextRequest) {
     const originalRoles = originalRole.split(',').map((r: string) => r.trim());
     const isAdminManaging = session.user?.isImpersonating &&
                            originalRoles.some((r: string) => r === 'Admin' || r === 'RowlandOrganiser' || r === 'superadmin');
-
-    // ── Club password change ────────────────────────────────────────────────
-    if (session.user?.role === 'Club') {
-      const body = await request.json();
-      const { currentPassword, newPassword, forceChangeOnNextLogin } = body as { currentPassword?: string; newPassword: string; forceChangeOnNextLogin?: boolean };
-
-      if (!isAdminManaging && (!currentPassword || typeof currentPassword !== 'string')) {
-        return NextResponse.json({ error: 'Current password is required' }, { status: 400 });
-      }
-      if (!newPassword || typeof newPassword !== 'string') {
-        return NextResponse.json({ error: 'New password is required' }, { status: 400 });
-      }
-
-      const result = await changeClubPassword(
-        userName,
-        newPassword,
-        isAdminManaging ? undefined : currentPassword,
-        isAdminManaging ? (forceChangeOnNextLogin ?? false) : false,
-      );
-
-      if (result.success) return NextResponse.json({ success: true });
-      return NextResponse.json({ error: result.error || 'Failed to change password' }, { status: 400 });
-    }
 
     // Parse request body
     const body = await request.json();

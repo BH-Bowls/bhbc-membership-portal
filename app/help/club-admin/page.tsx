@@ -49,15 +49,7 @@ export default function HelpClubAdminPage() {
           <HelpSection title="Editing or removing contacts">
             <Body>
               Tap any contact to edit their details. Use Delete to remove a contact who is no longer
-              relevant. Contacts are visible to all logged-in users including visiting club logins.
-            </Body>
-          </HelpSection>
-
-          <HelpSection title="Club logins">
-            <Body>
-              Visiting clubs have their own login credentials (separate from member accounts). These
-              are set up by an Admin in the member profile system. The club shares one login across
-              everyone who manages their Rowland Cup matches.
+              relevant. Contacts are visible to all logged-in users.
             </Body>
           </HelpSection>
 

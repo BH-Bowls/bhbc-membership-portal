@@ -11,7 +11,6 @@ declare module 'next-auth' {
     roles?: string[]; // parsed from role string (computed in JWT callback if absent)
     name: string;
     email: string;
-    clubId?: string; // set for Club role logins
     mustChangePassword?: boolean; // true when admin set a temporary password
   }
 
@@ -23,7 +22,6 @@ declare module 'next-auth' {
       userName: string;
       role: string;
       roles: string[]; // parsed from role string
-      clubId?: string; // set for Club role logins
       mustChangePassword?: boolean; // true when admin set a temporary password
 
       // Impersonation fields
@@ -47,7 +45,6 @@ declare module 'next-auth/jwt' {
     name: string;
     email: string;
     loginTime: number;
-    clubId?: string; // set for Club role logins
     mustChangePassword?: boolean; // true when admin set a temporary password
 
     // Impersonation fields

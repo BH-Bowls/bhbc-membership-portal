@@ -5,18 +5,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getClubWithContacts, updateClub, deleteClub, UpdateClubRequest, ClubContact } from '@/lib/clubs-supabase';
-import { isMember, hasRole } from '@/lib/role-utils';
+import { isMember } from '@/lib/role-utils';
 import { sendClubChangeNotification } from '@/lib/email/club-change-notifier';
 import { getFixtures } from '@/lib/fixtures-supabase';
 import { getUserByUsername } from '@/lib/members-supabase';
-
-/** Returns true if a Club-role user is viewing their own club. */
-function isOwnClub(session: any, clubName: string): boolean {
-  return (
-    session?.user?.role === 'Club' &&
-    (session?.user?.name ?? '').toLowerCase() === clubName.toLowerCase()
-  );
-}
 
 interface RouteParams {
   params: Promise<{ clubName: string }>;
@@ -81,13 +73,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     }
 
     const role = session?.user?.role || 'Member';
-    // Committee/special roles can edit any club; Club role can only edit their own
-    const canEdit = !!session && (
-      (!isMember(role) && role !== 'Club') ||
-      isOwnClub(session, decodedClubName)
-    );
-    // Only committee/admin can delete — Club role cannot delete their own club
-    const canDelete = !!session && !isMember(role) && role !== 'Club';
+    const canEdit = !!session && !isMember(role);
+    const canDelete = !!session && !isMember(role);
 
     return NextResponse.json({
       ...result,
@@ -121,12 +108,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     const decodedClubName = decodeURIComponent(clubName);
     const role = session.user.role ?? '';
 
-    // Club role: only allowed to edit their own club
-    if (role === 'Club') {
-      if (!isOwnClub(session, decodedClubName)) {
-        return NextResponse.json({ error: 'You can only edit your own club' }, { status: 403 });
-      }
-    } else if (isMember(role)) {
+    if (isMember(role)) {
       return NextResponse.json({ error: 'Only committee members can update clubs' }, { status: 403 });
     }
 
@@ -181,7 +163,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     }
 
     const role = session.user.role ?? '';
-    if (isMember(role) || role === 'Club') {
+    if (isMember(role)) {
       return NextResponse.json({ error: 'Only committee members can delete clubs' }, { status: 403 });
     }
 

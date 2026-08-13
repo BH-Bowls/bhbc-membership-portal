@@ -121,7 +121,6 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
   const isTreasurer = roles.includes('Treasurer') || userRole === 'T';
   const isCaptain = roles.includes('Captain');
   const isKiosk = userRole === 'Kiosk';
-  const isClub = userRole === 'Club'; // external club login (always a single value)
   const isRowlandOrganiser = roles.includes('RowlandOrganiser'); // BHBC Rowland competition organiser
   const isRowlandPlayer = roles.includes('RowlandPlayer'); // BHBC member who plays in Rowland Cup
   const isLeagueCaptain = roles.includes('LeagueOrganiser');
@@ -130,7 +129,7 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
   const canAccessBanking = isAdmin || isTreasurer;
   const canAccessCaptainTools = isAdmin || isCaptain;
   // Committee = has at least one committee role (Rowland roles are specialist only, not general committee)
-  const isCommittee = !isKiosk && !isClub && roles.some(r => ['Captain', 'Treasurer', 'GMC', 'Admin'].includes(r));
+  const isCommittee = !isKiosk && roles.some(r => ['Captain', 'Treasurer', 'GMC', 'Admin'].includes(r));
 
   // Build admin menu items based on role
   const getAdminMenuItems = (): SubMenuItem[] => {
@@ -218,8 +217,8 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
 
   // Check if regular users have buddies to manage (not for kiosk)
   useEffect(() => {
-    // Only check for non-admin, non-kiosk, non-club users
-    if (!isAdmin && !isKiosk && !isClub && userName) {
+    // Only check for non-admin, non-kiosk users
+    if (!isAdmin && !isKiosk && userName) {
       fetch('/api/admin/impersonate/users')
         .then(res => res.json())
         .then(data => {
@@ -237,7 +236,11 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
   // - Admins (can switch to anyone)
   // - Regular users who have buddies (people who set them as buddy)
   // - Never for kiosk users
-  const canShowImpersonation = !isKiosk && !isClub && (isAdmin || isRowlandOrganiser || hasBuddies);
+  // isRowlandOrganiser was here only to expose club impersonation (now removed) —
+  // getImpersonatableUsers/canImpersonate never granted RowlandOrganiser any user
+  // impersonation rights on its own, so leaving it in would show a dead-end "Switch
+  // User" button that opens to an empty list.
+  const canShowImpersonation = !isKiosk && (isAdmin || hasBuddies);
 
   // Kiosk navigation items - simplified for clubhouse tablet
   const kioskNavigationItems: NavItem[] = [
@@ -421,39 +424,8 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
 //    },
   ];
 
-  // Club navigation items — Clubs and Rowland Cup only
-  const clubNavigationItems: NavItem[] = [
-    {
-      name: 'Clubs',
-      href: '/clubs',
-      icon: (
-        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-        </svg>
-      ),
-    },
-    {
-      name: 'Rowland Cup',
-      href: '/rowland',
-      icon: (
-        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
-        </svg>
-      ),
-    },
-    {
-      name: 'Help',
-      href: '/help/club',
-      icon: (
-        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-      ),
-    },
-  ];
-
   // Use role-appropriate navigation items.
-  const navigationItems = isClub ? clubNavigationItems : isKiosk ? kioskNavigationItems : regularNavigationItems;
+  const navigationItems = isKiosk ? kioskNavigationItems : regularNavigationItems;
 
   const isActive = (href: string) => {
     if (href === '/') {
@@ -472,7 +444,7 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
   };
 
   const handleSignOut = () => {
-    signOut({ callbackUrl: userRole === 'Club' ? '/clublogin' : '/login' });
+    signOut({ callbackUrl: '/login' });
   };
 
   // Get user initials from name (e.g., "Liam Dasey" -> "LD")
@@ -583,12 +555,12 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
   };
 
   // Wrapper for impersonation that clears drafts and navigates to home after switching
-  const handleImpersonateUser = async (id: string, type: 'user' | 'club' = 'user') => {
+  const handleImpersonateUser = async (userName: string) => {
     // Clear drafts again just before impersonation (belt and suspenders approach)
     clearAllDrafts();
-    await startImpersonation(id, type);
-    // Navigate to home (or /clubs for club impersonation) to force clean state
-    router.push(type === 'club' ? '/clubs' : '/');
+    await startImpersonation(userName);
+    // Navigate to home to force clean state
+    router.push('/');
   };
 
   // Handle exit switch with unsaved changes warning
@@ -853,21 +825,12 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
               {profileMenuOpen && (
                 <div className="absolute right-0 mt-2 w-56 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-50">
                   <div className="py-1">
-                    {/* Kiosk / Club mode header - show minimal menu */}
-                    {(isKiosk || isClub) && !isImpersonating ? (
+                    {/* Kiosk mode header - show minimal menu */}
+                    {isKiosk && !isImpersonating ? (
                       <>
                         <div className="px-4 py-2 text-sm font-medium text-blue-700 border-b border-gray-200 bg-blue-50">
-                          {isClub ? (userName || 'Club Login') : 'Kiosk Mode'}
+                          Kiosk Mode
                         </div>
-                        {isClub && (
-                          <a
-                            href="/change-password"
-                            className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                            onClick={() => setProfileMenuOpen(false)}
-                          >
-                            Change Password
-                          </a>
-                        )}
                         <button
                           onClick={handleLogout}
                           className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
@@ -1120,24 +1083,15 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
               ))}
             </div>
             <div className="pt-4 pb-3 border-t border-gray-200">
-              {(isKiosk || isClub) && !isImpersonating ? (
-                /* Kiosk / Club mode mobile menu */
+              {isKiosk && !isImpersonating ? (
+                /* Kiosk mode mobile menu */
                 <>
                   <div className="px-4 mb-3">
                     <div className="text-sm font-medium text-blue-700 bg-blue-50 px-3 py-2 rounded-md">
-                      {isClub ? (userName || 'Club Login') : 'Kiosk Mode'}
+                      Kiosk Mode
                     </div>
                   </div>
                   <div className="px-2 space-y-1">
-                    {isClub && (
-                      <a
-                        href="/change-password"
-                        className="block px-3 py-2 text-base font-medium text-gray-700 hover:bg-gray-100 rounded-md"
-                        onClick={() => setMobileMenuOpen(false)}
-                      >
-                        Change Password
-                      </a>
-                    )}
                     <button
                       onClick={handleLogout}
                       className="block w-full text-left px-3 py-2 text-base font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-md"
@@ -1261,7 +1215,6 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
         isOpen={impersonationModalOpen}
         onClose={() => setImpersonationModalOpen(false)}
         onImpersonate={handleImpersonateUser}
-        showClubOption={isAdmin || isRowlandOrganiser}
       />
 
       {/* Confirmation Dialog */}

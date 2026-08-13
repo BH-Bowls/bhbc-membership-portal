@@ -193,7 +193,7 @@ export default function HelpIndexPage() {
     },
     {
       title: 'Rowland Admin',
-      description: 'Manage Rowland Cup draws, club logins, and match results across all competitions.',
+      description: 'Manage Rowland Cup draws and match results across all competitions.',
       href: '/help/rowland',
       show: isRowlandOrganiser || isAdmin,
       badge: 'Rowland',
