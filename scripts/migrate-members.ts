@@ -165,6 +165,10 @@ async function main() {
   // same reasoning, migrate-renewals.ts MUST be re-run after this script. renewal_payments
   // doesn't need to be here — matched_users is plain text, no FK into users, so it never
   // blocks the users wipe.
+  // competition_matches joined once migrate-competitions.ts started populating its
+  // marker_username FK column — same reasoning, migrate-competitions.ts MUST be re-run
+  // after this script. competitions itself doesn't need to be here — it has no FK into
+  // users at all.
   // game_players/handicap_history still aren't cleared since nothing populates them
   // yet; extend this list if that changes.
   const wipeSteps: { table: string; column: string }[] = [
@@ -181,6 +185,7 @@ async function main() {
     { table: 'availability_group_members', column: 'id' },
     { table: 'availability_groups', column: 'id' },
     { table: 'renewals', column: 'id' },
+    { table: 'competition_matches', column: 'id' },
     { table: 'user_roles', column: 'user_id' },
     { table: 'member_profiles', column: 'user_id' },
     { table: 'users', column: 'id' },

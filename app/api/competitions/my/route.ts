@@ -13,7 +13,7 @@ import {
   getCompetitionMatches,
   getMemberInfoMap,
   COMP_SHEET_CONFIG,
-} from '@/lib/competitions-sheets';
+} from '@/lib/competitions-supabase';
 import { ROUND_ORDER } from '@/types/competitions';
 import type { CompMatch, Competition, CompRound } from '@/types/competitions';
 

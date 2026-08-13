@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getCompetitionById, saveCompetitionSetup, updateDrawSideCount } from '@/lib/competitions-sheets';
+import { getCompetitionById, saveCompetitionSetup, updateDrawSideCount } from '@/lib/competitions-supabase';
 import type { CompMatch } from '@/types/competitions';
 import { hasRole } from '@/lib/role-utils';
 

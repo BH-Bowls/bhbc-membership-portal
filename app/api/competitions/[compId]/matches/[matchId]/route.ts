@@ -10,7 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getCompetitionMatches, updateMatch, propagateWinnerToNextRound, getMemberInfoMap, getNextRoundMatch, resetMatch } from '@/lib/competitions-sheets';
+import { getCompetitionMatches, updateMatch, propagateWinnerToNextRound, getMemberInfoMap, getNextRoundMatch, resetMatch } from '@/lib/competitions-supabase';
 import { clearDiaryCache } from '@/lib/home-cache';
 import { hasRole } from '@/lib/role-utils';
 
@@ -377,6 +377,10 @@ export async function PATCH(
         console.error('[propagateWinner] Error:', err);
       }
     }
+
+    // Invalidate the diary cache so the home page reflects the updated result/date/marker
+    // (the other three write paths in this route already do this — this one was missing it)
+    clearDiaryCache(currentUsername);
 
     return NextResponse.json({ success: true });
   } catch (error) {

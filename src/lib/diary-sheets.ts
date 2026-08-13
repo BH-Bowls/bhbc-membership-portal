@@ -8,11 +8,9 @@ import {
   getGoogleSheetsClient,
   getColumnMap,
   getSpreadsheetId,       // MEMBERS_SPREADSHEET_ID
-  getCompetitionsSpreadsheetId,
   getAllUsers,
 } from './sheets';
 import { getFriendliesSpreadsheetId } from './friendlies-sheets';
-import { COMP_SHEET_CONFIG } from './competitions-sheets';
 import { parseUKDate } from './date-utils';
 import { getSheetDataCache, setSheetDataCache } from './home-cache';
 import { hasRole } from './role-utils';
@@ -484,276 +482,92 @@ type CompsResult = {
   markerItems: DiaryItem[];
 };
 
-// Read all competition match sheets in a single batchGet call (with shared 24-hour cache),
-// then extract matches where the member is a player (pending, date set) or a marker
+// Find Pending matches with an agreed (future) played date where the member is a
+// player or the assigned marker. Straight Postgres query — the old Sheets version's
+// batchGet-plus-24h-cache dance existed purely to stay under the Sheets API's per-minute
+// quota; that concern doesn't apply here.
 async function fetchCompetitionsItems(
   userName: string,
   todayStr: string,
   nameMap: Map<string, string>
 ): Promise<CompsResult> {
-  const competitionsSpreadsheetId = getCompetitionsSpreadsheetId();
+  const supabase = getSupabaseClient();
 
-  // Build the list of comp IDs and their cache keys
-  const compIds = Object.keys(COMP_SHEET_CONFIG);
-  const compCacheKeys: string[] = [];
-  for (let i = 0; i < compIds.length; i++) {
-    const config = COMP_SHEET_CONFIG[compIds[i]];
-    compCacheKeys.push(`comps-${config.sheetName}:${competitionsSpreadsheetId}`);
-  }
-  const controlCacheKey = `comps-control:${competitionsSpreadsheetId}`;
+  const [matchesResp, compsResp] = await Promise.all([
+    supabase
+      .from('competition_matches')
+      .select('comp_id, round, side1_usernames, side2_usernames, marker_username, played_date')
+      .eq('status', 'Pending')
+      .gte('played_date', todayStr),
+    supabase.from('competitions').select('comp_id, display_name'),
+  ]);
+  if (matchesResp.error) throw new Error(`Failed to fetch competition matches: ${matchesResp.error.message}`);
+  if (compsResp.error) throw new Error(`Failed to fetch competitions: ${compsResp.error.message}`);
 
-  // Try to serve all data from the shared 24-hour cache
-  let allCached = true;
-  const cachedCompRows: (string[][] | null)[] = [];
-  for (let i = 0; i < compCacheKeys.length; i++) {
-    const cached = getSheetDataCache(compCacheKeys[i]);
-    cachedCompRows.push(cached);
-    if (!cached) {
-      allCached = false;
-    }
-  }
-  let controlRows: string[][] | null = getSheetDataCache(controlCacheKey);
-  if (!controlRows) {
-    allCached = false;
+  const compDisplayNames: Record<string, string> = {};
+  for (const c of compsResp.data ?? []) {
+    if (c.comp_id && c.display_name) compDisplayNames[c.comp_id] = c.display_name;
   }
 
-  if (!allCached) {
-    // Cache miss — fetch all comp sheets plus CompetitionsControl in one batchGet
-    const sheets = getGoogleSheetsClient();
-    const ranges: string[] = [];
-    for (let i = 0; i < compIds.length; i++) {
-      const config = COMP_SHEET_CONFIG[compIds[i]];
-      ranges.push(`${config.sheetName}!A2:N`);
-    }
-    // Append the control sheet as the last range
-    ranges.push('CompetitionsControl!A2:Z');
-
-    const batchResponse = await sheets.spreadsheets.values.batchGet({
-      spreadsheetId: competitionsSpreadsheetId,
-      ranges,
-    });
-
-    const valueRanges = batchResponse.data.valueRanges;
-    if (!valueRanges) {
-      return { competitionItems: [], markerItems: [] };
-    }
-
-    // Cache each competition sheet's rows individually
-    for (let i = 0; i < compIds.length; i++) {
-      const rows = (valueRanges[i] && valueRanges[i].values) ? valueRanges[i].values as string[][] : [];
-      cachedCompRows[i] = rows;
-      setSheetDataCache(compCacheKeys[i], rows);
-    }
-
-    // Cache the control sheet rows (last entry in ranges)
-    const controlIdx = compIds.length;
-    controlRows = (valueRanges[controlIdx] && valueRanges[controlIdx].values) ? valueRanges[controlIdx].values as string[][] : [];
-    setSheetDataCache(controlCacheKey, controlRows);
+  // Fallback: format compId (e.g. "mens-championship" → "Mens Championship") for a
+  // competition somehow missing from the control table
+  function getCompDisplayName(compId: string): string {
+    if (compDisplayNames[compId]) return compDisplayNames[compId];
+    return compId.split('-').filter(Boolean).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
   }
-
-  // Get the shared column map (getColumnMap has its own internal cache)
-  // All competition sheets use the same column structure — use the first available
-  let sharedColMap: Record<string, number> | null = null;
-  for (let i = 0; i < compIds.length; i++) {
-    const config = COMP_SHEET_CONFIG[compIds[i]];
-    try {
-      sharedColMap = await getColumnMap(config.sheetName, competitionsSpreadsheetId);
-      break;
-    } catch (_err) {
-      // This sheet may not exist yet — try the next one
-    }
-  }
-
-  if (!sharedColMap) {
-    return { competitionItems: [], markerItems: [] };
-  }
-
-  const colMap = sharedColMap;
 
   const competitionItems: DiaryItem[] = [];
   const markerItems: DiaryItem[] = [];
 
-  // Build comp display names from the cached control sheet rows
-  const compDisplayNames: Record<string, string> = {};
-  if (controlRows && controlRows.length > 0) {
-    try {
-      const controlColMap = await getColumnMap('CompetitionsControl', competitionsSpreadsheetId);
-      const compIdIdx = controlColMap['comp_id'];
-      const nameIdx = controlColMap['display_name'];
-      for (let i = 0; i < controlRows.length; i++) {
-        const row = controlRows[i];
-        if (compIdIdx !== undefined && nameIdx !== undefined) {
-          const cId = row[compIdIdx] ? String(row[compIdIdx]).trim() : '';
-          const cName = row[nameIdx] ? String(row[nameIdx]).trim() : '';
-          if (cId && cName) {
-            compDisplayNames[cId] = cName;
-          }
-        }
-      }
-    } catch (_err) {
-      // CompetitionsControl sheet might not exist — fall back to formatting compId
-    }
-  }
-
-  // Helper to get a display name for a compId
-  function getCompDisplayName(compId: string): string {
-    // Use the sheet-sourced name if available
-    if (compDisplayNames[compId]) {
-      return compDisplayNames[compId];
-    }
-    // Fallback: format compId (e.g. "mens-championship" → "Mens Championship")
-    const words = compId.split('-');
-    const formatted: string[] = [];
-    for (let i = 0; i < words.length; i++) {
-      const word = words[i];
-      if (word.length > 0) {
-        formatted.push(word.charAt(0).toUpperCase() + word.slice(1));
-      }
-    }
-    return formatted.join(' ');
-  }
-
-  // Helper to get a cell value from a row using the shared column map
-  function get(row: string[], field: string): string {
-    const idx = colMap[field];
-    if (idx === undefined) {
-      return '';
-    }
-    const val = row[idx];
-    return val !== undefined && val !== null ? String(val).trim() : '';
-  }
-
-  // Process each competition's cached match rows
-  for (let ci = 0; ci < compIds.length; ci++) {
-    const compId = compIds[ci];
+  for (const row of matchesResp.data ?? []) {
+    const compId = row.comp_id as string;
     const compName = getCompDisplayName(compId);
-    const rows = cachedCompRows[ci];
+    const round = row.round as string;
+    const playedDate = row.played_date as string;
+    const side1Usernames: string[] = row.side1_usernames ?? [];
+    const side2Usernames: string[] = row.side2_usernames ?? [];
 
-    if (!rows || rows.length === 0) {
-      continue;
+    // ── Competition match diary item ──
+    let memberInSide: 1 | 2 | 0 = 0;
+    if (side1Usernames.some((u) => u.toLowerCase() === userName.toLowerCase())) {
+      memberInSide = 1;
+    } else if (side2Usernames.some((u) => u.toLowerCase() === userName.toLowerCase())) {
+      memberInSide = 2;
     }
 
-    for (let ri = 0; ri < rows.length; ri++) {
-      const row = rows[ri] as string[];
-
-      // Only look at Pending matches (not Complete, Walkover, or Bye)
-      const status = get(row, 'status');
-      if (status !== 'Pending') {
-        continue;
+    if (memberInSide !== 0) {
+      const opponentUsernames = memberInSide === 1 ? side2Usernames : side1Usernames;
+      let opponentDisplay = 'TBD';
+      if (opponentUsernames.length > 0) {
+        opponentDisplay = opponentUsernames
+          .map((u) => nameMap.get(u.toLowerCase()) || u)
+          .join(' & ');
       }
 
-      // Only include matches where a date has been agreed
-      const playedDate = get(row, 'played_date');
-      if (!playedDate) {
-        continue;
-      }
+      competitionItems.push({
+        type: 'competition',
+        date: playedDate,
+        displayDate: formatDiaryDate(playedDate),
+        label: `${compName} — ${round}`,
+        subLabel: `vs ${opponentDisplay}`,
+        linkUrl: `/competitions/${compId}`,
+      });
+    }
 
-      // Skip matches whose agreed date is in the past
-      if (playedDate < todayStr) {
-        continue;
-      }
+    // ── Marker diary item ──
+    const markerUsername = row.marker_username as string | null;
+    if (markerUsername && markerUsername.toLowerCase() === userName.toLowerCase()) {
+      const side1Name = side1Usernames.length > 0 ? (nameMap.get(side1Usernames[0].toLowerCase()) || side1Usernames[0]) : 'TBD';
+      const side2Name = side2Usernames.length > 0 ? (nameMap.get(side2Usernames[0].toLowerCase()) || side2Usernames[0]) : 'TBD';
 
-      const round = get(row, 'round');
-      const side1Raw = get(row, 'side1');
-      const side2Raw = get(row, 'side2');
-
-      // Parse pipe-separated usernames from side1 and side2
-      const side1Usernames: string[] = [];
-      if (side1Raw) {
-        const parts = side1Raw.split('|');
-        for (let pi = 0; pi < parts.length; pi++) {
-          const p = parts[pi].trim();
-          if (p) {
-            side1Usernames.push(p);
-          }
-        }
-      }
-
-      const side2Usernames: string[] = [];
-      if (side2Raw) {
-        const parts = side2Raw.split('|');
-        for (let pi = 0; pi < parts.length; pi++) {
-          const p = parts[pi].trim();
-          if (p) {
-            side2Usernames.push(p);
-          }
-        }
-      }
-
-      // ── Competition match diary item ──
-      // Check if the member is in side1 or side2
-      let memberInSide: 1 | 2 | 0 = 0;
-      for (let pi = 0; pi < side1Usernames.length; pi++) {
-        if (side1Usernames[pi].toLowerCase() === userName.toLowerCase()) {
-          memberInSide = 1;
-          break;
-        }
-      }
-      if (memberInSide === 0) {
-        for (let pi = 0; pi < side2Usernames.length; pi++) {
-          if (side2Usernames[pi].toLowerCase() === userName.toLowerCase()) {
-            memberInSide = 2;
-            break;
-          }
-        }
-      }
-
-      if (memberInSide !== 0) {
-        // Build the opponent display: the side the member is NOT on
-        const opponentUsernames = memberInSide === 1 ? side2Usernames : side1Usernames;
-
-        let opponentDisplay = 'TBD';
-        if (opponentUsernames.length > 0) {
-          // Resolve each opponent username to a display name
-          const opponentNames: string[] = [];
-          for (let pi = 0; pi < opponentUsernames.length; pi++) {
-            const oppName = nameMap.get(opponentUsernames[pi].toLowerCase());
-            if (oppName) {
-              opponentNames.push(oppName);
-            } else {
-              // Username not found in Members — use the raw username as fallback
-              opponentNames.push(opponentUsernames[pi]);
-            }
-          }
-          opponentDisplay = opponentNames.join(' & ');
-        }
-
-        competitionItems.push({
-          type: 'competition',
-          date: playedDate,
-          displayDate: formatDiaryDate(playedDate),
-          label: `${compName} — ${round}`,
-          subLabel: `vs ${opponentDisplay}`,
-          linkUrl: `/competitions/${compId}`,
-        });
-      }
-
-      // ── Marker diary item ──
-      // Check if the member is the assigned marker for this match
-      const markerUsername = get(row, 'marker');
-      if (markerUsername && markerUsername.toLowerCase() === userName.toLowerCase()) {
-        // Resolve the two players' names for the subLabel
-        let side1Name = 'TBD';
-        let side2Name = 'TBD';
-
-        if (side1Usernames.length > 0) {
-          const resolved = nameMap.get(side1Usernames[0].toLowerCase());
-          side1Name = resolved ? resolved : side1Usernames[0];
-        }
-        if (side2Usernames.length > 0) {
-          const resolved = nameMap.get(side2Usernames[0].toLowerCase());
-          side2Name = resolved ? resolved : side2Usernames[0];
-        }
-
-        markerItems.push({
-          type: 'marker',
-          date: playedDate,
-          displayDate: formatDiaryDate(playedDate),
-          label: `${compName} — ${round}`,
-          subLabel: `Marking: ${side1Name} vs ${side2Name}`,
-          linkUrl: `/competitions/${compId}`,
-        });
-      }
+      markerItems.push({
+        type: 'marker',
+        date: playedDate,
+        displayDate: formatDiaryDate(playedDate),
+        label: `${compName} — ${round}`,
+        subLabel: `Marking: ${side1Name} vs ${side2Name}`,
+        linkUrl: `/competitions/${compId}`,
+      });
     }
   }
 
