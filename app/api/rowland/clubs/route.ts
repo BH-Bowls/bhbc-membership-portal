@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getAllClubsForImpersonation } from '@/lib/clubs-sheets';
+import { getClubIdentifiers } from '@/lib/clubs-sheets';
 
 export async function GET(_req: NextRequest) {
   try {
@@ -13,7 +13,7 @@ export async function GET(_req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const clubs = await getAllClubsForImpersonation();
+    const clubs = await getClubIdentifiers();
 
     return NextResponse.json({ clubs });
   } catch (error) {

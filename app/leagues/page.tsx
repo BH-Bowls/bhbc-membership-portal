@@ -28,7 +28,7 @@ export default function LeaguesPage() {
   const router = useRouter();
 
   const role = session?.user?.role ?? '';
-  const isCommittee = role !== 'Member' && role !== '' && role !== 'Kiosk' && role !== 'Club';
+  const isCommittee = role !== 'Member' && role !== '' && role !== 'Kiosk';
 
   const [leagues, setLeagues] = useState<League[]>([]);
   const [enteredLeagueIds, setEnteredLeagueIds] = useState<Set<string>>(new Set());

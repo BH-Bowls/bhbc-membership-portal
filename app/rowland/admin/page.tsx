@@ -25,7 +25,7 @@ export default function RowlandAdminPage() {
   const [error, setError] = useState<string | null>(null);
 
   const role = session?.user?.role ?? '';
-  const isCommittee = role !== 'Member' && role !== 'Club' && role !== '';
+  const isCommittee = role !== 'Member' && role !== '';
 
   useEffect(() => {
     if (session && !isCommittee) router.replace('/rowland');

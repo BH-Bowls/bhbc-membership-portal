@@ -62,7 +62,7 @@ function LeagueDetailPageInner() {
 
   const role = session?.user?.role ?? '';
   const userName = session?.user?.userName ?? '';
-  const isCommittee = role !== 'Member' && role !== '' && role !== 'Kiosk' && role !== 'Club';
+  const isCommittee = role !== 'Member' && role !== '' && role !== 'Kiosk';
 
   const [league, setLeague] = useState<League | null>(null);
   const [teams, setTeams] = useState<LeagueTeam[]>([]);

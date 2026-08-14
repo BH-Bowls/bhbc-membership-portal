@@ -214,7 +214,7 @@ export default function RowlandSetupPage({ params }: { params: Promise<{ compId:
   });
 
   const role        = session?.user?.role ?? '';
-  const isCommittee = role !== 'Member' && role !== 'Club' && role !== '';
+  const isCommittee = role !== 'Member' && role !== '';
 
   useEffect(() => {
     if (session && !isCommittee) router.replace('/rowland');

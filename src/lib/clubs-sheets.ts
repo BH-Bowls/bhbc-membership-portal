@@ -793,15 +793,16 @@ export async function deleteContact(clubName: string, rowNumber: number): Promis
 
 // ============================================================================
 // CLUB IDENTIFIERS
-// Club login itself (authenticateClub/changeClubPassword/getClubLoginRecord) was
-// removed — Rowland is moving to a token-based access design instead (see
-// specs/Planning_next_year_s_fixture_contacts.md), so it was never migrated to
-// Postgres. getAllClubsForImpersonation survives because it's also used by
-// /api/rowland/clubs (an authenticated Rowland club picker unrelated to login).
+// Club login is gone entirely — Rowland is moving to a token-based access design
+// instead (see specs/Planning_next_year_s_fixture_contacts.md). getClubIdentifiers
+// isn't login-related; it powers /api/rowland/clubs, an authenticated Rowland club
+// picker. Still Sheets-only (not yet migrated to Postgres) — it reads the Match Day
+// Contacts spreadsheet, filtered by club_id, a field that no longer exists at all
+// in the Postgres club_profiles schema (its only purpose there was as a login key).
 // ============================================================================
 
 /** Return all clubs that have a club_id set. */
-export async function getAllClubsForImpersonation(): Promise<{ clubId: string; clubName: string }[]> {
+export async function getClubIdentifiers(): Promise<{ clubId: string; clubName: string }[]> {
   const spreadsheetId = getMatchDayContactsSpreadsheetId();
   const colMap = await getColumnMap(spreadsheetId, 'clubs');
   const sheets = getGoogleSheetsClient();
