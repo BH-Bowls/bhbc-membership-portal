@@ -12,6 +12,7 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { SeasonPlanningTabs } from '@/components/SeasonPlanningTabs';
 import { hasRole } from '@/lib/role-utils';
 import { getButtonClasses } from '@/config/theme-helpers';
 import type { Season, PlanningFixture } from '@/lib/season-planning-supabase';
@@ -252,10 +253,12 @@ export default function SeasonPlanningEventsPage() {
       <Navbar userName={session.user.name || undefined} userRole={role} />
 
       <div className="container mx-auto px-4 py-8 max-w-5xl">
-        <h1 className="text-2xl font-bold text-gray-900 mb-1">Season Planning — Events</h1>
-        <p className="text-sm text-gray-700 mb-6">
-          Stage 1 of 3. Events are planned first so Friendlies and Leagues planning (not built yet) can check against them for clashes.
+        <h1 className="text-2xl font-bold text-gray-900 mb-1">Season Planning</h1>
+        <p className="text-sm text-gray-700 mb-4">
+          Events are planned first so Friendlies and Leagues planning can check against them for clashes.
         </p>
+
+        <SeasonPlanningTabs active="events" />
 
         {error && (
           <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-700">

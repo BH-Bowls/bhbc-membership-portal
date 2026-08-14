@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
-import { listPlanningEvents, addManualEvent } from '@/lib/season-planning-supabase';
+import { listPlanningFixtures, addManualFixture } from '@/lib/season-planning-supabase';
 
 export async function GET(request: NextRequest) {
   try {
@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'seasonId is required' }, { status: 400 });
     }
 
-    const events = await listPlanningEvents(seasonId);
+    const events = await listPlanningFixtures(seasonId, 'Event');
 
     return NextResponse.json({ events });
   } catch (error) {
@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'seasonId, date, and description are required' }, { status: 400 });
     }
 
-    const event = await addManualEvent(seasonId, {
+    const event = await addManualFixture(seasonId, 'Event', {
       date, time, description, clubName, format, ladiesMen, dress, hardBlock,
     });
 

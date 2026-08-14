@@ -1,6 +1,6 @@
-// app/api/fixtures/season-planning/events/project/route.ts
+// app/api/fixtures/season-planning/friendlies/project/route.ts
 // POST { draftSeasonId }: run the Nth-weekday-of-month projection, carrying
-// forward the active season's Event-type fixtures into the draft season.
+// forward the active season's Friendly-type fixtures into the draft season.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
@@ -27,12 +27,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'draftSeasonId is required' }, { status: 400 });
     }
 
-    const result = await runFixtureProjection(draftSeasonId, 'Event');
+    const result = await runFixtureProjection(draftSeasonId, 'Friendly');
 
     return NextResponse.json(result);
   } catch (error) {
-    console.error('Error running events projection:', error);
-    const message = error instanceof Error ? error.message : 'Failed to run events projection';
+    console.error('Error running friendlies projection:', error);
+    const message = error instanceof Error ? error.message : 'Failed to run friendlies projection';
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

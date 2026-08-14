@@ -1,11 +1,12 @@
 // src/lib/season-planning-supabase.ts
-// Season Planning Stage 1 (Events) — draft-season management, the Events
-// carry-forward projection, and the Projected/Confirmed workflow for those
-// rows. Date/time/description corrections (including moving an already-
-// decided date) go through plain field edits — there's no separate
-// "Rearrange" status; and removing an event is a real delete, not a soft-
-// delete flag — both simplified from the original design after using it in
-// practice (deleted events are easy enough to re-add manually if needed).
+// Season Planning — draft-season management, the carry-forward projection,
+// and the Projected/Confirmed workflow, shared by Stage 1 (Events) and
+// Stage 2 (Friendlies) via a fixtureType parameter. Date/time/description
+// corrections (including moving an already-decided date) go through plain
+// field edits — there's no separate "Rearrange" status; and removing a
+// fixture is a real delete, not a soft-delete flag — both simplified from
+// the original design after using Stage 1 in practice (deleted rows are easy
+// enough to re-add manually if needed).
 //
 // Deliberately does NOT reuse getActiveSeasonId() from fixtures-supabase.ts —
 // that helper only ever resolves the currently *active* season (matches the
@@ -13,14 +14,17 @@
 // the projection source) and a separate not-yet-active draft season (as the
 // projection target), which that helper can't express.
 //
-// Scoped hardcoded to fixture_type = 'Event' throughout, not parameterised —
-// Friendlies (Stage 2) and Leagues (Stage 3) need materially different logic
-// (contact resolution, capacity/reservations), not just a type filter on
-// these same functions. That's the seam deliberately left open for later.
+// The fixtureType parameter only covers what Events and Friendlies actually
+// share (projection, listing, plain edit, confirm, delete). Contact
+// resolution, capacity/reservations, and email-draft generation are
+// Friendlies-only and deliberately not modelled here — they land as
+// Friendly-specific additions in a later pass, not a widening of this file's
+// existing functions.
 
 import { getSupabaseClient } from './supabase';
 import { projectFixtureDate } from './season-planning-dates';
 
+export type PlanningFixtureType = 'Event' | 'Friendly';
 export type PlanningStatus = 'Projected' | 'Confirmed';
 export type PlanningSource = 'Carried Forward' | 'Manually Added';
 
@@ -37,6 +41,8 @@ export interface PlanningFixture {
   date: string; // DD/MM/YYYY
   time: string;
   clubName: string;
+  clubSuffix: string;
+  homeAway: 'H' | 'A' | '';
   description: string;
   format: string;
   ladiesMen: string;
@@ -76,6 +82,8 @@ function mapPlanningFixtureRow(row: any): PlanningFixture {
     date: isoToUKDate(row.date),
     time: row.time || '',
     clubName: row.club_name || '',
+    clubSuffix: row.club_suffix || '',
+    homeAway: (row.home_away === 'H' || row.home_away === 'A') ? row.home_away : '',
     description: row.description || '',
     format: row.format || '',
     ladiesMen: row.ladies_men || '',
@@ -148,10 +156,10 @@ export function suggestDraftSeasonWindow(activeSeason: Season): { year: number; 
 }
 
 // ============================================================================
-// EVENTS PROJECTION
+// PROJECTION
 // ============================================================================
 
-export async function runEventsProjection(draftSeasonId: string): Promise<{ inserted: number }> {
+export async function runFixtureProjection(draftSeasonId: string, fixtureType: PlanningFixtureType): Promise<{ inserted: number }> {
   const supabase = getSupabaseClient();
 
   const activeSeason = await getActiveSeason();
@@ -161,23 +169,24 @@ export async function runEventsProjection(draftSeasonId: string): Promise<{ inse
     .from('fixtures')
     .select('id', { count: 'exact', head: true })
     .eq('season_id', draftSeasonId)
-    .eq('fixture_type', 'Event');
-  if (existingError) throw new Error(`Failed to check for existing projected events: ${existingError.message}`);
+    .eq('fixture_type', fixtureType);
+  if (existingError) throw new Error(`Failed to check for existing projected fixtures: ${existingError.message}`);
   if (existingCount && existingCount > 0) {
-    throw new Error('Events have already been projected into this season. Delete or resolve them before re-running.');
+    throw new Error(`${fixtureType} fixtures have already been projected into this season. Delete or resolve them before re-running.`);
   }
 
-  const { data: sourceEvents, error: sourceError } = await supabase
+  const { data: sourceFixtures, error: sourceError } = await supabase
     .from('fixtures')
     .select('*')
     .eq('season_id', activeSeason.id)
-    .eq('fixture_type', 'Event');
-  if (sourceError) throw new Error(`Failed to fetch source events: ${sourceError.message}`);
+    .eq('fixture_type', fixtureType);
+  if (sourceError) throw new Error(`Failed to fetch source fixtures: ${sourceError.message}`);
 
-  const rowsToInsert = (sourceEvents || []).map((row: any) => ({
+  const rowsToInsert = (sourceFixtures || []).map((row: any) => ({
     season_id: draftSeasonId,
-    fixture_type: 'Event',
+    fixture_type: fixtureType,
     club_name: row.club_name,
+    club_suffix: row.club_suffix,
     description: row.description,
     date: projectFixtureDate(row.date, 1),
     time: row.time,
@@ -193,7 +202,7 @@ export async function runEventsProjection(draftSeasonId: string): Promise<{ inse
   if (rowsToInsert.length === 0) return { inserted: 0 };
 
   const { error: insertError } = await supabase.from('fixtures').insert(rowsToInsert);
-  if (insertError) throw new Error(`Failed to insert projected events: ${insertError.message}`);
+  if (insertError) throw new Error(`Failed to insert projected fixtures: ${insertError.message}`);
 
   return { inserted: rowsToInsert.length };
 }
@@ -202,37 +211,44 @@ export async function runEventsProjection(draftSeasonId: string): Promise<{ inse
 // LISTING / EDITING
 // ============================================================================
 
-export async function listPlanningEvents(seasonId: string): Promise<PlanningFixture[]> {
+export async function listPlanningFixtures(seasonId: string, fixtureType: PlanningFixtureType): Promise<PlanningFixture[]> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
-    .from('fixtures').select('*').eq('season_id', seasonId).eq('fixture_type', 'Event');
-  if (error) throw new Error(`Failed to fetch planning events: ${error.message}`);
+    .from('fixtures').select('*').eq('season_id', seasonId).eq('fixture_type', fixtureType);
+  if (error) throw new Error(`Failed to fetch planning fixtures: ${error.message}`);
   return (data || []).map(mapPlanningFixtureRow);
 }
 
-export async function addManualEvent(
+export interface ManualFixtureFields {
+  date: string;
+  time?: string;
+  description?: string;
+  clubName?: string;
+  clubSuffix?: string;
+  homeAway?: 'H' | 'A';
+  format?: string;
+  ladiesMen?: string;
+  dress?: string;
+  hardBlock?: boolean;
+}
+
+export async function addManualFixture(
   seasonId: string,
-  fields: {
-    date: string;
-    time?: string;
-    description: string;
-    clubName?: string;
-    format?: string;
-    ladiesMen?: string;
-    dress?: string;
-    hardBlock?: boolean;
-  }
+  fixtureType: PlanningFixtureType,
+  fields: ManualFixtureFields
 ): Promise<PlanningFixture> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
     .from('fixtures')
     .insert({
       season_id: seasonId,
-      fixture_type: 'Event',
+      fixture_type: fixtureType,
       date: toIsoDate(fields.date),
       time: fields.time || null,
-      description: fields.description,
+      description: fields.description || null,
       club_name: fields.clubName || null,
+      club_suffix: fields.clubSuffix || null,
+      home_away: fields.homeAway || null,
       format: fields.format || null,
       ladies_men: fields.ladiesMen || null,
       dress: fields.dress || null,
@@ -245,17 +261,19 @@ export async function addManualEvent(
     })
     .select('*')
     .single();
-  if (error) throw new Error(`Failed to add event: ${error.message}`);
+  if (error) throw new Error(`Failed to add fixture: ${error.message}`);
   return mapPlanningFixtureRow(data);
 }
 
-export async function updatePlanningEventFields(
+export async function updatePlanningFixtureFields(
   id: string,
   fields: {
     date?: string;
     time?: string;
     description?: string;
     clubName?: string;
+    clubSuffix?: string;
+    homeAway?: 'H' | 'A';
     format?: string;
     ladiesMen?: string;
     dress?: string;
@@ -268,7 +286,13 @@ export async function updatePlanningEventFields(
   if (fields.date !== undefined) updates.date = toIsoDate(fields.date);
   if (fields.time !== undefined) updates.time = fields.time;
   if (fields.description !== undefined) updates.description = fields.description;
-  if (fields.clubName !== undefined) updates.club_name = fields.clubName;
+  // club_name is foreign-keyed to club_profiles — an empty string isn't a
+  // valid club and isn't null either, so it would trip the FK constraint.
+  // Normalise to null (matches addManualFixture's fields.clubName || null),
+  // which lets a row be switched to description-only by clearing this field.
+  if (fields.clubName !== undefined) updates.club_name = fields.clubName || null;
+  if (fields.clubSuffix !== undefined) updates.club_suffix = fields.clubSuffix;
+  if (fields.homeAway !== undefined) updates.home_away = fields.homeAway;
   if (fields.format !== undefined) updates.format = fields.format;
   if (fields.ladiesMen !== undefined) updates.ladies_men = fields.ladiesMen;
   if (fields.dress !== undefined) updates.dress = fields.dress;
@@ -277,21 +301,21 @@ export async function updatePlanningEventFields(
   if (Object.keys(updates).length === 0) return;
 
   const { error } = await supabase.from('fixtures').update(updates).eq('id', id);
-  if (error) throw new Error(`Failed to update event: ${error.message}`);
+  if (error) throw new Error(`Failed to update fixture: ${error.message}`);
 }
 
 // ============================================================================
 // CONFIRM / DELETE
 // ============================================================================
 
-export async function confirmPlanningEvent(id: string): Promise<void> {
+export async function confirmPlanningFixture(id: string): Promise<void> {
   const supabase = getSupabaseClient();
   const { error } = await supabase.from('fixtures').update({ planning_status: 'Confirmed' }).eq('id', id);
-  if (error) throw new Error(`Failed to confirm event: ${error.message}`);
+  if (error) throw new Error(`Failed to confirm fixture: ${error.message}`);
 }
 
-export async function deletePlanningEvent(id: string): Promise<void> {
+export async function deletePlanningFixture(id: string): Promise<void> {
   const supabase = getSupabaseClient();
   const { error } = await supabase.from('fixtures').delete().eq('id', id);
-  if (error) throw new Error(`Failed to delete event: ${error.message}`);
+  if (error) throw new Error(`Failed to delete fixture: ${error.message}`);
 }

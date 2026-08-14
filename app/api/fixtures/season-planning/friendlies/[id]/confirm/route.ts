@@ -1,6 +1,6 @@
-// app/api/fixtures/season-planning/events/[id]/confirm/route.ts
-// POST: mark an event Confirmed. The only status transition Stage 1 has —
-// date/time corrections (including moving an already-decided date) go
+// app/api/fixtures/season-planning/friendlies/[id]/confirm/route.ts
+// POST: mark a friendly Confirmed. The only status transition this slice
+// has — date/time corrections (including moving an already-decided date) go
 // through the plain PATCH edit instead, and removal is a real DELETE.
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -29,7 +29,7 @@ export async function POST(
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('Error confirming event:', error);
-    return NextResponse.json({ error: 'Failed to confirm event' }, { status: 500 });
+    console.error('Error confirming friendly:', error);
+    return NextResponse.json({ error: 'Failed to confirm friendly' }, { status: 500 });
   }
 }
