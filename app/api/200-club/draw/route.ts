@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
-import { recordDraw, MAX_PRIZES } from '@/lib/two-hundred-club-sheets';
+import { recordDraw, MAX_PRIZES } from '@/lib/two-hundred-club-supabase';
 import { sendWinnerEmails } from '@/lib/email/two-hundred-club';
 
 export async function POST(request: NextRequest) {

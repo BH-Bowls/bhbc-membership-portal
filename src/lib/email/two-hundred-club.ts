@@ -6,8 +6,8 @@
 // rate-limits/suspends on parallel SMTP connections (see specs/CLAUDE.md).
 
 import { sendEmail } from './mailer';
-import { getUserByUsername } from '../sheets';
-import type { RecordedWinner } from '../two-hundred-club-sheets';
+import { getUserByUsername } from '../members-supabase';
+import type { RecordedWinner } from '../two-hundred-club-supabase';
 
 function gbp(n: number): string {
   return `£${Number(n).toLocaleString('en-GB')}`;

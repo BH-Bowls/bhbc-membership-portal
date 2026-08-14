@@ -169,6 +169,13 @@ async function main() {
   // marker_username FK column — same reasoning, migrate-competitions.ts MUST be re-run
   // after this script. competitions itself doesn't need to be here — it has no FK into
   // users at all.
+  // two_hundred_club_entries joined once migrate-two-hundred-club.ts started populating
+  // its username FK column — same reasoning, migrate-two-hundred-club.ts MUST be re-run
+  // after this script. two_hundred_club_settings/winners don't need to be here — neither
+  // has an FK into users (winners.member is a plain display-name snapshot).
+  // announcements joined once migrate-announcements.ts started populating its
+  // created_by/updated_by FK columns — same reasoning, migrate-announcements.ts MUST be
+  // re-run after this script.
   // game_players/handicap_history still aren't cleared since nothing populates them
   // yet; extend this list if that changes.
   const wipeSteps: { table: string; column: string }[] = [
@@ -186,6 +193,8 @@ async function main() {
     { table: 'availability_groups', column: 'id' },
     { table: 'renewals', column: 'id' },
     { table: 'competition_matches', column: 'id' },
+    { table: 'two_hundred_club_entries', column: 'id' },
+    { table: 'announcements', column: 'id' },
     { table: 'user_roles', column: 'user_id' },
     { table: 'member_profiles', column: 'user_id' },
     { table: 'users', column: 'id' },

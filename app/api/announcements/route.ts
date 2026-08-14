@@ -6,7 +6,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getAnnouncementCache, setAnnouncementCache } from '@/lib/home-cache';
-import { getActiveAnnouncements } from '@/lib/announcements-sheets';
+import { getActiveAnnouncements } from '@/lib/announcements-supabase';
 import type { AnnouncementsResponse } from '@/types/diary';
 
 // GET handler — returns active announcements, using cache where available

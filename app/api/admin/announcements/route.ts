@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
-import { getAllAnnouncements, createAnnouncement } from '@/lib/announcements-sheets';
+import { getAllAnnouncements, createAnnouncement } from '@/lib/announcements-supabase';
 import { clearAnnouncementCache } from '@/lib/home-cache';
 import type { AdminAnnouncementsResponse } from '@/types/diary';
 
