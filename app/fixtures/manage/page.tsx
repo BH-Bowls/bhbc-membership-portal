@@ -563,7 +563,7 @@ export default function FixturesManagePage() {
                         <span className="text-xs font-medium text-gray-600">{game.gameType}</span>
                       </td>
                       <td className="px-4 py-3 text-gray-800">
-                        {displayClubName(game.clubName, game.clubSuffix)}
+                        {displayClubName(game.clubName, game.clubSuffix) || game.description || ''}
                       </td>
                       <td className="px-4 py-3">
                         <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${

@@ -95,6 +95,7 @@ export const ALL_GAME_TYPES: GameType[] = ['Friendly', 'N/S A', 'N/S B', 'MSL', 
  * Each row in the Games sheet becomes one Game object
  */
 export interface Game {
+  id?: string;                  // Fixture UUID (fixtures-supabase.ts) — preferred identifier; rowNumber below is a Sheets-era leftover the Postgres-backed API never populates
   rowNumber: number;           // Row number in Games sheet (for updates)
   date: string;                 // Game date in "YYYY-MM-DD" format
   tabDate: string;              // Short date for tab names (e.g., "25-Sep")
@@ -128,6 +129,7 @@ export interface Game {
   lockedBy: string;             // Username of captain currently editing the selection ('' if unlocked)
   lockedAt: string;             // ISO timestamp when lock was acquired ('' if unlocked)
   needsPlayers?: boolean;       // true when captain has flagged this game as needing players
+  description?: string | null;  // Free-text label for fixtures with no real club opponent (internal Events, ad-hoc games) — see 0023_rename_games_to_fixtures.sql
 }
 
 /**

@@ -54,7 +54,7 @@ function isPublicRoute(pathname: string): boolean {
 
   // Exact public API routes (GET — write endpoints remain protected at handler level)
   const exactApis = [
-    '/api/fixtures/games', '/api/tea-rota', '/api/cleaning-rota',
+    '/api/fixtures/games', '/api/fixtures/seasons', '/api/tea-rota', '/api/cleaning-rota',
     '/api/sweeping-rota', '/api/members/lookup', '/api/friendlies/games',
     '/api/competitions', '/api/competitions/rules-text', '/api/rowland', '/api/rowland/message',
     '/api/leagues', '/api/leagues/message',

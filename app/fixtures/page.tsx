@@ -86,19 +86,35 @@ function FixturesPageInner() {
   const searchParams = useSearchParams();
 
   const initialTab = SLUG_TO_TAB[searchParams.get('tab') ?? ''] ?? 'All';
+  const yearParam = searchParams.get('year');
 
   const [games, setGames] = useState<Game[]>([]);
   const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState<'All' | GameType>(initialTab);
-  const [expandedRow, setExpandedRow] = useState<number | null>(null);
+  const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const [seasons, setSeasons] = useState<{ year: number; isActive: boolean }[]>([]);
+  const [selectedYear, setSelectedYear] = useState<number | null>(yearParam ? parseInt(yearParam, 10) : null);
 
   const setTab = useCallback((tab: 'All' | GameType) => {
     setTypeFilter(tab);
     const slug = TAB_TO_SLUG[tab];
-    const params = slug && slug !== 'all' ? `?tab=${slug}` : '';
-    router.replace(`/fixtures${params}`, { scroll: false });
-  }, [router]);
+    const params = new URLSearchParams();
+    if (slug && slug !== 'all') params.set('tab', slug);
+    if (selectedYear !== null) params.set('year', String(selectedYear));
+    const qs = params.toString();
+    router.replace(`/fixtures${qs ? `?${qs}` : ''}`, { scroll: false });
+  }, [router, selectedYear]);
+
+  const setYear = useCallback((year: number) => {
+    setSelectedYear(year);
+    const params = new URLSearchParams();
+    const slug = TAB_TO_SLUG[typeFilter];
+    if (slug && slug !== 'all') params.set('tab', slug);
+    params.set('year', String(year));
+    router.replace(`/fixtures?${params.toString()}`, { scroll: false });
+  }, [router, typeFilter]);
 
   const userRole = (session?.user as any)?.role || '';
   const isAdmin = hasRole(userRole, 'Admin');
@@ -107,13 +123,30 @@ function FixturesPageInner() {
 
   useEffect(() => {
     if (status === 'loading') return;
-    fetchGames();
+    fetch('/api/fixtures/seasons')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.error) throw new Error(data.error);
+        setSeasons(data.seasons || []);
+        if (selectedYear === null) {
+          const active = (data.seasons || []).find((s: { isActive: boolean }) => s.isActive);
+          if (active) setSelectedYear(active.year);
+        }
+      })
+      .catch(() => setError('Failed to load seasons'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
 
-  async function fetchGames() {
+  useEffect(() => {
+    if (status === 'loading' || selectedYear === null) return;
+    fetchGames(selectedYear);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, selectedYear]);
+
+  async function fetchGames(year: number) {
     setLoading(true);
     try {
-      const res = await fetch('/api/fixtures/games');
+      const res = await fetch(`/api/fixtures/games?year=${year}`);
       if (!res.ok) throw new Error('Failed to fetch');
       const data = await res.json();
       setGames(data.games || []);
@@ -129,6 +162,7 @@ function FixturesPageInner() {
     : games.filter(g => g.gameType === typeFilter);
 
   const typeFilterOptions: ('All' | GameType)[] = ['All', ...ALL_GAME_TYPES];
+  const activeYear = seasons.find((s) => s.isActive)?.year ?? 0;
 
   if (status === 'loading') return null;
 
@@ -147,14 +181,29 @@ function FixturesPageInner() {
             <h1 className="text-2xl font-bold text-gray-900">Fixtures</h1>
             <p className="text-gray-500 text-sm mt-1">All club fixtures and results</p>
           </div>
-          {canManage && (
-            <Link
-              href="/fixtures/manage"
-              className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors"
-            >
-              Manage Fixtures
-            </Link>
-          )}
+          <div className="flex items-center gap-3">
+            {seasons.length > 1 && (
+              <select
+                value={selectedYear ?? ''}
+                onChange={(e) => setYear(parseInt(e.target.value, 10))}
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-700 bg-white"
+              >
+                {seasons.map((s) => (
+                  <option key={s.year} value={s.year}>
+                    {s.year}{!s.isActive && s.year > activeYear ? ' (draft)' : ''}
+                  </option>
+                ))}
+              </select>
+            )}
+            {canManage && (
+              <Link
+                href="/fixtures/manage"
+                className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors"
+              >
+                Manage Fixtures
+              </Link>
+            )}
+          </div>
         </div>
 
         {error && (
@@ -188,19 +237,19 @@ function FixturesPageInner() {
         ) : (
           <div className="space-y-2">
             {filteredGames.map(game => {
-              const isExpanded = expandedRow === game.rowNumber;
+              const isExpanded = expandedRow === game.id;
               const st = statusLabel(game.status);
-              const clubDisplay = displayClubName(game.clubName, game.clubSuffix);
+              const clubDisplay = displayClubName(game.clubName, game.clubSuffix) || game.description || '';
 
               return (
                 <div
-                  key={game.rowNumber}
+                  key={game.id}
                   className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden"
                 >
                   {/* Main row — click to expand */}
                   <button
                     className="w-full text-left p-4 hover:bg-gray-50 transition-colors"
-                    onClick={() => setExpandedRow(isExpanded ? null : game.rowNumber)}
+                    onClick={() => setExpandedRow(isExpanded ? null : (game.id || null))}
                   >
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-medium text-gray-900 min-w-[120px]">

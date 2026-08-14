@@ -156,14 +156,32 @@ async function getActiveSeasonId(): Promise<string> {
 }
 
 // ============================================================================
+// SEASONS
+// ============================================================================
+
+export interface FixtureSeason {
+  id: string;
+  year: number;
+  isActive: boolean;
+}
+
+/** All seasons (past, active, and any not-yet-active draft), for the /fixtures year picker. */
+export async function getAllSeasons(): Promise<FixtureSeason[]> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.from('seasons').select('id, year, is_active').order('year', { ascending: true });
+  if (error) throw new Error(`Failed to fetch seasons: ${error.message}`);
+  return (data || []).map((row: any) => ({ id: row.id, year: row.year, isActive: !!row.is_active }));
+}
+
+// ============================================================================
 // FIXTURES — CORE
 // ============================================================================
 
-export async function getFixtures(statusFilter?: GameStatus, typeFilter?: GameType[]): Promise<Fixture[]> {
+export async function getFixtures(statusFilter?: GameStatus, typeFilter?: GameType[], seasonId?: string): Promise<Fixture[]> {
   const supabase = getSupabaseClient();
-  const seasonId = await getActiveSeasonId();
+  const resolvedSeasonId = seasonId || (await getActiveSeasonId());
 
-  let query = supabase.from('fixtures').select('*').eq('season_id', seasonId);
+  let query = supabase.from('fixtures').select('*').eq('season_id', resolvedSeasonId);
   if (statusFilter !== undefined) query = query.eq('game_status', statusFilter);
   if (typeFilter && typeFilter.length > 0) query = query.in('fixture_type', typeFilter);
 
