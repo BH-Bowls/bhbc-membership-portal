@@ -3,8 +3,9 @@
 // RenewalPayments/Renewals-touching Banking functions — those moved to
 // banking-supabase.ts (supabase/migrations/0031_renewals.sql) since they read/write the
 // same `renewals` table renewals-supabase.ts owns. This file now exists purely for these
-// utilities, still used by attachments-sheets.ts, invite-games-(attachments-)sheets.ts,
-// leagues-attachments-sheets.ts, profile-sheets.ts, and suggestions-sheets.ts.
+// utilities, still used by invite-games-(attachments-)sheets.ts and
+// leagues-attachments-sheets.ts (Suggestions/its attachments and profile-sheets.ts
+// have since been cut over to Postgres and deleted).
 
 // ============================================================================
 // Error Handling Utilities

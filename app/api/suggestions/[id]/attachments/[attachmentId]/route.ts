@@ -5,8 +5,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getAttachmentById, deleteAttachment } from '@/lib/attachments-sheets';
-import { getSuggestionById } from '@/lib/suggestions-sheets';
+import { getAttachmentById, deleteAttachment } from '@/lib/attachments-supabase';
+import { getSuggestionById } from '@/lib/suggestions-supabase';
 import { isCommitteeMember } from '@/lib/role-utils';
 import { deleteFileFromDrive, driveEmbedUrl, driveDownloadUrl } from '@/lib/drive';
 

@@ -176,6 +176,14 @@ async function main() {
   // announcements joined once migrate-announcements.ts started populating its
   // created_by/updated_by FK columns — same reasoning, migrate-announcements.ts MUST be
   // re-run after this script.
+  // suggestion_attachments/suggestions joined once migrate-suggestions.ts started
+  // populating their username FK columns (created_by/coordinator/updated_by on
+  // suggestions, added_by on suggestion_attachments) — same reasoning, in
+  // child-to-parent order, migrate-suggestions.ts MUST be re-run after this script.
+  // Both use their existing text business-key PKs (suggestion_id/attachment_id) here,
+  // not a uuid id column — the shared nil-UUID sentinel below still works fine as a
+  // "never matches" value against a text column, it only breaks the other way round
+  // (a non-uuid-shaped sentinel against an actual uuid column).
   // game_players/handicap_history still aren't cleared since nothing populates them
   // yet; extend this list if that changes.
   const wipeSteps: { table: string; column: string }[] = [
@@ -195,6 +203,8 @@ async function main() {
     { table: 'competition_matches', column: 'id' },
     { table: 'two_hundred_club_entries', column: 'id' },
     { table: 'announcements', column: 'id' },
+    { table: 'suggestion_attachments', column: 'attachment_id' },
+    { table: 'suggestions', column: 'suggestion_id' },
     { table: 'user_roles', column: 'user_id' },
     { table: 'member_profiles', column: 'user_id' },
     { table: 'users', column: 'id' },
