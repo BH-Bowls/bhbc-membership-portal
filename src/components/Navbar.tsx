@@ -160,6 +160,7 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
     // Captains and Admins get Fixtures Management
     if (canAccessCaptainTools) {
       items.push({ name: 'Fixtures Management', href: '/fixtures/manage' });
+      items.push({ name: 'Season Planning', href: '/fixtures/season-planning' });
     }
 
     // GMC and Admin get Member Suggestions and Invite Games and Club-related admin
