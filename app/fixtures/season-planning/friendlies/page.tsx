@@ -61,6 +61,7 @@ function displayClubName(clubName: string, clubSuffix: string): string {
 function statusBadgeClasses(status: string): string {
   switch (status) {
     case 'Projected': return 'bg-amber-100 text-amber-800';
+    case 'Email Sent': return 'bg-emerald-100 text-emerald-800';
     case 'Confirmed': return 'bg-green-100 text-green-800';
     default: return 'bg-gray-100 text-gray-700';
   }
@@ -294,6 +295,9 @@ export default function SeasonPlanningFriendliesPage() {
                 <button className={getButtonClasses('secondary')} onClick={() => setAddingFriendly(true)}>
                   Add Friendly
                 </button>
+                <Link href="/fixtures/season-planning/friendlies/outreach" className={getButtonClasses('secondary')}>
+                  Outreach
+                </Link>
               </div>
             </div>
 

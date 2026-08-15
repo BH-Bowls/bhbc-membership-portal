@@ -16,16 +16,17 @@
 //
 // The fixtureType parameter only covers what Events and Friendlies actually
 // share (projection, listing, plain edit, confirm, delete). Contact
-// resolution, capacity/reservations, and email-draft generation are
-// Friendlies-only and deliberately not modelled here — they land as
-// Friendly-specific additions in a later pass, not a widening of this file's
-// existing functions.
+// resolution and Gmail draft-link outreach are Friendlies-only, added below
+// as their own section rather than widening the shared functions — capacity/
+// reservations are still deferred to a later pass.
 
 import { getSupabaseClient } from './supabase';
 import { projectFixtureDate } from './season-planning-dates';
 
 export type PlanningFixtureType = 'Event' | 'Friendly';
-export type PlanningStatus = 'Projected' | 'Confirmed';
+// 'Email Sent' only ever applies to Friendlies (Events has no outreach step)
+// — Events fixtures simply never pass through it, same file-wide type either way.
+export type PlanningStatus = 'Projected' | 'Email Sent' | 'Confirmed';
 export type PlanningSource = 'Carried Forward' | 'Manually Added';
 
 export interface Season {
@@ -318,4 +319,129 @@ export async function deletePlanningFixture(id: string): Promise<void> {
   const supabase = getSupabaseClient();
   const { error } = await supabase.from('fixtures').delete().eq('id', id);
   if (error) throw new Error(`Failed to delete fixture: ${error.message}`);
+}
+
+// ============================================================================
+// CONTACT RESOLUTION + OUTREACH (Friendlies only)
+// ============================================================================
+
+export type ContactTier = 'secretary' | 'captain' | 'secretary-no-email' | 'none';
+
+export interface ClubContact {
+  name: string;
+  role: string;
+  email: string | null;
+}
+
+export interface ClubOutreachGroup {
+  clubName: string;
+  fixtures: PlanningFixture[];
+  contact: ClubContact | null;
+  tier: ContactTier;
+  allContacts: ClubContact[];
+}
+
+function splitRoles(role: string | null): string[] {
+  return (role || '').split(',').map((r) => r.trim()).filter(Boolean);
+}
+
+/**
+ * Match Secretary with email -> best case, no flag needed. Otherwise falls
+ * back to a Captain (any Captain-ish role) with email, flagged since it's
+ * not the ideal contact. If a Match Secretary exists but has no email
+ * anywhere, or there's no Match Secretary at all, the caller is expected to
+ * show allContacts for a manual pick — same three-tier scheme as the
+ * original spreadsheet-based process this replaces.
+ */
+function resolveContact(rows: any[]): { contact: ClubContact | null; tier: ContactTier; allContacts: ClubContact[] } {
+  const contacts: ClubContact[] = rows.map((row) => ({
+    name: [row.first_name, row.last_name].filter(Boolean).join(' ') || row.role,
+    role: row.role || '',
+    email: row.email || null,
+  }));
+  const withRoles = rows.map((row, i) => ({ ...contacts[i], roles: splitRoles(row.role) }));
+
+  let match = withRoles.find((c) => c.roles.includes('Match Secretary') && c.email);
+  if (match) return { contact: match, tier: 'secretary', allContacts: contacts };
+
+  match = withRoles.find((c) => c.roles.some((r) => r === 'Captain' || r.includes('Captain')) && c.email);
+  if (match) return { contact: match, tier: 'captain', allContacts: contacts };
+
+  match = withRoles.find((c) => c.roles.includes('Match Secretary'));
+  if (match) return { contact: match, tier: 'secretary-no-email', allContacts: contacts };
+
+  return { contact: null, tier: 'none', allContacts: contacts };
+}
+
+/**
+ * Groups this draft season's not-yet-Confirmed Friendlies by club, each with
+ * its resolved outreach contact. Fixtures with no club_name (ad-hoc
+ * opponents — touring teams etc.) are skipped entirely; there's no club to
+ * email. Confirmed fixtures drop out too — outreach is done once a club has
+ * agreed the date, nothing left to chase.
+ */
+export async function getClubOutreachGroups(seasonId: string): Promise<ClubOutreachGroup[]> {
+  const supabase = getSupabaseClient();
+
+  const { data: fixtureRows, error: fixturesError } = await supabase
+    .from('fixtures')
+    .select('*')
+    .eq('season_id', seasonId)
+    .eq('fixture_type', 'Friendly')
+    .not('club_name', 'is', null)
+    .neq('planning_status', 'Confirmed');
+  if (fixturesError) throw new Error(`Failed to fetch friendlies for outreach: ${fixturesError.message}`);
+
+  const fixtures = (fixtureRows || []).map(mapPlanningFixtureRow);
+  const clubNames = [...new Set(fixtures.map((f) => f.clubName))];
+  if (clubNames.length === 0) return [];
+
+  const { data: contactRows, error: contactsError } = await supabase
+    .from('club_contact_profiles')
+    .select('club_name, first_name, last_name, role, email')
+    .in('club_name', clubNames);
+  if (contactsError) throw new Error(`Failed to fetch club contacts: ${contactsError.message}`);
+
+  const contactsByClub: Record<string, any[]> = {};
+  for (const row of contactRows || []) {
+    if (!contactsByClub[row.club_name]) contactsByClub[row.club_name] = [];
+    contactsByClub[row.club_name].push(row);
+  }
+
+  const fixturesByClub: Record<string, PlanningFixture[]> = {};
+  for (const f of fixtures) {
+    if (!fixturesByClub[f.clubName]) fixturesByClub[f.clubName] = [];
+    fixturesByClub[f.clubName].push(f);
+  }
+
+  return clubNames
+    .sort((a, b) => a.localeCompare(b))
+    .map((clubName) => {
+      const resolved = resolveContact(contactsByClub[clubName] || []);
+      return {
+        clubName,
+        fixtures: fixturesByClub[clubName],
+        contact: resolved.contact,
+        tier: resolved.tier,
+        allContacts: resolved.allContacts,
+      };
+    });
+}
+
+/**
+ * Bulk-flips a set of fixtures' status — one club's whole group at once,
+ * since one email (or one un-send) covers all of that club's pending
+ * fixtures together. A deliberate, separate action from opening the Gmail
+ * draft link — clicking "Draft Email" doesn't mean it was actually sent, so
+ * this is never triggered automatically, only by the explicit Mark Sent /
+ * Mark Unsent buttons.
+ */
+export async function setFixturesEmailStatus(ids: string[], sent: boolean): Promise<void> {
+  if (ids.length === 0) return;
+  const supabase = getSupabaseClient();
+  const { error } = await supabase
+    .from('fixtures')
+    .update({ planning_status: sent ? 'Email Sent' : 'Projected' })
+    .in('id', ids);
+  if (error) throw new Error(`Failed to mark fixtures as ${sent ? 'Email Sent' : 'unsent'}: ${error.message}`);
 }
