@@ -15,6 +15,7 @@ import { getSupabaseClient } from './supabase';
 
 export interface Club {
   clubName: string;
+  clubId: string | null; // legacy Match Day Contacts id — see 0047_club_id_legacy.sql; only used by Rowland
   clubNumber: string;
   clubMobile: string;
   clubEmailAddress: string;
@@ -142,6 +143,7 @@ function mapClubRow(row: any, petrolBands: Record<string, number>): Club {
   const drivingBand = row.driving_band || '';
   return {
     clubName: row.club_name,
+    clubId: row.club_id || null,
     clubNumber: row.club_number || '',
     clubMobile: row.club_mobile || '',
     clubEmailAddress: row.club_email_address || '',
