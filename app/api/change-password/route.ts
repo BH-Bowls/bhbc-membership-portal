@@ -5,9 +5,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { changePassword } from '@/lib/auth-supabase';
-import { sendTemplateEmail, isEmailConfigured } from '@/lib/email/mailer';
+import { sendTemplateEmail, isEmailConfigured, withEmailLogContext } from '@/lib/email/mailer';
 import { getUserByUsername } from '@/lib/members-supabase';
-import { updateEmailSentStatus, logMemberEmail } from '@/lib/sheets';
 
 // ============================================================================
 // Type Definitions
@@ -142,54 +141,22 @@ export async function POST(request: NextRequest) {
               ? (session.user?.originalAdmin?.userName || 'Admin')
               : userName;
 
-            const emailResult = await sendTemplateEmail(
-              recipientEmail,
-              subject,
-              'password-changed',
-              {
-                memberName,
-              }
+            await withEmailLogContext({ sentBy, userName }, () =>
+              sendTemplateEmail(
+                recipientEmail,
+                subject,
+                'password-changed',
+                {
+                  memberName,
+                }
+              )
             );
-
-            // Log to MemberEmails sheet
-            await logMemberEmail({
-              userName,
-              emailAddress: recipientEmail,
-              templateName: 'Password Changed',
-              subject,
-              success: emailResult.success,
-              errorMessage: emailResult.error,
-              sentBy,
-              attachments: [],
-            });
-
-            // Update Member Email Sent Status in Members sheet
-            await updateEmailSentStatus(userName, emailResult.success, emailResult.error);
           }
         }
       } catch (emailError) {
-        // Log email error but don't fail the request
-        const errorMsg = emailError instanceof Error ? emailError.message : 'Unknown error';
+        // Password was changed successfully, just email failed — the mailer's own
+        // transporter wrapper already logged the failed attempt to member_emails.
         console.error('[change-password] Failed to send confirmation email:', emailError);
-
-        // Log failed attempt to MemberEmails sheet
-        await logMemberEmail({
-          userName,
-          emailAddress: null,
-          templateName: 'Password Changed',
-          subject: 'BHBC Password Changed Successfully',
-          success: false,
-          errorMessage: errorMsg,
-          sentBy: isAdminManaging
-            ? (session.user?.originalAdmin?.userName || 'Admin')
-            : userName,
-          attachments: [],
-        });
-
-        // Update Member Email Sent Status in Members sheet
-        await updateEmailSentStatus(userName, false, errorMsg);
-
-        // Password was changed successfully, just email failed
       }
 
       return NextResponse.json({ success: true });

@@ -3,69 +3,30 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { validateResetToken, updatePasswordHash, clearResetToken } from '@/lib/members-supabase';
-import { logMemberEmail, updateEmailSentStatus } from '@/lib/sheets';
 import bcrypt from 'bcryptjs';
-import { sendTemplateEmail, isEmailConfigured } from '@/lib/email/mailer';
+import { sendTemplateEmail, isEmailConfigured, withEmailLogContext } from '@/lib/email/mailer';
 
 async function sendPasswordChangedEmail(
   email: string,
   name: string,
   userName: string
 ): Promise<{ success: boolean; error?: string }> {
-  try {
-    if (!isEmailConfigured()) {
-      const error = 'SMTP not configured';
-      console.error(error);
-      return { success: false, error };
-    }
+  if (!isEmailConfigured()) {
+    const error = 'SMTP not configured';
+    console.error(error);
+    return { success: false, error };
+  }
 
-    const subject = 'BHBC Password Changed Successfully';
-    const result = await sendTemplateEmail(
+  return withEmailLogContext({ userName }, () =>
+    sendTemplateEmail(
       email,
-      subject,
+      'BHBC Password Changed Successfully',
       'password-changed',
       {
         memberName: name,
       }
-    );
-
-    // Log to MemberEmails sheet
-    await logMemberEmail({
-      userName,
-      emailAddress: email,
-      templateName: 'Password Changed',
-      subject,
-      success: result.success,
-      errorMessage: result.error,
-      sentBy: 'System',
-      attachments: [],
-    });
-
-    // Update Member Email Sent Status in Members sheet
-    await updateEmailSentStatus(userName, result.success, result.error);
-
-    return result;
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-    console.error('Error sending password changed email:', error);
-
-    // Log failed attempt to MemberEmails sheet
-    await logMemberEmail({
-      userName,
-      emailAddress: email,
-      templateName: 'Password Changed',
-      subject: 'BHBC Password Changed Successfully',
-      success: false,
-      errorMessage: errorMsg,
-      sentBy: 'System',
-      attachments: [],
-    });
-
-    // Update Member Email Sent Status in Members sheet
-    await updateEmailSentStatus(userName, false, errorMsg);
-
-    return { success: false, error: errorMsg };
-  }
+    )
+  );
 }
 
 export async function POST(request: NextRequest) {

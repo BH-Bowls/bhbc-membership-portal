@@ -3,8 +3,8 @@
 // Handles sending withdrawal notifications to captains and future game status notifications
 // Uses the club's email service to notify captains when players withdraw from selected teams
 
-import { sendEmail, commonMailHeaders } from './mailer';
-import { getUserByUsername, getAllUsers } from '../sheets';
+import { sendEmail, commonMailHeaders, withEmailLogContext } from './mailer';
+import { getUserByUsername, getAllUsers } from '../members-supabase';
 import { Game, GameSheetPlayer } from '../types/friendlies';
 import { hasRole } from '../role-utils';
 import { buildFriendlyICSAttachment, buildLinkedFriendlyICSAttachment, isGmailAddress, icsUpdatesEnabled } from '../ics-utils';
@@ -428,7 +428,9 @@ export async function sendRejoinNoticeEmail(
     buttonText: 'View Game',
   });
 
-  await sendEmail(emailAddress, subject, text, html, ics ? [ics] : undefined);
+  await withEmailLogContext({ userName }, () =>
+    sendEmail(emailAddress, subject, text, html, ics ? [ics] : undefined)
+  );
 }
 
 /**
@@ -699,15 +701,17 @@ Friendlies Management System
         : null;
 
       try {
-        await transporter.sendMail({
-          from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
-          to: player.email!,
-          subject,
-          text,
-          html,
-          headers: commonMailHeaders(),
-          ...(icsAttachment ? { attachments: [icsAttachment] } : {}),
-        });
+        await withEmailLogContext({ userName: player.userName, templateName: 'friendly-game-published' }, () =>
+          transporter.sendMail({
+            from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
+            to: player.email!,
+            subject,
+            text,
+            html,
+            headers: commonMailHeaders(),
+            ...(icsAttachment ? { attachments: [icsAttachment] } : {}),
+          })
+        );
         emailsSent++;
       } catch (playerError) {
         console.error(`Failed to send published email to ${player.fullName} (${player.email}):`, playerError);
@@ -993,15 +997,17 @@ export async function sendGameCancelledEmail(
 </html>`.trim();
 
       try {
-        await transporter.sendMail({
-          from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
-          to: player.email!,
-          subject,
-          text,
-          html,
-          headers: commonMailHeaders(),
-          ...(ics ? { attachments: [ics] } : {}),
-        });
+        await withEmailLogContext({ userName: player.userName, templateName: 'friendly-game-cancelled' }, () =>
+          transporter.sendMail({
+            from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
+            to: player.email!,
+            subject,
+            text,
+            html,
+            headers: commonMailHeaders(),
+            ...(ics ? { attachments: [ics] } : {}),
+          })
+        );
         emailsSent++;
       } catch (playerError) {
         console.error(`Failed to send cancellation email to ${player.fullName}:`, playerError);
@@ -1287,7 +1293,7 @@ export async function sendEntryConfirmedEmail(
     messageCaptainsUrl,
   });
 
-  await sendEmail(emailAddress, subject, text, html, [ics]);
+  await withEmailLogContext({ userName }, () => sendEmail(emailAddress, subject, text, html, [ics]));
 }
 
 /**
@@ -1395,7 +1401,7 @@ export async function sendLinkedEntryConfirmedEmail(
 </body>
 </html>`.trim();
 
-  await sendEmail(emailAddress, subject, text, html, [ics]);
+  await withEmailLogContext({ userName }, () => sendEmail(emailAddress, subject, text, html, [ics]));
 }
 
 /**
@@ -1459,7 +1465,9 @@ export async function sendWithdrawalNoticeEmail(
     buttonText: 'View Game',
   });
 
-  await sendEmail(emailAddress, subject, text, html, ics ? [ics] : undefined);
+  await withEmailLogContext({ userName }, () =>
+    sendEmail(emailAddress, subject, text, html, ics ? [ics] : undefined)
+  );
 }
 
 /**
@@ -1553,7 +1561,9 @@ export async function sendLinkedWithdrawalNoticeEmail(
 </body>
 </html>`.trim();
 
-  await sendEmail(emailAddress, subject, text, html, ics ? [ics] : undefined);
+  await withEmailLogContext({ userName }, () =>
+    sendEmail(emailAddress, subject, text, html, ics ? [ics] : undefined)
+  );
 }
 
 /**
@@ -1617,7 +1627,9 @@ export async function sendRemovedNoticeEmail(
     buttonText: 'View Game',
   });
 
-  await sendEmail(emailAddress, subject, text, html, ics ? [ics] : undefined);
+  await withEmailLogContext({ userName }, () =>
+    sendEmail(emailAddress, subject, text, html, ics ? [ics] : undefined)
+  );
 }
 
 /**
@@ -1681,5 +1693,7 @@ export async function sendWithdrawnByAdminNoticeEmail(
     buttonText: 'View Game',
   });
 
-  await sendEmail(emailAddress, subject, text, html, ics ? [ics] : undefined);
+  await withEmailLogContext({ userName }, () =>
+    sendEmail(emailAddress, subject, text, html, ics ? [ics] : undefined)
+  );
 }

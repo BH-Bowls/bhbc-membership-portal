@@ -11,6 +11,7 @@ import {
   sendTemplateEmail,
   commonMailHeaders,
   htmlToPlainText,
+  withEmailLogContext,
 } from './mailer';
 import { getAppUrl } from '../app-url';
 import { getUserByUsername, getAllUsers } from '../members-supabase';
@@ -259,15 +260,17 @@ export async function sendEventInviteEmails(
         const htmlContent = template({ ...baseVars, inviteeName: memberName, responseUrl });
 
         try {
-          await pooledTransporter.sendMail({
-            from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
-            to: memberEmail,
-            replyTo: captainEmail || undefined,
-            subject: emailSubject,
-            text: htmlToPlainText(htmlContent),
-            html: htmlContent,
-            headers: commonMailHeaders(),
-          });
+          await withEmailLogContext({ userName: m.userName, templateName: 'availability-event-invite' }, () =>
+            pooledTransporter.sendMail({
+              from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
+              to: memberEmail,
+              replyTo: captainEmail || undefined,
+              subject: emailSubject,
+              text: htmlToPlainText(htmlContent),
+              html: htmlContent,
+              headers: commonMailHeaders(),
+            })
+          );
           sentCount = sentCount + 1;
         } catch (err) {
           // Log individual failure but continue sending to others
@@ -498,6 +501,7 @@ export async function sendResponseNotificationEmail(
     // Cannot send if creator has no email address
     return;
   }
+  const creatorEmail = creatorUser.emailAddress;
 
   let creatorName = creatorUser.fullKnownAs || creatorUser.fullName || event.createdByUsername;
 
@@ -511,16 +515,18 @@ export async function sendResponseNotificationEmail(
   const appUrl = await getAppUrl();
   const manageUrl = `${appUrl}/availability/events/${eventId}/manage`;
 
-  const emailResult = await sendTemplateEmail(
-    creatorUser.emailAddress,
-    `New response — ${event.title}`,
-    'availability-response-notification',
-    {
-      creatorName: creatorName,
-      eventTitle: event.title,
-      respondentName: respondentName,
-      manageUrl: manageUrl,
-    }
+  const emailResult = await withEmailLogContext({ userName: event.createdByUsername }, () =>
+    sendTemplateEmail(
+      creatorEmail,
+      `New response — ${event.title}`,
+      'availability-response-notification',
+      {
+        creatorName: creatorName,
+        eventTitle: event.title,
+        respondentName: respondentName,
+        manageUrl: manageUrl,
+      }
+    )
   );
 
   if (!emailResult.success) {
@@ -554,22 +560,25 @@ export async function sendResponseNotificationEmailForVisitor(
     // Cannot send if creator has no email address
     return;
   }
+  const creatorEmail = creatorUser.emailAddress;
 
   const creatorName = creatorUser.fullKnownAs || creatorUser.fullName || event.createdByUsername;
 
   const appUrl = await getAppUrl();
   const manageUrl = `${appUrl}/availability/events/${eventId}/manage`;
 
-  const emailResult = await sendTemplateEmail(
-    creatorUser.emailAddress,
-    `New response — ${event.title}`,
-    'availability-response-notification',
-    {
-      creatorName: creatorName,
-      eventTitle: event.title,
-      respondentName: visitorName,
-      manageUrl: manageUrl,
-    }
+  const emailResult = await withEmailLogContext({ userName: event.createdByUsername }, () =>
+    sendTemplateEmail(
+      creatorEmail,
+      `New response — ${event.title}`,
+      'availability-response-notification',
+      {
+        creatorName: creatorName,
+        eventTitle: event.title,
+        respondentName: visitorName,
+        manageUrl: manageUrl,
+      }
+    )
   );
 
   if (!emailResult.success) {

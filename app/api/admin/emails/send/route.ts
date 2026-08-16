@@ -5,10 +5,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getAllUsers } from '@/lib/members-supabase';
-import { updateEmailSentStatus, logMemberEmail } from '@/lib/sheets';
 import { sendMemberEmail } from '@/lib/email/member-mailer';
 import { getEmailTemplates } from '@/lib/email/template-reader';
-import { getEmailTransporter } from '@/lib/email/mailer';
+import { getEmailTransporter, withEmailLogContext } from '@/lib/email/mailer';
 import { hasRole } from '@/lib/role-utils';
 
 // ============================================================================
@@ -124,16 +123,12 @@ export async function POST(request: NextRequest) {
             }
           }
 
-          // Get template information for logging
+          // Get template name for the email log
           const templates = getEmailTemplates();
           const template = templates.find(t => t.id === templateId);
           const templateName = template?.name || templateId;
-          const templateSubject = template?.subject || 'Message from Burgess Hill Bowls Club';
 
-          // Get attachment names for logging
-          const attachmentNames = attachmentIds.length > 0 ? attachmentIds : [];
-
-          // Get admin username for logging
+          // Get admin username for the email log
           const adminUserName = session.user?.userName || 'Unknown';
 
           // Get total count for progress tracking
@@ -207,63 +202,24 @@ export async function POST(request: NextRequest) {
                 // Send email to this member using selected template and attachments
                 // WAIT for completion before proceeding to next member
                 // Pass transporter to reuse connection (prevents rate limiting)
-                const result = await sendMemberEmail(member, templateId, attachmentIds, transporter);
+                // withEmailLogContext attributes the automatic member_emails log entry
+                // (written by mailer.ts's transporter wrapper) to this admin + template.
+                const result = await withEmailLogContext({ sentBy: adminUserName, templateName, userName: member.userName }, () =>
+                  sendMemberEmail(member, templateId, attachmentIds, transporter)
+                );
 
               // Check if email send was successful
               if (result.success) {
                 succeeded++;
-
-                await Promise.all([
-                  logMemberEmail({
-                    userName: member.userName,
-                    emailAddress: member.emailAddress,
-                    templateName,
-                    subject: templateSubject,
-                    success: true,
-                    sentBy: adminUserName,
-                    attachments: attachmentNames,
-                  }),
-                  updateEmailSentStatus(member.userName, true),
-                ]);
-
                 sendEvent({ type: 'success', userName });
               } else {
                 failed++;
-
-                await Promise.all([
-                  logMemberEmail({
-                    userName: member.userName,
-                    emailAddress: member.emailAddress,
-                    templateName,
-                    subject: templateSubject,
-                    success: false,
-                    errorMessage: result.error,
-                    sentBy: adminUserName,
-                    attachments: attachmentNames,
-                  }),
-                  updateEmailSentStatus(member.userName, false, result.error),
-                ]);
-
                 sendEvent({ type: 'error', userName, error: result.error || 'Unknown error' });
               }
             } catch (error) {
               failed++;
 
               const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-
-              await Promise.all([
-                logMemberEmail({
-                  userName: member.userName,
-                  emailAddress: member.emailAddress,
-                  templateName,
-                  subject: templateSubject,
-                  success: false,
-                  errorMessage: errorMsg,
-                  sentBy: adminUserName,
-                  attachments: attachmentNames,
-                }),
-                updateEmailSentStatus(member.userName, false, errorMsg),
-              ]);
 
               // Send error event
               sendEvent({

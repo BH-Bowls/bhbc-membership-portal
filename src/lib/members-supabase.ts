@@ -238,6 +238,53 @@ export async function getRecentFailedAttempts(
   }
 }
 
+/** Most recent login attempts, newest first — for the admin Logs viewer. Capped at
+ *  `limit` rows; `total` is the real row count so the UI can show "showing N of M". */
+export async function getLoginAttempts(limit = 500): Promise<{
+  rows: {
+    id: string;
+    identifier: string;
+    userName: string | null;
+    success: boolean;
+    failureReason: string | null;
+    ipAddress: string | null;
+    userAgent: string | null;
+    deviceType: string | null;
+    attemptedAt: string;
+  }[];
+  total: number;
+}> {
+  const supabase = getSupabaseClient();
+  const [{ data, error }, { count, error: countError }] = await Promise.all([
+    supabase.from('login_attempts').select('*').order('attempted_at', { ascending: false }).limit(limit),
+    supabase.from('login_attempts').select('id', { count: 'exact', head: true }),
+  ]);
+  if (error) throw new Error(`Failed to fetch login attempts: ${error.message}`);
+  if (countError) throw new Error(`Failed to count login attempts: ${countError.message}`);
+
+  return {
+    rows: (data ?? []).map((row) => ({
+      id: row.id,
+      identifier: row.identifier,
+      userName: row.user_name,
+      success: row.success,
+      failureReason: row.failure_reason,
+      ipAddress: row.ip_address,
+      userAgent: row.user_agent,
+      deviceType: row.device_type,
+      attemptedAt: row.attempted_at,
+    })),
+    total: count ?? 0,
+  };
+}
+
+/** Delete all login attempt rows — an admin clearing the log down (e.g. end of season). */
+export async function clearLoginAttempts(): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase.from('login_attempts').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+  if (error) throw new Error(`Failed to clear login attempts: ${error.message}`);
+}
+
 // ============================================================================
 // PASSWORD RESET (forgot-password / reset-password flow)
 // ============================================================================
@@ -270,6 +317,37 @@ export async function countRecentResetRequests(identifier: string): Promise<numb
     console.error('Error counting reset requests:', error);
     return 0;
   }
+}
+
+/** Most recent password reset requests, newest first — for the admin Logs viewer. */
+export async function getPasswordResetRequests(limit = 500): Promise<{
+  rows: { id: string; identifier: string; userName: string | null; requestedAt: string }[];
+  total: number;
+}> {
+  const supabase = getSupabaseClient();
+  const [{ data, error }, { count, error: countError }] = await Promise.all([
+    supabase.from('password_reset_requests').select('*').order('requested_at', { ascending: false }).limit(limit),
+    supabase.from('password_reset_requests').select('id', { count: 'exact', head: true }),
+  ]);
+  if (error) throw new Error(`Failed to fetch password reset requests: ${error.message}`);
+  if (countError) throw new Error(`Failed to count password reset requests: ${countError.message}`);
+
+  return {
+    rows: (data ?? []).map((row) => ({
+      id: row.id,
+      identifier: row.identifier,
+      userName: row.user_name,
+      requestedAt: row.requested_at,
+    })),
+    total: count ?? 0,
+  };
+}
+
+/** Delete all password reset request rows — an admin clearing the log down. */
+export async function clearPasswordResetRequests(): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase.from('password_reset_requests').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+  if (error) throw new Error(`Failed to clear password reset requests: ${error.message}`);
 }
 
 export async function generatePasswordResetToken(identifier: string): Promise<string | null> {
@@ -380,6 +458,52 @@ export async function logImpersonationEvent(event: {
     console.error('Error logging impersonation event:', error);
     // Don't throw - logging failure shouldn't break impersonation
   }
+}
+
+/** Most recent impersonation events, newest first — for the admin Logs viewer. */
+export async function getImpersonationLog(limit = 500): Promise<{
+  rows: {
+    id: string;
+    sessionId: string;
+    action: string;
+    adminUserName: string | null;
+    adminName: string | null;
+    targetUserName: string | null;
+    targetName: string | null;
+    ipAddress: string | null;
+    loggedAt: string;
+  }[];
+  total: number;
+}> {
+  const supabase = getSupabaseClient();
+  const [{ data, error }, { count, error: countError }] = await Promise.all([
+    supabase.from('impersonation_log').select('*').order('logged_at', { ascending: false }).limit(limit),
+    supabase.from('impersonation_log').select('id', { count: 'exact', head: true }),
+  ]);
+  if (error) throw new Error(`Failed to fetch impersonation log: ${error.message}`);
+  if (countError) throw new Error(`Failed to count impersonation log: ${countError.message}`);
+
+  return {
+    rows: (data ?? []).map((row) => ({
+      id: row.id,
+      sessionId: row.session_id,
+      action: row.action,
+      adminUserName: row.admin_user_name,
+      adminName: row.admin_name,
+      targetUserName: row.target_user_name,
+      targetName: row.target_name,
+      ipAddress: row.ip_address,
+      loggedAt: row.logged_at,
+    })),
+    total: count ?? 0,
+  };
+}
+
+/** Delete all impersonation log rows — an admin clearing the log down. */
+export async function clearImpersonationLog(): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase.from('impersonation_log').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+  if (error) throw new Error(`Failed to clear impersonation log: ${error.message}`);
 }
 
 // ============================================================================

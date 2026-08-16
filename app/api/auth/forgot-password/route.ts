@@ -7,8 +7,7 @@ import {
   countRecentResetRequests,
   getAllUsers,
 } from '@/lib/members-supabase';
-import { updateEmailSentStatus, logMemberEmail } from '@/lib/sheets';
-import { sendTemplateEmail, isEmailConfigured } from '@/lib/email/mailer';
+import { sendTemplateEmail, isEmailConfigured, withEmailLogContext } from '@/lib/email/mailer';
 import { getAppUrl } from '@/lib/app-url';
 
 async function sendPasswordResetEmail(
@@ -18,17 +17,17 @@ async function sendPasswordResetEmail(
   token: string,
   baseUrl: string
 ): Promise<{ success: boolean; error?: string }> {
-  try {
-    if (!isEmailConfigured()) {
-      const error = 'SMTP not configured';
-      console.error(error);
-      return { success: false, error };
-    }
+  if (!isEmailConfigured()) {
+    const error = 'SMTP not configured';
+    console.error(error);
+    return { success: false, error };
+  }
 
-    const resetUrl = `${baseUrl}/reset-password?token=${token}`;
-    const subject = 'BHBC Password Reset Request';
+  const resetUrl = `${baseUrl}/reset-password?token=${token}`;
+  const subject = 'BHBC Password Reset Request';
 
-    const result = await sendTemplateEmail(
+  return withEmailLogContext({ userName }, () =>
+    sendTemplateEmail(
       email,
       subject,
       'password-reset',
@@ -36,43 +35,8 @@ async function sendPasswordResetEmail(
         memberName: name,
         resetUrl: resetUrl,
       }
-    );
-
-    await Promise.all([
-      logMemberEmail({
-        userName,
-        emailAddress: email,
-        templateName: 'Password Reset',
-        subject,
-        success: result.success,
-        errorMessage: result.error,
-        sentBy: 'System',
-        attachments: [],
-      }),
-      updateEmailSentStatus(userName, result.success, result.error),
-    ]);
-
-    return result;
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-    console.error('Error sending password reset email:', error);
-
-    await Promise.all([
-      logMemberEmail({
-        userName,
-        emailAddress: email,
-        templateName: 'Password Reset',
-        subject: 'BHBC Password Reset Request',
-        success: false,
-        errorMessage: errorMsg,
-        sentBy: 'System',
-        attachments: [],
-      }),
-      updateEmailSentStatus(userName, false, errorMsg),
-    ]);
-
-    return { success: false, error: errorMsg };
-  }
+    )
+  );
 }
 
 export async function POST(request: NextRequest) {

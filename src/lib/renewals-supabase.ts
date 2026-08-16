@@ -12,15 +12,13 @@
 //   - Competitions' entrant lookup (getRenewalCompetitionEntries, below)
 //   - Banking's payment reconciliation (src/lib/banking-supabase.ts)
 //
-// updateEmailSentStatus/logMemberEmail still go through sheets.ts deliberately — email
-// send-status tracking on the Members sheet is a broader, still-Sheets-only concern used
-// by several already-migrated routes (change-password, reset-password, admin bulk email),
-// not something specific to this migration to fix.
+// Email sends are logged automatically by mailer.ts's transporter wrapper (see
+// email-log-supabase.ts / supabase/migrations/0046) — withEmailLogContext below just
+// attaches the right sentBy (member or whoever is managing them) to that log entry.
 
 import { getSupabaseClient } from './supabase';
 import { getUserByUsername } from './members-supabase';
-import { updateEmailSentStatus, logMemberEmail } from './sheets';
-import { sendTemplateEmail, isEmailConfigured } from './email/mailer';
+import { sendTemplateEmail, isEmailConfigured, withEmailLogContext } from './email/mailer';
 
 // ============================================================================
 // CONSTANTS
@@ -430,85 +428,50 @@ export async function sendRenewalConfirmation(
       ? substitutes.join('<br>• ')
       : null;
 
-    const result = await sendTemplateEmail(
-      recipientEmail,
-      'BHBC Membership Renewal Confirmation',
-      'renewal-confirmation',
-      {
-        memberName,
-        membershipFee: formatCurrency(fees.membershipFee),
-        compsFee: formatCurrency(fees.compsFee),
-        club200Fee: formatCurrency(fees.club200Fee),
-        totalFee: formatCurrency(fees.total),
-        paymentReference: `SUBS ${user.lastName.toUpperCase()}`,
-        memberType: user.memberType,
-        number200Club: renewal.number200ClubEntries > 0 ? renewal.number200ClubEntries.toString() : 'None',
-        pref200Club: renewal.pref200Club || null,
-        competitions: '• ' + competitionsText,
-        substitutes: substitutesText ? '• ' + substitutesText : null,
-        teaDatesToAvoid: renewal.teaDatesToAvoid || null,
-        cleaningDatesToAvoid: renewal.cleaningDatesToAvoid || null,
-        drivingAwayMatches: user.drivingAwayMatches || null,
-        drivingAdditionalInfo: user.drivingAdditionalInfo || null,
-        greenMaintenance: user.greenMaintenance || null,
-        greenAdditionalInfo: user.greenAdditionalInfo || null,
-        barDuty: user.barDuty || null,
-        barAdditionalInfo: user.barAdditionalInfo || null,
-        otherSkills: user.otherSkills || null,
-        showTriplesWarning: renewal.drawnTriples ? 'Y' : null,
-      }
+    const result = await withEmailLogContext({ sentBy: managerUserName || userName, userName }, () =>
+      sendTemplateEmail(
+        recipientEmail,
+        'BHBC Membership Renewal Confirmation',
+        'renewal-confirmation',
+        {
+          memberName,
+          membershipFee: formatCurrency(fees.membershipFee),
+          compsFee: formatCurrency(fees.compsFee),
+          club200Fee: formatCurrency(fees.club200Fee),
+          totalFee: formatCurrency(fees.total),
+          paymentReference: `SUBS ${user.lastName.toUpperCase()}`,
+          memberType: user.memberType,
+          number200Club: renewal.number200ClubEntries > 0 ? renewal.number200ClubEntries.toString() : 'None',
+          pref200Club: renewal.pref200Club || null,
+          competitions: '• ' + competitionsText,
+          substitutes: substitutesText ? '• ' + substitutesText : null,
+          teaDatesToAvoid: renewal.teaDatesToAvoid || null,
+          cleaningDatesToAvoid: renewal.cleaningDatesToAvoid || null,
+          drivingAwayMatches: user.drivingAwayMatches || null,
+          drivingAdditionalInfo: user.drivingAdditionalInfo || null,
+          greenMaintenance: user.greenMaintenance || null,
+          greenAdditionalInfo: user.greenAdditionalInfo || null,
+          barDuty: user.barDuty || null,
+          barAdditionalInfo: user.barAdditionalInfo || null,
+          otherSkills: user.otherSkills || null,
+          showTriplesWarning: renewal.drawnTriples ? 'Y' : null,
+        }
+      )
     );
 
     if (!result.success) {
-      await logMemberEmail({
-        userName,
-        emailAddress: user.emailAddress,
-        templateName: 'Renewal Confirmation',
-        subject: 'BHBC Membership Renewal Confirmation',
-        success: false,
-        errorMessage: result.error,
-        sentBy: managerUserName || userName,
-        attachments: [],
-      });
-
-      await updateEmailSentStatus(userName, false, result.error);
       return result;
     }
-
-    await logMemberEmail({
-      userName,
-      emailAddress: user.emailAddress,
-      templateName: 'Renewal Confirmation',
-      subject: 'BHBC Membership Renewal Confirmation',
-      success: true,
-      sentBy: managerUserName || userName,
-      attachments: [],
-    });
 
     const emailSentDate = new Date().toISOString();
     await updateRenewal(userName, {
       confirmationEmailDate: emailSentDate,
     });
 
-    await updateEmailSentStatus(userName, true);
-
     return { success: true };
   } catch (error) {
     console.error(`[sendRenewalConfirmation] Failed to send confirmation for ${userName}:`, error);
     const errorMsg = error instanceof Error ? error.message : 'Failed to send confirmation email';
-
-    await logMemberEmail({
-      userName,
-      emailAddress: null,
-      templateName: 'Renewal Confirmation',
-      subject: 'BHBC Membership Renewal Confirmation',
-      success: false,
-      errorMessage: errorMsg,
-      sentBy: managerUserName || userName,
-      attachments: [],
-    });
-
-    await updateEmailSentStatus(userName, false, errorMsg);
 
     return {
       success: false,
@@ -555,55 +518,25 @@ export async function sendCancellationConfirmation(
       return { success: false, error: 'No email address found for user, manager, or buddy' };
     }
 
-    const result = await sendTemplateEmail(
-      recipientEmail,
-      'BHBC Membership - Sorry to See You Go',
-      'renewal-cancellation',
-      {
-        memberName,
-      }
+    const result = await withEmailLogContext({ sentBy: managerUserName || userName, userName }, () =>
+      sendTemplateEmail(
+        recipientEmail,
+        'BHBC Membership - Sorry to See You Go',
+        'renewal-cancellation',
+        {
+          memberName,
+        }
+      )
     );
 
     if (!result.success) {
-      await logMemberEmail({
-        userName,
-        emailAddress: user.emailAddress,
-        templateName: 'Renewal Cancellation',
-        subject: 'BHBC Membership - Sorry to See You Go',
-        success: false,
-        errorMessage: result.error,
-        sentBy: managerUserName || userName,
-        attachments: [],
-      });
-
       return result;
     }
-
-    await logMemberEmail({
-      userName,
-      emailAddress: user.emailAddress,
-      templateName: 'Renewal Cancellation',
-      subject: 'BHBC Membership - Sorry to See You Go',
-      success: true,
-      sentBy: managerUserName || userName,
-      attachments: [],
-    });
 
     return { success: true };
   } catch (error) {
     console.error(`[sendCancellationConfirmation] Failed to send cancellation email for ${userName}:`, error);
     const errorMsg = error instanceof Error ? error.message : 'Failed to send cancellation email';
-
-    await logMemberEmail({
-      userName,
-      emailAddress: null,
-      templateName: 'Renewal Cancellation',
-      subject: 'BHBC Membership - Sorry to See You Go',
-      success: false,
-      errorMessage: errorMsg,
-      sentBy: managerUserName || userName,
-      attachments: [],
-    });
 
     return {
       success: false,

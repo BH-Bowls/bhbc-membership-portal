@@ -4,7 +4,7 @@
 // requested) and the welcome / credentials email (when an application is converted
 // into a member). Both use the shared sendTemplateEmail helper.
 
-import { sendTemplateEmail } from './mailer';
+import { sendTemplateEmail, withEmailLogContext } from './mailer';
 import { getAppUrl } from '../app-url';
 import type { Application } from '../applications-supabase';
 
@@ -119,16 +119,19 @@ export async function sendWelcomeEmail(
     return { success: false, error: 'No email address provided' };
   }
 
-  return sendTemplateEmail(
-    emailAddress,
-    'Welcome to Burgess Hill Bowls Club — Your Portal Login',
-    'application-welcome',
-    {
-      firstName,
-      userName,
-      tempPassword,
-      portalUrl: await getAppUrl(),
-    }
+  const portalUrl = await getAppUrl();
+  return withEmailLogContext({ userName }, () =>
+    sendTemplateEmail(
+      emailAddress,
+      'Welcome to Burgess Hill Bowls Club — Your Portal Login',
+      'application-welcome',
+      {
+        firstName,
+        userName,
+        tempPassword,
+        portalUrl,
+      }
+    )
   );
 }
 

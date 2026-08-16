@@ -5,7 +5,78 @@ import nodemailer from 'nodemailer';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import Handlebars from 'handlebars';
+import { AsyncLocalStorage } from 'async_hooks';
 import { processEmailTemplate } from './template-processor';
+
+// ── Send logging ──────────────────────────────────────────────────────────────
+// Every email the app sends should land in the member_emails audit log
+// (supabase/migrations/0046), regardless of whether it goes through sendEmail/
+// sendTemplateEmail/sendEmailWithAttachments below or a raw transporter grabbed via
+// getEmailTransporter() for a pooled bulk loop (Friendlies game-published/tea-rota,
+// admin bulk send, Availability). So logging is wired in once, here, by wrapping every
+// transporter's sendMail — callers don't have to remember to log anything themselves.
+//
+// sentBy/templateName/userName aren't visible from mailOptions alone (mailOptions only
+// has to/subject/html/attachments), so callers that know them — sendTemplateEmail below,
+// or a route/function that already has the recipient's userName in scope — set them via
+// withEmailLogContext() for the duration of the send. AsyncLocalStorage (not a shared
+// variable) because multiple requests/loops can have sends in flight concurrently on one
+// server instance.
+//
+// userName is important to set whenever it's known: without it, the log falls back to
+// guessing the recipient by reverse-matching the `to` address against every member's
+// email — which is ambiguous (and picks an arbitrary one) whenever more than one account
+// shares an address, e.g. family/buddy accounts, or several test accounts routed to one
+// real inbox.
+interface EmailLogContext {
+  sentBy?: string;
+  templateName?: string;
+  userName?: string;
+}
+const emailLogContext = new AsyncLocalStorage<EmailLogContext>();
+
+/** Run `fn` with sentBy/templateName/userName attached to every email it sends. */
+export function withEmailLogContext<T>(ctx: EmailLogContext, fn: () => Promise<T>): Promise<T> {
+  return emailLogContext.run(ctx, fn);
+}
+
+async function logSend(mailOptions: any, success: boolean, errorMessage?: string): Promise<void> {
+  try {
+    const ctx = emailLogContext.getStore();
+    const { logEmailSend } = await import('../email-log-supabase');
+    const attachments: string[] = Array.isArray(mailOptions.attachments)
+      ? mailOptions.attachments.map((a: any) => a.filename).filter(Boolean)
+      : [];
+    await logEmailSend({
+      to: String(mailOptions.to || ''),
+      subject: String(mailOptions.subject || ''),
+      success,
+      errorMessage,
+      sentBy: ctx?.sentBy,
+      templateName: ctx?.templateName,
+      userName: ctx?.userName,
+      attachments,
+    });
+  } catch (error) {
+    console.error('Error logging email send:', error);
+  }
+}
+
+/** Wrap a freshly-created transporter so every sendMail() call is logged. */
+function withSendLogging<T extends { sendMail: (...args: any[]) => Promise<any> }>(transporter: T): T {
+  const originalSendMail = transporter.sendMail.bind(transporter);
+  transporter.sendMail = (async (mailOptions: any) => {
+    try {
+      const info = await originalSendMail(mailOptions);
+      await logSend(mailOptions, true);
+      return info;
+    } catch (error) {
+      await logSend(mailOptions, false, error instanceof Error ? error.message : 'Failed to send email');
+      throw error;
+    }
+  }) as T['sendMail'];
+  return transporter;
+}
 
 /**
  * Get configured email transporter for sending emails
@@ -38,7 +109,7 @@ export function getEmailTransporter(usePool: boolean = false) {
     config.keepAlive = true;
   }
 
-  return nodemailer.createTransport(config);
+  return withSendLogging(nodemailer.createTransport(config));
 }
 
 /**
@@ -225,7 +296,10 @@ export async function sendTemplateEmail(
       mailOptions.cc = options.cc;
     }
 
-    const info = await transporter.sendMail(mailOptions);
+    // Merge templateName into whatever log context an enclosing caller already set
+    // (e.g. sentBy from an admin bulk-send route) rather than replacing it outright.
+    const outerLogCtx = emailLogContext.getStore();
+    const info = await emailLogContext.run({ ...outerLogCtx, templateName }, () => transporter.sendMail(mailOptions));
 
     // Log successful send for monitoring
     console.log(`✓ Email sent to ${to}: ${subject} [MessageId: ${info.messageId}]`);
