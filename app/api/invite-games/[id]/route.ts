@@ -8,8 +8,8 @@ import {
   getInviteGameById,
   updateInviteGame,
   deleteInviteGame,
-} from '@/lib/invite-games-sheets';
-import { getAttachmentsByInviteGameId, deleteInviteGameAttachment } from '@/lib/invite-games-attachments-sheets';
+} from '@/lib/invite-games-supabase';
+import { getAttachmentsByInviteGameId, deleteInviteGameAttachment } from '@/lib/invite-games-attachments-supabase';
 import { deleteFileFromDrive } from '@/lib/drive';
 import { hasRole } from '@/lib/role-utils';
 

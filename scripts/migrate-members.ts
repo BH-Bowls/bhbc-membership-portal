@@ -184,6 +184,19 @@ async function main() {
   // not a uuid id column — the shared nil-UUID sentinel below still works fine as a
   // "never matches" value against a text column, it only breaks the other way round
   // (a non-uuid-shaped sentinel against an actual uuid column).
+  // league_attachments/league_squad joined once migrate-leagues.ts started populating
+  // their username FK columns (added_by on league_attachments, username on
+  // league_squad) — same reasoning, child-to-parent order, migrate-leagues.ts MUST be
+  // re-run after this script. leagues/league_teams/league_matches/league_settings
+  // don't need to be here — none has an FK into users.
+  // league_match_players joined once the per-match lineup feature shipped (it has a
+  // username FK too) — nothing migrates it (it's a new concept with no Sheets
+  // equivalent, starts empty), but it must still be wiped before users so real
+  // interactive-testing data doesn't block the users delete.
+  // invite_game_attachments/invite_games joined once migrate-invite-games.ts started
+  // populating their username FK columns (added_by on invite_game_attachments,
+  // created_by/updated_by on invite_games) — same reasoning, child-to-parent order,
+  // migrate-invite-games.ts MUST be re-run after this script.
   // game_players/handicap_history still aren't cleared since nothing populates them
   // yet; extend this list if that changes.
   const wipeSteps: { table: string; column: string }[] = [
@@ -205,6 +218,11 @@ async function main() {
     { table: 'announcements', column: 'id' },
     { table: 'suggestion_attachments', column: 'attachment_id' },
     { table: 'suggestions', column: 'suggestion_id' },
+    { table: 'league_attachments', column: 'attachment_id' },
+    { table: 'league_match_players', column: 'id' },
+    { table: 'league_squad', column: 'id' },
+    { table: 'invite_game_attachments', column: 'attachment_id' },
+    { table: 'invite_games', column: 'invite_game_id' },
     { table: 'user_roles', column: 'user_id' },
     { table: 'member_profiles', column: 'user_id' },
     { table: 'users', column: 'id' },

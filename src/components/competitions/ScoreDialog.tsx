@@ -19,8 +19,8 @@ interface ScoreDialogProps {
   onWalkover: (matchId: string, winnerSide: 1 | 2) => void;
   onClose: () => void;
   saving?: boolean;
-  // When provided, a "Date arranged" field is shown. Submitting with no scores saves the date (and marker) only.
-  onSaveDateOnly?: (matchId: string, date: string, marker: string) => void;
+  // When provided, a "Date arranged" field is shown. Submitting with no scores saves the date/time (and marker) only.
+  onSaveDateOnly?: (matchId: string, date: string, time: string, marker: string) => void;
   // Whether this is a singles competition — controls visibility of the marker dropdown
   isSingles?: boolean;
   // Sorted list of playing members for the marker dropdown (singles only)
@@ -61,8 +61,9 @@ export function ScoreDialog({
   const [score2, setScore2] = useState(isCompleted && match.score2 != null ? String(match.score2) : '');
   const [showWalkoverOptions, setShowWalkoverOptions] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Arranged date — pre-filled from any existing value on the match
+  // Arranged date/time — pre-filled from any existing value on the match
   const [plannedDate, setPlannedDate] = useState(match.playedDate || '');
+  const [plannedTime, setPlannedTime] = useState(match.playedTime || '');
   // Marker — pre-filled from any existing value on the match (singles only)
   const [markerValue, setMarkerValue] = useState(match.marker || '');
 
@@ -94,7 +95,7 @@ export function ScoreDialog({
         setError('Please enter a date or fill in scores');
         return;
       }
-      onSaveDateOnly(match.matchId, plannedDate, markerValue);
+      onSaveDateOnly(match.matchId, plannedDate, plannedTime, markerValue);
       return;
     }
 
@@ -178,6 +179,21 @@ export function ScoreDialog({
                     setPlannedDate(e.target.value);
                     setError(null);
                   }}
+                  className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm text-gray-900"
+                />
+              </div>
+            )}
+
+            {/* Optional time arranged field — shown alongside the date */}
+            {!isCompleted && onSaveDateOnly && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Time <span className="font-normal text-gray-500">(optional)</span>
+                </label>
+                <input
+                  type="time"
+                  value={plannedTime}
+                  onChange={(e) => setPlannedTime(e.target.value)}
                   className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm text-gray-900"
                 />
               </div>

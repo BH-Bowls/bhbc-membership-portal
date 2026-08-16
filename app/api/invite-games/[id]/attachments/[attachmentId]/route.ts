@@ -6,7 +6,7 @@ import { authOptions } from '@/lib/auth';
 import {
   getInviteGameAttachmentById,
   deleteInviteGameAttachment,
-} from '@/lib/invite-games-attachments-sheets';
+} from '@/lib/invite-games-attachments-supabase';
 import { isCommitteeMember } from '@/lib/role-utils';
 import { deleteFileFromDrive, driveEmbedUrl, driveDownloadUrl } from '@/lib/drive';
 

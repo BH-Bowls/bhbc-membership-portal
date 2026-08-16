@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getAllInviteGames, createInviteGame } from '@/lib/invite-games-sheets';
+import { getAllInviteGames, createInviteGame } from '@/lib/invite-games-supabase';
 import { hasRole } from '@/lib/role-utils';
 
 /**

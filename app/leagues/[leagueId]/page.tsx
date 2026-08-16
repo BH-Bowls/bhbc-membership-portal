@@ -13,11 +13,13 @@ import type {
   LeagueTeam,
   LeagueSquadMember,
   LeagueMatch,
+  LeagueMatchPlayer,
   LeagueTableRow,
   LeagueMatchStatus,
 } from '@/types/leagues';
 import { AttachmentsList } from '@/components/AttachmentsList';
 import type { Attachment } from '@/types/attachments';
+import { hasRole } from '@/lib/role-utils';
 
 function formatDate(d: string | null): string {
   if (!d) return '';
@@ -37,8 +39,11 @@ function formatTime(t: string | null): string {
   return t.replace(':', '');
 }
 
-function getMatchDate(m: LeagueMatch, leagueType: string): string | null {
-  return leagueType === 'triples' ? (m.scheduledDate ?? null) : (m.playByDate ?? null);
+// The real arranged date always takes priority once set (both league types can have
+// one now); playByDate is only a fallback grouping key for pairs leagues before a
+// real date has been arranged.
+function getMatchDate(m: LeagueMatch, _leagueType: string): string | null {
+  return m.scheduledDate ?? m.playByDate ?? null;
 }
 
 function fmtAdj(n: number | null): string {
@@ -62,12 +67,16 @@ function LeagueDetailPageInner() {
 
   const role = session?.user?.role ?? '';
   const userName = session?.user?.userName ?? '';
-  const isCommittee = role !== 'Member' && role !== '' && role !== 'Kiosk';
+  // Must match the backend's exact permission check (app/api/leagues/**/matches routes) —
+  // a broad "anything but Member" check here previously let any multi-role or unrelated
+  // role see committee-only controls (score entry, both teams' player allocation).
+  const isCommittee = hasRole(role, 'LeagueOrganiser', 'Captain', 'Admin');
 
   const [league, setLeague] = useState<League | null>(null);
   const [teams, setTeams] = useState<LeagueTeam[]>([]);
   const [squad, setSquad] = useState<LeagueSquadMember[]>([]);
   const [matches, setMatches] = useState<LeagueMatch[]>([]);
+  const [matchPlayers, setMatchPlayers] = useState<LeagueMatchPlayer[]>([]);
   const [table, setTable] = useState<LeagueTableRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -90,11 +99,17 @@ function LeagueDetailPageInner() {
   // Team breakdown popup
   const [teamDetailId, setTeamDetailId] = useState<string | null>(null);
 
-  // Score entry
+  // Score entry (committee only) — also carries date/time since it's the one dialog
+  // committee sees, per the "single dialog" redesign. 'DateOnly' is a synthetic
+  // status meaning "just update date/time, don't touch the result" — the default
+  // for a not-yet-played match so committee isn't forced to submit a score just to
+  // fix the date.
   const [scoreDialog, setScoreDialog] = useState<{
     matchId: string;
+    homeTeamId: string; awayTeamId: string;
     homeTeamName: string; awayTeamName: string;
-    status: LeagueMatchStatus | 'Reset';
+    status: LeagueMatchStatus | 'Reset' | 'DateOnly';
+    scheduledDate: string; scheduledTime: string;
     // Played / Conceded
     homeScore: string; awayScore: string;
     // All statuses with a result
@@ -104,6 +119,26 @@ function LeagueDetailPageInner() {
     walkoverWinner: 'home' | 'away' | '';
     saving: boolean;
   } | null>(null);
+
+  // Date/time arrangement (non-committee) — any squad member of either team can
+  // arrange when their match is actually happening (both league types; the
+  // committee-set "Play by" deadline for pairs leagues stays separate, read-only here).
+  const [dateDialog, setDateDialog] = useState<{
+    matchId: string;
+    homeTeamId: string; awayTeamId: string;
+    homeTeamName: string; awayTeamName: string;
+    scheduledDate: string; scheduledTime: string;
+    saving: boolean;
+  } | null>(null);
+
+  // Match lineup — who's actually named as playing this specific match, separate
+  // from the team's overall squad. Toggled per-player, so no local draft state needed.
+  const [playersDialog, setPlayersDialog] = useState<{
+    matchId: string;
+    homeTeamId: string; awayTeamId: string;
+    homeTeamName: string; awayTeamName: string;
+  } | null>(null);
+  const [togglingPlayer, setTogglingPlayer] = useState<string | null>(null);
 
   // Entry
   const [enteringLeague, setEnteringLeague] = useState(false);
@@ -121,6 +156,7 @@ function LeagueDetailPageInner() {
         setTeams(data.teams);
         setSquad(data.squad);
         setMatches(data.matches);
+        setMatchPlayers(data.matchPlayers ?? []);
         setTable(data.table);
         setSelectedMatchId(null);
       })
@@ -141,8 +177,8 @@ function LeagueDetailPageInner() {
   const myEntry = squad.find((m) => m.username === userName);
   const canEnter = !!session && !myEntry && league?.status === 'Entries Open';
 
-  function canEnterScore(_match: LeagueMatch): boolean {
-    return isCommittee;
+  function lineupFor(matchId: string): Set<string> {
+    return new Set(matchPlayers.filter((p) => p.matchId === matchId).map((p) => p.username));
   }
 
   async function submitEntry() {
@@ -192,10 +228,14 @@ function LeagueDetailPageInner() {
     if (!scoreDialog) return;
     const { status } = scoreDialog;
 
-    let payload: Record<string, unknown> = { status };
+    // 'DateOnly' — just update the date/time, leave the result (and status) untouched.
+    let payload: Record<string, unknown> = {
+      scheduledDate: scoreDialog.scheduledDate || null,
+      scheduledTime: scoreDialog.scheduledTime || null,
+    };
 
     if (status === 'Reset') {
-      payload = { status: 'Scheduled', homeScore: null, awayScore: null, homeAdj: null, awayAdj: null, homePoints: null, awayPoints: null };
+      payload = { ...payload, status: 'Scheduled', homeScore: null, awayScore: null, homeAdj: null, awayAdj: null, homePoints: null, awayPoints: null };
     } else if (status === 'Played' || status === 'Conceded') {
       const home = parseInt(scoreDialog.homeScore);
       const away = parseInt(scoreDialog.awayScore);
@@ -205,7 +245,7 @@ function LeagueDetailPageInner() {
       const homePts = parseInt(scoreDialog.homePoints);
       const awayPts = parseInt(scoreDialog.awayPoints);
       if (isNaN(homePts) || isNaN(awayPts)) { alert('Enter valid points for both sides'); return; }
-      payload = { status, homeScore: home, awayScore: away, homeAdj: homeAdj ?? 0, awayAdj: awayAdj ?? 0, homePoints: homePts, awayPoints: awayPts };
+      payload = { ...payload, status, homeScore: home, awayScore: away, homeAdj: homeAdj ?? 0, awayAdj: awayAdj ?? 0, homePoints: homePts, awayPoints: awayPts };
 
     } else if (status === 'Walkover') {
       if (!scoreDialog.walkoverWinner) { alert('Select which team is awarded the points'); return; }
@@ -216,9 +256,11 @@ function LeagueDetailPageInner() {
       if (isNaN(homeAdj) || isNaN(awayAdj) || isNaN(homePts) || isNaN(awayPts)) {
         alert('Enter valid adjustment and points values'); return;
       }
-      payload = { status, homeScore: null, awayScore: null, homeAdj, awayAdj, homePoints: homePts, awayPoints: awayPts };
+      payload = { ...payload, status, homeScore: null, awayScore: null, homeAdj, awayAdj, homePoints: homePts, awayPoints: awayPts };
+    } else if (status === 'Not Played') {
+      payload = { ...payload, status };
     }
-    // Cancelled: just status
+    // 'DateOnly': payload already just has the date/time fields
 
     setScoreDialog((d) => d ? { ...d, saving: true } : d);
     try {
@@ -242,7 +284,10 @@ function LeagueDetailPageInner() {
   function openScoreDialog(match: LeagueMatch) {
     const homeTeam = teams.find((t) => t.teamId === match.homeTeamId);
     const awayTeam = teams.find((t) => t.teamId === match.awayTeamId);
-    const initialStatus: LeagueMatchStatus = match.status === 'Scheduled' ? 'Played' : match.status;
+    // Default to just updating date/time for a not-yet-played match, so committee
+    // isn't forced to submit a result just to fix the date — they explicitly pick a
+    // result type from the dropdown when they're ready to record one.
+    const initialStatus: LeagueMatchStatus | 'DateOnly' = match.status === 'Scheduled' ? 'DateOnly' : match.status;
     const walkoverWinner: 'home' | 'away' | '' =
       match.status === 'Walkover' && match.homeAdj !== null && match.awayAdj !== null
         ? (match.homeAdj > match.awayAdj ? 'home' : 'away')
@@ -253,8 +298,12 @@ function LeagueDetailPageInner() {
     const existingAwayPts = match.awayPoints !== null ? String(match.awayPoints) : '';
     setScoreDialog({
       matchId: match.matchId,
+      homeTeamId: match.homeTeamId,
+      awayTeamId: match.awayTeamId,
       homeTeamName: homeTeam?.teamName ?? 'Home',
       awayTeamName: awayTeam?.teamName ?? 'Away',
+      scheduledDate: match.scheduledDate ?? '',
+      scheduledTime: match.scheduledTime ?? '',
       homeScore: match.homeScore !== null ? String(match.homeScore) : '',
       awayScore: match.awayScore !== null ? String(match.awayScore) : '',
       homeAdj: existingHomeAdj,
@@ -265,6 +314,65 @@ function LeagueDetailPageInner() {
       walkoverWinner,
       saving: false,
     });
+  }
+
+  function openDateDialog(match: LeagueMatch) {
+    const homeTeam = teams.find((t) => t.teamId === match.homeTeamId);
+    const awayTeam = teams.find((t) => t.teamId === match.awayTeamId);
+    setDateDialog({
+      matchId: match.matchId,
+      homeTeamId: match.homeTeamId,
+      awayTeamId: match.awayTeamId,
+      homeTeamName: homeTeam?.teamName ?? 'Home',
+      awayTeamName: awayTeam?.teamName ?? 'Away',
+      scheduledDate: match.scheduledDate ?? '',
+      scheduledTime: match.scheduledTime ?? '',
+      saving: false,
+    });
+  }
+
+  async function saveDate() {
+    if (!dateDialog) return;
+    setDateDialog((d) => d ? { ...d, saving: true } : d);
+    try {
+      const res = await fetch(`/api/leagues/${leagueId}/matches/${dateDialog.matchId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scheduledDate: dateDialog.scheduledDate || null,
+          scheduledTime: dateDialog.scheduledTime || null,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to save');
+      }
+      setDateDialog(null);
+      loadLeague();
+    } catch (err: any) {
+      alert(err.message);
+      setDateDialog((d) => d ? { ...d, saving: false } : d);
+    }
+  }
+
+  async function toggleMatchPlayer(matchId: string, username: string, currentlyNamed: boolean) {
+    setTogglingPlayer(username);
+    try {
+      const res = await fetch(`/api/leagues/${leagueId}/matches/${matchId}/players`, {
+        method: currentlyNamed ? 'DELETE' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to update lineup');
+      }
+      loadLeague();
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setTogglingPlayer(null);
+    }
   }
 
   const POSITION_ORDER: Record<string, number> = { Captain: 0, Skip: 1, Lead: 2, Two: 3 };
@@ -725,7 +833,7 @@ function LeagueDetailPageInner() {
                               <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${MATCH_STATUS_STYLES[match.status]}`}>
                                 {match.status}
                               </span>
-                              {canEnterScore(match) && !isPlayed && match.status !== 'Not Played' && (
+                              {isCommittee && !isPlayed && match.status !== 'Not Played' && (
                                 <button
                                   onClick={(e) => { e.stopPropagation(); openScoreDialog(match); }}
                                   className="text-xs px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100"
@@ -739,6 +847,14 @@ function LeagueDetailPageInner() {
                                   className="text-xs px-2 py-1 bg-gray-50 text-gray-600 rounded hover:bg-gray-100"
                                 >
                                   Edit Score
+                                </button>
+                              )}
+                              {!isCommittee && isMyMatch && !isPlayed && match.status !== 'Not Played' && (
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); openDateDialog(match); }}
+                                  className="text-xs px-2 py-1 bg-gray-50 text-gray-700 rounded hover:bg-gray-100"
+                                >
+                                  Date/Time
                                 </button>
                               )}
                             </div>
@@ -782,11 +898,14 @@ function LeagueDetailPageInner() {
                               <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${MATCH_STATUS_STYLES[match.status]}`}>
                                 {match.status}
                               </span>
-                              {canEnterScore(match) && !isPlayed && match.status !== 'Not Played' && (
+                              {isCommittee && !isPlayed && match.status !== 'Not Played' && (
                                 <button onClick={(e) => { e.stopPropagation(); openScoreDialog(match); }} className="text-xs px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100">Enter Score</button>
                               )}
                               {isCommittee && (isPlayed || match.status === 'Not Played') && (
                                 <button onClick={(e) => { e.stopPropagation(); openScoreDialog(match); }} className="text-xs px-2 py-1 bg-gray-50 text-gray-600 rounded hover:bg-gray-100">Edit</button>
+                              )}
+                              {!isCommittee && isMyMatch && !isPlayed && match.status !== 'Not Played' && (
+                                <button onClick={(e) => { e.stopPropagation(); openDateDialog(match); }} className="text-xs px-2 py-1 bg-gray-50 text-gray-700 rounded hover:bg-gray-100">Date/Time</button>
                               )}
                             </div>
                           </div>
@@ -883,24 +1002,59 @@ function LeagueDetailPageInner() {
         )}
       </div>
 
-      {/* Score entry dialog */}
+      {/* Score entry dialog (committee) — also covers date/time in the same dialog */}
       {scoreDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
-            <div className="p-5 border-b border-gray-200">
-              <h2 className="text-base font-semibold text-gray-900">Enter Result</h2>
-              <p className="text-sm text-gray-500 mt-0.5">
-                {scoreDialog.homeTeamName} vs {scoreDialog.awayTeamName}
-              </p>
+            <div className="p-5 border-b border-gray-200 flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-gray-900">Enter Result</h2>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  {scoreDialog.homeTeamName} vs {scoreDialog.awayTeamName}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const { matchId, homeTeamId, awayTeamId, homeTeamName, awayTeamName } = scoreDialog;
+                  setScoreDialog(null);
+                  setPlayersDialog({ matchId, homeTeamId, awayTeamId, homeTeamName, awayTeamName });
+                }}
+                className="text-xs px-2 py-1 bg-gray-50 text-gray-700 rounded hover:bg-gray-100 whitespace-nowrap"
+              >
+                Players
+              </button>
             </div>
             <div className="p-5 space-y-4">
+              {/* Date/time */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Date</label>
+                  <input
+                    type="date"
+                    value={scoreDialog.scheduledDate}
+                    onChange={(e) => setScoreDialog((d) => d ? { ...d, scheduledDate: e.target.value } : d)}
+                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Time</label>
+                  <input
+                    type="time"
+                    value={scoreDialog.scheduledTime}
+                    onChange={(e) => setScoreDialog((d) => d ? { ...d, scheduledTime: e.target.value } : d)}
+                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                  />
+                </div>
+              </div>
+
               {/* Status */}
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Result type</label>
                 <select
                   value={scoreDialog.status}
                   onChange={(e) => {
-                    const s = e.target.value as LeagueMatchStatus;
+                    const s = e.target.value as LeagueMatchStatus | 'Reset' | 'DateOnly';
                     const isWalkover = s === 'Walkover';
                     setScoreDialog((d) => d ? {
                       ...d, status: s, walkoverWinner: '',
@@ -914,6 +1068,7 @@ function LeagueDetailPageInner() {
                   }}
                   className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
                 >
+                  <option value="DateOnly">— Just update date/time —</option>
                   <option value="Played">Played</option>
                   <option value="Conceded">Conceded</option>
                   <option value="Walkover">Walkover</option>
@@ -991,7 +1146,7 @@ function LeagueDetailPageInner() {
               )}
 
               {/* Score adjustment (all result types except Cancelled) */}
-              {scoreDialog.status !== 'Not Played' && scoreDialog.status !== 'Reset' && (
+              {scoreDialog.status !== 'Not Played' && scoreDialog.status !== 'Reset' && scoreDialog.status !== 'DateOnly' && (
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">Score adjustment</label>
                   <div className="grid grid-cols-2 gap-3">
@@ -1040,7 +1195,7 @@ function LeagueDetailPageInner() {
               )}
 
               {/* Points (all result types except Cancelled) */}
-              {scoreDialog.status !== 'Not Played' && scoreDialog.status !== 'Reset' && (
+              {scoreDialog.status !== 'Not Played' && scoreDialog.status !== 'Reset' && scoreDialog.status !== 'DateOnly' && (
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">Points awarded</label>
                   <div className="grid grid-cols-2 gap-3">
@@ -1068,6 +1223,9 @@ function LeagueDetailPageInner() {
                 </div>
               )}
 
+              {scoreDialog.status === 'DateOnly' && (
+                <p className="text-sm text-gray-500">Only the date/time will be saved — pick a result type above once the game's been played.</p>
+              )}
               {scoreDialog.status === 'Not Played' && (
                 <p className="text-sm text-gray-500">This match will be marked as not played with no result.</p>
               )}
@@ -1093,6 +1251,151 @@ function LeagueDetailPageInner() {
           </div>
         </div>
       )}
+
+      {/* Date/time arrangement dialog (non-committee) */}
+      {dateDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm">
+            <div className="p-5 border-b border-gray-200 flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-gray-900">Arrange Match Date/Time</h2>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  {dateDialog.homeTeamName} vs {dateDialog.awayTeamName}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const { matchId, homeTeamId, awayTeamId, homeTeamName, awayTeamName } = dateDialog;
+                  setDateDialog(null);
+                  setPlayersDialog({ matchId, homeTeamId, awayTeamId, homeTeamName, awayTeamName });
+                }}
+                className="text-xs px-2 py-1 bg-gray-50 text-gray-700 rounded hover:bg-gray-100 whitespace-nowrap"
+              >
+                Players
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Date</label>
+                  <input
+                    type="date"
+                    value={dateDialog.scheduledDate}
+                    onChange={(e) => setDateDialog((d) => d ? { ...d, scheduledDate: e.target.value } : d)}
+                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                    autoFocus
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Time</label>
+                  <input
+                    type="time"
+                    value={dateDialog.scheduledTime}
+                    onChange={(e) => setDateDialog((d) => d ? { ...d, scheduledTime: e.target.value } : d)}
+                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="p-5 border-t border-gray-200 flex gap-3 justify-end">
+              <button
+                onClick={() => setDateDialog(null)}
+                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveDate}
+                disabled={dateDialog.saving}
+                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+              >
+                {dateDialog.saving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Match lineup dialog — who's actually named as playing this game.
+          Non-committee only see (and can only manage) their OWN team's squad. */}
+      {playersDialog && (() => {
+        const named = lineupFor(playersDialog.matchId);
+        const myTeamId = myEntry?.teamId;
+        const canSeeHome = isCommittee || myTeamId === playersDialog.homeTeamId;
+        const canSeeAway = isCommittee || myTeamId === playersDialog.awayTeamId;
+        const homeSquad = sortByPosition(squad.filter((m) => m.teamId === playersDialog.homeTeamId));
+        const awaySquad = sortByPosition(squad.filter((m) => m.teamId === playersDialog.awayTeamId));
+
+        const renderList = (members: LeagueSquadMember[], canManageThisTeam: boolean) => (
+          <div className="space-y-1.5">
+            {members.length === 0 ? (
+              <p className="text-xs text-gray-400 italic">No players assigned.</p>
+            ) : (
+              members.map((m) => {
+                const isNamed = named.has(m.username);
+                return (
+                  <label
+                    key={m.username}
+                    className={`flex items-center gap-2 text-sm ${canManageThisTeam ? 'cursor-pointer' : 'text-gray-400'}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isNamed}
+                      disabled={!canManageThisTeam || togglingPlayer === m.username}
+                      onChange={() => toggleMatchPlayer(playersDialog.matchId, m.username, isNamed)}
+                      className="rounded border-gray-300"
+                    />
+                    <span className={canManageThisTeam ? 'text-gray-900' : ''}>{m.fullName}</span>
+                    {m.position && <span className="text-xs text-gray-500">{m.position}</span>}
+                  </label>
+                );
+              })
+            )}
+          </div>
+        );
+
+        return (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setPlayersDialog(null)}>
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+              <div className="p-5 border-b border-gray-200 flex items-center justify-between">
+                <div>
+                  <h2 className="text-base font-semibold text-gray-900">Players for This Game</h2>
+                  <p className="text-sm text-gray-500 mt-0.5">
+                    {playersDialog.homeTeamName} vs {playersDialog.awayTeamName}
+                  </p>
+                </div>
+                <button onClick={() => setPlayersDialog(null)} className="text-gray-400 hover:text-gray-600 text-lg leading-none">✕</button>
+              </div>
+              <div className="p-5 space-y-4 max-h-[60vh] overflow-y-auto">
+                {canSeeHome && (
+                  <div>
+                    <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">{playersDialog.homeTeamName}</h3>
+                    {renderList(homeSquad, isCommittee || myTeamId === playersDialog.homeTeamId)}
+                  </div>
+                )}
+                {canSeeAway && (
+                  <div>
+                    <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">{playersDialog.awayTeamName}</h3>
+                    {renderList(awaySquad, isCommittee || myTeamId === playersDialog.awayTeamId)}
+                  </div>
+                )}
+                {!isCommittee && (
+                  <p className="text-xs text-gray-400">You can add or remove any player from your own team.</p>
+                )}
+              </div>
+              <div className="p-5 border-t border-gray-200 flex justify-end">
+                <button
+                  onClick={() => setPlayersDialog(null)}
+                  className="px-4 py-2 text-sm bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200"
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Team breakdown popup */}
       {teamDetailId && (() => {

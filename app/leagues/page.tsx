@@ -8,6 +8,7 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
 import type { League, LeagueStatus } from '@/types/leagues';
+import { isCommitteeMember } from '@/lib/role-utils';
 
 const STATUS_STYLES: Record<LeagueStatus, { badge: string; label: string }> = {
   'Not Started':  { badge: 'bg-gray-100 text-gray-600',     label: 'Not Started' },
@@ -28,7 +29,10 @@ export default function LeaguesPage() {
   const router = useRouter();
 
   const role = session?.user?.role ?? '';
-  const isCommittee = role !== 'Member' && role !== '' && role !== 'Kiosk';
+  // Gates the site-wide message Edit button — must match the backend's actual check
+  // (PUT /api/leagues/message uses isCommitteeMember, not the LeagueOrganiser/Captain/
+  // Admin set used by match/team/squad routes elsewhere in Leagues).
+  const isCommittee = isCommitteeMember(role);
 
   const [leagues, setLeagues] = useState<League[]>([]);
   const [enteredLeagueIds, setEnteredLeagueIds] = useState<Set<string>>(new Set());

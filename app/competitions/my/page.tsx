@@ -84,19 +84,22 @@ const STATUS_CONFIG = {
 
 function PlannedDateInput({
   initialDate,
+  initialTime,
   initialMarker,
   isSingles,
   playingMembers,
   onSave,
 }: {
   initialDate: string;
+  initialTime: string;
   initialMarker: string;
   isSingles: boolean;
   playingMembers: { username: string; fullName: string }[];
-  onSave: (date: string, marker: string) => Promise<void>;
+  onSave: (date: string, time: string, marker: string) => Promise<void>;
 }) {
-  // Pre-fill date from the match's existing arranged date
+  // Pre-fill date/time from the match's existing arranged date/time
   const [dateValue, setDateValue] = useState(initialDate);
+  const [timeValue, setTimeValue] = useState(initialTime);
   // Pre-fill marker from the match's existing marker value
   const [markerValue, setMarkerValue] = useState(initialMarker);
   const [saving, setSaving] = useState(false);
@@ -107,6 +110,10 @@ function PlannedDateInput({
   useEffect(() => {
     setDateValue(initialDate);
   }, [initialDate]);
+
+  useEffect(() => {
+    setTimeValue(initialTime);
+  }, [initialTime]);
 
   useEffect(() => {
     setMarkerValue(initialMarker);
@@ -134,8 +141,8 @@ function PlannedDateInput({
     setError(null);
     setSaved(false);
     try {
-      // Pass both date and marker so they are written in the same PATCH call
-      await onSave(dateValue, markerValue);
+      // Pass date, time, and marker so they are written in the same PATCH call
+      await onSave(dateValue, timeValue, markerValue);
       setSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save');
@@ -169,6 +176,15 @@ function PlannedDateInput({
           </button>
         )}
       </div>
+
+      {/* Time input (optional) */}
+      <input
+        type="time"
+        value={timeValue}
+        onChange={(e) => { setTimeValue(e.target.value); setSaved(false); }}
+        className={getInputClasses(false)}
+        aria-label="Planned match time"
+      />
 
       {/* Marker dropdown — only shown for singles competitions */}
       {isSingles && playingMembers.length > 0 && (
@@ -216,10 +232,10 @@ function JourneyRow({
   step: JourneyStep;
   isSingles: boolean;
   playingMembers: { username: string; fullName: string }[];
-  onSavePlannedDate?: (matchId: string, date: string, marker: string) => Promise<void>;
+  onSavePlannedDate?: (matchId: string, date: string, time: string, marker: string) => Promise<void>;
 }) {
   const { matchStatus, round, opponents, myScore, oppScore,
-          playByDate, playedDate, myHandicap, myStartScore, oppStartScore, marker } = step;
+          playByDate, playedDate, playedTime, myHandicap, myStartScore, oppStartScore, marker } = step;
 
   const oppNames = opponents && opponents.length > 0 ? nameList(opponents) : null;
 
@@ -290,7 +306,9 @@ function JourneyRow({
             )}
             {hcpLine && <p>{hcpLine}</p>}
             {playedDate && (
-              <p className="text-xs text-green-700 font-medium">Arranged: {formatDate(playedDate)}</p>
+              <p className="text-xs text-green-700 font-medium">
+                Arranged: {formatDate(playedDate)}{playedTime ? ` at ${playedTime}` : ''}
+              </p>
             )}
             {/* Show the assigned marker name for singles comps */}
             {isSingles && markerFullName && (
@@ -299,10 +317,11 @@ function JourneyRow({
             {onSavePlannedDate && (
               <PlannedDateInput
                 initialDate={playedDate || ''}
+                initialTime={playedTime || ''}
                 initialMarker={marker || ''}
                 isSingles={isSingles}
                 playingMembers={playingMembers}
-                onSave={(date, m) => onSavePlannedDate(step.matchId, date, m)}
+                onSave={(date, time, m) => onSavePlannedDate(step.matchId, date, time, m)}
               />
             )}
           </div>
@@ -371,7 +390,7 @@ function EntryCard({
   userName: string;
   onClick: () => void;
   playingMembers: { username: string; fullName: string }[];
-  onSavePlannedDate?: (matchId: string, date: string, marker: string) => Promise<void>;
+  onSavePlannedDate?: (matchId: string, date: string, time: string, marker: string) => Promise<void>;
 }) {
   const { label, className } = STATUS_CONFIG[entry.entryStatus];
   const isActive     = entry.entryStatus === 'active';
@@ -543,14 +562,14 @@ export default function MyCompetitionsPage() {
 
   useEffect(() => { fetchEntries(); }, [fetchEntries]);
 
-  // Save both the arranged date and the marker for a pending match.
+  // Save the arranged date, time, and marker for a pending match.
   // marker is the username of the selected marker ('' = clear / no marker).
-  async function handleSavePlannedDate(compId: string, matchId: string, date: string, marker: string) {
+  async function handleSavePlannedDate(compId: string, matchId: string, date: string, time: string, marker: string) {
     const res = await fetch(`/api/competitions/${compId}/matches/${matchId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      // Send both fields in one request — marker may be '' to clear, which is fine
-      body: JSON.stringify({ playedDate: date, marker }),
+      // Send all fields in one request — time/marker may be '' to clear, which is fine
+      body: JSON.stringify({ playedDate: date, playedTime: time, marker }),
     });
     if (!res.ok) {
       const d = await res.json();
@@ -623,7 +642,7 @@ export default function MyCompetitionsPage() {
                       userName={session?.user?.name || ''}
                       onClick={() => router.push(`/competitions/${e.compId}`)}
                       playingMembers={playingMembers}
-                      onSavePlannedDate={(matchId, date, marker) => handleSavePlannedDate(e.compId, matchId, date, marker)}
+                      onSavePlannedDate={(matchId, date, time, marker) => handleSavePlannedDate(e.compId, matchId, date, time, marker)}
                     />
                   ))}
                 </div>
@@ -644,7 +663,7 @@ export default function MyCompetitionsPage() {
                       userName={session?.user?.name || ''}
                       onClick={() => router.push(`/competitions/${e.compId}`)}
                       playingMembers={playingMembers}
-                      onSavePlannedDate={(matchId, date, marker) => handleSavePlannedDate(e.compId, matchId, date, marker)}
+                      onSavePlannedDate={(matchId, date, time, marker) => handleSavePlannedDate(e.compId, matchId, date, time, marker)}
                     />
                   ))}
                 </div>
@@ -665,7 +684,7 @@ export default function MyCompetitionsPage() {
                       userName={session?.user?.name || ''}
                       onClick={() => router.push(`/competitions/${e.compId}`)}
                       playingMembers={playingMembers}
-                      onSavePlannedDate={(matchId, date, marker) => handleSavePlannedDate(e.compId, matchId, date, marker)}
+                      onSavePlannedDate={(matchId, date, time, marker) => handleSavePlannedDate(e.compId, matchId, date, time, marker)}
                     />
                   ))}
                 </div>
@@ -686,7 +705,7 @@ export default function MyCompetitionsPage() {
                       userName={session?.user?.name || ''}
                       onClick={() => router.push(`/competitions/${e.compId}`)}
                       playingMembers={playingMembers}
-                      onSavePlannedDate={(matchId, date, marker) => handleSavePlannedDate(e.compId, matchId, date, marker)}
+                      onSavePlannedDate={(matchId, date, time, marker) => handleSavePlannedDate(e.compId, matchId, date, time, marker)}
                     />
                   ))}
                 </div>

@@ -94,6 +94,7 @@ function mapMatchRow(row: any): CompMatch {
     status: row.status,
     playByDate: row.play_by_date,
     playedDate: row.played_date,
+    playedTime: row.played_time,
     marker: row.marker_username || '',
   };
 }
@@ -263,6 +264,7 @@ export async function saveCompetitionSetup(
     return {
       ...m,
       playedDate: ex.playedDate ?? m.playedDate,
+      playedTime: ex.playedTime ?? m.playedTime,
       score1: ex.score1 ?? m.score1,
       score2: ex.score2 ?? m.score2,
       winnerSide: ex.winnerSide ?? m.winnerSide,
@@ -292,6 +294,7 @@ export async function saveCompetitionSetup(
         status: existing?.status ?? 'Pending',
         playByDate: existing?.playByDate || defaultPlayByDate || null,
         playedDate: existing?.playedDate || null,
+        playedTime: existing?.playedTime || null,
         marker: existing?.marker || '',
       });
     }
@@ -361,6 +364,7 @@ export async function saveCompetitionSetup(
     status: m.status,
     play_by_date: m.playByDate || null,
     played_date: m.playedDate || null,
+    played_time: m.playedTime || null,
     marker_username: null, // Marker column — always blank on fresh setup rows
   }));
 
@@ -449,6 +453,7 @@ export async function resetMatch(compId: string, match: CompMatch): Promise<void
     winnerSide: null,
     status: 'Pending',
     playedDate: null,
+    playedTime: null,
   });
 
   const allMatches = await getCompetitionMatches(compId);
@@ -478,6 +483,7 @@ export async function updateMatch(
     winnerSide?: 1 | 2 | null;
     status?: CompMatch['status'];
     playedDate?: string | null;
+    playedTime?: string | null;
     side1Usernames?: string[];
     side2Usernames?: string[] | null;
     playByDate?: string | null;
@@ -493,6 +499,7 @@ export async function updateMatch(
   if (updates.winnerSide !== undefined) columnUpdates.winner_side = updates.winnerSide;
   if (updates.status !== undefined) columnUpdates.status = updates.status;
   if (updates.playedDate !== undefined) columnUpdates.played_date = updates.playedDate || null;
+  if (updates.playedTime !== undefined) columnUpdates.played_time = updates.playedTime || null;
   if (updates.playByDate !== undefined) columnUpdates.play_by_date = updates.playByDate || null;
   if (updates.side1Usernames !== undefined) columnUpdates.side1_usernames = updates.side1Usernames;
   if (updates.side2Usernames !== undefined) columnUpdates.side2_usernames = updates.side2Usernames;

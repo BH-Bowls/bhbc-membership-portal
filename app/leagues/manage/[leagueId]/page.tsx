@@ -809,7 +809,7 @@ export default function LeagueManageDetailPage() {
           const memberPickerSquad: LeagueSquadMember[] = allMembers
             .filter((m) => !squadUsernames.has(m.userName))
             .map((m, i) => ({
-              rowNumber: i, leagueId: leagueId as string, teamId: '', username: m.userName,
+              rowNumber: String(i), leagueId: leagueId as string, teamId: '', username: m.userName,
               fullName: m.fullName, position: '' as any, enteredDate: '',
             }));
           // Names assigned to OTHER teams (not the currently selected team)

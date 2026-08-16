@@ -7,7 +7,7 @@ import { authOptions } from '@/lib/auth';
 import {
   getLeagueAttachmentsByLeagueId,
   createLeagueAttachment,
-} from '@/lib/leagues-attachments-sheets';
+} from '@/lib/leagues-attachments-supabase';
 import { hasRole } from '@/lib/role-utils';
 import { setPublicReadPermission, driveViewUrl } from '@/lib/drive';
 

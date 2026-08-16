@@ -12,7 +12,7 @@ import {
   getLeagueMatches,
   clearLeagueMatches,
   createLeagueMatches,
-} from '@/lib/leagues-sheets';
+} from '@/lib/leagues-supabase';
 import { generateRoundRobin } from '@/types/leagues';
 
 export async function POST(

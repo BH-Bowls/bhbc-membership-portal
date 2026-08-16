@@ -30,6 +30,7 @@ export interface JourneyStep {
   myScore: number | null;
   oppScore: number | null;
   playedDate: string | null;
+  playedTime: string | null;
   playByDate: string | null;
   // Handicap context
   myHandicap: number | null;
@@ -69,6 +70,7 @@ export interface MyCompEntry {
     oppScore: number | null;
     playByDate: string | null;
     playedDate: string | null;
+    playedTime: string | null;
     won: boolean | null;
   } | null;
 }
@@ -245,6 +247,7 @@ export async function GET() {
           myScore:    (mySide === 1 ? m.score1 : m.score2) ?? null,
           oppScore:   (mySide === 1 ? m.score2 : m.score1) ?? null,
           playedDate: m.playedDate ?? null,
+          playedTime: m.playedTime ?? null,
           playByDate: m.playByDate ?? playByForRound(comp, m.round) ?? null,
           myHandicap,
           myStartScore:  myStart,
@@ -355,6 +358,7 @@ export async function GET() {
           oppScore:   (mySide === 1 ? relevantMatch.score2 : relevantMatch.score1) ?? null,
           playByDate: relevantMatch.playByDate ?? playByForRound(comp, relevantMatch.round) ?? null,
           playedDate: relevantMatch.playedDate ?? null,
+          playedTime: relevantMatch.playedTime ?? null,
           won:
             relevantMatch.status === 'Pending' || relevantMatch.status === 'Bye'
               ? null

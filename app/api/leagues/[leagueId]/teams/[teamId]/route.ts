@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
-import { deleteTeam, renameTeam } from '@/lib/leagues-sheets';
+import { deleteTeam, renameTeam } from '@/lib/leagues-supabase';
 
 export async function PATCH(
   req: NextRequest,

@@ -1,6 +1,13 @@
 // app/api/leagues/[leagueId]/matches/[matchId]/route.ts
-// PATCH — update a match (score/status: squad members of either team + LeagueOrganiser/Admin)
-//         date/time fields: LeagueOrganiser/Admin only
+// PATCH — update a match.
+//   Score/status: LeagueOrganiser/Captain/Admin only — full stop, no player
+//     self-service (reverted after live testing showed regular squad members could
+//     edit scores, which isn't wanted).
+//   scheduledDate/scheduledTime (when the game is actually happening — same "arrange
+//     your own match" model as Competitions' playedDate): any squad member of either
+//     team.
+//   playByDate (the committee's target deadline, pairs leagues only) and
+//     matchday/homeTeamId/awayTeamId (structural): LeagueOrganiser/Admin only.
 // DELETE (LeagueOrganiser/Admin) — delete a single match
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -12,7 +19,8 @@ import {
   getTeamSquad,
   updateLeagueMatch,
   deleteLeagueMatch,
-} from '@/lib/leagues-sheets';
+} from '@/lib/leagues-supabase';
+import { clearDiaryCache } from '@/lib/home-cache';
 
 export async function PATCH(
   req: NextRequest,
@@ -35,14 +43,20 @@ export async function PATCH(
     const body = await req.json();
 
     const isScoreUpdate = body.homeScore !== undefined || body.awayScore !== undefined || body.status !== undefined;
-    const isSchedulingUpdate = body.scheduledDate !== undefined || body.scheduledTime !== undefined ||
-      body.playByDate !== undefined || body.matchday !== undefined;
+    const isPlayerEditableSchedulingUpdate = body.scheduledDate !== undefined || body.scheduledTime !== undefined;
+    const isCommitteeOnlyUpdate = body.playByDate !== undefined || body.matchday !== undefined ||
+      body.homeTeamId !== undefined || body.awayTeamId !== undefined;
 
-    if (isSchedulingUpdate && !isCommittee) {
+    // Scores/status are committee-only, no exceptions
+    if (isScoreUpdate && !isCommittee) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    if (isScoreUpdate && !isCommittee) {
+    if (isCommitteeOnlyUpdate && !isCommittee) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    if (isPlayerEditableSchedulingUpdate && !isCommittee) {
       // Once a result is recorded, only committee can change it
       if (match.status === 'Played' || match.status === 'Walkover') {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
@@ -56,6 +70,7 @@ export async function PATCH(
     }
 
     await updateLeagueMatch(matchId, body);
+    clearDiaryCache(username);
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error(`PATCH /api/leagues/${leagueId}/matches/${matchId} error:`, err);
