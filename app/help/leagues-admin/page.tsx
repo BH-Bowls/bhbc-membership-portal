@@ -129,15 +129,34 @@ export default function HelpLeaguesAdminPage() {
 
           <HelpSection title="Scheduling fixtures (dates &amp; times)">
             <Body>
-              Fixtures are not automatically given dates — you set them once you know the
-              schedule. Tap the <strong>Edit</strong> button next to any fixture to set the date
-              and time. For triples leagues a specific date and time is set; for pairs leagues a
-              play-by date is set instead.
+              Fixtures are not automatically given dates. Tap the <strong>Edit</strong> button
+              next to any fixture on the manage page to set the date and time, or set a{' '}
+              <strong>play-by</strong> deadline (pairs leagues) instead of a fixed date/time.
             </Body>
+            <Note>
+              Squad members can also set their own match&apos;s date/time from the public Leagues
+              page, without going through the manage page — see the <strong>Setting your match
+              date/time and naming players</strong> section of the player-facing Leagues help.
+              This self-service path doesn&apos;t cover scores, which stay committee-only.
+            </Note>
             <Body>
               On the public Leagues page, fixtures are grouped by their scheduled date. Matches
               without a date appear under <strong>Unscheduled</strong>.
             </Body>
+          </HelpSection>
+
+          <HelpSection title="Naming who's playing a match">
+            <Body>
+              Separate from the season-long Squad assignment, each match has its own lineup —
+              who is actually named as playing that specific fixture. Open the{' '}
+              <strong>Players</strong> button inside the score/date dialog on either the manage
+              page or the public Leagues page to add or remove names from either team&apos;s squad.
+            </Body>
+            <Note>
+              A match only shows up in a player&apos;s home page <strong>Coming Up</strong> diary
+              once it has a date set AND that player has been named in its lineup — squad
+              membership alone isn&apos;t enough.
+            </Note>
           </HelpSection>
 
           <HelpSection title="Recording results">

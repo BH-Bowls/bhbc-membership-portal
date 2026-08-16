@@ -94,11 +94,11 @@ function getStatusReason(status: string): string {
     case 'S':
       return 'Teams have been selected';
     case 'P':
-      return 'Game has been postponed';
+      return 'Game has already been played';
     case 'C':
       return 'Game has been cancelled';
     case 'A':
-      return 'Game is archived';
+      return 'Game has been abandoned';
     default:
       return 'Game is not available for entry';
   }

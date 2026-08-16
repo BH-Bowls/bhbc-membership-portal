@@ -1092,13 +1092,13 @@ export default function ClubDetailPage({ params }: PageProps) {
                 let resultEl: React.ReactNode;
                 if (f.status === 'C') {
                   resultEl = <span className="text-xs text-gray-400">Cancelled</span>;
-                } else if (f.status === 'P') {
-                  resultEl = <span className="text-xs text-gray-400">Postponed</span>;
-                } else if (f.reason?.toLowerCase().includes('abandon')) {
+                } else if (f.status === 'A' || f.reason?.toLowerCase().includes('abandon')) {
                   resultEl = <span className="text-xs text-gray-400">Abandoned</span>;
                 } else if (hasScore) {
+                  const resultColor = won ? 'text-green-600' : lost ? 'text-red-600' : 'text-gray-600';
                   resultEl = (
-                    <span className={`text-sm font-semibold tabular-nums ${won ? 'text-green-600' : lost ? 'text-red-600' : 'text-gray-600'}`}>
+                    <span className={`text-sm font-semibold tabular-nums ${resultColor}`}>
+                      {won ? 'W' : lost ? 'L' : 'D'}{' '}
                       {f.bhbcScore} – {f.opponentScore}
                     </span>
                   );
