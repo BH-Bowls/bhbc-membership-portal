@@ -1,5 +1,5 @@
 // src/components/competitions/ExportSheetDialog.tsx
-// Dialog for configuring and triggering a Google Sheet bracket export.
+// Dialog for configuring and triggering a bracket export to a downloadable .xlsx file.
 
 'use client';
 
@@ -21,7 +21,7 @@ export function ExportSheetDialog({ competition, onClose }: ExportSheetDialogPro
     includeHandicap: competition.compId === 'handicap',
   }));
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<{ sheetUrl: string; sheetTitle: string } | null>(null);
+  const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   function update<K extends keyof SheetExportConfig>(key: K, value: SheetExportConfig[K]) {
@@ -32,14 +32,52 @@ export function ExportSheetDialog({ competition, onClose }: ExportSheetDialogPro
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/competitions/${competition.compId}/export-sheet`, {
+      const res = await fetch(`/api/competitions/${competition.compId}/export-excel`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ config }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || data.detail || 'Export failed');
-      setResult({ sheetUrl: data.sheetUrl, sheetTitle: data.sheetTitle });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || data.detail || 'Export failed');
+      }
+      const blob = await res.blob();
+      const contentDisposition = res.headers.get('Content-Disposition') || '';
+      const match = contentDisposition.match(/filename="(.+)"/);
+      const filename = match ? match[1] : `${competition.displayName}.xlsx`;
+
+      // File System Access API (Chrome/Edge) gives a real Save As dialog — pick
+      // location/name, native overwrite prompt if it already exists. Falls back to a
+      // silent download-folder save (Firefox/Safari, which don't support it).
+      const showSaveFilePicker = (window as any).showSaveFilePicker;
+      if (showSaveFilePicker) {
+        try {
+          const handle = await showSaveFilePicker({
+            suggestedName: filename,
+            types: [{
+              description: 'Excel Workbook',
+              accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] },
+            }],
+          });
+          const writable = await handle.createWritable();
+          await writable.write(blob);
+          await writable.close();
+          setDone(true);
+          return;
+        } catch (pickerErr: any) {
+          // User cancelled the dialog — not a real error, just stop quietly.
+          if (pickerErr && pickerErr.name === 'AbortError') return;
+          throw pickerErr;
+        }
+      }
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
+      setDone(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -53,25 +91,16 @@ export function ExportSheetDialog({ competition, onClose }: ExportSheetDialogPro
 
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-200">
-          <h2 className="text-base font-semibold text-gray-900">Export Bracket to Google Sheet</h2>
+          <h2 className="text-base font-semibold text-gray-900">Export Bracket to Excel</h2>
           <p className="text-xs text-gray-500 mt-0.5">{competition.displayName}</p>
         </div>
 
-        {result ? (
+        {done ? (
           /* ── Success state ── */
           <div className="px-6 py-6 space-y-4">
             <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-sm text-green-800">
-              <p className="font-semibold mb-1">Sheet created successfully</p>
-              <p className="text-green-700 break-all">Tab name: <span className="font-mono">{result.sheetTitle}</span></p>
+              <p className="font-semibold">Export complete</p>
             </div>
-            <a
-              href={result.sheetUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block w-full text-center px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
-            >
-              Open Spreadsheet →
-            </a>
             <button
               onClick={onClose}
               className="block w-full text-center px-4 py-2 border border-gray-200 text-gray-600 rounded-lg text-sm hover:bg-gray-50"
@@ -250,7 +279,7 @@ export function ExportSheetDialog({ competition, onClose }: ExportSheetDialogPro
                 disabled={loading}
                 className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
               >
-                {loading ? 'Exporting…' : 'Export to Sheet'}
+                {loading ? 'Exporting…' : 'Export to Excel'}
               </button>
               <button
                 onClick={onClose}

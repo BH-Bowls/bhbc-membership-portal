@@ -1,6 +1,6 @@
-// app/api/competitions/[compId]/export-sheet/route.ts
-// POST /api/competitions/[compId]/export-sheet
-// Exports the bracket to a Google Sheet tab (Admin only).
+// app/api/competitions/[compId]/export-excel/route.ts
+// POST /api/competitions/[compId]/export-excel
+// Exports the bracket as a downloadable .xlsx file (Admin only).
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
@@ -8,9 +8,9 @@ import { authOptions } from '@/lib/auth';
 import { getCompetitionById, getCompetitionMatches } from '@/lib/competitions-supabase';
 import { hasRole } from '@/lib/role-utils';
 import { getAllUsers } from '@/lib/members-supabase';
-import { exportBracketToSheet } from '@/lib/sheet-export';
+import { buildBracketWorkbook } from '@/lib/bracket-excel-export';
 import type { CompMemberInfo } from '@/types/competitions';
-import type { SheetExportConfig } from '@/lib/sheet-export';
+import type { SheetExportConfig } from '@/lib/bracket-excel-export';
 
 export async function POST(
   request: NextRequest,
@@ -56,11 +56,20 @@ export async function POST(
       });
     }
 
-    const result = await exportBracketToSheet(compId, comp, matches, memberInfo, config);
+    const buffer = await buildBracketWorkbook(comp, matches, memberInfo, config);
+    const filename = `${comp.displayName.replace(/[^a-z0-9-_ ]/gi, '').trim() || compId}.xlsx`;
 
-    return NextResponse.json({ success: true, ...result });
+    // Uint8Array is a valid runtime BodyInit; cast needed due to a lib.dom.d.ts /
+    // Node type-parameter mismatch (ArrayBufferLike vs ArrayBuffer), not a real issue.
+    return new NextResponse(buffer as BodyInit, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'Content-Disposition': `attachment; filename="${filename}"`,
+      },
+    });
   } catch (error) {
-    console.error('[POST /api/competitions/[compId]/export-sheet] Error:', error);
+    console.error('[POST /api/competitions/[compId]/export-excel] Error:', error);
     return NextResponse.json({ error: 'Export failed', detail: String(error) }, { status: 500 });
   }
 }
