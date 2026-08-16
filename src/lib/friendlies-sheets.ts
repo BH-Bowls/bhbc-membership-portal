@@ -17,7 +17,7 @@ import {
   PlayerEntryStatus,
 } from './types/friendlies';
 import { parseNormalizedDate, normalizeToUKDate } from './date-utils';
-import { withRetry, registerSheetCacheInvalidator } from './sheets';
+import { withRetry } from './sheets';
 import { getPetrolBands, getClubByName, getContactsForClub } from './clubs-supabase';
 import { getAllUsers } from './members-supabase';
 import { getFixtureByTabName, updateFixture } from './fixtures-supabase';
@@ -39,25 +39,6 @@ export function getFriendliesSpreadsheetId(): string {
   // Verify that the environment variable is configured
   if (!id) {
     throw new Error('FRIENDLIES_SPREADSHEET_ID environment variable is not set');
-  }
-
-  return id;
-}
-
-/**
- * Get the Members spreadsheet ID from environment variables
- * This spreadsheet contains the Members sheet with user profiles, contact info, and preferences
- * Used to look up player details like full name, email, phone, driving status, and bar duty
- * Throws an error if the environment variable is not configured
- * @returns Spreadsheet ID string (e.g., "1a2b3c4d5e6f...")
- */
-export function getMembersSpreadsheetId(): string {
-  // Read the spreadsheet ID from environment variables
-  const id = process.env.MEMBERS_SPREADSHEET_ID;
-
-  // Verify that the environment variable is configured
-  if (!id) {
-    throw new Error('MEMBERS_SPREADSHEET_ID environment variable is not set');
   }
 
   return id;
@@ -115,68 +96,6 @@ function getPrivateKey(): string {
  */
 let _sheetsClient: ReturnType<typeof google.sheets> | null = null;
 
-// ── Members sheet read cache ─────────────────────────────────────────────────
-// friendlies looks up member details (names, phone, driving, bar duty) from the
-// Members sheet in ~9 places, each otherwise re-reading the whole sheet on every
-// call via this module's own client — bypassing the cache in sheets.ts and
-// burning the shared read quota. Members changes rarely, so cache the raw rows
-// (24h) and clear them whenever the Members sheet is written, via the shared
-// invalidator registry in sheets.ts (fired by every write through that client).
-let _membersRowsCache: { rows: any[][]; at: number } | null = null;
-const MEMBERS_ROWS_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
-
-// Diagnostics (surfaced at /admin/cache and logged). Per serverless instance.
-interface FriendliesMembersInvalidation { invalidatedAt: number; hitsServed: number; windowMs: number; }
-const _membersCacheStats = {
-  windowHits: 0,
-  windowLoadedAt: null as number | null,
-  totalHits: 0,
-  totalLoads: 0,
-  totalInvalidations: 0,
-  startedAt: Date.now(),
-  recent: [] as FriendliesMembersInvalidation[],
-};
-const MEMBERS_CACHE_STATS_MAX = 50;
-
-/** Snapshot of the friendlies Members cache for the admin diagnostics view. */
-export function getFriendliesMembersCacheStats() {
-  const now = Date.now();
-  const loadedAt = _membersCacheStats.windowLoadedAt;
-  const rows = _membersRowsCache ? _membersRowsCache.rows.length : 0;
-  return {
-    cached: _membersRowsCache !== null,
-    count: rows > 0 ? rows - 1 : 0, // rows include the header
-    loadedAt,
-    ageMs: loadedAt !== null ? now - loadedAt : null,
-    ttlMs: MEMBERS_ROWS_TTL_MS,
-    currentWindowHits: _membersCacheStats.windowHits,
-    totalHits: _membersCacheStats.totalHits,
-    totalLoads: _membersCacheStats.totalLoads,
-    totalInvalidations: _membersCacheStats.totalInvalidations,
-    startedAt: _membersCacheStats.startedAt,
-    recentInvalidations: _membersCacheStats.recent.slice(),
-  };
-}
-
-registerSheetCacheInvalidator('Members', () => {
-  if (_membersRowsCache !== null && _membersCacheStats.windowLoadedAt !== null) {
-    const now = Date.now();
-    _membersCacheStats.recent.unshift({
-      invalidatedAt: now,
-      hitsServed: _membersCacheStats.windowHits,
-      windowMs: now - _membersCacheStats.windowLoadedAt,
-    });
-    if (_membersCacheStats.recent.length > MEMBERS_CACHE_STATS_MAX) {
-      _membersCacheStats.recent.length = MEMBERS_CACHE_STATS_MAX;
-    }
-    _membersCacheStats.totalInvalidations += 1;
-    console.log(`[friendlies members-cache] invalidated after serving ${_membersCacheStats.windowHits} reads over ${Math.round((now - _membersCacheStats.windowLoadedAt) / 1000)}s`);
-  }
-  _membersRowsCache = null;
-  _membersCacheStats.windowHits = 0;
-  _membersCacheStats.windowLoadedAt = null;
-});
-
 export function getSheetsClient() {
   if (_sheetsClient) return _sheetsClient;
   // Create Google Auth instance with service account credentials
@@ -209,32 +128,6 @@ export function getSheetsClient() {
       values[method] = (...args: any[]) => withRetry(() => original(...args));
     }
   }
-
-  // Serve the full Members-sheet read from a shared cache (see _membersRowsCache).
-  // Only the exact "Members!A:ZZ" read on the Members spreadsheet is cached; every
-  // other read passes straight through. Returns the same { data: { values } } shape
-  // callers already expect, so no call site needs to change.
-  const retriedGet = values.get.bind(values);
-  values.get = async (...args: any[]) => {
-    const arg = args && args.length > 0 ? args[0] : null;
-    if (arg && arg.range === 'Members!A:ZZ' && arg.spreadsheetId === getMembersSpreadsheetId()) {
-      if (_membersRowsCache && (Date.now() - _membersRowsCache.at) < MEMBERS_ROWS_TTL_MS) {
-        _membersCacheStats.windowHits += 1;
-        _membersCacheStats.totalHits += 1;
-        return { data: { values: _membersRowsCache.rows } };
-      }
-      const result = await retriedGet(...args);
-      const rows = result && result.data && result.data.values ? result.data.values : [];
-      const loadedAt = Date.now();
-      _membersRowsCache = { rows, at: loadedAt };
-      _membersCacheStats.windowLoadedAt = loadedAt;
-      _membersCacheStats.windowHits = 0;
-      _membersCacheStats.totalLoads += 1;
-      console.log(`[friendlies members-cache] loaded ${rows.length} rows from the sheet`);
-      return result;
-    }
-    return retriedGet(...args);
-  };
 
   _sheetsClient = sheets;
   return sheets;

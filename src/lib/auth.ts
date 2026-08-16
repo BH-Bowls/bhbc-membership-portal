@@ -64,7 +64,7 @@ export const authOptions: NextAuthOptions = {
                          req?.body?.headers?.['user-agent'] ||
                          '';
 
-        // Authenticate against Google Sheets database
+        // Authenticate against Postgres (auth-supabase.ts)
         const result = await authenticateUser(
           credentials.identifier,
           credentials.password,

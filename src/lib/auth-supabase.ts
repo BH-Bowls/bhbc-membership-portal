@@ -7,11 +7,8 @@
 // duplicated — they don't depend on the data source at all, only on an already-fetched
 // User object or nothing.
 //
-// NOT YET WIRED IN: auth.ts still imports authenticateUser from ./auth-sheets. This file
-// exists and is verified standalone but deliberately not connected to the live login path
-// yet — that's a separate, explicit step given the stakes (see
-// specs/Phase_0_1_Migration_Plan.md's Cutover Procedure: real login testing before ever
-// flipping this switch).
+// WIRED IN since 2026-08-02: auth.ts's authorize() imports authenticateUser from here,
+// verified with real interactive logins first per the plan's Cutover Procedure.
 
 import { parseRoles } from './role-utils';
 import { isMaintenanceModeOn } from './maintenance';
@@ -33,7 +30,6 @@ export {
   isCaptain,
   isTreasurer,
   hasRole,
-  checkRateLimit,
 } from './auth-sheets';
 import { hashPassword, verifyPassword } from './auth-sheets';
 

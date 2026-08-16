@@ -7,10 +7,11 @@
 import {
   getGoogleSheetsClient,
   getColumnMap,
-  getSpreadsheetId,       // MEMBERS_SPREADSHEET_ID
-  getAllUsers,
 } from './sheets';
 import { getFriendliesSpreadsheetId } from './friendlies-sheets';
+import { getAllUsers } from './members-supabase';
+import { getCleaningRotaList } from './cleaning-rota-supabase';
+import { getSweepingRotaList } from './sweeping-rota-supabase';
 import { parseUKDate } from './date-utils';
 import { getSheetDataCache, setSheetDataCache } from './home-cache';
 import { hasRole } from './role-utils';
@@ -99,18 +100,6 @@ function parseCleaningRotaDate(displayDate: string): string | null {
   return `${year}-${mm}-${dd}`;
 }
 
-// Convert a Google Sheets date serial number (integer days since 30 Dec 1899) to YYYY-MM-DD
-function sheetsSerialToIso(serial: number): string {
-  // Google Sheets epoch is 30 December 1899
-  const epoch = new Date(1899, 11, 30);
-  const ms = epoch.getTime() + serial * 86400 * 1000;
-  const d = new Date(ms);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
 // ─── User Display Name Helpers ────────────────────────────────────────────────
 
 // Build a map from lowercase username → display name from the full users list
@@ -137,143 +126,80 @@ function buildNameMap(allUsers: Awaited<ReturnType<typeof getAllUsers>>): Map<st
   return nameMap;
 }
 
-// ─── Source 1 & 2: MEMBERS spreadsheet — Cleaning + Sweeping Rota ────────────
+// ─── Source 1 & 2: Postgres — Cleaning + Sweeping Rota ───────────────────────
 
 type MembersRotaResult = {
   cleaningItems: DiaryItem[];
   sweepingItems: DiaryItem[];
 };
 
-// Fetch CleaningRota and SweepingRota data, serving from the 24-hour shared cache
-// when available and falling back to a batchGet on a cache miss.
+// Fetch CleaningRota and SweepingRota data from Postgres.
 async function fetchMembersRotaItems(userName: string, todayStr: string): Promise<MembersRotaResult> {
-  const spreadsheetId = getSpreadsheetId();
-
-  // Cache keys for the two rota sheets
-  const cleaningCacheKey = `members-cleaning:${spreadsheetId}`;
-  const sweepingCacheKey = `members-sweeping:${spreadsheetId}`;
-
-  // Try the shared cache first
-  let cleaningRows = getSheetDataCache(cleaningCacheKey);
-  let sweepingRows = getSheetDataCache(sweepingCacheKey);
-
-  if (!cleaningRows || !sweepingRows) {
-    // Cache miss — fetch both sheets in a single batchGet then cache the results
-    const sheets = getGoogleSheetsClient();
-    const batchResponse = await sheets.spreadsheets.values.batchGet({
-      spreadsheetId,
-      ranges: [
-        'CleaningRota!A2:E',  // date (col A), lead (B), second (C), third (D), fourth (E)
-        'SweepingRota!A2:C',  // date serial (col A), user_name (B), is_blocked (C)
-      ],
-    });
-
-    const valueRanges = batchResponse.data.valueRanges;
-    cleaningRows = (valueRanges && valueRanges[0] && valueRanges[0].values) ? valueRanges[0].values as string[][] : [];
-    sweepingRows = (valueRanges && valueRanges[1] && valueRanges[1].values) ? valueRanges[1].values as string[][] : [];
-
-    setSheetDataCache(cleaningCacheKey, cleaningRows);
-    setSheetDataCache(sweepingCacheKey, sweepingRows);
-  }
+  const [cleaningEntries, sweepingEntries] = await Promise.all([
+    getCleaningRotaList(),
+    getSweepingRotaList(),
+  ]);
 
   const cleaningItems: DiaryItem[] = [];
   const sweepingItems: DiaryItem[] = [];
 
-  // ── CleaningRota: columns are positional (A=date, B=lead, C=second, D=third, E=fourth) ──
-  if (cleaningRows) {
-    for (let i = 0; i < cleaningRows.length; i++) {
-      const row = cleaningRows[i];
-      const dateStr = row[0] ? String(row[0]).trim() : '';
-      if (!dateStr) {
-        continue;
-      }
-
-      // Parse the display date (e.g. "Sat, 05 September") to a sortable YYYY-MM-DD
-      const isoDate = parseCleaningRotaDate(dateStr);
-      if (!isoDate) {
-        continue;
-      }
-
-      // Skip dates that are in the past
-      if (isoDate < todayStr) {
-        continue;
-      }
-
-      // Check if this member appears in any of the four cleaner columns (B, C, D, E)
-      const lead = row[1] ? String(row[1]).trim() : '';
-      const second = row[2] ? String(row[2]).trim() : '';
-      const third = row[3] ? String(row[3]).trim() : '';
-      const fourth = row[4] ? String(row[4]).trim() : '';
-
-      // Only include the row if the member is one of the assigned cleaners
-      const isCleaner = (lead === userName || second === userName || third === userName || fourth === userName);
-      if (!isCleaner) {
-        continue;
-      }
-
-      cleaningItems.push({
-        type: 'cleaning',
-        date: isoDate,
-        displayDate: formatDiaryDate(isoDate),
-        label: 'Cleaning Duty',
-        subLabel: dateStr,
-        linkUrl: '/cleaning-rota',
-      });
+  for (const entry of cleaningEntries) {
+    // Parse the display date (e.g. "Sat, 05 September") to a sortable YYYY-MM-DD
+    const isoDate = parseCleaningRotaDate(entry.date);
+    if (!isoDate) {
+      continue;
     }
+
+    // Skip dates that are in the past
+    if (isoDate < todayStr) {
+      continue;
+    }
+
+    // Only include the row if the member is one of the assigned cleaners
+    const isCleaner = (entry.lead === userName || entry.second === userName || entry.third === userName || entry.fourth === userName);
+    if (!isCleaner) {
+      continue;
+    }
+
+    cleaningItems.push({
+      type: 'cleaning',
+      date: isoDate,
+      displayDate: formatDiaryDate(isoDate),
+      label: 'Cleaning Duty',
+      subLabel: entry.date,
+      linkUrl: '/cleaning-rota',
+    });
   }
 
-  // ── SweepingRota: columns are positional (A=date serial, B=user_name, C=is_blocked) ──
-  if (sweepingRows) {
-    for (let i = 0; i < sweepingRows.length; i++) {
-      const row = sweepingRows[i];
-      const rawDate = row[0] ? String(row[0]).trim() : '';
-      const rowUserName = row[1] ? String(row[1]).trim() : '';
-      const isBlocked = row[2] ? String(row[2]).trim() : '';
-
-      // Skip blocked dates — they are not assignable
-      if (isBlocked === 'TRUE' || isBlocked === 'true') {
-        continue;
-      }
-
-      // Skip rows not belonging to this member
-      if (rowUserName !== userName) {
-        continue;
-      }
-
-      // Skip empty dates
-      if (!rawDate) {
-        continue;
-      }
-
-      // The date may be a Google Sheets serial number (integer) or a formatted string
-      let isoDate: string | null = null;
-      const serialNum = Number(rawDate);
-      if (!isNaN(serialNum) && serialNum > 1000) {
-        // Google Sheets date serial — convert to ISO
-        isoDate = sheetsSerialToIso(serialNum);
-      } else {
-        // Parse as any supported date format (DD/MM/YYYY, YYYY-MM-DD, etc.)
-        isoDate = anyDateToIso(rawDate);
-      }
-
-      if (!isoDate) {
-        continue;
-      }
-
-      // Skip dates in the past
-      if (isoDate < todayStr) {
-        continue;
-      }
-
-      sweepingItems.push({
-        type: 'sweeping',
-        date: isoDate,
-        displayDate: formatDiaryDate(isoDate),
-        label: 'Sweeping Duty',
-        subLabel: '',
-        linkUrl: '/sweeping-rota',
-      });
+  for (const entry of sweepingEntries) {
+    // Skip blocked dates — they are not assignable
+    if (entry.isBlocked) {
+      continue;
     }
+
+    // Skip rows not belonging to this member
+    if (entry.userName !== userName) {
+      continue;
+    }
+
+    const isoDate = anyDateToIso(entry.date);
+    if (!isoDate) {
+      continue;
+    }
+
+    // Skip dates in the past
+    if (isoDate < todayStr) {
+      continue;
+    }
+
+    sweepingItems.push({
+      type: 'sweeping',
+      date: isoDate,
+      displayDate: formatDiaryDate(isoDate),
+      label: 'Sweeping Duty',
+      subLabel: '',
+      linkUrl: '/sweeping-rota',
+    });
   }
 
   return { cleaningItems, sweepingItems };
@@ -395,7 +321,12 @@ async function fetchFriendliesItems(userName: string, todayStr: string): Promise
       const tabName = getGameCol(row, 'tab_name');
       const clubName = getGameCol(row, 'club_name');
       const clubSuffix = getGameCol(row, 'club_suffix');
-      const homeAway = getGameCol(row, 'h_a') || getGameCol(row, 'home_away');
+      // Same resolution as friendlies-sheets.ts's own Games parser: a blank H/A cell
+      // means Home (the sheet's implicit default), not "unknown" — matching that
+      // here too, since the diary previously only recognised an explicit 'H' and
+      // left the label off entirely for the (common) blank-means-Home case.
+      const homeAwayRaw = getGameCol(row, 'home_away') || getGameCol(row, 'h_a') || 'H';
+      const homeAway = homeAwayRaw.trim().toUpperCase() === 'A' ? 'A' : 'H';
       const needsPlayers = getGameCol(row, 'needs_players').toUpperCase() === 'Y';
 
       // Build the display club name (append suffix if present)
@@ -404,15 +335,8 @@ async function fetchFriendliesItems(userName: string, todayStr: string): Promise
         displayClub = `${clubName} ${clubSuffix}`;
       }
 
-      // Determine home/away label
-      let haLabel = '';
-      if (homeAway === 'H') {
-        haLabel = 'Home';
-      } else if (homeAway === 'A') {
-        haLabel = 'Away';
-      }
-
-      const gameLabel = haLabel ? `vs ${displayClub} (${haLabel})` : `vs ${displayClub}`;
+      const haLabel = homeAway === 'A' ? 'Away' : 'Home';
+      const gameLabel = `vs ${displayClub} (${haLabel})`;
 
       // ── Tea duty check ──
       const teaLead = getGameCol(row, 'tea_lead');
@@ -574,6 +498,70 @@ async function fetchCompetitionsItems(
   return { competitionItems, markerItems };
 }
 
+// Find Scheduled league matches the member has specifically been named as playing
+// (league_match_players) — being on the team's overall squad is not enough on its
+// own. Uses a resolved date (the real arranged scheduledDate, falling back to the
+// pairs-league playByDate deadline if no real date has been arranged yet) that's
+// today or later.
+async function fetchLeagueItems(
+  userName: string,
+  todayStr: string
+): Promise<DiaryItem[]> {
+  const supabase = getSupabaseClient();
+
+  const [{ data: lineupRows, error: lineupError }, { data: squadRows, error: squadError }] = await Promise.all([
+    supabase.from('league_match_players').select('match_id').eq('username', userName),
+    supabase.from('league_squad').select('team_id').eq('username', userName),
+  ]);
+  if (lineupError) throw new Error(`Failed to fetch league match lineup: ${lineupError.message}`);
+  if (squadError) throw new Error(`Failed to fetch league squad membership: ${squadError.message}`);
+
+  const myMatchIds = (lineupRows ?? []).map((r) => r.match_id as string);
+  if (myMatchIds.length === 0) return [];
+  const myTeamIds = new Set((squadRows ?? []).map((r) => r.team_id).filter(Boolean));
+
+  const [matchesResp, leaguesResp, teamsResp] = await Promise.all([
+    supabase
+      .from('league_matches')
+      .select('match_id, league_id, home_team_id, away_team_id, scheduled_date, scheduled_time, play_by_date, status')
+      .in('match_id', myMatchIds),
+    supabase.from('leagues').select('league_id, name'),
+    supabase.from('league_teams').select('team_id, team_name'),
+  ]);
+  if (matchesResp.error) throw new Error(`Failed to fetch league matches: ${matchesResp.error.message}`);
+  if (leaguesResp.error) throw new Error(`Failed to fetch leagues: ${leaguesResp.error.message}`);
+  if (teamsResp.error) throw new Error(`Failed to fetch league teams: ${teamsResp.error.message}`);
+
+  const leagueNames: Record<string, string> = {};
+  for (const l of leaguesResp.data ?? []) leagueNames[l.league_id] = l.name;
+  const teamNames: Record<string, string> = {};
+  for (const t of teamsResp.data ?? []) teamNames[t.team_id] = t.team_name;
+
+  const items: DiaryItem[] = [];
+  for (const row of matchesResp.data ?? []) {
+    if (row.status !== 'Scheduled') continue;
+
+    const date = (row.scheduled_date as string | null) ?? (row.play_by_date as string | null);
+    if (!date || date < todayStr) continue;
+
+    const opponentTeamId = myTeamIds.has(row.home_team_id) ? row.away_team_id : row.home_team_id;
+    const opponentName = teamNames[opponentTeamId] ?? 'TBD';
+    const leagueName = leagueNames[row.league_id] ?? row.league_id;
+    const time = row.scheduled_time ? ` at ${row.scheduled_time}` : '';
+
+    items.push({
+      type: 'league',
+      date,
+      displayDate: formatDiaryDate(date),
+      label: leagueName,
+      subLabel: `vs ${opponentName}${time}`,
+      linkUrl: `/leagues/${row.league_id}`,
+    });
+  }
+
+  return items;
+}
+
 // ─── Sources 6 & 7: AVAILABILITY spreadsheet — Nudges + Confirmed ─────────────
 
 type AvailabilityResult = {
@@ -706,11 +694,12 @@ export async function getDiaryItems(userName: string): Promise<DiaryItem[]> {
   }
   const nameMap = buildNameMap(allUsers);
 
-  // Run all four data-source fetches in parallel, capturing results and errors separately
-  const [membersResult, friendliesResult, compsResult, availabilityResult] = await Promise.allSettled([
+  // Run all data-source fetches in parallel, capturing results and errors separately
+  const [membersResult, friendliesResult, compsResult, leaguesResult, availabilityResult] = await Promise.allSettled([
     fetchMembersRotaItems(userName, todayStr),
     fetchFriendliesItems(userName, todayStr),
     fetchCompetitionsItems(userName, todayStr, nameMap),
+    fetchLeagueItems(userName, todayStr),
     fetchAvailabilityItems(userName, todayStr),
   ]);
 
@@ -743,6 +732,13 @@ export async function getDiaryItems(userName: string): Promise<DiaryItem[]> {
     }
     for (let i = 0; i < compsResult.value.markerItems.length; i++) {
       items.push(compsResult.value.markerItems[i]);
+    }
+  }
+
+  // Collect items from LEAGUES (upcoming fixtures for teams the member is on)
+  if (leaguesResult.status === 'fulfilled') {
+    for (let i = 0; i < leaguesResult.value.length; i++) {
+      items.push(leaguesResult.value[i]);
     }
   }
 
