@@ -1,8 +1,22 @@
 // lib/game-management/capacity.ts
-// Capacity management for games and events
-// NEW FEATURE: Tracks player limits across all systems
+// Capacity management for games — used by Friendlies. Structurally typed against
+// any game-shaped object (Fixture satisfies this), so no import from a shared
+// BaseGame/CapacityInfo types module is needed (that module was Internal
+// Games/Social Events-specific and was removed as dead code).
 
-import type { BaseGame, CapacityInfo } from './types';
+interface BaseGame {
+  entered?: number;
+  maxPlayers?: number;
+  status: string;
+}
+
+interface CapacityInfo {
+  current: number;
+  max: number;
+  available: number;
+  isFull: boolean;
+  waitlistCount?: number;
+}
 
 /**
  * Calculate capacity information for a game/event

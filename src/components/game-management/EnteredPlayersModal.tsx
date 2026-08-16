@@ -1,6 +1,7 @@
 // src/components/game-management/EnteredPlayersModal.tsx
 // Modal to show who has entered a game and allow adding/removing players
-// Used by Friendlies, Internal Games, and Social Events
+// Used by Friendlies (Internal Games and Social Events were removed as dead code —
+// both superseded by Internal Leagues, never had a working nav entry)
 
 'use client';
 
@@ -34,10 +35,10 @@ interface EnteredPlayersModalProps {
   isOpen: boolean;
   onClose: () => void;
   gameId: string; // tabName for the game
-  gameType: 'friendlies' | 'internal-games' | 'social-events';
+  gameType: 'friendlies';
   gameName: string; // Display name (club name, game name, or event name)
   gameStatus?: string; // Current game status — used to offer Remove vs Withdraw choice on selected games
-  ladiesMen?: string; // For gender validation (Friendlies/Internal Games only)
+  ladiesMen?: string; // For gender validation
   currentUserRole?: string; // For capacity restrictions
   maxPlayers?: number; // For capacity checking
   onPlayersChanged: () => void; // Callback to refresh parent data
