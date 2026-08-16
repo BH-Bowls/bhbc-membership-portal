@@ -30,6 +30,43 @@ export function invalidateCache() {
   _usersCache = null;
 }
 
+/**
+ * Reproduces the old Members sheet's "Gmail Labels" ARRAYFORMULA exactly (see
+ * specs/Phase_0_1_Migration_Plan.md's "Gmail Labels" section for the original formula
+ * and resolved column mapping). Deliberately not a generated column: this feeds the
+ * still-mid-design Google Contacts Sync feature, so keeping it as a plain function
+ * means its shape can change without a schema migration.
+ *
+ * Every segment after Label_0 carries its OWN leading " ::: " baked into its own
+ * conditional in the original formula — it's not a separator inserted *between*
+ * present segments (i.e. NOT array.join), so when Label_0 and, say, Age Demographic
+ * are both blank but Member Type isn't, the result still starts " ::: Member Type",
+ * not "Member Type". Only Label_0 itself is ever emitted with no leading separator.
+ *
+ * The Social segment intentionally shows the member type code (e.g. "Social PL")
+ * rather than a plain "Yes" whenever Social Emails isn't explicitly off — inherited
+ * unchanged from the live formula, confirmed to keep on migration.
+ */
+function computeGmailLabel(profile: any): string {
+  if (!profile) return '';
+
+  const memberType = profile.member_type || '';
+  let label = profile.label_0 || '';
+
+  if (profile.age_demographic) label += ` ::: ${profile.age_demographic}`;
+  if (memberType) label += ` ::: ${memberType}`;
+  label += ` ::: Social ${profile.social_emails === false ? 'No' : memberType}`;
+  if (profile.gmc) label += ` ::: ${profile.gmc}`;
+  if (profile.darts) label += ` ::: ${profile.darts}`;
+  if (profile.bar_duty === 'Y') label += ' ::: Bar Duty';
+  if (profile.county_ladies) label += ` ::: ${profile.county_ladies}`;
+  if (profile.green_maintenance === 'Y') label += ' ::: Green Maint';
+  if (profile.label_9) label += ` ::: ${profile.label_9}`;
+  if (profile.label_10) label += ` ::: ${profile.label_10}`;
+
+  return label;
+}
+
 function mapRow(row: any): User {
   const profile = row.member_profiles ?? null;
   const roles: string[] = (row.user_roles ?? []).map((r: any) => r.role);
@@ -84,6 +121,7 @@ function mapRow(row: any): User {
     maxGamesPerDay: profile?.max_games_per_day ?? 2,
     include: profile?.include ?? null,
     renewalEmailSentStatus: profile?.renewal_email_sent_status ?? null,
+    gmailLabel: computeGmailLabel(profile),
     buddyUserName: profile?.buddy_user_name ?? null,
     userName: row.username,
     passwordHash: row.password_hash,

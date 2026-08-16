@@ -161,9 +161,11 @@ async function main() {
     if (error) throw new Error(`availability_groups insert failed: ${error.message}`);
   }
   console.log(`   -> ${groupsToInsert.length} availability_groups rows inserted`);
+  const validGroupIds = new Set(groupsToInsert.map((g) => g.id));
 
   // ─── Group members ────────────────────────────────────────────────────────
   console.log('4. Inserting availability_group_members rows...');
+  let groupMembersSkipped = 0;
   const groupMembersToInsert = membersSheet.rows
     .filter((row) => cell(row, membersSheet.colMap, 'group_id'))
     .map((row) => {
@@ -182,12 +184,21 @@ async function main() {
         token: nullIfBlank(cell(row, membersSheet.colMap, 'token')),
         created_at: cell(row, membersSheet.colMap, 'created_at') || new Date().toISOString(),
       };
+    })
+    // group_id is NOT NULL — a member row whose group doesn't exist in the Groups sheet
+    // (stale reference, group deleted directly in the sheet at some point) can't be
+    // nulled, only skipped. Without this the whole batch insert fails on one bad row.
+    .filter((m) => {
+      if (validGroupIds.has(m.group_id)) return true;
+      console.warn(`   !! availability_group_members: group_id "${m.group_id}" doesn't match any group — row skipped`);
+      groupMembersSkipped++;
+      return false;
     });
   if (groupMembersToInsert.length > 0) {
     const { error } = await supabase.from('availability_group_members').insert(groupMembersToInsert);
     if (error) throw new Error(`availability_group_members insert failed: ${error.message}`);
   }
-  console.log(`   -> ${groupMembersToInsert.length} availability_group_members rows inserted`);
+  console.log(`   -> ${groupMembersToInsert.length} availability_group_members rows inserted${groupMembersSkipped > 0 ? ` (${groupMembersSkipped} skipped — no matching group)` : ''}`);
 
   // ─── Events (pass 1 — concluded_slot_id/offered_slot_ids left null; slots don't exist yet) ──
   console.log('5. Inserting availability_events rows (concluded_slot_id deferred until slots exist)...');
@@ -197,7 +208,15 @@ async function main() {
     title: cell(row, eventsSheet.colMap, 'title'),
     description: nullIfBlank(cell(row, eventsSheet.colMap, 'description')),
     created_by_username: warnIfUnresolvable(cell(row, eventsSheet.colMap, 'created_by_username'), `availability_events ${cell(row, eventsSheet.colMap, 'event_id')} created_by`),
-    group_id: nullIfBlank(cell(row, eventsSheet.colMap, 'group_id')),
+    // group_id is nullable — a stale/orphaned reference is nulled with a warning rather
+    // than left to fail the FK insert, same treatment as a nullable username FK.
+    group_id: ((): string | null => {
+      const raw = nullIfBlank(cell(row, eventsSheet.colMap, 'group_id'));
+      if (!raw) return null;
+      if (validGroupIds.has(raw)) return raw;
+      console.warn(`   !! availability_events ${cell(row, eventsSheet.colMap, 'event_id')}: group_id "${raw}" doesn't match any group — nulled`);
+      return null;
+    })(),
     type: cell(row, eventsSheet.colMap, 'type') || 'general',
     slot_type: cell(row, eventsSheet.colMap, 'slot_type') || 'datetime',
     status: cell(row, eventsSheet.colMap, 'status') || 'open',
@@ -218,31 +237,48 @@ async function main() {
     if (error) throw new Error(`availability_events insert failed: ${error.message}`);
   }
   console.log(`   -> ${eventsToInsert.length} availability_events rows inserted`);
+  const validEventIds = new Set(eventsToInsert.map((e) => e.id));
 
   // ─── Slots — old AVS-NNNNNN sheet id -> fresh uuid, tracked for the events backfill + responses ──
   console.log('6. Inserting availability_slots rows...');
   const slotIdMap = new Map<string, string>();
+  let slotsSkipped = 0;
   const slotsToInsert = slotsSheet.rows
     .filter((row) => cell(row, slotsSheet.colMap, 'slot_id') && cell(row, slotsSheet.colMap, 'event_id'))
     .map((row) => {
       const oldSlotId = cell(row, slotsSheet.colMap, 'slot_id');
+      const eventId = cell(row, slotsSheet.colMap, 'event_id');
       const newSlotId = randomUUID();
-      slotIdMap.set(oldSlotId, newSlotId);
       const displayOrderStr = cell(row, slotsSheet.colMap, 'display_order');
       return {
-        id: newSlotId,
-        event_id: cell(row, slotsSheet.colMap, 'event_id'),
+        oldSlotId,
+        newSlotId,
+        event_id: eventId,
         slot_datetime: nullIfBlank(cell(row, slotsSheet.colMap, 'slot_datetime')),
         slot_label: nullIfBlank(cell(row, slotsSheet.colMap, 'slot_label')),
         display_order: displayOrderStr ? parseInt(displayOrderStr, 10) : 0,
         created_at: cell(row, slotsSheet.colMap, 'created_at') || new Date().toISOString(),
       };
-    });
+    })
+    // event_id is NOT NULL — a slot whose event doesn't exist (stale reference) can't be
+    // nulled, only skipped. slotIdMap is only populated for slots that actually get
+    // inserted, so a later reference to a skipped slot's old id correctly resolves to
+    // "no matching slot" rather than mapping to an id that was never written.
+    .filter((s) => {
+      if (validEventIds.has(s.event_id)) {
+        slotIdMap.set(s.oldSlotId, s.newSlotId);
+        return true;
+      }
+      console.warn(`   !! availability_slots: event_id "${s.event_id}" doesn't match any event — slot "${s.oldSlotId}" skipped`);
+      slotsSkipped++;
+      return false;
+    })
+    .map(({ oldSlotId, newSlotId, ...rest }) => ({ id: newSlotId, ...rest }));
   if (slotsToInsert.length > 0) {
     const { error } = await supabase.from('availability_slots').insert(slotsToInsert);
     if (error) throw new Error(`availability_slots insert failed: ${error.message}`);
   }
-  console.log(`   -> ${slotsToInsert.length} availability_slots rows inserted`);
+  console.log(`   -> ${slotsToInsert.length} availability_slots rows inserted${slotsSkipped > 0 ? ` (${slotsSkipped} skipped — no matching event)` : ''}`);
 
   // ─── Events (pass 2 — backfill concluded_slot_id/offered_slot_ids now slots exist) ──
   console.log('7. Backfilling availability_events.concluded_slot_id/offered_slot_ids...');
@@ -288,8 +324,12 @@ async function main() {
       const oldSlotId = cell(row, responsesSheet.colMap, 'slot_id');
       const newSlotId = slotIdMap.get(oldSlotId);
       if (!newSlotId) return null;
-      const respondentType = cell(row, responsesSheet.colMap, 'respondent_type') || 'member';
       const eventId = cell(row, responsesSheet.colMap, 'event_id');
+      if (!validEventIds.has(eventId)) {
+        console.warn(`   !! availability_responses: event_id "${eventId}" doesn't match any event — row skipped`);
+        return null;
+      }
+      const respondentType = cell(row, responsesSheet.colMap, 'respondent_type') || 'member';
       return {
         id: randomUUID(),
         event_id: eventId,

@@ -263,6 +263,12 @@ export interface User {
   createdAt: string;
   updatedAt: string;
 
+  // Computed, Postgres-era only (undefined via this module's own getAllUsers — the
+  // Sheets/migration-script path never needed it, Gmail Labels are compute-on-read
+  // in members-supabase.ts). See specs/Phase_0_1_Migration_Plan.md's "Gmail Labels"
+  // section for the formula this reproduces.
+  gmailLabel?: string;
+
   _rowNumber?: number;
 }
 
