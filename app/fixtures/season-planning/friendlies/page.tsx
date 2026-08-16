@@ -1,16 +1,19 @@
 // app/fixtures/season-planning/friendlies/page.tsx
-// Season Planning Stage 2 (Friendlies) — thin first slice: pull last year's
-// Friendly fixtures forward via the same Nth-weekday-of-month projection
-// used for Events, then work each one through Projected -> Confirmed,
-// editing date/time/club/H-A/format freely, deleting anything that isn't
-// happening. No capacity/rink-clash warnings, no club-contact matching, no
-// email-draft generation yet — those land as a follow-up once this planning
-// table itself is proven out. The one Friendlies-specific rule this slice
-// does carry is the Monday amber warning (Mondays are allowed, just flagged).
+// Season Planning Stage 2 (Friendlies) — pull last year's Friendly fixtures
+// forward via the same Nth-weekday-of-month projection used for Events, then
+// work each one through Projected -> Confirmed, editing date/time/club/H-A/
+// format freely, deleting anything that isn't happening. Each row's Contact
+// button jumps to that club's Info page (contacts, outreach, fixture
+// history) — see clubs/[clubName]/page.tsx. Two Friendlies-specific rules
+// this page carries: the Monday amber warning (Mondays are allowed, just
+// flagged), and same-day capacity warnings (rinks — Home fixtures only,
+// since an Away fixture uses the opponent's green, plus Events' Rinks
+// Required and standing Reservation occurrences — and a softer all-fixture
+// player-count guide, both against config/admin/config's General tab).
 //
 // Requires the draft season to already exist — created from the Events tab,
-// since Events are planned first (Friendlies/Leagues clash-checking, not
-// built yet, will check against Events).
+// since Events are planned first — this page fetches that season's Events
+// too, purely for their Rinks Required contribution to the capacity sum.
 
 'use client';
 
@@ -23,7 +26,9 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { SeasonPlanningTabs } from '@/components/SeasonPlanningTabs';
 import { hasRole } from '@/lib/role-utils';
 import { getButtonClasses } from '@/config/theme-helpers';
+import { computeDayCapacity, getReservationOccurrences, type CapacityEvent } from '@/lib/season-planning-capacity';
 import type { Season, PlanningFixture } from '@/lib/season-planning-supabase';
+import type { Reservation } from '@/lib/reservations-supabase';
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTH_NAMES_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -88,6 +93,12 @@ export default function SeasonPlanningFriendliesPage() {
   const [draftSeason, setDraftSeason] = useState<Season | null>(null);
   const [friendlies, setFriendlies] = useState<PlanningFixture[]>([]);
   const [clubNames, setClubNames] = useState<string[]>([]);
+  const [capacityEvents, setCapacityEvents] = useState<CapacityEvent[]>([]);
+  const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [capacityConfig, setCapacityConfig] = useState({
+    greenTotalRinks: 6, capacityWarningThreshold: 5, maxPlayersPerDay: 20,
+    reservationDefaultStart: '15-04', reservationDefaultEnd: '30-09',
+  });
 
   const [projecting, setProjecting] = useState(false);
   const [addingFriendly, setAddingFriendly] = useState(false);
@@ -116,7 +127,7 @@ export default function SeasonPlanningFriendliesPage() {
         if (data.error) throw new Error(data.error);
         setDraftSeason(data.draftSeason);
         if (data.draftSeason) {
-          return loadFriendlies(data.draftSeason.id);
+          return Promise.all([loadFriendlies(data.draftSeason.id), loadCapacityEvents(data.draftSeason.id)]);
         }
       })
       .catch((err) => setError(err.message))
@@ -133,6 +144,21 @@ export default function SeasonPlanningFriendliesPage() {
       .catch((err) => setError(err.message));
   }
 
+  // Only needed for their Rinks Required contribution to the capacity sum —
+  // everything else about Events is irrelevant to Friendlies planning.
+  function loadCapacityEvents(seasonId: string) {
+    return fetch(`/api/fixtures/season-planning/events?seasonId=${seasonId}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.error) throw new Error(data.error);
+        const events: CapacityEvent[] = (data.events || [])
+          .filter((e: PlanningFixture) => e.rinksRequired > 0)
+          .map((e: PlanningFixture) => ({ date: e.date, label: e.description || e.clubName || 'Event', rinksRequired: e.rinksRequired }));
+        setCapacityEvents(events);
+      })
+      .catch(() => {});
+  }
+
   useEffect(() => {
     if (canAccess) loadSeasons();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -143,6 +169,28 @@ export default function SeasonPlanningFriendliesPage() {
     fetch('/api/clubs')
       .then((r) => (r.ok ? r.json() : { clubs: [] }))
       .then((data) => setClubNames((data.clubs || []).map((c: any) => c.clubName).filter(Boolean).sort()))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canAccess]);
+
+  useEffect(() => {
+    if (!canAccess) return;
+    fetch('/api/fixtures/season-planning/friendlies/capacity-config')
+      .then((r) => r.json())
+      .then((data) => {
+        if (!data.error) setCapacityConfig(data);
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canAccess]);
+
+  useEffect(() => {
+    if (!canAccess) return;
+    fetch('/api/fixtures/season-planning/reservations')
+      .then((r) => r.json())
+      .then((data) => {
+        if (!data.error) setReservations(data.reservations || []);
+      })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canAccess]);
@@ -227,6 +275,19 @@ export default function SeasonPlanningFriendliesPage() {
       .catch((err) => setError(err.message));
   }
 
+  function unconfirmFriendly(id: string) {
+    if (!draftSeason) return;
+    setError(null);
+    fetch(`/api/fixtures/season-planning/friendlies/${id}/unconfirm`, { method: 'POST' })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.error) throw new Error(data.error);
+        setEditingId(null);
+        return loadFriendlies(draftSeason.id);
+      })
+      .catch((err) => setError(err.message));
+  }
+
   function submitDelete() {
     if (!deleteId || !draftSeason) return;
     setError(null);
@@ -248,6 +309,18 @@ export default function SeasonPlanningFriendliesPage() {
     const db = b.date.split('/').reverse().join('-');
     return da.localeCompare(db);
   });
+  const reservationOccurrences = draftSeason
+    ? reservations.flatMap((res) =>
+        getReservationOccurrences(res, draftSeason.year, capacityConfig.reservationDefaultStart, capacityConfig.reservationDefaultEnd)
+          .map((date) => ({ date, label: res.name, rinksReserved: res.rinksReserved }))
+      )
+    : [];
+  const capacityByDate = computeDayCapacity(friendlies, capacityEvents, reservationOccurrences);
+  const dateGroups: string[] = [];
+  const seenDates = new Set<string>();
+  for (const f of sortedFriendlies) {
+    if (!seenDates.has(f.date)) { seenDates.add(f.date); dateGroups.push(f.date); }
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -256,7 +329,7 @@ export default function SeasonPlanningFriendliesPage() {
       <div className="container mx-auto px-4 py-8 max-w-5xl">
         <h1 className="text-2xl font-bold text-gray-900 mb-1">Season Planning</h1>
         <p className="text-sm text-gray-700 mb-4">
-          Friendlies — project last year's fixtures forward, then confirm, edit, or delete each one. No capacity warnings or club outreach yet.
+          Friendlies — project last year's fixtures forward, then confirm, edit, or delete each one.
         </p>
 
         <SeasonPlanningTabs active="friendlies" />
@@ -295,8 +368,8 @@ export default function SeasonPlanningFriendliesPage() {
                 <button className={getButtonClasses('secondary')} onClick={() => setAddingFriendly(true)}>
                   Add Friendly
                 </button>
-                <Link href="/fixtures/season-planning/friendlies/outreach" className={getButtonClasses('secondary')}>
-                  Outreach
+                <Link href="/fixtures/season-planning/friendlies/clubs" className={getButtonClasses('secondary')}>
+                  Clubs
                 </Link>
               </div>
             </div>
@@ -355,8 +428,46 @@ export default function SeasonPlanningFriendliesPage() {
                   No friendlies yet. Run the projection or add one manually.
                 </div>
               )}
-              {sortedFriendlies.map((friendly) => (
-                <div key={friendly.id} className="px-4 py-3">
+              {dateGroups.map((date) => {
+                const day = capacityByDate[date];
+                const dayFixtures = sortedFriendlies.filter((f) => f.date === date);
+                const monday = isMonday(date);
+                const showHeader = dayFixtures.length > 1 || monday || !!(day && day.contributors.length > 0);
+
+                return (
+                  <div key={date} className="contents">
+                    {showHeader && (
+                      <div className="px-4 py-2 bg-slate-50 flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-semibold text-gray-900">{formatDisplayDate(date)}</span>
+                        {dayFixtures.length > 1 && (
+                          <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-gray-200 text-gray-800">
+                            Multiple Games ({dayFixtures.length})
+                          </span>
+                        )}
+                        {monday && (
+                          <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-orange-100 text-orange-800 border border-orange-300">
+                            ⚠ Monday
+                          </span>
+                        )}
+                        {day && day.homeRinks > 0 && (day.homeRinks >= capacityConfig.capacityWarningThreshold || dayFixtures.length > 1 || day.contributors.length > 0) && (
+                          <span
+                            className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                              day.homeRinks > capacityConfig.greenTotalRinks ? 'bg-red-100 text-red-800 border border-red-300' : 'bg-amber-100 text-amber-800'
+                            }`}
+                            title={day.contributors.length > 0 ? day.contributors.map((c) => `${c.label} (${c.rinks} rink${c.rinks === 1 ? '' : 's'})`).join('\n') : undefined}
+                          >
+                            {day.homeRinks > capacityConfig.greenTotalRinks ? '⚠ ' : ''}{day.homeRinks}/{capacityConfig.greenTotalRinks} rinks (Home)
+                          </span>
+                        )}
+                        {day && dayFixtures.length > 1 && day.totalPlayers >= capacityConfig.maxPlayersPerDay && (
+                          <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-amber-100 text-amber-800">
+                            {day.totalPlayers} players needed
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {dayFixtures.map((friendly) => (
+              <div key={friendly.id} className="px-4 py-3">
                   {editingId === friendly.id ? (
                     <div className="flex flex-wrap items-end gap-3">
                       <input type="date" className="border border-gray-300 rounded-md px-3 py-1.5 text-sm"
@@ -378,16 +489,16 @@ export default function SeasonPlanningFriendliesPage() {
                         value={editFormat} onChange={(e) => setEditFormat(e.target.value)} />
                       <button className={getButtonClasses('primary', 'sm')} onClick={submitEdit}>Save</button>
                       <button className={getButtonClasses('secondary', 'sm')} onClick={() => setEditingId(null)}>Cancel</button>
+                      {friendly.planningStatus === 'Confirmed' && (
+                        <button className="text-xs text-amber-700 hover:text-amber-900" onClick={() => unconfirmFriendly(friendly.id)}>
+                          Un-confirm
+                        </button>
+                      )}
                     </div>
                   ) : (
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="flex items-center gap-3 flex-wrap">
                         <div className="w-28 text-sm text-gray-900">{formatDisplayDate(friendly.date)}</div>
-                        {isMonday(friendly.date) && (
-                          <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-orange-100 text-orange-800 border border-orange-300">
-                            ⚠ Monday
-                          </span>
-                        )}
                         <div className="w-16 text-sm text-gray-700">{friendly.time}</div>
                         <div className="text-sm text-gray-900 font-medium">
                           {displayClubName(friendly.clubName, friendly.clubSuffix) || friendly.description || ''}
@@ -399,6 +510,11 @@ export default function SeasonPlanningFriendliesPage() {
                         </span>
                         {friendly.format && (
                           <span className="text-xs text-gray-700">{friendly.format}</span>
+                        )}
+                        {friendly.ladiesMen && friendly.ladiesMen !== 'Mixed' && (
+                          <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-purple-100 text-purple-800">
+                            {friendly.ladiesMen}
+                          </span>
                         )}
                         <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusBadgeClasses(friendly.planningStatus)}`}>
                           {friendly.planningStatus}
@@ -412,12 +528,23 @@ export default function SeasonPlanningFriendliesPage() {
                         {friendly.planningStatus !== 'Confirmed' && (
                           <button className="text-xs text-green-600 hover:text-green-800" onClick={() => confirmFriendly(friendly.id)}>Confirm</button>
                         )}
+                        {friendly.clubName && (
+                          <Link
+                            href={`/fixtures/season-planning/friendlies/clubs/${encodeURIComponent(friendly.clubName)}`}
+                            className="text-xs text-blue-600 hover:text-blue-800"
+                          >
+                            Contact
+                          </Link>
+                        )}
                         <button className="text-xs text-red-600 hover:text-red-800" onClick={() => setDeleteId(friendly.id)}>Delete</button>
                       </div>
                     </div>
                   )}
-                </div>
-              ))}
+              </div>
+                    ))}
+                  </div>
+                );
+              })}
             </div>
           </>
         )}

@@ -1,10 +1,9 @@
-// app/api/fixtures/season-planning/events/[id]/route.ts
-// PATCH: plain field edit (date/time/description/etc) — no status side-effect.
-// Used to refine a still-Projected row, correct a manual add, or move an
-// already-decided date (there's no separate "Rearrange" transition — Edit
-// covers date changes at any point).
-// DELETE: remove the event entirely. Real delete, not a soft-delete flag —
-// deleted events can be re-added manually if needed.
+// app/api/fixtures/season-planning/leagues/[id]/route.ts
+// PATCH: plain field edit (date/time/club/H-A/format/description) — fills
+// in a generated "No Game" placeholder as the real fixture becomes known, or
+// corrects any league fixture. No Confirm/Un-confirm here — league rows are
+// always Confirmed, there's no Projected state to protect against.
+// DELETE: remove the fixture entirely.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
@@ -29,16 +28,16 @@ export async function PATCH(
 
     const { id } = await params;
     const body = await request.json();
-    const { date, time, description, clubName, format, ladiesMen, dress, eventType, rinksRequired } = body;
+    const { date, time, description, clubName, clubSuffix, homeAway, format } = body;
 
     await updatePlanningFixtureFields(id, {
-      date, time, description, clubName, format, ladiesMen, dress, eventType, rinksRequired,
+      date, time, description, clubName, clubSuffix, homeAway, format,
     });
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('Error updating event:', error);
-    return NextResponse.json({ error: 'Failed to update event' }, { status: 500 });
+    console.error('Error updating league fixture:', error);
+    return NextResponse.json({ error: 'Failed to update league fixture' }, { status: 500 });
   }
 }
 
@@ -62,7 +61,7 @@ export async function DELETE(
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('Error deleting event:', error);
-    return NextResponse.json({ error: 'Failed to delete event' }, { status: 500 });
+    console.error('Error deleting league fixture:', error);
+    return NextResponse.json({ error: 'Failed to delete league fixture' }, { status: 500 });
   }
 }

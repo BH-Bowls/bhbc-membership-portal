@@ -85,6 +85,10 @@ export type GameType = 'Friendly' | 'N/S A' | 'N/S B' | 'MSL' | 'JSL' | 'BL' | '
 export const ALL_GAME_TYPES: GameType[] = ['Friendly', 'N/S A', 'N/S B', 'MSL', 'JSL', 'BL', 'Event'];
 // Test type is intentionally excluded from ALL_GAME_TYPES — it is only shown to Admin role
 
+/** The 5 league GameTypes, split out for Season Planning's Leagues stage (slot generation, type filter) — kept here rather than duplicated, since this file has no Supabase dependency and is already safely runtime-imported by client components (e.g. app/fixtures/page.tsx). */
+export type LeagueGameType = 'N/S A' | 'N/S B' | 'MSL' | 'JSL' | 'BL';
+export const LEAGUE_GAME_TYPES: LeagueGameType[] = ['N/S A', 'N/S B', 'MSL', 'JSL', 'BL'];
+
 // ============================================================================
 // CORE DATA INTERFACES
 // ============================================================================

@@ -85,6 +85,9 @@ export default function AdminConfigPage() {
         maintenance_mode: editGeneral.maintenance_mode ?? 'false',
         age_reference_date: ageAnchor,
         min_friendlies_for_competitions: editGeneral.min_friendlies_for_competitions ?? '',
+        season_planning_green_total_rinks: editGeneral.season_planning_green_total_rinks ?? '',
+        season_planning_capacity_warning_threshold: editGeneral.season_planning_capacity_warning_threshold ?? '',
+        season_planning_max_players_per_day: editGeneral.season_planning_max_players_per_day ?? '',
       };
       const res = await fetch('/api/admin/config', {
         method: 'POST',
@@ -235,6 +238,55 @@ export default function AdminConfigPage() {
                   <span className="text-gray-900">{config.min_friendlies_for_competitions || '—'}</span>
                 )}
                 <p className="text-xs text-gray-700 mt-1">Not yet used anywhere in the app — Renewals' eligibility check still reads this threshold from Sheets.</p>
+              </div>
+
+              {/* Season Planning capacity */}
+              <div>
+                <label className="block text-gray-900 mb-1">Green total rinks</label>
+                {isEditingGeneral ? (
+                  <input
+                    type="number"
+                    min={1}
+                    value={editGeneral.season_planning_green_total_rinks ?? ''}
+                    onChange={(e) => setEditGeneral((prev) => ({ ...prev, season_planning_green_total_rinks: e.target.value }))}
+                    className={`${getInputClasses()} max-w-[10rem]`}
+                  />
+                ) : (
+                  <span className="text-gray-900">{config.season_planning_green_total_rinks || '—'}</span>
+                )}
+                <p className="text-xs text-gray-700 mt-1">Season Planning — the green's physical rink capacity, used for same-day Friendlies capacity warnings.</p>
+              </div>
+
+              <div>
+                <label className="block text-gray-900 mb-1">Capacity warning threshold (rinks)</label>
+                {isEditingGeneral ? (
+                  <input
+                    type="number"
+                    min={1}
+                    value={editGeneral.season_planning_capacity_warning_threshold ?? ''}
+                    onChange={(e) => setEditGeneral((prev) => ({ ...prev, season_planning_capacity_warning_threshold: e.target.value }))}
+                    className={`${getInputClasses()} max-w-[10rem]`}
+                  />
+                ) : (
+                  <span className="text-gray-900">{config.season_planning_capacity_warning_threshold || '—'}</span>
+                )}
+                <p className="text-xs text-gray-700 mt-1">Season Planning — Home-rinks booked on a day at or above this fires an amber warning, before the hard ceiling above.</p>
+              </div>
+
+              <div>
+                <label className="block text-gray-900 mb-1">Max players per day (soft guide)</label>
+                {isEditingGeneral ? (
+                  <input
+                    type="number"
+                    min={1}
+                    value={editGeneral.season_planning_max_players_per_day ?? ''}
+                    onChange={(e) => setEditGeneral((prev) => ({ ...prev, season_planning_max_players_per_day: e.target.value }))}
+                    className={`${getInputClasses()} max-w-[10rem]`}
+                  />
+                ) : (
+                  <span className="text-gray-900">{config.season_planning_max_players_per_day || '—'}</span>
+                )}
+                <p className="text-xs text-gray-700 mt-1">Season Planning — not enforced, just a warning. Covers all fixtures that day (Home and Away both need a full team), unlike the rinks check above which only counts Home.</p>
               </div>
             </div>
           </div>

@@ -1,16 +1,13 @@
-// app/api/fixtures/season-planning/events/[id]/route.ts
-// PATCH: plain field edit (date/time/description/etc) — no status side-effect.
-// Used to refine a still-Projected row, correct a manual add, or move an
-// already-decided date (there's no separate "Rearrange" transition — Edit
-// covers date changes at any point).
-// DELETE: remove the event entirely. Real delete, not a soft-delete flag —
-// deleted events can be re-added manually if needed.
+// app/api/fixtures/season-planning/reservations/[id]/route.ts
+// PATCH: edit a reservation's fields (name/weekday/time/rinks, or its
+// one-off dates as a pair).
+// DELETE: remove it entirely.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
-import { updatePlanningFixtureFields, deletePlanningFixture } from '@/lib/season-planning-supabase';
+import { updateReservation, deleteReservation } from '@/lib/reservations-supabase';
 
 export async function PATCH(
   request: NextRequest,
@@ -29,16 +26,14 @@ export async function PATCH(
 
     const { id } = await params;
     const body = await request.json();
-    const { date, time, description, clubName, format, ladiesMen, dress, eventType, rinksRequired } = body;
+    const { name, weekday, time, rinksReserved, startDate, endDate } = body;
 
-    await updatePlanningFixtureFields(id, {
-      date, time, description, clubName, format, ladiesMen, dress, eventType, rinksRequired,
-    });
+    await updateReservation(id, { name, weekday, time, rinksReserved, startDate, endDate });
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('Error updating event:', error);
-    return NextResponse.json({ error: 'Failed to update event' }, { status: 500 });
+    console.error('Error updating reservation:', error);
+    return NextResponse.json({ error: 'Failed to update reservation' }, { status: 500 });
   }
 }
 
@@ -58,11 +53,11 @@ export async function DELETE(
     }
 
     const { id } = await params;
-    await deletePlanningFixture(id);
+    await deleteReservation(id);
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('Error deleting event:', error);
-    return NextResponse.json({ error: 'Failed to delete event' }, { status: 500 });
+    console.error('Error deleting reservation:', error);
+    return NextResponse.json({ error: 'Failed to delete reservation' }, { status: 500 });
   }
 }
