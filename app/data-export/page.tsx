@@ -1,9 +1,10 @@
 // app/data-export/page.tsx
-// Data Export / Report Builder - Admin-only page for extracting CSV data from Google Sheets
+// Data Export / Report Builder - Admin-only page for building ad-hoc joined/filtered
+// reports across the Postgres-backed member/club data and exporting to .xlsx
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
@@ -48,6 +49,15 @@ export default function DataExportPage() {
   } | null>(null);
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+  const resultsRef = useRef<HTMLDivElement>(null);
+
+  // Scroll the results (or error) into view once they land — Run Report only
+  // updates a card further down the page, easy to miss without this.
+  useEffect(() => {
+    if (results || runError) {
+      resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [results, runError]);
 
   // Saved definitions state
   const [definitions, setDefinitions] = useState<DefinitionSummary[]>([]);
@@ -360,24 +370,63 @@ export default function DataExportPage() {
     }
   }
 
-  // Download CSV from preview
-  function handleDownloadCSV() {
-    if (!results) return;
+  // Download the FULL result set (not just the 10-row preview) as a real .xlsx file
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
-    let csv = results.headers.join(',') + '\n';
-    for (const row of results.preview) {
-      csv +=
-        row.map((cell) => `"${(cell || '').replace(/"/g, '""')}"`).join(',') +
-        '\n';
+  async function handleExportExcel() {
+    setExporting(true);
+    setExportError(null);
+    try {
+      const res = await fetch('/api/data-export/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ definition: buildDefinition() }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to export report');
+      }
+      const blob = await res.blob();
+      const contentDisposition = res.headers.get('Content-Disposition') || '';
+      const match = contentDisposition.match(/filename="(.+)"/);
+      const filename = match ? match[1] : 'data-export.xlsx';
+
+      // File System Access API (Chrome/Edge) gives a real Save As dialog — pick
+      // location/name, native overwrite prompt if it already exists. Falls back to a
+      // silent download-folder save (Firefox/Safari, which don't support it).
+      const showSaveFilePicker = (window as any).showSaveFilePicker;
+      if (showSaveFilePicker) {
+        try {
+          const handle = await showSaveFilePicker({
+            suggestedName: filename,
+            types: [{
+              description: 'Excel Workbook',
+              accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] },
+            }],
+          });
+          const writable = await handle.createWritable();
+          await writable.write(blob);
+          await writable.close();
+          return;
+        } catch (pickerErr: any) {
+          // User cancelled the dialog — not a real error, just stop quietly.
+          if (pickerErr && pickerErr.name === 'AbortError') return;
+          throw pickerErr;
+        }
+      }
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : 'Failed to export report');
+    } finally {
+      setExporting(false);
     }
-
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `data-export-${new Date().toISOString().split('T')[0]}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
   }
 
   if (status === 'loading') {
@@ -969,6 +1018,9 @@ export default function DataExportPage() {
               </div>
             )}
 
+            {/* Run Error + Results Preview — wrapped together so the auto-scroll-into-view
+                effect has one target regardless of which one is showing */}
+            <div ref={resultsRef}>
             {/* Run Error */}
             {runError && (
               <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
@@ -982,10 +1034,13 @@ export default function DataExportPage() {
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-lg font-semibold text-gray-900">Results Preview</h2>
                   <button
-                    onClick={handleDownloadCSV}
-                    className="inline-flex items-center px-3 py-1.5 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                    onClick={handleExportExcel}
+                    disabled={exporting}
+                    className={`inline-flex items-center px-3 py-1.5 border border-transparent rounded-md shadow-sm text-sm font-medium text-white ${
+                      exporting ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'
+                    }`}
                   >
-                    Download Preview CSV
+                    {exporting ? 'Exporting…' : 'Export to Excel (.xlsx)'}
                   </button>
                 </div>
 
@@ -993,16 +1048,15 @@ export default function DataExportPage() {
                   <span className="font-medium">{results.rowCount}</span> rows,{' '}
                   <span className="font-medium">{results.columnCount}</span> columns
                   {results.rowCount > 10 && (
-                    <span className="ml-1">(showing first 10 rows)</span>
+                    <span className="ml-1">(showing first 10 rows below — Export to Excel downloads all {results.rowCount})</span>
                   )}
                 </div>
 
-                <p className="text-sm text-gray-500 mb-4">
-                  Full results have been written to the{' '}
-                  <span className="font-medium">ReportOutput</span> tab in your Members
-                  spreadsheet. Open the spreadsheet to access all rows and download
-                  as CSV from Google Sheets.
-                </p>
+                {exportError && (
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
+                    <p className="text-red-700 text-sm">{exportError}</p>
+                  </div>
+                )}
 
                 {results.preview.length > 0 && (
                   <div className="overflow-x-auto border border-gray-200 rounded-md">
@@ -1039,6 +1093,7 @@ export default function DataExportPage() {
                 )}
               </div>
             )}
+            </div>
           </>
         )}
       </div>

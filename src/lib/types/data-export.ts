@@ -2,22 +2,10 @@
 // Type definitions for the Data Export / Report Builder feature
 
 // ============================================================================
-// SHEET REGISTRY TYPES
+// SCHEMA TYPES
 // ============================================================================
 
 export type JoinKey = 'user_name' | 'club_name';
-
-export interface SheetDescriptor {
-  key: string;
-  label: string;
-  sheetName: string;
-  spreadsheetKey: 'MEMBERS_SPREADSHEET_ID' | 'FRIENDLIES_SPREADSHEET_ID' | 'MATCH_DAY_CONTACTS_SPREADSHEET_ID';
-  joinKey: JoinKey;
-}
-
-// ============================================================================
-// SCHEMA TYPES
-// ============================================================================
 
 export interface SchemaColumn {
   name: string;           // Normalized column name (e.g., "user_name")

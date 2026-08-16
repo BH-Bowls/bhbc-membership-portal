@@ -1,13 +1,28 @@
 // src/lib/data-export.ts
-// Core report engine for the Data Export / Report Builder feature
-// Handles fetching sheet schemas, executing reports with JOIN/filter logic,
-// writing output to ReportOutput tab, and CRUD for saved report definitions.
+// Core report engine for the Data Export / Report Builder feature.
+//
+// Rebuilt from scratch — the old version read every source (Members, Renewals,
+// RenewalPayments, CleaningRota, SweepingRota, Games, Clubs, Contacts) directly from
+// raw Google Sheets, and wrote results to a ReportOutput sheet tab. That had gone
+// silently stale: every one of those sources except Players (still Sheets-only,
+// Step 4b, dropped from this tool entirely per an explicit decision) had already been
+// cut over to Postgres elsewhere in the app, so the Sheets tabs were no longer being
+// written to at all — Data Export was quietly reporting against frozen snapshots.
+//
+// Now every source reads the real Postgres tables (reusing each feature's own typed
+// data-layer function where one already exists), ReportDefinitions moved to a
+// `report_definitions` table, and results are handed back as a real .xlsx file
+// (via exceljs) instead of being written into a sheet tab — no Sheets dependency
+// anywhere in this file any more.
 
-import { getGoogleSheetsClient, getSpreadsheetId } from './sheets';
-import { getFriendliesSpreadsheetId } from './friendlies-sheets';
-import { getMatchDayContactsSpreadsheetId } from './clubs-sheets';
+import ExcelJS from 'exceljs';
+import { getSupabaseClient } from './supabase';
+import { getAllUsers } from './members-supabase';
+import { getFixtures } from './fixtures-supabase';
+import { getClubs } from './clubs-supabase';
+import { getCleaningRotaList } from './cleaning-rota-supabase';
+import { getSweepingRotaList } from './sweeping-rota-supabase';
 import {
-  SheetDescriptor,
   SchemaColumn,
   SheetSchema,
   ReportDefinition,
@@ -16,145 +31,373 @@ import {
   RunReportResponse,
 } from './types/data-export';
 
+// A single output row, keyed by the source's column `name` (not the qualified
+// "Sheet.column" form used in ReportDefinition — that qualification is added when
+// joining). Values are always stringified; numeric-looking strings are converted
+// back to real numbers only at the point an .xlsx file is written.
+type ReportRow = Record<string, string>;
+
 // ============================================================================
-// SHEET REGISTRY
+// SOURCE REGISTRY
 // ============================================================================
 
-export const SHEET_REGISTRY: SheetDescriptor[] = [
-  { key: 'Members',         label: 'Members',          sheetName: 'Members',         spreadsheetKey: 'MEMBERS_SPREADSHEET_ID',              joinKey: 'user_name' },
-  { key: 'Renewals',        label: 'Renewals',         sheetName: 'Renewals',        spreadsheetKey: 'MEMBERS_SPREADSHEET_ID',              joinKey: 'user_name' },
-  { key: 'RenewalPayments', label: 'Renewal Payments', sheetName: 'RenewalPayments', spreadsheetKey: 'MEMBERS_SPREADSHEET_ID',              joinKey: 'user_name' },
-  { key: 'CleaningRota',    label: 'Cleaning Rota',    sheetName: 'CleaningRota',    spreadsheetKey: 'MEMBERS_SPREADSHEET_ID',              joinKey: 'user_name' },
-  { key: 'SweepingRota',    label: 'Sweeping Rota',    sheetName: 'SweepingRota',    spreadsheetKey: 'MEMBERS_SPREADSHEET_ID',              joinKey: 'user_name' },
-  { key: 'Players',         label: 'Players',          sheetName: 'Players',         spreadsheetKey: 'FRIENDLIES_SPREADSHEET_ID',           joinKey: 'user_name' },
-  { key: 'Games',           label: 'Games',            sheetName: 'Games',           spreadsheetKey: 'FRIENDLIES_SPREADSHEET_ID',           joinKey: 'club_name' },
-  { key: 'Clubs',           label: 'Clubs',            sheetName: 'clubs',           spreadsheetKey: 'MATCH_DAY_CONTACTS_SPREADSHEET_ID',   joinKey: 'club_name' },
-  { key: 'Contacts',        label: 'Contacts',         sheetName: 'Club Contacts',   spreadsheetKey: 'MATCH_DAY_CONTACTS_SPREADSHEET_ID',   joinKey: 'club_name' },
+interface SourceSpec {
+  key: string;
+  label: string;
+  joinKey: 'user_name' | 'club_name';
+  columns: SchemaColumn[]; // name = internal column key, originalHeader = display label
+  fetchRows: () => Promise<ReportRow[]>;
+}
+
+function col(name: string, originalHeader: string): SchemaColumn {
+  return { name, originalHeader };
+}
+
+function str(v: unknown): string {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+  return String(v);
+}
+
+async function fetchMembersRows(): Promise<ReportRow[]> {
+  const users = await getAllUsers();
+  // Deliberately excludes auth-internal fields (passwordHash, resetToken,
+  // resetTokenExpires, isTempPassword, lastLoginFailedDate, lastPasswordResetDate) —
+  // no reporting value, and a real security risk if ever exported to a shareable file.
+  return users.map((u) => ({
+    user_name: (u.userName || '').toLowerCase(),
+    username_display: u.userName,
+    title: str(u.title),
+    first_name: str(u.firstName),
+    last_name: str(u.lastName),
+    known_as: str(u.knownAs),
+    full_name: str(u.fullName),
+    email_address: str(u.emailAddress),
+    mobile: str(u.mobile),
+    landline: str(u.landline),
+    address_1: str(u.address1),
+    address_2: str(u.address2),
+    address_3: str(u.address3),
+    post_code: str(u.postCode),
+    locker_no: str(u.lockerNo),
+    birthdate: str(u.birthdate),
+    age_demographic: str(u.ageDemographic),
+    member_type: str(u.memberType),
+    honorary: str(u.honorary),
+    year_started: str(u.yearStarted),
+    renew_status: str(u.renewStatus),
+    friendlies_last_year: str(u.friendliesLastYear),
+    competitions_eligible_override: str(u.competitionsEligibleOverride),
+    comments: str(u.comments),
+    social_emails: str(u.socialEmails),
+    handbook_entry: str(u.handbookEntry),
+    driving_away_matches: str(u.drivingAwayMatches),
+    driving_additional_info: str(u.drivingAdditionalInfo),
+    green_maintenance: str(u.greenMaintenance),
+    green_additional_info: str(u.greenAdditionalInfo),
+    bar_duty: str(u.barDuty),
+    bar_additional_info: str(u.barAdditionalInfo),
+    other_skills: str(u.otherSkills),
+    gmc: str(u.gmc),
+    handicap: str(u.handicap),
+    is_marker: str(u.isMarker),
+    is_worker: str(u.isWorker),
+    worker_additional_info: str(u.workerAdditionalInfo),
+    max_games_per_day: str(u.maxGamesPerDay),
+    include: str(u.include),
+    buddy_user_name: str(u.buddyUserName),
+    role: str(u.role),
+    last_login_date: str(u.lastLoginDate),
+    created_at: str(u.createdAt),
+    updated_at: str(u.updatedAt),
+  }));
+}
+
+const MEMBERS_COLUMNS: SchemaColumn[] = [
+  col('username_display', 'Username'),
+  col('title', 'Title'), col('first_name', 'First Name'), col('last_name', 'Last Name'),
+  col('known_as', 'Known As'), col('full_name', 'Full Name'),
+  col('email_address', 'Email Address'), col('mobile', 'Mobile'), col('landline', 'Landline'),
+  col('address_1', 'Address 1'), col('address_2', 'Address 2'), col('address_3', 'Address 3'), col('post_code', 'Post Code'),
+  col('locker_no', 'Locker No'), col('birthdate', 'Birthdate'), col('age_demographic', 'Age Demographic'),
+  col('member_type', 'Member Type'), col('honorary', 'Honorary'), col('year_started', 'Year Started'),
+  col('renew_status', 'Renew Status'), col('friendlies_last_year', 'Friendlies Last Year'),
+  col('competitions_eligible_override', 'Competitions Eligible Override'),
+  col('comments', 'Comments'), col('social_emails', 'Social Emails'), col('handbook_entry', 'Handbook Entry'),
+  col('driving_away_matches', 'Driving Away Matches'), col('driving_additional_info', 'Driving Additional Info'),
+  col('green_maintenance', 'Green Maintenance'), col('green_additional_info', 'Green Additional Info'),
+  col('bar_duty', 'Bar Duty'), col('bar_additional_info', 'Bar Additional Info'), col('other_skills', 'Other Skills'),
+  col('gmc', 'GMC'), col('handicap', 'Handicap'), col('is_marker', 'Is Marker'), col('is_worker', 'Is Worker'),
+  col('worker_additional_info', 'Worker Additional Info'), col('max_games_per_day', 'Max Games Per Day'),
+  col('include', 'Include In Emails'), col('buddy_user_name', 'Buddy Username'), col('role', 'Role'),
+  col('last_login_date', 'Last Login Date'), col('created_at', 'Created At'), col('updated_at', 'Updated At'),
 ];
 
-// ============================================================================
-// SPREADSHEET ID RESOLVER
-// ============================================================================
-
-export function getSpreadsheetIdForKey(key: string): string {
-  switch (key) {
-    case 'MEMBERS_SPREADSHEET_ID':
-      return getSpreadsheetId();
-    case 'FRIENDLIES_SPREADSHEET_ID':
-      return getFriendliesSpreadsheetId();
-    case 'MATCH_DAY_CONTACTS_SPREADSHEET_ID':
-      return getMatchDayContactsSpreadsheetId();
-    default:
-      throw new Error(`Unknown spreadsheet key: ${key}`);
-  }
+async function fetchRenewalsRows(): Promise<ReportRow[]> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.from('renewals').select('*');
+  if (error) throw new Error(`Failed to fetch renewals: ${error.message}`);
+  return (data ?? []).map((r) => ({
+    user_name: (r.username || '').toLowerCase(),
+    username_display: r.username,
+    season_year: str(r.season_year),
+    renewing_membership: str(r.renewing_membership),
+    renewals_closed: str(r.renewals_closed),
+    playing_fee: str(r.playing_fee),
+    social_fee: str(r.social_fee),
+    competitions_fee: str(r.competitions_fee),
+    club_200_fee: str(r.club_200_fee),
+    total_fee_due: str(r.total_fee_due),
+    comp_mens_championship: str(r.comp_mens_championship),
+    comp_ladies_maynard: str(r.comp_ladies_maynard),
+    comp_mens_two_wood: str(r.comp_mens_two_wood),
+    comp_ladies_two_wood: str(r.comp_ladies_two_wood),
+    comp_married_pairs: str(r.comp_married_pairs),
+    comp_drawn_pairs: str(r.comp_drawn_pairs),
+    comp_australian_pairs: str(r.comp_australian_pairs),
+    comp_drawn_triples: str(r.comp_drawn_triples),
+    comp_handicap: str(r.comp_handicap),
+    comp_oldlands: str(r.comp_oldlands),
+    comp_veterans: str(r.comp_veterans),
+    sub_drawn_pairs: str(r.sub_drawn_pairs),
+    sub_australian_pairs: str(r.sub_australian_pairs),
+    sub_drawn_triples: str(r.sub_drawn_triples),
+    club_200_entries: str(r.club_200_entries),
+    club_200_preferred_numbers: str(r.club_200_preferred_numbers),
+    cleaning_dates_to_avoid: str(r.cleaning_dates_to_avoid),
+    tea_dates_to_avoid: str(r.tea_dates_to_avoid),
+    outstanding: str(r.outstanding),
+    banking: str(r.banking),
+    donations: str(r.donations),
+    difference: str(r.difference),
+    bank_transfer: str(r.bank_transfer),
+    card_machine: str(r.card_machine),
+    cheque: str(r.cheque),
+    cash: str(r.cash),
+    payment_ids: str(r.payment_ids),
+    payment_notes: str(r.payment_notes),
+    date_paid: str(r.date_paid),
+    confirmation_email_date: str(r.confirmation_email_date),
+    created_at: str(r.created_at),
+    updated_at: str(r.updated_at),
+  }));
 }
 
-// ============================================================================
-// SCHEMA FETCHING
-// ============================================================================
+const RENEWALS_COLUMNS: SchemaColumn[] = [
+  col('username_display', 'Username'), col('season_year', 'Season Year'),
+  col('renewing_membership', 'Renewing Membership'), col('renewals_closed', 'Renewals Closed'),
+  col('playing_fee', 'Playing Fee'), col('social_fee', 'Social Fee'), col('competitions_fee', 'Competitions Fee'),
+  col('club_200_fee', '200 Club Fee'), col('total_fee_due', 'Total Fee Due'),
+  col('comp_mens_championship', "Mens Championship"), col('comp_ladies_maynard', "Ladies Maynard"),
+  col('comp_mens_two_wood', "Mens Two Wood"), col('comp_ladies_two_wood', "Ladies Two Wood"),
+  col('comp_married_pairs', "Married Pairs"), col('comp_drawn_pairs', "Drawn Pairs"),
+  col('comp_australian_pairs', "Australian Pairs"), col('comp_drawn_triples', "Drawn Triples"),
+  col('comp_handicap', "Handicap Comp"), col('comp_oldlands', "Oldlands"), col('comp_veterans', "Veterans"),
+  col('sub_drawn_pairs', "Drawn Pairs Sub"), col('sub_australian_pairs', "Australian Pairs Sub"), col('sub_drawn_triples', "Drawn Triples Sub"),
+  col('club_200_entries', '200 Club Entries'), col('club_200_preferred_numbers', '200 Club Preferred Numbers'),
+  col('cleaning_dates_to_avoid', 'Cleaning Dates To Avoid'), col('tea_dates_to_avoid', 'Tea Dates To Avoid'),
+  col('outstanding', 'Outstanding'), col('banking', 'Banking'), col('donations', 'Donations'), col('difference', 'Difference'),
+  col('bank_transfer', 'Bank Transfer'), col('card_machine', 'Card Machine'), col('cheque', 'Cheque'), col('cash', 'Cash'),
+  col('payment_ids', 'Payment IDs'), col('payment_notes', 'Payment Notes'), col('date_paid', 'Date Paid'),
+  col('confirmation_email_date', 'Confirmation Email Date'), col('created_at', 'Created At'), col('updated_at', 'Updated At'),
+];
 
-/**
- * Fetch column headers for a single sheet and return normalized + original names
- */
-async function fetchSheetSchema(descriptor: SheetDescriptor): Promise<SheetSchema> {
-  const sheets = getGoogleSheetsClient();
-  const spreadsheetId = getSpreadsheetIdForKey(descriptor.spreadsheetKey);
+async function fetchRenewalPaymentsRows(): Promise<ReportRow[]> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.from('renewal_payments').select('*');
+  if (error) throw new Error(`Failed to fetch renewal payments: ${error.message}`);
+  // No user_name column on this table (matched_users is a comma-separated free-text
+  // field) — it can still be a join primary/target for filtering, just never matches
+  // via the join key (matching the old sheet, which had no join column here either).
+  return (data ?? []).map((p) => ({
+    user_name: '',
+    payment_id: str(p.payment_id),
+    date: str(p.date),
+    type: str(p.type),
+    reference: str(p.reference),
+    amount: str(p.amount),
+    status: str(p.status),
+    matched_users: str(p.matched_users),
+    created_at: str(p.created_at),
+  }));
+}
 
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `'${descriptor.sheetName}'!1:1`,
+const RENEWAL_PAYMENTS_COLUMNS: SchemaColumn[] = [
+  col('payment_id', 'Payment ID'), col('date', 'Date'), col('type', 'Type'), col('reference', 'Reference'),
+  col('amount', 'Amount'), col('status', 'Status'), col('matched_users', 'Matched Users'), col('created_at', 'Created At'),
+];
+
+async function fetchCleaningRotaRows(): Promise<ReportRow[]> {
+  const rows = await getCleaningRotaList();
+  // One rota row can name up to 4 members — no single "the" user_name to join on, so
+  // this source isn't joinable to Members (matches the old sheet: CleaningRota was
+  // never actually offered as a join target, only ever queried standalone).
+  return rows.map((r) => ({
+    user_name: '',
+    date: r.date,
+    lead: r.lead,
+    second: r.second,
+    third: r.third,
+    fourth: r.fourth,
+  }));
+}
+
+const CLEANING_ROTA_COLUMNS: SchemaColumn[] = [
+  col('date', 'Date'), col('lead', 'Lead'), col('second', 'Second'), col('third', 'Third'), col('fourth', 'Fourth'),
+];
+
+async function fetchSweepingRotaRows(): Promise<ReportRow[]> {
+  const rows = await getSweepingRotaList();
+  return rows.map((r) => ({
+    user_name: (r.userName || '').toLowerCase(),
+    username_display: r.userName,
+    date: r.date,
+    is_blocked: str(r.isBlocked),
+  }));
+}
+
+const SWEEPING_ROTA_COLUMNS: SchemaColumn[] = [
+  col('username_display', 'Username'), col('date', 'Date'), col('is_blocked', 'Is Blocked'),
+];
+
+async function fetchGamesRows(): Promise<ReportRow[]> {
+  // Active season only — matches the old Games sheet, which only ever held the
+  // current season's fixtures.
+  const fixtures = await getFixtures();
+  return fixtures.map((f) => ({
+    club_name: (f.clubName || '').toLowerCase(),
+    club_name_display: f.clubName,
+    date: f.date,
+    time: f.time,
+    home_away: f.homeAway,
+    format: f.format,
+    ladies_men: f.ladiesMen,
+    dress: f.dress,
+    tab_name: f.tabName,
+    status: f.status,
+    max_players: str(f.maxPlayers),
+    entered: str(f.entered),
+    selected: str(f.selected),
+    reserves: str(f.reserves),
+    bhbc_score: str(f.bhbcScore),
+    opponent_score: str(f.opponentScore),
+    reason: f.reason,
+    who: f.who,
+    last_modified_by: f.lastModifiedBy,
+    last_modified_date: f.lastModifiedDate,
+    paired: f.paired,
+    game_type: f.gameType,
+    club_suffix: f.clubSuffix,
+    special_instructions: f.specialInstructions,
+    pickup_info: f.pickupInfo,
+    captain: f.captain,
+    needs_players: str(f.needsPlayers),
+    description: str(f.description),
+  }));
+}
+
+const GAMES_COLUMNS: SchemaColumn[] = [
+  col('club_name_display', 'Club Name'), col('date', 'Date'), col('time', 'Time'), col('home_away', 'Home/Away'),
+  col('format', 'Format'), col('ladies_men', 'Ladies/Men'), col('dress', 'Dress'), col('tab_name', 'Tab Name'),
+  col('status', 'Status'), col('max_players', 'Max Players'), col('entered', 'Entered'), col('selected', 'Selected'),
+  col('reserves', 'Reserves'), col('bhbc_score', 'BHBC Score'), col('opponent_score', 'Opponent Score'),
+  col('reason', 'Reason'), col('who', 'Who'), col('last_modified_by', 'Last Modified By'), col('last_modified_date', 'Last Modified Date'),
+  col('paired', 'Paired'), col('game_type', 'Game Type'), col('club_suffix', 'Club Suffix'),
+  col('special_instructions', 'Special Instructions'), col('pickup_info', 'Pickup Info'), col('captain', 'Captain'),
+  col('needs_players', 'Needs Players'), col('description', 'Description'),
+];
+
+async function fetchClubsRows(): Promise<ReportRow[]> {
+  const clubs = await getClubs();
+  return clubs.map((c) => ({
+    club_name: (c.clubName || '').toLowerCase(),
+    club_name_display: c.clubName,
+    club_number: c.clubNumber,
+    club_mobile: c.clubMobile,
+    club_email_address: c.clubEmailAddress,
+    club_email_note: c.clubEmailNote,
+    general_information: c.generalInformation,
+    driving_band: c.drivingBand,
+    petrol_cost: str(c.petrolCost),
+    address_1: c.address1,
+    address_2: c.address2,
+    address_3: c.address3,
+    address_4: c.address4,
+    post_code: c.postCode,
+    website: c.website,
+    latitude: str(c.latitude),
+    longitude: str(c.longitude),
+    miles: c.miles,
+    travel_time: c.travelTime,
+    last_updated: c.lastUpdated,
+  }));
+}
+
+const CLUBS_COLUMNS: SchemaColumn[] = [
+  col('club_name_display', 'Club Name'), col('club_number', 'Club Number'), col('club_mobile', 'Club Mobile'),
+  col('club_email_address', 'Club Email Address'), col('club_email_note', 'Club Email Note'),
+  col('general_information', 'General Information'), col('driving_band', 'Driving Band'), col('petrol_cost', 'Petrol Cost'),
+  col('address_1', 'Address 1'), col('address_2', 'Address 2'), col('address_3', 'Address 3'), col('address_4', 'Address 4'),
+  col('post_code', 'Post Code'), col('website', 'Website'), col('latitude', 'Latitude'), col('longitude', 'Longitude'),
+  col('miles', 'Miles'), col('travel_time', 'Travel Time'), col('last_updated', 'Last Updated'),
+];
+
+async function fetchContactsRows(): Promise<ReportRow[]> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.from('club_contact_profiles').select('*');
+  if (error) throw new Error(`Failed to fetch club contacts: ${error.message}`);
+  return (data ?? []).map((r) => {
+    const firstName = r.first_name || '';
+    const lastName = r.last_name || '';
+    return {
+      club_name: (r.club_name || '').toLowerCase(),
+      club_name_display: r.club_name,
+      role: str(r.role),
+      first_name: str(firstName),
+      last_name: str(lastName),
+      name: str(`${firstName} ${lastName}`.trim()),
+      phone_number: str(r.phone_number),
+      mobile_number: str(r.mobile_number),
+      notes: str(r.notes),
+      email: str(r.email),
+    };
   });
-
-  const headers = response.data.values?.[0] || [];
-  const columns: SchemaColumn[] = [];
-
-  for (const header of headers) {
-    const original = String(header).trim();
-    if (!original) continue;
-
-    const normalized = original
-      .toLowerCase()
-      .replace(/\s+/g, '_')
-      .replace(/\//g, '_');
-
-    columns.push({ name: normalized, originalHeader: original });
-  }
-
-  return {
-    key: descriptor.key,
-    label: descriptor.label,
-    joinKey: descriptor.joinKey,
-    columns,
-  };
 }
 
-/**
- * Fetch schemas for all sheets in the registry
- */
+const CONTACTS_COLUMNS: SchemaColumn[] = [
+  col('club_name_display', 'Club Name'), col('role', 'Role'), col('first_name', 'First Name'), col('last_name', 'Last Name'),
+  col('name', 'Name'), col('phone_number', 'Phone Number'), col('mobile_number', 'Mobile Number'),
+  col('notes', 'Notes'), col('email', 'Email'),
+];
+
+export const SOURCE_REGISTRY: SourceSpec[] = [
+  { key: 'Members', label: 'Members', joinKey: 'user_name', columns: MEMBERS_COLUMNS, fetchRows: fetchMembersRows },
+  { key: 'Renewals', label: 'Renewals', joinKey: 'user_name', columns: RENEWALS_COLUMNS, fetchRows: fetchRenewalsRows },
+  { key: 'RenewalPayments', label: 'Renewal Payments', joinKey: 'user_name', columns: RENEWAL_PAYMENTS_COLUMNS, fetchRows: fetchRenewalPaymentsRows },
+  { key: 'CleaningRota', label: 'Cleaning Rota', joinKey: 'user_name', columns: CLEANING_ROTA_COLUMNS, fetchRows: fetchCleaningRotaRows },
+  { key: 'SweepingRota', label: 'Sweeping Rota', joinKey: 'user_name', columns: SWEEPING_ROTA_COLUMNS, fetchRows: fetchSweepingRotaRows },
+  { key: 'Games', label: 'Games', joinKey: 'club_name', columns: GAMES_COLUMNS, fetchRows: fetchGamesRows },
+  { key: 'Clubs', label: 'Clubs', joinKey: 'club_name', columns: CLUBS_COLUMNS, fetchRows: fetchClubsRows },
+  { key: 'Contacts', label: 'Contacts', joinKey: 'club_name', columns: CONTACTS_COLUMNS, fetchRows: fetchContactsRows },
+];
+
+function getSource(key: string): SourceSpec {
+  const source = SOURCE_REGISTRY.find((s) => s.key === key);
+  if (!source) throw new Error(`Unknown source: ${key}`);
+  return source;
+}
+
+// ============================================================================
+// SCHEMA
+// ============================================================================
+
 export async function getAllSheetSchemas(): Promise<SheetSchema[]> {
-  const results = await Promise.all(
-    SHEET_REGISTRY.map((desc) => fetchSheetSchema(desc))
-  );
-  return results;
-}
-
-// ============================================================================
-// DATA FETCHING
-// ============================================================================
-
-interface SheetData {
-  headers: string[];          // Normalized column names
-  originalHeaders: string[];  // Original header text
-  rows: string[][];           // Raw row data
-  columnMap: { [key: string]: number };
-}
-
-/**
- * Fetch all rows from a sheet, returning headers, rows, and column map
- */
-export async function fetchSheetData(sheetKey: string): Promise<SheetData> {
-  const descriptor = SHEET_REGISTRY.find((d) => d.key === sheetKey);
-  if (!descriptor) {
-    throw new Error(`Unknown sheet key: ${sheetKey}`);
-  }
-
-  const sheets = getGoogleSheetsClient();
-  const spreadsheetId = getSpreadsheetIdForKey(descriptor.spreadsheetKey);
-
-  // Fetch all data including header row
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `'${descriptor.sheetName}'!A:ZZ`,
-    valueRenderOption: 'FORMATTED_VALUE',
-  });
-
-  const allRows = response.data.values || [];
-  if (allRows.length === 0) {
-    return { headers: [], originalHeaders: [], rows: [], columnMap: {} };
-  }
-
-  const headerRow = allRows[0];
-  const dataRows = allRows.slice(1);
-
-  const headers: string[] = [];
-  const originalHeaders: string[] = [];
-  const columnMap: { [key: string]: number } = {};
-
-  for (let i = 0; i < headerRow.length; i++) {
-    const original = String(headerRow[i]).trim();
-    if (!original) continue;
-
-    const normalized = original
-      .toLowerCase()
-      .replace(/\s+/g, '_')
-      .replace(/\//g, '_');
-
-    headers.push(normalized);
-    originalHeaders.push(original);
-    columnMap[normalized] = i;
-  }
-
-  return { headers, originalHeaders, rows: dataRows, columnMap };
+  return SOURCE_REGISTRY.map((s) => ({
+    key: s.key,
+    label: s.label,
+    joinKey: s.joinKey,
+    columns: s.columns,
+  }));
 }
 
 // ============================================================================
@@ -162,139 +405,92 @@ export async function fetchSheetData(sheetKey: string): Promise<SheetData> {
 // ============================================================================
 
 /**
- * Execute a report definition: fetch data, join, filter, select columns, write output
+ * Execute a report definition: fetch rows for the primary source and every joined
+ * source, LEFT JOIN on the shared join key, filter, select columns in the requested
+ * order (including fixed/static columns), and return every matching row.
  */
-export async function executeReport(definition: ReportDefinition): Promise<RunReportResponse> {
-  const primaryDescriptor = SHEET_REGISTRY.find((d) => d.key === definition.primarySheet);
-  if (!primaryDescriptor) {
-    throw new Error(`Unknown primary sheet: ${definition.primarySheet}`);
-  }
+export async function executeReport(definition: ReportDefinition): Promise<{ headers: string[]; rows: string[][] }> {
+  const primarySource = getSource(definition.primarySheet);
+  const primaryRows = await primarySource.fetchRows();
 
-  // Fetch primary sheet data
-  const primaryData = await fetchSheetData(definition.primarySheet);
-  if (primaryData.rows.length === 0) {
-    return { rowCount: 0, columnCount: 0, headers: [], preview: [] };
-  }
-
-  // Fetch joined sheet data
-  const joinedData: { [key: string]: SheetData } = {};
+  const joinedRowsBySource: Record<string, ReportRow[]> = {};
   for (const joinKey of definition.joins) {
-    const joinDescriptor = SHEET_REGISTRY.find((d) => d.key === joinKey);
-    if (!joinDescriptor) {
-      throw new Error(`Unknown join sheet: ${joinKey}`);
-    }
-    // Verify join compatibility
-    if (joinDescriptor.joinKey !== primaryDescriptor.joinKey) {
+    const joinSource = getSource(joinKey);
+    if (joinSource.joinKey !== primarySource.joinKey) {
       throw new Error(
-        `Cannot join ${joinKey} (${joinDescriptor.joinKey}) with ${definition.primarySheet} (${primaryDescriptor.joinKey}): different join keys`
+        `Cannot join ${joinKey} (${joinSource.joinKey}) with ${definition.primarySheet} (${primarySource.joinKey}): different join keys`
       );
     }
-    joinedData[joinKey] = await fetchSheetData(joinKey);
+    joinedRowsBySource[joinKey] = await joinSource.fetchRows();
   }
 
-  // Build join indexes: Map<joinKeyValue, row[]> for each joined sheet
-  const joinIndexes: { [sheetKey: string]: Map<string, string[][]> } = {};
-  for (const [sheetKey, data] of Object.entries(joinedData)) {
-    const descriptor = SHEET_REGISTRY.find((d) => d.key === sheetKey)!;
-    const joinColIndex = data.columnMap[descriptor.joinKey];
-    const index = new Map<string, string[][]>();
-
-    if (joinColIndex !== undefined) {
-      for (const row of data.rows) {
-        const keyValue = (row[joinColIndex] || '').toLowerCase().trim();
-        if (!keyValue) continue;
-        if (!index.has(keyValue)) {
-          index.set(keyValue, []);
-        }
-        index.get(keyValue)!.push(row);
-      }
+  // Build join indexes: Map<joinKeyValue, row[]> for each joined source
+  const joinIndexes: Record<string, Map<string, ReportRow[]>> = {};
+  for (const [sourceKey, rows] of Object.entries(joinedRowsBySource)) {
+    const source = getSource(sourceKey);
+    const index = new Map<string, ReportRow[]>();
+    for (const row of rows) {
+      const keyValue = (row[source.joinKey] || '').trim();
+      if (!keyValue) continue;
+      if (!index.has(keyValue)) index.set(keyValue, []);
+      index.get(keyValue)!.push(row);
     }
-
-    joinIndexes[sheetKey] = index;
+    joinIndexes[sourceKey] = index;
   }
 
-  // Perform LEFT JOIN: iterate primary rows, expand with joined data
-  const primaryJoinColIndex = primaryData.columnMap[primaryDescriptor.joinKey];
-  let joinedRows: { [sheetKey: string]: string[] | null }[] = [];
+  // LEFT JOIN: iterate primary rows, expand with joined data (cartesian product across joins)
+  type ExpandedRow = Record<string, ReportRow | null>;
+  let joinedExpandedRows: ExpandedRow[] = [];
 
-  for (const primaryRow of primaryData.rows) {
-    const primaryKeyValue = primaryJoinColIndex !== undefined
-      ? (primaryRow[primaryJoinColIndex] || '').toLowerCase().trim()
-      : '';
+  for (const primaryRow of primaryRows) {
+    const primaryKeyValue = (primaryRow[primarySource.joinKey] || '').trim();
 
-    // For each primary row, find matching rows in all joined sheets
-    // and produce the cartesian product across joins
-    let expansions: { [sheetKey: string]: string[] | null }[] = [
-      { [definition.primarySheet]: primaryRow as string[] },
-    ];
+    let expansions: ExpandedRow[] = [{ [definition.primarySheet]: primaryRow }];
 
-    for (const joinSheetKey of definition.joins) {
-      const matchedRows = primaryKeyValue
-        ? joinIndexes[joinSheetKey]?.get(primaryKeyValue) || []
-        : [];
-
-      const newExpansions: { [sheetKey: string]: string[] | null }[] = [];
+    for (const joinSourceKey of definition.joins) {
+      const matchedRows = primaryKeyValue ? joinIndexes[joinSourceKey]?.get(primaryKeyValue) || [] : [];
+      const newExpansions: ExpandedRow[] = [];
 
       if (matchedRows.length === 0) {
-        // LEFT JOIN: keep primary row with nulls for this join
-        for (const existing of expansions) {
-          newExpansions.push({ ...existing, [joinSheetKey]: null });
-        }
+        for (const existing of expansions) newExpansions.push({ ...existing, [joinSourceKey]: null });
       } else {
-        // Expand: each existing expansion x each matched row
         for (const existing of expansions) {
-          for (const matchedRow of matchedRows) {
-            newExpansions.push({ ...existing, [joinSheetKey]: matchedRow as string[] });
-          }
+          for (const matchedRow of matchedRows) newExpansions.push({ ...existing, [joinSourceKey]: matchedRow });
         }
       }
-
       expansions = newExpansions;
     }
 
-    joinedRows.push(...expansions);
+    joinedExpandedRows.push(...expansions);
   }
 
-  // Helper: evaluate a single filter against an expanded row
-  function applyFilter(
-    filter: ReportFilter,
-    expandedRow: { [sheetKey: string]: string[] | null }
-  ): boolean {
+  // Evaluate a single filter against an expanded row
+  function applyFilter(filter: ReportFilter, expandedRow: ExpandedRow): boolean {
     const dotIndex = filter.column.indexOf('.');
-    const filterSheetKey = filter.column.substring(0, dotIndex);
+    const filterSourceKey = filter.column.substring(0, dotIndex);
     const filterColName = filter.column.substring(dotIndex + 1);
-    const sheetRow = expandedRow[filterSheetKey];
+    const sourceRow = expandedRow[filterSourceKey];
 
     function getCellValue(): string | null {
-      if (!sheetRow) return null;
-      let colIndex: number | undefined;
-      if (filterSheetKey === definition.primarySheet) {
-        colIndex = primaryData.columnMap[filterColName];
-      } else if (joinedData[filterSheetKey]) {
-        colIndex = joinedData[filterSheetKey].columnMap[filterColName];
-      }
-      if (colIndex === undefined) return null;
-      return (sheetRow[colIndex] || '').trim();
+      if (!sourceRow) return null;
+      const v = sourceRow[filterColName];
+      return v === undefined ? null : v.trim();
     }
 
     if (filter.operator === 'is_blank') {
-      if (!sheetRow) return true;
+      if (!sourceRow) return true;
       const v = getCellValue();
       return v === null || v === '';
     }
     if (filter.operator === 'is_not_blank') {
-      if (!sheetRow) return false;
+      if (!sourceRow) return false;
       const v = getCellValue();
       return v !== null && v !== '';
     }
-    if (!sheetRow) return false;
+    if (!sourceRow) return false;
     const cellValue = getCellValue() ?? '';
-    if (filter.operator === 'in') {
-      return filter.values.some((v) => v.trim().toLowerCase() === cellValue.toLowerCase());
-    }
-    if (filter.operator === 'not_in') {
-      return !filter.values.some((v) => v.trim().toLowerCase() === cellValue.toLowerCase());
-    }
+    if (filter.operator === 'in') return filter.values.some((v) => v.trim().toLowerCase() === cellValue.toLowerCase());
+    if (filter.operator === 'not_in') return !filter.values.some((v) => v.trim().toLowerCase() === cellValue.toLowerCase());
     if (filter.operator === 'gt' || filter.operator === 'lt') {
       const parseNumeric = (s: string) => parseFloat(s.replace(/[£$,\s]/g, ''));
       const cellNum = parseNumeric(getCellValue() ?? '');
@@ -302,39 +498,26 @@ export async function executeReport(definition: ReportDefinition): Promise<RunRe
       if (isNaN(cellNum) || isNaN(threshold)) return false;
       return filter.operator === 'gt' ? cellNum > threshold : cellNum < threshold;
     }
-    if (filter.operator === 'contains') {
-      return filter.values.some((v) => cellValue.toLowerCase().includes(v.trim().toLowerCase()));
-    }
-    if (filter.operator === 'not_contains') {
-      return filter.values.every((v) => !cellValue.toLowerCase().includes(v.trim().toLowerCase()));
-    }
+    if (filter.operator === 'contains') return filter.values.some((v) => cellValue.toLowerCase().includes(v.trim().toLowerCase()));
+    if (filter.operator === 'not_contains') return filter.values.every((v) => !cellValue.toLowerCase().includes(v.trim().toLowerCase()));
     return false;
   }
 
-  // Apply filters (AND or OR across filters)
   const filterMode = definition.filterMode || 'AND';
-  const filteredRows = joinedRows.filter((expandedRow) => {
+  const filteredRows = joinedExpandedRows.filter((expandedRow) => {
     if (definition.filters.length === 0) return true;
-    if (filterMode === 'OR') {
-      return definition.filters.some((f) => applyFilter(f, expandedRow));
-    }
+    if (filterMode === 'OR') return definition.filters.some((f) => applyFilter(f, expandedRow));
     return definition.filters.every((f) => applyFilter(f, expandedRow));
   });
 
   // Build unified output column specs from columnOrder (or fall back to selectedColumns)
-  const unifiedOrder =
-    definition.columnOrder && definition.columnOrder.length > 0
-      ? definition.columnOrder
-      : definition.selectedColumns;
-
-  const fixedColMap = new Map(
-    (definition.fixedColumns || []).map((fc) => [fc.id, fc])
-  );
+  const unifiedOrder = definition.columnOrder && definition.columnOrder.length > 0 ? definition.columnOrder : definition.selectedColumns;
+  const fixedColMap = new Map((definition.fixedColumns || []).map((fc) => [fc.id, fc]));
 
   interface OutputColSpec {
     header: string;
     type: 'field' | 'fixed';
-    sheetKey?: string;
+    sourceKey?: string;
     columnName?: string;
     fixedValue?: string;
   }
@@ -349,281 +532,136 @@ export async function executeReport(definition: ReportDefinition): Promise<RunRe
       outputColSpecs.push({ header: alias || fc.name || '', type: 'fixed', fixedValue: fc.value });
     } else {
       const dot = colKey.indexOf('.');
-      const sheetKey = colKey.substring(0, dot);
+      const sourceKey = colKey.substring(0, dot);
       const columnName = colKey.substring(dot + 1);
-      let originalHeader = columnName;
-      if (sheetKey === definition.primarySheet) {
-        const idx = primaryData.headers.indexOf(columnName);
-        if (idx !== -1) originalHeader = primaryData.originalHeaders[idx];
-      } else if (joinedData[sheetKey]) {
-        const idx = joinedData[sheetKey].headers.indexOf(columnName);
-        if (idx !== -1) originalHeader = joinedData[sheetKey].originalHeaders[idx];
-      }
+      const source = SOURCE_REGISTRY.find((s) => s.key === sourceKey);
+      const schemaCol = source?.columns.find((c) => c.name === columnName);
       const alias = definition.columnAliases?.[colKey];
-      outputColSpecs.push({ header: alias || originalHeader, type: 'field', sheetKey, columnName });
+      outputColSpecs.push({ header: alias || schemaCol?.originalHeader || columnName, type: 'field', sourceKey, columnName });
     }
   }
 
   const outputHeaders = outputColSpecs.map((c) => c.header);
+  const outputRows: string[][] = filteredRows.map((expandedRow) =>
+    outputColSpecs.map((spec) => {
+      if (spec.type === 'fixed') return spec.fixedValue || '';
+      const sourceRow = expandedRow[spec.sourceKey!];
+      if (!sourceRow) return '';
+      return sourceRow[spec.columnName!] ?? '';
+    })
+  );
 
-  // Select columns from filtered rows
-  const outputRows: string[][] = filteredRows.map((expandedRow) => {
-    return outputColSpecs.map((col) => {
-      if (col.type === 'fixed') return col.fixedValue || '';
-      const sheetRow = expandedRow[col.sheetKey!];
-      if (!sheetRow) return '';
-      let colIndex: number | undefined;
-      if (col.sheetKey === definition.primarySheet) {
-        colIndex = primaryData.columnMap[col.columnName!];
-      } else if (joinedData[col.sheetKey!]) {
-        colIndex = joinedData[col.sheetKey!].columnMap[col.columnName!];
-      }
-      if (colIndex === undefined) return '';
-      return sheetRow[colIndex] || '';
-    });
-  });
+  return { headers: outputHeaders, rows: outputRows };
+}
 
-  // Write to ReportOutput tab
-  await writeReportOutput(outputHeaders, outputRows);
-
-  // Return response with preview
+/** Preview-sized wrapper for the live "Run Report" UI — first 10 rows only. */
+export async function runReportPreview(definition: ReportDefinition): Promise<RunReportResponse> {
+  const { headers, rows } = await executeReport(definition);
   return {
-    rowCount: outputRows.length,
-    columnCount: outputHeaders.length,
-    headers: outputHeaders,
-    preview: outputRows.slice(0, 10),
+    rowCount: rows.length,
+    columnCount: headers.length,
+    headers,
+    preview: rows.slice(0, 10),
   };
 }
 
 // ============================================================================
-// REPORT OUTPUT WRITING
+// EXCEL EXPORT
 // ============================================================================
 
-/**
- * Clear and write report results to the ReportOutput tab in the Members spreadsheet
- */
-async function writeReportOutput(headers: string[], rows: string[][]): Promise<void> {
-  const sheets = getGoogleSheetsClient();
-  const spreadsheetId = getSpreadsheetId();
-
-  // Clear existing content
-  await sheets.spreadsheets.values.clear({
-    spreadsheetId,
-    range: 'ReportOutput!A:ZZ',
-  });
-
-  // Write header + data rows
-  if (headers.length > 0) {
-    await sheets.spreadsheets.values.update({
-      spreadsheetId,
-      range: 'ReportOutput!A1',
-      valueInputOption: 'USER_ENTERED',
-      requestBody: {
-        values: [headers, ...rows],
-      },
-    });
+// Values are stored internally as strings (see ReportRow) even though most started
+// out as real numbers/dates in Postgres — this heuristic writes anything that still
+// looks purely numeric back out as a real Excel number (sortable/summable), rather
+// than a text cell, without the join/filter engine ever needing to know column types.
+function toCellValue(v: string): string | number {
+  if (v !== '' && /^-?\d+(\.\d+)?$/.test(v)) {
+    const n = Number(v);
+    if (Number.isFinite(n)) return n;
   }
+  return v;
+}
+
+/** Build an .xlsx workbook from report results, as a plain Uint8Array (avoids Node
+ *  Buffer vs DOM BlobPart type friction at the API route boundary). */
+export async function buildWorkbook(headers: string[], rows: string[][], sheetName = 'Report'): Promise<Uint8Array> {
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet(sheetName.slice(0, 31) || 'Report'); // Excel sheet-name length limit
+
+  sheet.columns = headers.map((h) => ({ header: h, key: h, width: Math.min(40, Math.max(10, h.length + 4)) }));
+  sheet.getRow(1).font = { bold: true };
+
+  for (const row of rows) {
+    sheet.addRow(row.map(toCellValue));
+  }
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  return new Uint8Array(buffer);
 }
 
 // ============================================================================
-// REPORT DEFINITIONS CRUD
+// REPORT DEFINITIONS CRUD (report_definitions table, 0045)
 // ============================================================================
 
-/**
- * List all saved report definitions (summary only)
- */
 export async function listDefinitions(): Promise<DefinitionSummary[]> {
-  const sheets = getGoogleSheetsClient();
-  const spreadsheetId = getSpreadsheetId();
-
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: 'ReportDefinitions!A:E',
-    valueRenderOption: 'FORMATTED_VALUE',
-  });
-
-  const rows = response.data.values || [];
-  if (rows.length <= 1) return []; // Header only or empty
-
-  const definitions: DefinitionSummary[] = [];
-
-  for (let i = 1; i < rows.length; i++) {
-    const row = rows[i];
-    if (!row[0]) continue; // Skip empty rows
-
-    definitions.push({
-      id: row[0] || '',
-      name: row[1] || '',
-      createdAt: row[3] || '',
-      updatedAt: row[4] || '',
-    });
-  }
-
-  return definitions;
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('report_definitions')
+    .select('id, name, created_at, updated_at')
+    .order('updated_at', { ascending: false });
+  if (error) throw new Error(`Failed to list report definitions: ${error.message}`);
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    name: row.name,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }));
 }
 
-/**
- * Get a single report definition by ID
- */
 export async function getDefinition(id: string): Promise<ReportDefinition | null> {
-  const sheets = getGoogleSheetsClient();
-  const spreadsheetId = getSpreadsheetId();
-
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: 'ReportDefinitions!A:E',
-    valueRenderOption: 'FORMATTED_VALUE',
-  });
-
-  const rows = response.data.values || [];
-
-  for (let i = 1; i < rows.length; i++) {
-    const row = rows[i];
-    if (row[0] === id) {
-      try {
-        const definition: ReportDefinition = JSON.parse(row[2] || '{}');
-        definition.id = row[0];
-        definition.name = row[1];
-        definition.createdAt = row[3];
-        definition.updatedAt = row[4];
-        return definition;
-      } catch {
-        return null;
-      }
-    }
-  }
-
-  return null;
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.from('report_definitions').select('*').eq('id', id).maybeSingle();
+  if (error) throw new Error(`Failed to fetch report definition ${id}: ${error.message}`);
+  if (!data) return null;
+  const definition = data.definition as ReportDefinition;
+  definition.id = data.id;
+  definition.name = data.name;
+  definition.createdAt = data.created_at;
+  definition.updatedAt = data.updated_at;
+  return definition;
 }
 
-/**
- * Save or update a report definition
- */
 export async function saveDefinition(
   name: string,
   definition: ReportDefinition,
   existingId?: string
 ): Promise<DefinitionSummary> {
-  const sheets = getGoogleSheetsClient();
-  const spreadsheetId = getSpreadsheetId();
+  const supabase = getSupabaseClient();
   const now = new Date().toISOString();
 
   if (existingId) {
-    // Update existing definition — find its row
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: 'ReportDefinitions!A:E',
-      valueRenderOption: 'FORMATTED_VALUE',
-    });
-
-    const rows = response.data.values || [];
-    let rowNumber = -1;
-
-    for (let i = 1; i < rows.length; i++) {
-      if (rows[i][0] === existingId) {
-        rowNumber = i + 1; // 1-indexed sheet row
-        break;
-      }
-    }
-
-    if (rowNumber === -1) {
-      throw new Error(`Definition ${existingId} not found`);
-    }
-
-    const definitionJson = JSON.stringify(definition);
-
-    await sheets.spreadsheets.values.update({
-      spreadsheetId,
-      range: `ReportDefinitions!A${rowNumber}:E${rowNumber}`,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: {
-        values: [[existingId, name, definitionJson, rows[rowNumber - 1]?.[3] || now, now]],
-      },
-    });
-
-    return {
-      id: existingId,
-      name,
-      createdAt: rows[rowNumber - 1]?.[3] || now,
-      updatedAt: now,
-    };
-  } else {
-    // Create new definition
-    const id = `rpt_${Date.now()}`;
-    const definitionJson = JSON.stringify(definition);
-
-    await sheets.spreadsheets.values.append({
-      spreadsheetId,
-      range: 'ReportDefinitions!A:E',
-      valueInputOption: 'USER_ENTERED',
-      requestBody: {
-        values: [[id, name, definitionJson, now, now]],
-      },
-    });
-
-    return { id, name, createdAt: now, updatedAt: now };
+    const { data, error } = await supabase
+      .from('report_definitions')
+      .update({ name, definition, updated_at: now }, { count: 'exact' })
+      .eq('id', existingId)
+      .select('id, name, created_at, updated_at')
+      .maybeSingle();
+    if (error) throw new Error(`Failed to update report definition: ${error.message}`);
+    if (!data) throw new Error(`Definition ${existingId} not found`);
+    return { id: data.id, name: data.name, createdAt: data.created_at, updatedAt: data.updated_at };
   }
+
+  const { data, error } = await supabase
+    .from('report_definitions')
+    .insert({ name, definition })
+    .select('id, name, created_at, updated_at')
+    .single();
+  if (error) throw new Error(`Failed to create report definition: ${error.message}`);
+  return { id: data.id, name: data.name, createdAt: data.created_at, updatedAt: data.updated_at };
 }
 
-/**
- * Delete a report definition by ID
- */
 export async function deleteDefinition(id: string): Promise<boolean> {
-  const sheets = getGoogleSheetsClient();
-  const spreadsheetId = getSpreadsheetId();
-
-  // Find the row
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: 'ReportDefinitions!A:E',
-    valueRenderOption: 'FORMATTED_VALUE',
-  });
-
-  const rows = response.data.values || [];
-  let rowNumber = -1;
-
-  for (let i = 1; i < rows.length; i++) {
-    if (rows[i][0] === id) {
-      rowNumber = i + 1; // 1-indexed sheet row
-      break;
-    }
-  }
-
-  if (rowNumber === -1) {
-    return false;
-  }
-
-  // Get the sheet ID for ReportDefinitions
-  const spreadsheet = await sheets.spreadsheets.get({
-    spreadsheetId,
-  });
-
-  const reportDefSheet = spreadsheet.data.sheets?.find(
-    (s) => s.properties?.title === 'ReportDefinitions'
-  );
-
-  if (!reportDefSheet?.properties?.sheetId && reportDefSheet?.properties?.sheetId !== 0) {
-    throw new Error('ReportDefinitions sheet not found');
-  }
-
-  // Delete the row
-  await sheets.spreadsheets.batchUpdate({
-    spreadsheetId,
-    requestBody: {
-      requests: [
-        {
-          deleteDimension: {
-            range: {
-              sheetId: reportDefSheet.properties.sheetId,
-              dimension: 'ROWS',
-              startIndex: rowNumber - 1, // 0-indexed
-              endIndex: rowNumber,
-            },
-          },
-        },
-      ],
-    },
-  });
-
-  return true;
+  const supabase = getSupabaseClient();
+  const { error, count } = await supabase.from('report_definitions').delete({ count: 'exact' }).eq('id', id);
+  if (error) throw new Error(`Failed to delete report definition ${id}: ${error.message}`);
+  return !!count;
 }

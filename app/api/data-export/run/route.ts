@@ -1,10 +1,11 @@
 // app/api/data-export/run/route.ts
-// POST: Execute a report definition, write results to ReportOutput tab (Admin only)
+// POST: Execute a report definition and return a preview (first 10 rows) for the
+// live UI. For the full result set, see /api/data-export/export (Admin only).
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { executeReport } from '@/lib/data-export';
+import { runReportPreview } from '@/lib/data-export';
 import { ReportDefinition } from '@/lib/types/data-export';
 import { hasRole } from '@/lib/role-utils';
 
@@ -39,7 +40,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result = await executeReport(definition);
+    const result = await runReportPreview(definition);
     return NextResponse.json(result);
   } catch (error) {
     console.error('Error executing report:', error);
