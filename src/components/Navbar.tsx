@@ -19,12 +19,22 @@ interface SubMenuItem {
   href: string;
 }
 
+interface SubMenuGroup {
+  label: string;
+  items: SubMenuItem[];
+}
+
 interface NavItem {
   name: string;
   href?: string;
   icon?: React.ReactNode;
   adminOnly?: boolean;
   subItems?: SubMenuItem[];
+  // Alternate to subItems: a true two-level menu (category -> its items), only
+  // used for Admin's long list. Category rows are an accordion — click to expand,
+  // only one open at a time — so a role with the full item set doesn't overflow
+  // the viewport with one giant flat list.
+  subItemGroups?: SubMenuGroup[];
 }
 
 interface ActionButton {
@@ -52,6 +62,9 @@ interface NavbarProps {
 export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogoOnly = false, isTokenMode = false, guestButtons, actionButtons }: NavbarProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
+  // Which category is expanded within a two-level (subItemGroups) dropdown —
+  // e.g. Admin's Members/Games/Club/System accordion. Only one open at a time.
+  const [openAdminCategory, setOpenAdminCategory] = useState<string | null>(null);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [impersonationModalOpen, setImpersonationModalOpen] = useState(false);
   const [hasBuddies, setHasBuddies] = useState(false);
@@ -131,90 +144,84 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
   // Committee = has at least one committee role (Rowland roles are specialist only, not general committee)
   const isCommittee = !isKiosk && roles.some(r => ['Captain', 'Treasurer', 'GMC', 'Admin'].includes(r));
 
-  // Build admin menu items based on role
-  const getAdminMenuItems = (): SubMenuItem[] => {
-    const items: SubMenuItem[] = [];
+  // Build admin menu items based on role, grouped into categories — Members (member
+  // data/comms), Games (fixtures/leagues/competitions), Club (club-wide business),
+  // System (technical/dev-facing, Admin only). Returns only non-empty groups.
+  const getAdminMenuGroups = (): SubMenuGroup[] => {
+    const members: SubMenuItem[] = [];
+    const games: SubMenuItem[] = [];
+    const club: SubMenuItem[] = [];
+    const system: SubMenuItem[] = [];
 
-    // Admins get all admin functions
+    // ── Members ──
     if (isAdmin) {
-      items.push({ name: 'Members', href: '/admin/members' });
-      items.push({ name: 'Send Member Emails', href: '/admin/emails' });
-      items.push({ name: 'Banking', href: '/banking' });
-      items.push({ name: 'Friendly Management', href: '/friendlies/manage' });
-      items.push({ name: 'Data Export', href: '/data-export' });
-    } else {
-      // Non-admins get role-specific items
-      if (canAccessBanking) {
-        items.push({ name: 'Banking', href: '/banking' });
-      }
-      if (canAccessCaptainTools) {
-        items.push({ name: 'Friendly Management', href: '/friendlies/manage' });
-      }
+      members.push({ name: 'Members', href: '/admin/members' });
+      members.push({ name: 'Send Member Emails', href: '/admin/emails' });
+      members.push({ name: 'Data Export', href: '/data-export' });
+      members.push({ name: 'Print Labels', href: '/labels' });
+      members.push({ name: 'Availability', href: '/availability' });
     }
-
-    // Captains, LeagueOrganisers and Admins get League Management
-    if (canAccessCaptainTools || isLeagueCaptain) {
-      items.push({ name: 'League Management', href: '/leagues/manage' });
-    }
-
-    // Captains and Admins get Fixtures Management
-    if (canAccessCaptainTools) {
-      items.push({ name: 'Fixtures Management', href: '/fixtures/manage' });
-      items.push({ name: 'Season Planning', href: '/fixtures/season-planning' });
-    }
-
-    // GMC and Admin get Member Suggestions and Invite Games and Club-related admin
-    if (isGMC || isAdmin) {
-      items.push({ name: 'Member Suggestions', href: '/member-suggestions' });
-      items.push({ name: 'Invite Games', href: '/invite-games' });
-    }
-
-    // Captains and Admins get Competitions Admin and Handicaps
     if (isCaptain || isAdmin) {
-      items.push({ name: 'Competitions Admin', href: '/competitions/admin' });
-      items.push({ name: 'Handicaps', href: '/competitions/handicaps' });
+      members.push({ name: 'Handicaps', href: '/competitions/handicaps' });
     }
-
-    // Admin, Captain, and GMC can manage home page announcements
     if (isAdmin || isCaptain || isGMC) {
-      items.push({ name: 'Announcements', href: '/admin/announcements' });
+      members.push({ name: 'Membership Statistics', href: '/admin/stats' });
     }
 
-    // Admin, Captain, and GMC get Membership Statistics (Treasurer excluded)
-    if (isAdmin || isCaptain || isGMC) {
-      items.push({ name: 'Membership Statistics', href: '/admin/stats' });
+    // ── Games ──
+    if (isAdmin || canAccessCaptainTools) {
+      games.push({ name: 'Friendly Management', href: '/friendlies/manage' });
     }
-
-    // Admin only — Print Labels
-    if (isAdmin) {
-      items.push({ name: 'Print Labels', href: '/labels' });
+    if (canAccessCaptainTools) {
+      games.push({ name: 'Fixtures Management', href: '/fixtures/manage' });
+      games.push({ name: 'Season Planning', href: '/fixtures/season-planning' });
     }
-
-    // Admin only — app-wide config (maintenance mode, labels, etc.)
-    if (isAdmin) {
-      items.push({ name: 'Config', href: '/admin/config' });
+    if (canAccessCaptainTools || isLeagueCaptain) {
+      games.push({ name: 'League Management', href: '/leagues/manage' });
     }
-
-    // Admin only — Availability (still testing). The pages stay reachable by direct
-    // link, so members can complete their availability without a nav entry.
-    if (isAdmin) {
-      items.push({ name: 'Availability', href: '/availability' });
+    if (isCaptain || isAdmin) {
+      games.push({ name: 'Competitions Admin', href: '/competitions/admin' });
     }
-
-    // Admin only — cache diagnostics
-    if (isAdmin) {
-      items.push({ name: 'Cache View', href: '/admin/cache' });
+    if (isGMC || isAdmin) {
+      games.push({ name: 'Invite Games', href: '/invite-games' });
     }
-
-    // Admin and RowlandOrganiser get Rowland Admin
     if (isAdmin || isRowlandOrganiser) {
-      items.push({ name: 'Rowland Admin', href: '/rowland/admin' });
+      games.push({ name: 'Rowland Admin', href: '/rowland/admin' });
     }
 
-    return items;
+    // ── Club ──
+    if (isAdmin || canAccessBanking) {
+      club.push({ name: 'Banking', href: '/banking' });
+    }
+    if (isGMC || isAdmin) {
+      club.push({ name: 'Member Suggestions', href: '/member-suggestions' });
+    }
+    if (isAdmin || isCaptain || isGMC) {
+      club.push({ name: 'Announcements', href: '/admin/announcements' });
+    }
+
+    // ── System (Admin only — technical/dev-facing) ──
+    if (isAdmin) {
+      system.push({ name: 'Config', href: '/admin/config' });
+      system.push({ name: 'Cache View', href: '/admin/cache' });
+      system.push({ name: 'Logs', href: '/admin/logs' });
+    }
+
+    const groups: SubMenuGroup[] = [
+      { label: 'Members', items: members },
+      { label: 'Games', items: games },
+      { label: 'Club', items: club },
+      { label: 'System', items: system },
+    ];
+    return groups.filter((g) => g.items.length > 0);
   };
 
-  const adminMenuItems = getAdminMenuItems();
+  const adminGroups = getAdminMenuGroups();
+  // Admins see the full ~19-item list — grouped into a two-level accordion menu so
+  // it doesn't overflow the viewport. Every other role sees at most a handful of
+  // items (Captain/GMC/Treasurer etc.), where a flat list is simpler and grouping
+  // would just add an extra click for no benefit.
+  const adminMenuItemsFlat: SubMenuItem[] = adminGroups.flatMap((g) => g.items);
 
   // Check if regular users have buddies to manage (not for kiosk)
   useEffect(() => {
@@ -394,8 +401,11 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
         </svg>
       ),
     }] : []),
-    // Admin submenu - shows role-based admin functions (only appears if user has items to access)
-    ...(adminMenuItems.length > 0 ? [{
+    // Admin submenu — Admins get a two-level accordion (category -> items, only
+    // one category open at a time) since the full list runs to ~19 items and would
+    // overflow the viewport as one flat list. Every other role just sees a flat
+    // list — usually well under 6 items, not worth an extra click to expand.
+    ...(adminMenuItemsFlat.length > 0 ? [{
       name: 'Admin',
       icon: (
         <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -403,7 +413,7 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
         </svg>
       ),
-      subItems: adminMenuItems,
+      ...(isAdmin ? { subItemGroups: adminGroups } : { subItems: adminMenuItemsFlat }),
     }] : []),
     {
       name: 'Help',
@@ -414,15 +424,6 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
         </svg>
       ),
     },
-//    {
-//      name: 'Social Events',
-//      href: '/social-events',
-//      icon: (
-//        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-//          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-//        </svg>
-//      ),
-//    },
   ];
 
   // Use role-appropriate navigation items.
@@ -435,13 +436,16 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
     return pathname?.startsWith(href);
   };
 
-  const isDropdownActive = (subItems?: SubMenuItem[]) => {
-    if (!subItems) return false;
-    return subItems.some(item => isActive(item.href));
+  const isDropdownActive = (subItems?: SubMenuItem[], subItemGroups?: SubMenuGroup[]) => {
+    if (subItems?.some(item => isActive(item.href))) return true;
+    if (subItemGroups?.some(group => group.items.some(item => isActive(item.href)))) return true;
+    return false;
   };
 
   const toggleDropdown = (itemName: string) => {
     setOpenDropdown(openDropdown === itemName ? null : itemName);
+    // Always start a freshly-opened dropdown's category accordion collapsed
+    setOpenAdminCategory(null);
   };
 
   const handleSignOut = () => {
@@ -730,12 +734,12 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
               </div>
             ) : (
               navigationItems.map((item) => (
-              item.subItems ? (
+              item.subItems || item.subItemGroups ? (
                 // Dropdown menu item
                 <div key={item.name} className="relative">
                   <button
                     onClick={() => toggleDropdown(item.name)}
-                    className={getNavItemClasses(isDropdownActive(item.subItems))}
+                    className={getNavItemClasses(isDropdownActive(item.subItems, item.subItemGroups))}
                   >
                     {item.icon && <span className="mr-2">{item.icon}</span>}
                     {item.name}
@@ -743,7 +747,56 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                     </svg>
                   </button>
-                  {openDropdown === item.name && (
+                  {openDropdown === item.name && item.subItemGroups && (
+                    // Two-level accordion — click a category to expand its items,
+                    // only one category open at a time (keeps the panel short)
+                    <div className="absolute left-0 mt-2 w-56 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-50">
+                      <div className="py-1">
+                        {item.subItemGroups.map((group) => (
+                          <div key={group.label}>
+                            <button
+                              type="button"
+                              onClick={() => setOpenAdminCategory(openAdminCategory === group.label ? null : group.label)}
+                              className={`flex items-center justify-between w-full px-4 py-2 text-sm font-medium ${
+                                group.items.some(i => isActive(i.href)) ? 'text-blue-700' : 'text-gray-700 hover:bg-gray-100'
+                              }`}
+                            >
+                              {group.label}
+                              <svg
+                                className={`h-3.5 w-3.5 transition-transform ${openAdminCategory === group.label ? 'rotate-180' : ''}`}
+                                fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                              >
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              </svg>
+                            </button>
+                            {openAdminCategory === group.label && (
+                              <div className="bg-gray-50 py-1">
+                                {group.items.map((subItem) => (
+                                  <Link
+                                    key={subItem.name}
+                                    href={subItem.href}
+                                    onClick={(e) => {
+                                      handleNavigation(e, subItem.href);
+                                      setOpenDropdown(null);
+                                      setOpenAdminCategory(null);
+                                    }}
+                                    className={`block pl-7 pr-4 py-2 text-sm ${
+                                      isActive(subItem.href)
+                                        ? 'bg-blue-100 text-blue-700'
+                                        : 'text-gray-600 hover:bg-gray-100'
+                                    }`}
+                                  >
+                                    {subItem.name}
+                                  </Link>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {openDropdown === item.name && item.subItems && (
                     <div className="absolute left-0 mt-2 w-48 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-50">
                       <div className="py-1">
                         {item.subItems.map((subItem) => (
@@ -1015,13 +1068,13 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
 
             <div className="px-2 pt-2 pb-3 space-y-1">
               {navigationItems.map((item) => (
-                item.subItems ? (
+                item.subItems || item.subItemGroups ? (
                   // Dropdown menu item in mobile
                   <div key={item.name}>
                     <button
                       onClick={() => toggleDropdown(item.name)}
                       className={`flex items-center justify-between w-full px-3 py-2 rounded-md text-base font-medium ${
-                        isDropdownActive(item.subItems)
+                        isDropdownActive(item.subItems, item.subItemGroups)
                           ? 'bg-blue-100 text-blue-700'
                           : 'text-gray-700 hover:bg-gray-100'
                       }`}
@@ -1039,7 +1092,55 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                       </svg>
                     </button>
-                    {openDropdown === item.name && (
+                    {openDropdown === item.name && item.subItemGroups && (
+                      // Two-level accordion — click a category to expand its items,
+                      // only one category open at a time (keeps the panel short)
+                      <div className="ml-4 mt-1 space-y-1">
+                        {item.subItemGroups.map((group) => (
+                          <div key={group.label}>
+                            <button
+                              type="button"
+                              onClick={() => setOpenAdminCategory(openAdminCategory === group.label ? null : group.label)}
+                              className={`flex items-center justify-between w-full px-3 py-2 rounded-md text-sm font-medium ${
+                                group.items.some(i => isActive(i.href)) ? 'text-blue-700' : 'text-gray-700 hover:bg-gray-100'
+                              }`}
+                            >
+                              {group.label}
+                              <svg
+                                className={`h-3.5 w-3.5 transition-transform ${openAdminCategory === group.label ? 'rotate-180' : ''}`}
+                                fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                              >
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              </svg>
+                            </button>
+                            {openAdminCategory === group.label && (
+                              <div className="ml-4 space-y-1">
+                                {group.items.map((subItem) => (
+                                  <Link
+                                    key={subItem.name}
+                                    href={subItem.href}
+                                    onClick={(e) => {
+                                      handleNavigation(e, subItem.href);
+                                      setMobileMenuOpen(false);
+                                      setOpenDropdown(null);
+                                      setOpenAdminCategory(null);
+                                    }}
+                                    className={`block px-3 py-2 text-sm rounded-md ${
+                                      isActive(subItem.href)
+                                        ? 'bg-blue-100 text-blue-700'
+                                        : 'text-gray-600 hover:bg-gray-100'
+                                    }`}
+                                  >
+                                    {subItem.name}
+                                  </Link>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {openDropdown === item.name && item.subItems && (
                       <div className="ml-6 mt-1 space-y-1">
                         {item.subItems.map((subItem) => (
                           <Link
