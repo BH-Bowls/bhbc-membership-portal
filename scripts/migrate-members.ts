@@ -69,7 +69,7 @@ import { parseSheetTimestamp } from './lib/parse-sheet-timestamp';
 // was an assumption, corrected here after the migration script surfaced the mismatch.
 const SHARED_USERNAMES = ['captains', 'clubhouse'];
 const REDACT_ALIASES = Array.from({ length: 9 }, (_, i) => `liamBH${i + 1}@dasey.org.uk`);
-const TEST_PASSWORD = 'DevTestPassword123!';
+const TEST_PASSWORD = 'Westhill19!';
 
 const noRedact = process.argv.includes('--no-redact');
 
