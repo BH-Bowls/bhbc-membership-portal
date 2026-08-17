@@ -64,9 +64,11 @@ npx supabase link --project-ref ovmaeycnlubjxsyrswoz
 (Prod's reference ID — see the table in §1. You'll be prompted for the database
 password set when the project was created.)
 
-Apply all 47 migrations in one command — confirmed working against the dev project on
-2026-08-17, applied all `supabase/migrations/*.sql` files in order with no manual
-intervention:
+Apply all migrations (48 as of writing, including 0048's Rowland cutover and 0050's
+member_email_sent_status cleanup — numbering has a couple of gaps from since-removed
+migrations, harmless, `db reset --linked` just applies whatever files exist) in one
+command — confirmed working against the dev project on 2026-08-17, applied all
+`supabase/migrations/*.sql` files in order with no manual intervention:
 
 ```powershell
 npx supabase db reset --linked
@@ -88,7 +90,11 @@ whichever one that is, with no additional confirmation prompt of its own.
 
 One sitting, in this exact order — verified against every script's own FK dependency
 comments. Scripts 6–15 aren't order-dependent relative to each other, only relative to
-members/leavers (3–4).
+members/leavers (3–4). `migrate-rowland.ts` (16) must run after `migrate-clubs.ts` (2)
+— it resolves Rowland's hand-entered team names against the real club_profiles list,
+so clubs needs to exist first for that resolution to actually work (no FK enforces
+this, so getting the order wrong won't fail loudly — it'll just leave team names
+unresolved with a console warning per row).
 
 ```powershell
 npx dotenv -e .env.prod.local -- npx tsx scripts/migrate-config.ts
@@ -106,6 +112,7 @@ npx dotenv -e .env.prod.local -- npx tsx scripts/migrate-announcements.ts
 npx dotenv -e .env.prod.local -- npx tsx scripts/migrate-suggestions.ts
 npx dotenv -e .env.prod.local -- npx tsx scripts/migrate-leagues.ts
 npx dotenv -e .env.prod.local -- npx tsx scripts/migrate-invite-games.ts
+npx dotenv -e .env.prod.local -- npx tsx scripts/migrate-rowland.ts
 ```
 
 **`--no-redact` only on the 4 that redact by default** (clubs, members, leavers,
@@ -125,7 +132,7 @@ looks right on the live sheet; this script is not part of the numbered sequence 
 — these scripts read live Sheets regardless of what the deployed app needs.
 
 **Run one at a time.** A failure partway through is much easier to diagnose
-immediately than after all 15 have run — check the printed row counts and any
+immediately than after all 16 have run — check the printed row counts and any
 warnings before moving to the next one. (`migrate-availability.ts` in particular
 validates group_id/event_id against a stale reference and skips it with a clear
 warning rather than crashing the batch — if you see that kind of warning on any

@@ -37,7 +37,7 @@
  *                                     push dev/test data into prod)
  */
 
-import { execFileSync } from 'child_process';
+import { execFileSync, execSync } from 'child_process';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { ask, listBackups, BACKUPS_DIR } from './lib/backups';
@@ -55,10 +55,12 @@ const PROJECT_REFS: Record<string, string> = {
   production: 'ovmaeycnlubjxsyrswoz',
 };
 
-// .cmd on Windows since npx isn't a real .exe there — avoids needing shell: true
-// (and its arg-escaping deprecation warning) just to resolve the command.
-const NPX = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-
+// npx resolves to npx.cmd on Windows, a batch file — execFileSync can't invoke that
+// directly without { shell: true }, which then prints Node's DEP0190 arg-escaping
+// warning. execSync's plain-string form always runs through a shell (its documented,
+// intended behavior — not an opt-in), so it resolves npx.cmd fine without that
+// warning. Safe here since every piece of the command is a trusted constant
+// (PROJECT_REFS lookup), never user input.
 function resetTarget(databaseName: string) {
   const key = /dev/i.test(databaseName) ? 'dev' : /prod/i.test(databaseName) ? 'production' : null;
   if (!key) {
@@ -66,9 +68,9 @@ function resetTarget(databaseName: string) {
   }
   const projectRef = PROJECT_REFS[key];
   console.log(`\nLinking to ${key} (${projectRef})...`);
-  execFileSync(NPX, ['supabase', 'link', '--project-ref', projectRef], { stdio: 'inherit' });
+  execSync(`npx supabase link --project-ref ${projectRef}`, { stdio: 'inherit' });
   console.log(`\nResetting ${key} schema (npx supabase db reset --linked)...`);
-  execFileSync(NPX, ['supabase', 'db', 'reset', '--linked'], { stdio: 'inherit' });
+  execSync(`npx supabase db reset --linked`, { stdio: 'inherit' });
 }
 
 async function main() {

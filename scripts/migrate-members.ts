@@ -82,7 +82,6 @@ if (!noRedact) {
 
 /** Supplementary columns not exposed on the typed User interface — read directly. */
 interface SupplementaryFields {
-  memberEmailSentStatus: string | null;
   label0: string | null;
   label3: string | null;
   label9: string | null;
@@ -114,7 +113,6 @@ async function fetchSupplementaryFields(): Promise<Map<string, SupplementaryFiel
     const userName = get(row, 'user_name');
     if (!userName) continue;
     result.set(userName, {
-      memberEmailSentStatus: get(row, 'member_email_sent_status'),
       label0: get(row, 'label_0'),
       label3: get(row, 'label_3'),
       label9: get(row, 'label_9'),
@@ -325,7 +323,6 @@ async function main() {
       renew_status: u.renewStatus,
       include: u.include,
       renewal_email_sent_status: u.renewalEmailSentStatus,
-      member_email_sent_status: supp?.memberEmailSentStatus ?? null,
       label_0: supp?.label0 ?? null,
       label_3: supp?.label3 ?? null,
       darts: supp?.darts ?? null,

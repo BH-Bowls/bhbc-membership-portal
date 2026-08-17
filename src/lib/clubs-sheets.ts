@@ -790,39 +790,3 @@ export async function deleteContact(clubName: string, rowNumber: number): Promis
 
   await deleteContactByRowNumber(rowNumber);
 }
-
-// ============================================================================
-// CLUB IDENTIFIERS
-// Club login is gone entirely — Rowland is moving to a token-based access design
-// instead (see specs/Planning_next_year_s_fixture_contacts.md). getClubIdentifiers
-// isn't login-related; it powers /api/rowland/clubs, an authenticated Rowland club
-// picker. Still Sheets-only (not yet migrated to Postgres) — it reads the Match Day
-// Contacts spreadsheet, filtered by club_id, a field that no longer exists at all
-// in the Postgres club_profiles schema (its only purpose there was as a login key).
-// ============================================================================
-
-/** Return all clubs that have a club_id set. */
-export async function getClubIdentifiers(): Promise<{ clubId: string; clubName: string }[]> {
-  const spreadsheetId = getMatchDayContactsSpreadsheetId();
-  const colMap = await getColumnMap(spreadsheetId, 'clubs');
-  const sheets = getGoogleSheetsClient();
-
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: 'clubs!A:ZZ',
-  });
-
-  const rows = response.data.values ?? [];
-  if (rows.length < 2) return [];
-
-  const clubIdCol = colMap['club_id'];
-  const clubNameCol = colMap['club_name'];
-  if (clubIdCol === undefined) return [];
-
-  return rows.slice(1)
-    .filter((r) => r[clubIdCol]?.toString().trim())
-    .map((r) => ({
-      clubId: r[clubIdCol] ?? '',
-      clubName: clubNameCol !== undefined ? (r[clubNameCol] ?? '') : '',
-    }));
-}

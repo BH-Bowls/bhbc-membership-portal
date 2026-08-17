@@ -44,8 +44,8 @@ export default function RowlandPage() {
 
   // Club selector shown to guests/plain members (a RowlandPlayer is already identified, no picker needed)
   const isClubSession = role.split(',').map(r => r.trim()).includes('RowlandPlayer');
-  const [clubs, setClubs] = useState<{ clubId: string; clubName: string }[]>([]);
-  const [selectedClub, setSelectedClub] = useState<{ clubId: string; clubName: string } | null>(null);
+  const [clubs, setClubs] = useState<{ clubName: string }[]>([]);
+  const [selectedClub, setSelectedClub] = useState<{ clubName: string } | null>(null);
   const [guestContactName, setGuestContactName] = useState('');
   const [contactNameInput, setContactNameInput] = useState('');
 
@@ -83,7 +83,7 @@ export default function RowlandPage() {
         const stored = localStorage.getItem(LS_KEY);
         if (stored) {
           const parsed = JSON.parse(stored);
-          setSelectedClub({ clubId: parsed.clubId, clubName: parsed.clubName });
+          setSelectedClub({ clubName: parsed.clubName });
           if (parsed.contactName) {
             setGuestContactName(parsed.contactName);
             setContactNameInput(parsed.contactName);
@@ -233,7 +233,7 @@ export default function RowlandPage() {
               <select
                 defaultValue=""
                 onChange={(e) => {
-                  const club = clubs.find((c) => c.clubId === e.target.value) ?? null;
+                  const club = clubs.find((c) => c.clubName === e.target.value) ?? null;
                   setSelectedClub(club);
                   setGuestContactName('');
                   setContactNameInput('');
@@ -245,7 +245,7 @@ export default function RowlandPage() {
               >
                 <option value="" disabled>Select your club…</option>
                 {clubs.map((c) => (
-                  <option key={c.clubId} value={c.clubId}>{c.clubName}</option>
+                  <option key={c.clubName} value={c.clubName}>{c.clubName}</option>
                 ))}
               </select>
             )}

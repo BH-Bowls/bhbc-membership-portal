@@ -1,13 +1,13 @@
 // src/lib/clubs-supabase.ts
 // Postgres-backed replacement for clubs-sheets.ts's real Clubs & Contacts data (NOT
-// club login — that concept has been removed entirely, code and all, since Rowland is
-// moving to a token-based access design instead. getClubIdentifiers stays on
-// clubs-sheets.ts deliberately — it's also used by /api/rowland/clubs, unrelated to
-// login).
+// club login — that concept has been removed entirely, code and all, since Rowland
+// moved to token-based/direct-name access instead).
 //
 // club_name is the sole identifier (matches the plan's decision to drop club_id
-// entirely — it only ever existed as a login identifier). Club lookups are
-// case-insensitive (ilike) to match the live Sheets version's .toLowerCase() matching.
+// entirely — it only ever existed as a login identifier, and briefly as a Sheets-era
+// bridge for Rowland's match data before that moved to Postgres too, storing teams by
+// club_name directly). Club lookups are case-insensitive (ilike) to match the live
+// Sheets version's .toLowerCase() matching.
 //
 // ClubContact.id (a UUID) replaces the Sheets version's _rowNumber.
 
@@ -15,7 +15,6 @@ import { getSupabaseClient } from './supabase';
 
 export interface Club {
   clubName: string;
-  clubId: string | null; // legacy Match Day Contacts id — see 0047_club_id_legacy.sql; only used by Rowland
   clubNumber: string;
   clubMobile: string;
   clubEmailAddress: string;
@@ -143,7 +142,6 @@ function mapClubRow(row: any, petrolBands: Record<string, number>): Club {
   const drivingBand = row.driving_band || '';
   return {
     clubName: row.club_name,
-    clubId: row.club_id || null,
     clubNumber: row.club_number || '',
     clubMobile: row.club_mobile || '',
     clubEmailAddress: row.club_email_address || '',

@@ -32,13 +32,17 @@ export const ROWLAND_SHEET_NAMES: Record<RowlandCompId, string> = {
   'gladys-b': 'Rowland_gladys-b',
 };
 
+/** BHBC's own entry in club_profiles.club_name — used to identify "our" matches. */
+export const BHBC_CLUB_NAME = 'Burgess Hill';
+
 /**
- * A club team entry in a Rowland competition.
+ * A club team entry in a Rowland competition. club_name is the sole identifier
+ * (matches how clubs are identified everywhere else post club-login-removal — see
+ * specs/Phase_0_1_Migration_Plan.md's Rowland redesign section).
  * teamLetter is 'A' or 'B' for clubs entering two teams, or '' for single entry.
  * The display name is typically "Club Name" or "Club Name A" / "Club Name B".
  */
 export interface RowlandTeamRef {
-  clubId: string;
   clubName: string;
   teamLetter: string;
 }
@@ -94,4 +98,59 @@ export interface RowlandComp {
   qfPlayBy: string | null;
   sfPlayBy: string | null;
   fPlayBy: string | null;
+}
+
+// ============================================================================
+// BRACKET MATH
+// ============================================================================
+// Pure, no I/O — shared by both rowland-sheets.ts (kept for migration tooling) and
+// rowland-supabase.ts (the live data layer) rather than duplicated between them.
+
+export interface BracketRound { round: RowlandRound; matchCount: number; }
+
+export interface RowlandBracketInfo {
+  hasPrelim: boolean;
+  prelimMatches: number;  // real prelim matches (not byes)
+  byeCount: number;       // teams with byes directly into R1
+  r1Matches: number;
+  rounds: BracketRound[]; // full ordered list Prelim?→R1→...→F
+}
+
+/**
+ * Compute the correct bracket structure for a given number of teams.
+ * e.g. 24 → 8 prelim matches + 8 byes + R1(8) + QF(4) + SF(2) + F(1)
+ *      16 → R1(8) + QF(4) + SF(2) + F(1)
+ *      32 → R1(16) + R2(8) + QF(4) + SF(2) + F(1)
+ */
+export function computeRowlandBracket(numTeams: number): RowlandBracketInfo {
+  let P = 1;
+  while (P < numTeams) P *= 2;
+
+  const hasPrelim = numTeams !== P;
+  const prelimMatches = hasPrelim ? numTeams - P / 2 : 0;
+  const byeCount = hasPrelim ? P - numTeams : 0;
+
+  // R1 entrants = prelim winners + byes (when prelim) or all teams (when no prelim)
+  const r1Entrants = hasPrelim ? P / 2 : numTeams;
+  const r1Matches = r1Entrants / 2;
+
+  const rounds: BracketRound[] = [];
+  if (hasPrelim) rounds.push({ round: 'Prelim', matchCount: prelimMatches });
+  rounds.push({ round: 'R1', matchCount: r1Matches });
+
+  let count = r1Matches;
+  while (count > 1) {
+    count = count / 2;
+    const prev = rounds[rounds.length - 1].round;
+    const next: RowlandRound =
+      prev === 'Prelim' ? 'R1'
+      : count === 1 ? 'F'
+      : count === 2 ? 'SF'
+      : count === 4 ? 'QF'
+      : count === 8 ? 'R2'
+      : 'R1';
+    rounds.push({ round: next, matchCount: count });
+  }
+
+  return { hasPrelim, prelimMatches, byeCount, r1Matches, rounds };
 }

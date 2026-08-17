@@ -1,12 +1,12 @@
 // app/api/rowland/[compId]/next-match/route.ts
-// GET ?clubId=xxx[&contactName=xxx] — returns the club's next pending match + opponent contacts
+// GET ?clubName=xxx[&contactName=xxx] — returns the club's next pending match + opponent contacts
 // For unauthenticated guests, contactName is verified against the requesting club's own contacts
 // before opponent contact details are returned.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getRowlandMatches } from '@/lib/rowland-sheets';
+import { getRowlandMatches } from '@/lib/rowland-supabase';
 import { getContactsForClub } from '@/lib/clubs-supabase';
 import type { RowlandCompId } from '@/types/rowland';
 
@@ -26,9 +26,9 @@ export async function GET(
 ) {
   try {
     const { compId } = await params;
-    const clubId = req.nextUrl.searchParams.get('clubId');
+    const clubName = req.nextUrl.searchParams.get('clubName');
     const contactName = req.nextUrl.searchParams.get('contactName');
-    if (!clubId) return NextResponse.json({ error: 'clubId required' }, { status: 400 });
+    if (!clubName) return NextResponse.json({ error: 'clubName required' }, { status: 400 });
 
     const session = await getServerSession(authOptions);
     const isAuthenticated = !!session?.user;
@@ -37,7 +37,7 @@ export async function GET(
 
     // Find the club's next pending match (earliest in bracket order)
     const clubMatches = matches.filter(
-      (m) => m.homeTeam?.clubId === clubId || m.awayTeam?.clubId === clubId
+      (m) => m.homeTeam?.clubName === clubName || m.awayTeam?.clubName === clubName
     );
     const pending = clubMatches
       .filter((m) => m.status === 'Pending')
@@ -53,7 +53,7 @@ export async function GET(
 
     const next = pending[0];
     const opponentTeam =
-      next.homeTeam?.clubId === clubId ? next.awayTeam : next.homeTeam;
+      next.homeTeam?.clubName === clubName ? next.awayTeam : next.homeTeam;
 
     if (!opponentTeam) {
       return NextResponse.json({ match: next, opponentContacts: [] });
@@ -66,7 +66,7 @@ export async function GET(
         return NextResponse.json({ match: next, opponentContacts: [] });
       }
       // Find the requesting club's name from match data
-      const requestingTeam = clubMatches[0].homeTeam?.clubId === clubId
+      const requestingTeam = clubMatches[0].homeTeam?.clubName === clubName
         ? clubMatches[0].homeTeam
         : clubMatches[0].awayTeam;
 

@@ -3,8 +3,7 @@
 // Public (no auth) — the draw is already public
 
 import { NextResponse } from 'next/server';
-import { getAllRowlandComps, getRowlandMatches } from '@/lib/rowland-sheets';
-import { rowlandTeamDisplayName } from '@/types/rowland';
+import { getAllRowlandComps, getRowlandMatches } from '@/lib/rowland-supabase';
 import type { RowlandCompId } from '@/types/rowland';
 
 export async function GET() {
@@ -14,24 +13,14 @@ export async function GET() {
       (c) => c.status === 'In Progress' || c.status === 'Draw Done'
     );
 
-    const clubMap = new Map<string, { clubId: string; clubName: string }>();
+    const clubMap = new Map<string, { clubName: string }>();
 
     await Promise.all(
       activeComps.map(async (comp) => {
         const matches = await getRowlandMatches(comp.compId as RowlandCompId);
         for (const m of matches) {
-          if (m.homeTeam && m.homeTeam.clubId) {
-            clubMap.set(m.homeTeam.clubId, {
-              clubId: m.homeTeam.clubId,
-              clubName: m.homeTeam.clubName,
-            });
-          }
-          if (m.awayTeam && m.awayTeam.clubId) {
-            clubMap.set(m.awayTeam.clubId, {
-              clubId: m.awayTeam.clubId,
-              clubName: m.awayTeam.clubName,
-            });
-          }
+          if (m.homeTeam) clubMap.set(m.homeTeam.clubName, { clubName: m.homeTeam.clubName });
+          if (m.awayTeam) clubMap.set(m.awayTeam.clubName, { clubName: m.awayTeam.clubName });
         }
       })
     );

@@ -8,11 +8,11 @@ import {
   getRowlandMatches,
   updateRowlandMatch,
   propagateRowlandWinnerForMatch,
-} from '@/lib/rowland-sheets';
+} from '@/lib/rowland-supabase';
 import { getEmailTransporter, isEmailConfigured } from '@/lib/email/mailer';
 import { hasRole, isCommitteeMember } from '@/lib/role-utils';
 import type { RowlandCompId, RowlandMatch } from '@/types/rowland';
-import { ROWLAND_COMP_NAMES, ROWLAND_ROUND_LABELS } from '@/types/rowland';
+import { ROWLAND_COMP_NAMES, ROWLAND_ROUND_LABELS, BHBC_CLUB_NAME } from '@/types/rowland';
 
 export async function PATCH(
   req: NextRequest,
@@ -23,8 +23,6 @@ export async function PATCH(
     if (!session?.user?.userName) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-
-    const BHBC_CLUB_ID = 'burgess.hill';
 
     const role = session.user.role;
     const isRowlandPlayer = hasRole(role, 'RowlandPlayer');
@@ -49,13 +47,12 @@ export async function PATCH(
 
     // For RowlandPlayer, verify their club is a participant in the match
     if (isRowlandPlayer) {
-      const clubId = BHBC_CLUB_ID;
       const matches = await getRowlandMatches(compId as RowlandCompId);
       const match = matches.find((m) => m.matchId === matchId);
       if (!match) {
         return NextResponse.json({ error: 'Match not found' }, { status: 404 });
       }
-      if (match.homeTeam?.clubId !== clubId && match.awayTeam?.clubId !== clubId) {
+      if (match.homeTeam?.clubName !== BHBC_CLUB_NAME && match.awayTeam?.clubName !== BHBC_CLUB_NAME) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
       }
     }
