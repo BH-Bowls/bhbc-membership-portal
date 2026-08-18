@@ -134,7 +134,17 @@ export default function RowlandPage() {
       />
 
       <div className="container mx-auto px-4 py-8 max-w-4xl">
-        <h1 className="text-3xl font-bold text-gray-900 mb-6">Rowland Cup</h1>
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-3xl font-bold text-gray-900">Rowland Cup</h1>
+          {isCommittee && (
+            <button
+              onClick={() => router.push('/rowland/admin')}
+              className="px-3 py-1.5 text-sm font-medium text-blue-600 border border-blue-200 rounded-md hover:bg-blue-50"
+            >
+              Manage
+            </button>
+          )}
+        </div>
 
         {/* Message panel */}
         {(message || isCommittee) && (

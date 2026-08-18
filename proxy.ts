@@ -37,10 +37,18 @@ function isPublicRoute(pathname: string): boolean {
   // /api/friendlies/game/[tabDate] — public API for game details
   if (pathname.startsWith('/api/friendlies/game/')) return true;
 
-  // /rowland/[compId] — but NOT setup pages
+  // /rowland/[compId] — but NOT setup pages (/rowland/[compId]/setup — 'setup' is the
+  // 4th segment, after compId) or the /rowland/admin/* section ('admin' is the 3rd
+  // segment, no compId in between). Checking only the 3rd segment here was a real bug
+  // (found 2026-08-18): it always held the compId, e.g. "edward-a", never literally
+  // "setup", so /rowland/[compId]/setup was never actually excluded — it worked only
+  // because the setup page's own client-side role check also blocks it, not because
+  // of this middleware layer. Fixed here to check both segment positions properly.
   if (pathname.startsWith('/rowland/')) {
-    const segment = pathname.split('/')[2];
-    if (segment && !['setup'].includes(segment)) return true;
+    const parts = pathname.split('/');
+    const isAdminSection = parts[2] === 'admin';
+    const isSetupPage = parts[3] === 'setup';
+    if (parts[2] && !isAdminSection && !isSetupPage) return true;
   }
 
   // /competitions/[compId] and sub-pages — but NOT admin/my/handicaps
@@ -64,10 +72,16 @@ function isPublicRoute(pathname: string): boolean {
   // /api/leagues/[leagueId] and sub-paths — public
   if (pathname.startsWith('/api/leagues/')) return true;
 
-  // /api/rowland/[compId] and matches — but NOT setup
+  // /api/rowland/[compId] and matches — but NOT setup (/api/rowland/[compId]/setup —
+  // 'setup' is the 5th segment, after compId) or /api/rowland/entries/* (committee-only
+  // entry management — 'entries' is the 4th segment, no compId in between). Same bug
+  // as the page-route check above: checking only the 4th segment always caught the
+  // compId, never literally "setup", so the exclusion never fired for that path shape.
   if (pathname.startsWith('/api/rowland/')) {
-    const segment = pathname.split('/')[3];
-    if (segment && !['setup'].includes(segment)) return true;
+    const parts = pathname.split('/');
+    const isEntriesApi = parts[3] === 'entries';
+    const isSetupApi = parts[4] === 'setup';
+    if (parts[3] && !isEntriesApi && !isSetupApi) return true;
   }
 
   // /api/clubs and all sub-paths

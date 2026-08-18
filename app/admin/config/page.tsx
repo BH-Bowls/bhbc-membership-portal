@@ -11,7 +11,14 @@ import { Navbar } from '@/components/Navbar';
 import { hasRole } from '@/lib/role-utils';
 import { getInputClasses, getCardClasses, getAlertClasses } from '@/config/theme-helpers';
 
-type Tab = 'general' | 'labels';
+type Tab = 'general' | 'labels' | 'rowland';
+
+const ROWLAND_FIELDS: [string, string, string][] = [
+  // key, label, hint
+  ['rowland_entry_fee', 'Entry fee per team (£)', 'Charged per team on the Rowland Cup entry form.'],
+  ['rowland_entry_deadline', 'Entry deadline (YYYY-MM-DD)', 'Shown on the entry form and confirmation email, and used as the access-token expiry.'],
+  ['rowland_entry_season', 'Entry season', 'Which season new entry-form submissions get tagged with, e.g. "2027".'],
+];
 
 const LABELS_FIELDS: [string, string][] = [
   ['booklet_label_message', 'Booklet label message'],
@@ -45,6 +52,10 @@ export default function AdminConfigPage() {
   const [isEditingLabels, setIsEditingLabels] = useState(false);
   const [savingLabels, setSavingLabels] = useState(false);
 
+  const [editRowland, setEditRowland] = useState<Record<string, string>>({});
+  const [isEditingRowland, setIsEditingRowland] = useState(false);
+  const [savingRowland, setSavingRowland] = useState(false);
+
   // Auth guard
   useEffect(() => {
     if (status === 'loading') return;
@@ -62,6 +73,7 @@ export default function AdminConfigPage() {
           setConfig(data.config);
           setEditGeneral(data.config);
           setEditLabels(data.config);
+          setEditRowland(data.config);
         } else {
           setError(data.error || 'Failed to load config');
         }
@@ -124,6 +136,26 @@ export default function AdminConfigPage() {
     }
   }
 
+  async function saveRowland() {
+    setSavingRowland(true);
+    try {
+      const updates: Record<string, string> = {};
+      for (const [key] of ROWLAND_FIELDS) updates[key] = editRowland[key] ?? '';
+      const res = await fetch('/api/admin/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+      });
+      if (!res.ok) throw new Error();
+      setConfig((prev) => ({ ...prev, ...updates }));
+      setIsEditingRowland(false);
+    } catch {
+      alert('Failed to save Rowland configuration');
+    } finally {
+      setSavingRowland(false);
+    }
+  }
+
   if (status === 'loading' || loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -147,7 +179,7 @@ export default function AdminConfigPage() {
 
         {/* Tabs */}
         <div className="border-b border-gray-200 flex gap-6">
-          {(['general', 'labels'] as Tab[]).map((t) => (
+          {(['general', 'labels', 'rowland'] as Tab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -155,7 +187,7 @@ export default function AdminConfigPage() {
                 tab === t ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
               }`}
             >
-              {t === 'general' ? 'General' : 'Labels'}
+              {t === 'general' ? 'General' : t === 'labels' ? 'Labels' : 'Rowland'}
             </button>
           ))}
         </div>
@@ -329,6 +361,50 @@ export default function AdminConfigPage() {
                   ) : (
                     <span className="text-gray-900">{config[key] || '—'}</span>
                   )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Rowland tab ── */}
+        {tab === 'rowland' && (
+          <div className={`${getCardClasses('md')} space-y-3`}>
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-medium text-gray-700">Rowland Cup entry settings</h2>
+              {!isEditingRowland ? (
+                <button onClick={() => { setEditRowland(config); setIsEditingRowland(true); }} className="text-sm text-blue-600 hover:text-blue-800">
+                  Edit
+                </button>
+              ) : (
+                <div className="flex gap-3">
+                  <button onClick={() => { setEditRowland(config); setIsEditingRowland(false); }} className="text-sm text-gray-500 hover:text-gray-700">
+                    Cancel
+                  </button>
+                  <button onClick={saveRowland} disabled={savingRowland} className="text-sm text-blue-600 hover:text-blue-800 disabled:opacity-50">
+                    {savingRowland ? 'Saving...' : 'Save'}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <p className="text-xs text-gray-700">Used by the public Rowland Cup team entry form (/rowland/enter) and its confirmation email.</p>
+
+            <div className="space-y-4 text-sm">
+              {ROWLAND_FIELDS.map(([key, label, hint]) => (
+                <div key={key}>
+                  <label className="block text-gray-900 mb-1">{label}</label>
+                  {isEditingRowland ? (
+                    <input
+                      type="text"
+                      value={editRowland[key] ?? ''}
+                      onChange={(e) => setEditRowland((prev) => ({ ...prev, [key]: e.target.value }))}
+                      className={`${getInputClasses()} max-w-xs`}
+                    />
+                  ) : (
+                    <span className="text-gray-900">{config[key] || '—'}</span>
+                  )}
+                  <p className="text-xs text-gray-700 mt-1">{hint}</p>
                 </div>
               ))}
             </div>
