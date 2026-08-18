@@ -41,9 +41,20 @@ function formatTime(t: string | null): string {
 
 // The real arranged date always takes priority once set (both league types can have
 // one now); playByDate is only a fallback grouping key for pairs leagues before a
-// real date has been arranged.
+// real date has been arranged. Used for "your next match" / contact-card purposes,
+// where the actual real-world date matters more than the committee's original target.
 function getMatchDate(m: LeagueMatch, _leagueType: string): string | null {
   return m.scheduledDate ?? m.playByDate ?? null;
+}
+
+// The main fixtures list stays grouped under the committee's original target date
+// (playByDate for pairs leagues) even after a real date/time has been arranged —
+// the arranged date/time is shown on the match card itself instead (see the
+// "Arranged" line below), so the original deadline doesn't just vanish once someone
+// self-services a date. Triples leagues have no playByDate concept at all, so
+// scheduledDate is already their "original" date and moves as expected.
+function getGroupDate(m: LeagueMatch): string | null {
+  return m.playByDate ?? m.scheduledDate ?? null;
 }
 
 function fmtAdj(n: number | null): string {
@@ -99,17 +110,22 @@ function LeagueDetailPageInner() {
   // Team breakdown popup
   const [teamDetailId, setTeamDetailId] = useState<string | null>(null);
 
-  // Score entry (committee only) — also carries date/time since it's the one dialog
-  // committee sees, per the "single dialog" redesign. 'DateOnly' is a synthetic
-  // status meaning "just update date/time, don't touch the result" — the default
-  // for a not-yet-played match so committee isn't forced to submit a score just to
-  // fix the date.
-  const [scoreDialog, setScoreDialog] = useState<{
+  // Unified match dialog — covers date/time, player lineup, and (committee only)
+  // score entry in one place, opened from either the committee's Enter/Edit Score
+  // button or a squad member's own Date/Time button. Always opens on the Players
+  // tab regardless of entry point; the Score tab only exists for isCommittee.
+  // Nothing hits the API until Save — including lineup toggles, tracked here as a
+  // local diff (pendingLineup) against the server's current lineupFor(matchId) so
+  // clicking a checkbox doesn't trigger a full-page reload per click.
+  // status: '' means "no change intended" — the dialog can be saved as a pure
+  // date/time and/or lineup update without ever touching the result.
+  const [matchDialog, setMatchDialog] = useState<{
     matchId: string;
     homeTeamId: string; awayTeamId: string;
     homeTeamName: string; awayTeamName: string;
-    status: LeagueMatchStatus | 'Reset' | 'DateOnly';
+    tab: 'players' | 'score';
     scheduledDate: string; scheduledTime: string;
+    status: LeagueMatchStatus | 'Reset' | '';
     // Played / Conceded
     homeScore: string; awayScore: string;
     // All statuses with a result
@@ -117,28 +133,9 @@ function LeagueDetailPageInner() {
     homePoints: string; awayPoints: string;
     // Walkover
     walkoverWinner: 'home' | 'away' | '';
+    pendingLineup: Record<string, boolean>;
     saving: boolean;
   } | null>(null);
-
-  // Date/time arrangement (non-committee) — any squad member of either team can
-  // arrange when their match is actually happening (both league types; the
-  // committee-set "Play by" deadline for pairs leagues stays separate, read-only here).
-  const [dateDialog, setDateDialog] = useState<{
-    matchId: string;
-    homeTeamId: string; awayTeamId: string;
-    homeTeamName: string; awayTeamName: string;
-    scheduledDate: string; scheduledTime: string;
-    saving: boolean;
-  } | null>(null);
-
-  // Match lineup — who's actually named as playing this specific match, separate
-  // from the team's overall squad. Toggled per-player, so no local draft state needed.
-  const [playersDialog, setPlayersDialog] = useState<{
-    matchId: string;
-    homeTeamId: string; awayTeamId: string;
-    homeTeamName: string; awayTeamName: string;
-  } | null>(null);
-  const [togglingPlayer, setTogglingPlayer] = useState<string | null>(null);
 
   // Entry
   const [enteringLeague, setEnteringLeague] = useState(false);
@@ -224,70 +221,13 @@ function LeagueDetailPageInner() {
     return { home: '1', away: '1' };
   }
 
-  async function saveScore() {
-    if (!scoreDialog) return;
-    const { status } = scoreDialog;
-
-    // 'DateOnly' — just update the date/time, leave the result (and status) untouched.
-    let payload: Record<string, unknown> = {
-      scheduledDate: scoreDialog.scheduledDate || null,
-      scheduledTime: scoreDialog.scheduledTime || null,
-    };
-
-    if (status === 'Reset') {
-      payload = { ...payload, status: 'Scheduled', homeScore: null, awayScore: null, homeAdj: null, awayAdj: null, homePoints: null, awayPoints: null };
-    } else if (status === 'Played' || status === 'Conceded') {
-      const home = parseInt(scoreDialog.homeScore);
-      const away = parseInt(scoreDialog.awayScore);
-      if (isNaN(home) || isNaN(away)) { alert('Enter valid scores for both sides'); return; }
-      const homeAdj = scoreDialog.homeAdj !== '' ? parseInt(scoreDialog.homeAdj) : null;
-      const awayAdj = scoreDialog.awayAdj !== '' ? parseInt(scoreDialog.awayAdj) : null;
-      const homePts = parseInt(scoreDialog.homePoints);
-      const awayPts = parseInt(scoreDialog.awayPoints);
-      if (isNaN(homePts) || isNaN(awayPts)) { alert('Enter valid points for both sides'); return; }
-      payload = { ...payload, status, homeScore: home, awayScore: away, homeAdj: homeAdj ?? 0, awayAdj: awayAdj ?? 0, homePoints: homePts, awayPoints: awayPts };
-
-    } else if (status === 'Walkover') {
-      if (!scoreDialog.walkoverWinner) { alert('Select which team is awarded the points'); return; }
-      const homeAdj = parseInt(scoreDialog.homeAdj);
-      const awayAdj = parseInt(scoreDialog.awayAdj);
-      const homePts = parseInt(scoreDialog.homePoints);
-      const awayPts = parseInt(scoreDialog.awayPoints);
-      if (isNaN(homeAdj) || isNaN(awayAdj) || isNaN(homePts) || isNaN(awayPts)) {
-        alert('Enter valid adjustment and points values'); return;
-      }
-      payload = { ...payload, status, homeScore: null, awayScore: null, homeAdj, awayAdj, homePoints: homePts, awayPoints: awayPts };
-    } else if (status === 'Not Played') {
-      payload = { ...payload, status };
-    }
-    // 'DateOnly': payload already just has the date/time fields
-
-    setScoreDialog((d) => d ? { ...d, saving: true } : d);
-    try {
-      const res = await fetch(`/api/leagues/${leagueId}/matches/${scoreDialog.matchId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to save');
-      }
-      setScoreDialog(null);
-      loadLeague();
-    } catch (err: any) {
-      alert(err.message);
-      setScoreDialog((d) => d ? { ...d, saving: false } : d);
-    }
-  }
-
-  function openScoreDialog(match: LeagueMatch) {
+  function openMatchDialog(match: LeagueMatch) {
     const homeTeam = teams.find((t) => t.teamId === match.homeTeamId);
     const awayTeam = teams.find((t) => t.teamId === match.awayTeamId);
-    // Default to just updating date/time for a not-yet-played match, so committee
-    // isn't forced to submit a result just to fix the date — they explicitly pick a
-    // result type from the dropdown when they're ready to record one.
-    const initialStatus: LeagueMatchStatus | 'DateOnly' = match.status === 'Scheduled' ? 'DateOnly' : match.status;
+    // '' (no change) for a not-yet-played match — committee isn't forced to pick a
+    // result type just to fix the date/time or lineup; they explicitly choose one
+    // from the dropdown on the Score tab when they're ready to record it.
+    const initialStatus: LeagueMatchStatus | '' = match.status === 'Scheduled' ? '' : match.status;
     const walkoverWinner: 'home' | 'away' | '' =
       match.status === 'Walkover' && match.homeAdj !== null && match.awayAdj !== null
         ? (match.homeAdj > match.awayAdj ? 'home' : 'away')
@@ -296,12 +236,13 @@ function LeagueDetailPageInner() {
     const existingAwayAdj = match.awayAdj !== null ? String(match.awayAdj) : '0';
     const existingHomePts = match.homePoints !== null ? String(match.homePoints) : '';
     const existingAwayPts = match.awayPoints !== null ? String(match.awayPoints) : '';
-    setScoreDialog({
+    setMatchDialog({
       matchId: match.matchId,
       homeTeamId: match.homeTeamId,
       awayTeamId: match.awayTeamId,
       homeTeamName: homeTeam?.teamName ?? 'Home',
       awayTeamName: awayTeam?.teamName ?? 'Away',
+      tab: 'players',
       scheduledDate: match.scheduledDate ?? '',
       scheduledTime: match.scheduledTime ?? '',
       homeScore: match.homeScore !== null ? String(match.homeScore) : '',
@@ -312,66 +253,85 @@ function LeagueDetailPageInner() {
       awayPoints: existingAwayPts,
       status: initialStatus,
       walkoverWinner,
+      pendingLineup: {},
       saving: false,
     });
   }
 
-  function openDateDialog(match: LeagueMatch) {
-    const homeTeam = teams.find((t) => t.teamId === match.homeTeamId);
-    const awayTeam = teams.find((t) => t.teamId === match.awayTeamId);
-    setDateDialog({
-      matchId: match.matchId,
-      homeTeamId: match.homeTeamId,
-      awayTeamId: match.awayTeamId,
-      homeTeamName: homeTeam?.teamName ?? 'Home',
-      awayTeamName: awayTeam?.teamName ?? 'Away',
-      scheduledDate: match.scheduledDate ?? '',
-      scheduledTime: match.scheduledTime ?? '',
-      saving: false,
-    });
+  // Local-only toggle — no network call. The checkbox's displayed state already
+  // reflects this via effectiveLineupFor below; nothing is sent to the server until
+  // Save, which is what actually fixes the sluggish per-click table reload.
+  function toggleLineupLocal(username: string, currentlyEffectiveNamed: boolean) {
+    setMatchDialog((d) => d ? { ...d, pendingLineup: { ...d.pendingLineup, [username]: !currentlyEffectiveNamed } } : d);
   }
 
-  async function saveDate() {
-    if (!dateDialog) return;
-    setDateDialog((d) => d ? { ...d, saving: true } : d);
+  async function saveMatchDialog() {
+    if (!matchDialog) return;
+    const { status } = matchDialog;
+
+    let payload: Record<string, unknown> = {
+      scheduledDate: matchDialog.scheduledDate || null,
+      scheduledTime: matchDialog.scheduledTime || null,
+    };
+
+    if (status === 'Reset') {
+      payload = { ...payload, status: 'Scheduled', homeScore: null, awayScore: null, homeAdj: null, awayAdj: null, homePoints: null, awayPoints: null };
+    } else if (status === 'Played' || status === 'Conceded') {
+      const home = parseInt(matchDialog.homeScore);
+      const away = parseInt(matchDialog.awayScore);
+      if (isNaN(home) || isNaN(away)) { alert('Enter valid scores for both sides'); return; }
+      const homeAdj = matchDialog.homeAdj !== '' ? parseInt(matchDialog.homeAdj) : null;
+      const awayAdj = matchDialog.awayAdj !== '' ? parseInt(matchDialog.awayAdj) : null;
+      const homePts = parseInt(matchDialog.homePoints);
+      const awayPts = parseInt(matchDialog.awayPoints);
+      if (isNaN(homePts) || isNaN(awayPts)) { alert('Enter valid points for both sides'); return; }
+      payload = { ...payload, status, homeScore: home, awayScore: away, homeAdj: homeAdj ?? 0, awayAdj: awayAdj ?? 0, homePoints: homePts, awayPoints: awayPts };
+
+    } else if (status === 'Walkover') {
+      if (!matchDialog.walkoverWinner) { alert('Select which team is awarded the points'); return; }
+      const homeAdj = parseInt(matchDialog.homeAdj);
+      const awayAdj = parseInt(matchDialog.awayAdj);
+      const homePts = parseInt(matchDialog.homePoints);
+      const awayPts = parseInt(matchDialog.awayPoints);
+      if (isNaN(homeAdj) || isNaN(awayAdj) || isNaN(homePts) || isNaN(awayPts)) {
+        alert('Enter valid adjustment and points values'); return;
+      }
+      payload = { ...payload, status, homeScore: null, awayScore: null, homeAdj, awayAdj, homePoints: homePts, awayPoints: awayPts };
+    } else if (status === 'Not Played') {
+      payload = { ...payload, status };
+    }
+    // status === '': payload already just has the date/time fields — no result change intended
+
+    setMatchDialog((d) => d ? { ...d, saving: true } : d);
     try {
-      const res = await fetch(`/api/leagues/${leagueId}/matches/${dateDialog.matchId}`, {
+      const res = await fetch(`/api/leagues/${leagueId}/matches/${matchDialog.matchId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          scheduledDate: dateDialog.scheduledDate || null,
-          scheduledTime: dateDialog.scheduledTime || null,
-        }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || 'Failed to save');
       }
-      setDateDialog(null);
-      loadLeague();
-    } catch (err: any) {
-      alert(err.message);
-      setDateDialog((d) => d ? { ...d, saving: false } : d);
-    }
-  }
 
-  async function toggleMatchPlayer(matchId: string, username: string, currentlyNamed: boolean) {
-    setTogglingPlayer(username);
-    try {
-      const res = await fetch(`/api/leagues/${leagueId}/matches/${matchId}/players`, {
-        method: currentlyNamed ? 'DELETE' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username }),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to update lineup');
+      // Apply pending lineup changes — sequential, only for entries actually toggled.
+      for (const [username, shouldBeNamed] of Object.entries(matchDialog.pendingLineup)) {
+        const res2 = await fetch(`/api/leagues/${leagueId}/matches/${matchDialog.matchId}/players`, {
+          method: shouldBeNamed ? 'POST' : 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username }),
+        });
+        if (!res2.ok) {
+          const data = await res2.json();
+          throw new Error(data.error || `Failed to update ${username}'s lineup status`);
+        }
       }
+
+      setMatchDialog(null);
       loadLeague();
     } catch (err: any) {
       alert(err.message);
-    } finally {
-      setTogglingPlayer(null);
+      setMatchDialog((d) => d ? { ...d, saving: false } : d);
     }
   }
 
@@ -451,11 +411,12 @@ function LeagueDetailPageInner() {
     ? (squad.find((m) => m.teamId === contactOpponentTeamId && m.position === 'Captain') ?? null)
     : null;
 
-  // Group matches by date
+  // Group matches by date — pinned to the original target date (getGroupDate), not
+  // wherever a match has since been individually arranged to.
   const scheduledDates = Array.from(
-    new Set(matches.map((m) => getMatchDate(m, league?.type ?? 'triples')).filter(Boolean) as string[])
+    new Set(matches.map((m) => getGroupDate(m)).filter(Boolean) as string[])
   ).sort();
-  const unscheduledMatches = matches.filter((m) => !getMatchDate(m, league?.type ?? 'triples'));
+  const unscheduledMatches = matches.filter((m) => !getGroupDate(m));
 
   if (loading) {
     return (
@@ -771,14 +732,14 @@ function LeagueDetailPageInner() {
                 {scheduledDates.filter((date) =>
                   matchFilter === 'all' || !myEntry?.teamId
                     ? true
-                    : matches.some((m) => getMatchDate(m, league.type) === date && (m.homeTeamId === myEntry.teamId || m.awayTeamId === myEntry.teamId))
+                    : matches.some((m) => getGroupDate(m) === date && (m.homeTeamId === myEntry.teamId || m.awayTeamId === myEntry.teamId))
                 ).map((date) => (
                   <div key={date}>
                     <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
                       {league.dateLabel}: {formatFullDate(date)}
                     </h3>
                     <div className="space-y-2">
-                      {matches.filter((m) => getMatchDate(m, league.type) === date && (matchFilter === 'all' || !myEntry?.teamId || m.homeTeamId === myEntry.teamId || m.awayTeamId === myEntry.teamId)).map((match) => {
+                      {matches.filter((m) => getGroupDate(m) === date && (matchFilter === 'all' || !myEntry?.teamId || m.homeTeamId === myEntry.teamId || m.awayTeamId === myEntry.teamId)).map((match) => {
                         const homeTeam = teams.find((t) => t.teamId === match.homeTeamId);
                         const awayTeam = teams.find((t) => t.teamId === match.awayTeamId);
                         const isPlayed = match.status === 'Played' || match.status === 'Walkover' || match.status === 'Conceded';
@@ -828,6 +789,13 @@ function LeagueDetailPageInner() {
                                   </span>
                                 )}
                               </div>
+                              {/* Once self-serviced, the real arranged date/time is shown here — the
+                                  heading above stays pinned to the original playByDate regardless. */}
+                              {match.playByDate && match.scheduledDate && (
+                                <p className="text-xs text-blue-600 font-medium mt-0.5">
+                                  Arranged: {formatFullDate(match.scheduledDate)}{match.scheduledTime ? ` at ${formatTime(match.scheduledTime)}` : ''}
+                                </p>
+                              )}
                             </div>
                             <div className="flex items-center gap-2">
                               <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${MATCH_STATUS_STYLES[match.status]}`}>
@@ -835,7 +803,7 @@ function LeagueDetailPageInner() {
                               </span>
                               {isCommittee && !isPlayed && match.status !== 'Not Played' && (
                                 <button
-                                  onClick={(e) => { e.stopPropagation(); openScoreDialog(match); }}
+                                  onClick={(e) => { e.stopPropagation(); openMatchDialog(match); }}
                                   className="text-xs px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100"
                                 >
                                   Enter Score
@@ -843,7 +811,7 @@ function LeagueDetailPageInner() {
                               )}
                               {isCommittee && (isPlayed || match.status === 'Not Played') && (
                                 <button
-                                  onClick={(e) => { e.stopPropagation(); openScoreDialog(match); }}
+                                  onClick={(e) => { e.stopPropagation(); openMatchDialog(match); }}
                                   className="text-xs px-2 py-1 bg-gray-50 text-gray-600 rounded hover:bg-gray-100"
                                 >
                                   Edit Score
@@ -851,7 +819,7 @@ function LeagueDetailPageInner() {
                               )}
                               {!isCommittee && isMyMatch && !isPlayed && match.status !== 'Not Played' && (
                                 <button
-                                  onClick={(e) => { e.stopPropagation(); openDateDialog(match); }}
+                                  onClick={(e) => { e.stopPropagation(); openMatchDialog(match); }}
                                   className="text-xs px-2 py-1 bg-gray-50 text-gray-700 rounded hover:bg-gray-100"
                                 >
                                   Date/Time
@@ -899,13 +867,13 @@ function LeagueDetailPageInner() {
                                 {match.status}
                               </span>
                               {isCommittee && !isPlayed && match.status !== 'Not Played' && (
-                                <button onClick={(e) => { e.stopPropagation(); openScoreDialog(match); }} className="text-xs px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100">Enter Score</button>
+                                <button onClick={(e) => { e.stopPropagation(); openMatchDialog(match); }} className="text-xs px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100">Enter Score</button>
                               )}
                               {isCommittee && (isPlayed || match.status === 'Not Played') && (
-                                <button onClick={(e) => { e.stopPropagation(); openScoreDialog(match); }} className="text-xs px-2 py-1 bg-gray-50 text-gray-600 rounded hover:bg-gray-100">Edit</button>
+                                <button onClick={(e) => { e.stopPropagation(); openMatchDialog(match); }} className="text-xs px-2 py-1 bg-gray-50 text-gray-600 rounded hover:bg-gray-100">Edit</button>
                               )}
                               {!isCommittee && isMyMatch && !isPlayed && match.status !== 'Not Played' && (
-                                <button onClick={(e) => { e.stopPropagation(); openDateDialog(match); }} className="text-xs px-2 py-1 bg-gray-50 text-gray-700 rounded hover:bg-gray-100">Date/Time</button>
+                                <button onClick={(e) => { e.stopPropagation(); openMatchDialog(match); }} className="text-xs px-2 py-1 bg-gray-50 text-gray-700 rounded hover:bg-gray-100">Date/Time</button>
                               )}
                             </div>
                           </div>
@@ -1002,330 +970,20 @@ function LeagueDetailPageInner() {
         )}
       </div>
 
-      {/* Score entry dialog (committee) — also covers date/time in the same dialog */}
-      {scoreDialog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
-            <div className="p-5 border-b border-gray-200 flex items-start justify-between gap-3">
-              <div>
-                <h2 className="text-base font-semibold text-gray-900">Enter Result</h2>
-                <p className="text-sm text-gray-500 mt-0.5">
-                  {scoreDialog.homeTeamName} vs {scoreDialog.awayTeamName}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  const { matchId, homeTeamId, awayTeamId, homeTeamName, awayTeamName } = scoreDialog;
-                  setScoreDialog(null);
-                  setPlayersDialog({ matchId, homeTeamId, awayTeamId, homeTeamName, awayTeamName });
-                }}
-                className="text-xs px-2 py-1 bg-gray-50 text-gray-700 rounded hover:bg-gray-100 whitespace-nowrap"
-              >
-                Players
-              </button>
-            </div>
-            <div className="p-5 space-y-4">
-              {/* Date/time */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">Date</label>
-                  <input
-                    type="date"
-                    value={scoreDialog.scheduledDate}
-                    onChange={(e) => setScoreDialog((d) => d ? { ...d, scheduledDate: e.target.value } : d)}
-                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">Time</label>
-                  <input
-                    type="time"
-                    value={scoreDialog.scheduledTime}
-                    onChange={(e) => setScoreDialog((d) => d ? { ...d, scheduledTime: e.target.value } : d)}
-                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
-                  />
-                </div>
-              </div>
-
-              {/* Status */}
-              <div>
-                <label className="block text-xs text-gray-600 mb-1">Result type</label>
-                <select
-                  value={scoreDialog.status}
-                  onChange={(e) => {
-                    const s = e.target.value as LeagueMatchStatus | 'Reset' | 'DateOnly';
-                    const isWalkover = s === 'Walkover';
-                    setScoreDialog((d) => d ? {
-                      ...d, status: s, walkoverWinner: '',
-                      homeScore: isWalkover ? '' : d.homeScore,
-                      awayScore: isWalkover ? '' : d.awayScore,
-                      homeAdj: isWalkover ? '10' : '0',
-                      awayAdj: isWalkover ? '0' : '0',
-                      homePoints: isWalkover ? '2' : '',
-                      awayPoints: isWalkover ? '0' : '',
-                    } : d);
-                  }}
-                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
-                >
-                  <option value="DateOnly">— Just update date/time —</option>
-                  <option value="Played">Played</option>
-                  <option value="Conceded">Conceded</option>
-                  <option value="Walkover">Walkover</option>
-                  <option value="Not Played">Not Played</option>
-                  <option value="Reset">— Reset to Scheduled —</option>
-                </select>
-              </div>
-
-              {/* Walkover: which side claims */}
-              {scoreDialog.status === 'Walkover' && (
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">Which team is awarded the points?</label>
-                  <select
-                    value={scoreDialog.walkoverWinner}
-                    onChange={(e) => {
-                      const winner = e.target.value as 'home' | 'away' | '';
-                      setScoreDialog((d) => d ? {
-                        ...d, walkoverWinner: winner,
-                        homeAdj: winner === 'home' ? '10' : winner === 'away' ? '0' : d.homeAdj,
-                        awayAdj: winner === 'away' ? '10' : winner === 'home' ? '0' : d.awayAdj,
-                        homePoints: winner === 'home' ? '2' : winner === 'away' ? '0' : d.homePoints,
-                        awayPoints: winner === 'away' ? '2' : winner === 'home' ? '0' : d.awayPoints,
-                      } : d);
-                    }}
-                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
-                    autoFocus
-                  >
-                    <option value="">— select —</option>
-                    <option value="home">{scoreDialog.homeTeamName}</option>
-                    <option value="away">{scoreDialog.awayTeamName}</option>
-                  </select>
-                </div>
-              )}
-
-              {/* Played / Conceded: final score */}
-              {(scoreDialog.status === 'Played' || scoreDialog.status === 'Conceded') && (
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">Final score</label>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <p className="text-xs text-gray-500 mb-1 truncate">{scoreDialog.homeTeamName}</p>
-                      <input
-                        type="number" min="0"
-                        value={scoreDialog.homeScore}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setScoreDialog((d) => {
-                            if (!d) return d;
-                            const pts = autoPoints(v, d.awayScore, d.homeAdj, d.awayAdj);
-                            return { ...d, homeScore: v, homePoints: pts.home, awayPoints: pts.away };
-                          });
-                        }}
-                        className="w-full border border-gray-300 rounded-md px-3 py-2 text-lg font-semibold text-center"
-                        autoFocus
-                      />
-                    </div>
-                    <div>
-                      <p className="text-xs text-gray-500 mb-1 truncate">{scoreDialog.awayTeamName}</p>
-                      <input
-                        type="number" min="0"
-                        value={scoreDialog.awayScore}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setScoreDialog((d) => {
-                            if (!d) return d;
-                            const pts = autoPoints(d.homeScore, v, d.homeAdj, d.awayAdj);
-                            return { ...d, awayScore: v, homePoints: pts.home, awayPoints: pts.away };
-                          });
-                        }}
-                        className="w-full border border-gray-300 rounded-md px-3 py-2 text-lg font-semibold text-center"
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Score adjustment (all result types except Cancelled) */}
-              {scoreDialog.status !== 'Not Played' && scoreDialog.status !== 'Reset' && scoreDialog.status !== 'DateOnly' && (
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">Score adjustment</label>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <p className="text-xs text-gray-500 mb-1 truncate">{scoreDialog.homeTeamName}</p>
-                      <input
-                        type="number"
-                        value={scoreDialog.homeAdj}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setScoreDialog((d) => {
-                            if (!d) return d;
-                            if (d.status === 'Played' || d.status === 'Conceded') {
-                              const pts = autoPoints(d.homeScore, d.awayScore, v, d.awayAdj);
-                              return { ...d, homeAdj: v, homePoints: pts.home, awayPoints: pts.away };
-                            }
-                            return { ...d, homeAdj: v };
-                          });
-                        }}
-                        className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-center"
-                        placeholder="0"
-                      />
-                    </div>
-                    <div>
-                      <p className="text-xs text-gray-500 mb-1 truncate">{scoreDialog.awayTeamName}</p>
-                      <input
-                        type="number"
-                        value={scoreDialog.awayAdj}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setScoreDialog((d) => {
-                            if (!d) return d;
-                            if (d.status === 'Played' || d.status === 'Conceded') {
-                              const pts = autoPoints(d.homeScore, d.awayScore, d.homeAdj, v);
-                              return { ...d, awayAdj: v, homePoints: pts.home, awayPoints: pts.away };
-                            }
-                            return { ...d, awayAdj: v };
-                          });
-                        }}
-                        className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-center"
-                        placeholder="0"
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Points (all result types except Cancelled) */}
-              {scoreDialog.status !== 'Not Played' && scoreDialog.status !== 'Reset' && scoreDialog.status !== 'DateOnly' && (
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">Points awarded</label>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <p className="text-xs text-gray-500 mb-1 truncate">{scoreDialog.homeTeamName}</p>
-                      <input
-                        type="number" min="0"
-                        value={scoreDialog.homePoints}
-                        onChange={(e) => setScoreDialog((d) => d ? { ...d, homePoints: e.target.value } : d)}
-                        className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-center"
-                        placeholder="0"
-                      />
-                    </div>
-                    <div>
-                      <p className="text-xs text-gray-500 mb-1 truncate">{scoreDialog.awayTeamName}</p>
-                      <input
-                        type="number" min="0"
-                        value={scoreDialog.awayPoints}
-                        onChange={(e) => setScoreDialog((d) => d ? { ...d, awayPoints: e.target.value } : d)}
-                        className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-center"
-                        placeholder="0"
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {scoreDialog.status === 'DateOnly' && (
-                <p className="text-sm text-gray-500">Only the date/time will be saved — pick a result type above once the game's been played.</p>
-              )}
-              {scoreDialog.status === 'Not Played' && (
-                <p className="text-sm text-gray-500">This match will be marked as not played with no result.</p>
-              )}
-              {scoreDialog.status === 'Reset' && (
-                <p className="text-sm text-amber-700">This will clear all scores and reset the match to Scheduled.</p>
-              )}
-            </div>
-            <div className="p-5 border-t border-gray-200 flex gap-3 justify-end">
-              <button
-                onClick={() => setScoreDialog(null)}
-                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={saveScore}
-                disabled={scoreDialog.saving}
-                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
-              >
-                {scoreDialog.saving ? 'Saving…' : 'Save'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Date/time arrangement dialog (non-committee) */}
-      {dateDialog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm">
-            <div className="p-5 border-b border-gray-200 flex items-start justify-between gap-3">
-              <div>
-                <h2 className="text-base font-semibold text-gray-900">Arrange Match Date/Time</h2>
-                <p className="text-sm text-gray-500 mt-0.5">
-                  {dateDialog.homeTeamName} vs {dateDialog.awayTeamName}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  const { matchId, homeTeamId, awayTeamId, homeTeamName, awayTeamName } = dateDialog;
-                  setDateDialog(null);
-                  setPlayersDialog({ matchId, homeTeamId, awayTeamId, homeTeamName, awayTeamName });
-                }}
-                className="text-xs px-2 py-1 bg-gray-50 text-gray-700 rounded hover:bg-gray-100 whitespace-nowrap"
-              >
-                Players
-              </button>
-            </div>
-            <div className="p-5 space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">Date</label>
-                  <input
-                    type="date"
-                    value={dateDialog.scheduledDate}
-                    onChange={(e) => setDateDialog((d) => d ? { ...d, scheduledDate: e.target.value } : d)}
-                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
-                    autoFocus
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">Time</label>
-                  <input
-                    type="time"
-                    value={dateDialog.scheduledTime}
-                    onChange={(e) => setDateDialog((d) => d ? { ...d, scheduledTime: e.target.value } : d)}
-                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
-                  />
-                </div>
-              </div>
-            </div>
-            <div className="p-5 border-t border-gray-200 flex gap-3 justify-end">
-              <button
-                onClick={() => setDateDialog(null)}
-                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={saveDate}
-                disabled={dateDialog.saving}
-                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
-              >
-                {dateDialog.saving ? 'Saving…' : 'Save'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Match lineup dialog — who's actually named as playing this game.
-          Non-committee only see (and can only manage) their OWN team's squad. */}
-      {playersDialog && (() => {
-        const named = lineupFor(playersDialog.matchId);
+      {/* Unified match dialog — Players tab (default, for anyone with permission) +
+          Score tab (committee only). Nothing hits the API until Save, including
+          lineup toggles (tracked locally in pendingLineup), which is what fixes the
+          old per-checkbox-click full reload. */}
+      {matchDialog && (() => {
+        const named = lineupFor(matchDialog.matchId);
         const myTeamId = myEntry?.teamId;
-        const canSeeHome = isCommittee || myTeamId === playersDialog.homeTeamId;
-        const canSeeAway = isCommittee || myTeamId === playersDialog.awayTeamId;
-        const homeSquad = sortByPosition(squad.filter((m) => m.teamId === playersDialog.homeTeamId));
-        const awaySquad = sortByPosition(squad.filter((m) => m.teamId === playersDialog.awayTeamId));
+        const canSeeHome = isCommittee || myTeamId === matchDialog.homeTeamId;
+        const canSeeAway = isCommittee || myTeamId === matchDialog.awayTeamId;
+        const homeSquad = sortByPosition(squad.filter((m) => m.teamId === matchDialog.homeTeamId));
+        const awaySquad = sortByPosition(squad.filter((m) => m.teamId === matchDialog.awayTeamId));
+
+        const effectiveNamed = (username: string): boolean =>
+          matchDialog.pendingLineup[username] !== undefined ? matchDialog.pendingLineup[username] : named.has(username);
 
         const renderList = (members: LeagueSquadMember[], canManageThisTeam: boolean) => (
           <div className="space-y-1.5">
@@ -1333,7 +991,7 @@ function LeagueDetailPageInner() {
               <p className="text-xs text-gray-400 italic">No players assigned.</p>
             ) : (
               members.map((m) => {
-                const isNamed = named.has(m.username);
+                const isNamed = effectiveNamed(m.username);
                 return (
                   <label
                     key={m.username}
@@ -1342,8 +1000,8 @@ function LeagueDetailPageInner() {
                     <input
                       type="checkbox"
                       checked={isNamed}
-                      disabled={!canManageThisTeam || togglingPlayer === m.username}
-                      onChange={() => toggleMatchPlayer(playersDialog.matchId, m.username, isNamed)}
+                      disabled={!canManageThisTeam || matchDialog.saving}
+                      onChange={() => toggleLineupLocal(m.username, isNamed)}
                       className="rounded border-gray-300"
                     />
                     <span className={canManageThisTeam ? 'text-gray-900' : ''}>{m.fullName}</span>
@@ -1356,40 +1014,285 @@ function LeagueDetailPageInner() {
         );
 
         return (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setPlayersDialog(null)}>
-            <div className="bg-white rounded-xl shadow-xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
-              <div className="p-5 border-b border-gray-200 flex items-center justify-between">
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+              <div className="p-5 border-b border-gray-200 flex items-start justify-between gap-3">
                 <div>
-                  <h2 className="text-base font-semibold text-gray-900">Players for This Game</h2>
+                  <h2 className="text-base font-semibold text-gray-900">Match Details</h2>
                   <p className="text-sm text-gray-500 mt-0.5">
-                    {playersDialog.homeTeamName} vs {playersDialog.awayTeamName}
+                    {matchDialog.homeTeamName} vs {matchDialog.awayTeamName}
                   </p>
                 </div>
-                <button onClick={() => setPlayersDialog(null)} className="text-gray-400 hover:text-gray-600 text-lg leading-none">✕</button>
+                <button onClick={() => setMatchDialog(null)} className="text-gray-400 hover:text-gray-600 text-lg leading-none">✕</button>
               </div>
-              <div className="p-5 space-y-4 max-h-[60vh] overflow-y-auto">
-                {canSeeHome && (
+
+              <div className="p-5 pb-0 space-y-4">
+                {/* Date/time — shared, editable by anyone who could open this dialog */}
+                <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">{playersDialog.homeTeamName}</h3>
-                    {renderList(homeSquad, isCommittee || myTeamId === playersDialog.homeTeamId)}
+                    <label className="block text-xs text-gray-600 mb-1">Date</label>
+                    <input
+                      type="date"
+                      value={matchDialog.scheduledDate}
+                      onChange={(e) => setMatchDialog((d) => d ? { ...d, scheduledDate: e.target.value } : d)}
+                      className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">Time</label>
+                    <input
+                      type="time"
+                      value={matchDialog.scheduledTime}
+                      onChange={(e) => setMatchDialog((d) => d ? { ...d, scheduledTime: e.target.value } : d)}
+                      className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                    />
+                  </div>
+                </div>
+
+                {/* Tabs — Score only exists for committee; non-committee just get a
+                    plain Players section below with no tab affordance to switch away from. */}
+                {isCommittee && (
+                  <div className="flex gap-1 border-b border-gray-200 -mb-px">
+                    {(['players', 'score'] as const).map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => setMatchDialog((d) => d ? { ...d, tab: t } : d)}
+                        className={`px-3 py-1.5 text-sm font-medium border-b-2 capitalize transition-colors ${
+                          matchDialog.tab === t
+                            ? 'border-green-600 text-green-700'
+                            : 'border-transparent text-gray-500 hover:text-gray-700'
+                        }`}
+                      >
+                        {t}
+                      </button>
+                    ))}
                   </div>
                 )}
-                {canSeeAway && (
-                  <div>
-                    <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">{playersDialog.awayTeamName}</h3>
-                    {renderList(awaySquad, isCommittee || myTeamId === playersDialog.awayTeamId)}
-                  </div>
-                )}
-                {!isCommittee && (
-                  <p className="text-xs text-gray-400">You can add or remove any player from your own team.</p>
+              </div>
+
+              <div className="p-5 space-y-4 max-h-[50vh] overflow-y-auto">
+                {matchDialog.tab === 'players' ? (
+                  <>
+                    {canSeeHome && (
+                      <div>
+                        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">{matchDialog.homeTeamName}</h3>
+                        {renderList(homeSquad, isCommittee || myTeamId === matchDialog.homeTeamId)}
+                      </div>
+                    )}
+                    {canSeeAway && (
+                      <div>
+                        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">{matchDialog.awayTeamName}</h3>
+                        {renderList(awaySquad, isCommittee || myTeamId === matchDialog.awayTeamId)}
+                      </div>
+                    )}
+                    {!isCommittee && (
+                      <p className="text-xs text-gray-400">You can add or remove any player from your own team.</p>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {/* Status */}
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Result type</label>
+                      <select
+                        value={matchDialog.status}
+                        onChange={(e) => {
+                          const s = e.target.value as LeagueMatchStatus | 'Reset' | '';
+                          const isWalkover = s === 'Walkover';
+                          setMatchDialog((d) => d ? {
+                            ...d, status: s, walkoverWinner: '',
+                            homeScore: isWalkover ? '' : d.homeScore,
+                            awayScore: isWalkover ? '' : d.awayScore,
+                            homeAdj: isWalkover ? '10' : '0',
+                            awayAdj: isWalkover ? '0' : '0',
+                            homePoints: isWalkover ? '2' : '',
+                            awayPoints: isWalkover ? '0' : '',
+                          } : d);
+                        }}
+                        className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                      >
+                        <option value="">— No change to result —</option>
+                        <option value="Played">Played</option>
+                        <option value="Conceded">Conceded</option>
+                        <option value="Walkover">Walkover</option>
+                        <option value="Not Played">Not Played</option>
+                        <option value="Reset">— Reset to Scheduled —</option>
+                      </select>
+                    </div>
+
+                    {/* Walkover: which side claims */}
+                    {matchDialog.status === 'Walkover' && (
+                      <div>
+                        <label className="block text-xs text-gray-600 mb-1">Which team is awarded the points?</label>
+                        <select
+                          value={matchDialog.walkoverWinner}
+                          onChange={(e) => {
+                            const winner = e.target.value as 'home' | 'away' | '';
+                            setMatchDialog((d) => d ? {
+                              ...d, walkoverWinner: winner,
+                              homeAdj: winner === 'home' ? '10' : winner === 'away' ? '0' : d.homeAdj,
+                              awayAdj: winner === 'away' ? '10' : winner === 'home' ? '0' : d.awayAdj,
+                              homePoints: winner === 'home' ? '2' : winner === 'away' ? '0' : d.homePoints,
+                              awayPoints: winner === 'away' ? '2' : winner === 'home' ? '0' : d.awayPoints,
+                            } : d);
+                          }}
+                          className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                          autoFocus
+                        >
+                          <option value="">— select —</option>
+                          <option value="home">{matchDialog.homeTeamName}</option>
+                          <option value="away">{matchDialog.awayTeamName}</option>
+                        </select>
+                      </div>
+                    )}
+
+                    {/* Played / Conceded: final score */}
+                    {(matchDialog.status === 'Played' || matchDialog.status === 'Conceded') && (
+                      <div>
+                        <label className="block text-xs text-gray-600 mb-1">Final score</label>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <p className="text-xs text-gray-500 mb-1 truncate">{matchDialog.homeTeamName}</p>
+                            <input
+                              type="number" min="0"
+                              value={matchDialog.homeScore}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setMatchDialog((d) => {
+                                  if (!d) return d;
+                                  const pts = autoPoints(v, d.awayScore, d.homeAdj, d.awayAdj);
+                                  return { ...d, homeScore: v, homePoints: pts.home, awayPoints: pts.away };
+                                });
+                              }}
+                              className="w-full border border-gray-300 rounded-md px-3 py-2 text-lg font-semibold text-center"
+                              autoFocus
+                            />
+                          </div>
+                          <div>
+                            <p className="text-xs text-gray-500 mb-1 truncate">{matchDialog.awayTeamName}</p>
+                            <input
+                              type="number" min="0"
+                              value={matchDialog.awayScore}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setMatchDialog((d) => {
+                                  if (!d) return d;
+                                  const pts = autoPoints(d.homeScore, v, d.homeAdj, d.awayAdj);
+                                  return { ...d, awayScore: v, homePoints: pts.home, awayPoints: pts.away };
+                                });
+                              }}
+                              className="w-full border border-gray-300 rounded-md px-3 py-2 text-lg font-semibold text-center"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Score adjustment (all result types except no-change/Not Played/Reset) */}
+                    {matchDialog.status !== '' && matchDialog.status !== 'Not Played' && matchDialog.status !== 'Reset' && (
+                      <div>
+                        <label className="block text-xs text-gray-600 mb-1">Score adjustment</label>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <p className="text-xs text-gray-500 mb-1 truncate">{matchDialog.homeTeamName}</p>
+                            <input
+                              type="number"
+                              value={matchDialog.homeAdj}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setMatchDialog((d) => {
+                                  if (!d) return d;
+                                  if (d.status === 'Played' || d.status === 'Conceded') {
+                                    const pts = autoPoints(d.homeScore, d.awayScore, v, d.awayAdj);
+                                    return { ...d, homeAdj: v, homePoints: pts.home, awayPoints: pts.away };
+                                  }
+                                  return { ...d, homeAdj: v };
+                                });
+                              }}
+                              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-center"
+                              placeholder="0"
+                            />
+                          </div>
+                          <div>
+                            <p className="text-xs text-gray-500 mb-1 truncate">{matchDialog.awayTeamName}</p>
+                            <input
+                              type="number"
+                              value={matchDialog.awayAdj}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setMatchDialog((d) => {
+                                  if (!d) return d;
+                                  if (d.status === 'Played' || d.status === 'Conceded') {
+                                    const pts = autoPoints(d.homeScore, d.awayScore, d.homeAdj, v);
+                                    return { ...d, awayAdj: v, homePoints: pts.home, awayPoints: pts.away };
+                                  }
+                                  return { ...d, awayAdj: v };
+                                });
+                              }}
+                              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-center"
+                              placeholder="0"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Points (all result types except no-change/Not Played/Reset) */}
+                    {matchDialog.status !== '' && matchDialog.status !== 'Not Played' && matchDialog.status !== 'Reset' && (
+                      <div>
+                        <label className="block text-xs text-gray-600 mb-1">Points awarded</label>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <p className="text-xs text-gray-500 mb-1 truncate">{matchDialog.homeTeamName}</p>
+                            <input
+                              type="number" min="0"
+                              value={matchDialog.homePoints}
+                              onChange={(e) => setMatchDialog((d) => d ? { ...d, homePoints: e.target.value } : d)}
+                              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-center"
+                              placeholder="0"
+                            />
+                          </div>
+                          <div>
+                            <p className="text-xs text-gray-500 mb-1 truncate">{matchDialog.awayTeamName}</p>
+                            <input
+                              type="number" min="0"
+                              value={matchDialog.awayPoints}
+                              onChange={(e) => setMatchDialog((d) => d ? { ...d, awayPoints: e.target.value } : d)}
+                              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-center"
+                              placeholder="0"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {matchDialog.status === '' && (
+                      <p className="text-sm text-gray-500">Choose a result above to record one, or just save the date/time and lineup.</p>
+                    )}
+                    {matchDialog.status === 'Not Played' && (
+                      <p className="text-sm text-gray-500">This match will be marked as not played with no result.</p>
+                    )}
+                    {matchDialog.status === 'Reset' && (
+                      <p className="text-sm text-amber-700">This will clear all scores and reset the match to Scheduled.</p>
+                    )}
+                  </>
                 )}
               </div>
-              <div className="p-5 border-t border-gray-200 flex justify-end">
+
+              <div className="p-5 border-t border-gray-200 flex gap-3 justify-end">
                 <button
-                  onClick={() => setPlayersDialog(null)}
-                  className="px-4 py-2 text-sm bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200"
+                  onClick={() => setMatchDialog(null)}
+                  className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800"
                 >
-                  Done
+                  Cancel
+                </button>
+                <button
+                  onClick={saveMatchDialog}
+                  disabled={matchDialog.saving}
+                  className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {matchDialog.saving ? 'Saving…' : 'Save'}
                 </button>
               </div>
             </div>
