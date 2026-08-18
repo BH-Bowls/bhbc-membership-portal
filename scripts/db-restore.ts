@@ -16,12 +16,15 @@
  * tables it owns. Dropping/re-adding the constraint itself (normal DDL on a table we
  * own) is the workaround — see specs/GO_LIVE_RUNBOOK.md §5 for the full story.
  *
- * config/petrol_bands duplicate-key errors from pg_restore are EXPECTED and
- * harmless — those two tables are seeded directly by the migration files, not by
+ * config/petrol_bands/bar_products duplicate-key errors from pg_restore are EXPECTED
+ * and harmless — those three tables are seeded directly by the migration files, not by
  * this restore, so a freshly-reset target already has those exact rows. pg_restore
  * exits non-zero whenever it hits any ignored error (even these harmless ones), so
  * that failure is caught here and doesn't stop the constraint from being re-added —
- * but the output is still shown live so you can confirm it's *only* those two.
+ * but the output is still shown live so you can confirm it's *only* those three.
+ * (bar_products only started colliding here once migration 0026 added a real
+ * unique(name, category) constraint — before that its random-uuid primary key meant
+ * a restore's copy never collided, it just silently doubled every row instead.)
  *
  * SAFETY: this mutates whichever database SUPABASE_POOLER_URL points at, in place.
  * Requires typed confirmation before doing anything, and prints the target name —

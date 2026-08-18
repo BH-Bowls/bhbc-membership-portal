@@ -3,6 +3,36 @@
 -- if bar_products is empty, so it's safe to apply to Dev then Prod. Prices are PENCE.
 -- Category mapping: beer = Beers/Lagers/Ciders, wine = Wines, spirit = Spirits,
 -- zero_gf = Non-alcoholic & Gluten Free, soft = Mixers/Soft + Cordials/Splashes, snack.
+--
+-- Drop + recreate below: found Dev with every product duplicated 2x — db-restore.ts
+-- resets the target schema (reapplying this seed) before pg_restore layers Prod's own
+-- copy of bar_products on top. config/petrol_bands are seeded the same way but have
+-- natural-key primary keys, so their restore duplicates collide and get silently
+-- rejected (documented in db-restore.ts as an expected, harmless conflict). This table's
+-- primary key is a random uuid, so the restore's copy never collided — it just landed
+-- as 65 extra rows. No bar_sale_items reference any of the duplicates (bar isn't live
+-- yet), so a clean drop/recreate is safe. The new unique(name, category) constraint
+-- fixes the restore going forward too, the same way it already works for the other two
+-- tables — a second insert now collides for real instead of silently succeeding.
+-- Temporary fix — this whole Dev/Prod dance goes away once the Postgres cutover lands.
+
+drop table if exists bar_products cascade;
+
+create table bar_products (
+  id          uuid primary key default gen_random_uuid(),
+  name        text not null,
+  category    text not null,            -- 'beer','wine','zero_gf','soft','snack'
+  price_pence int  not null check (price_pence >= 0),
+  active      boolean not null default true,
+  sort_order  int  not null default 0,
+  updated_by  text,
+  updated_at  timestamptz not null default now(),
+  unique (name, category)
+);
+alter table bar_products enable row level security;
+
+alter table bar_sale_items
+  add constraint bar_sale_items_product_id_fkey foreign key (product_id) references bar_products(id);
 
 do $$
 begin
