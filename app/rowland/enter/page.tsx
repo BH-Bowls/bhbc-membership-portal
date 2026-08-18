@@ -3,7 +3,7 @@
 
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { formatOrdinalDate } from '@/lib/date-utils';
 
@@ -21,7 +21,18 @@ interface TeamSlot {
   label: string;
 }
 
+// useSearchParams() (for ?from=admin) needs a Suspense boundary for static export —
+// next dev doesn't enforce this, next build does. This thin wrapper is the whole
+// reason the form itself isn't the default export.
 export default function RowlandEnterPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-gradient-to-b from-green-50 to-white" />}>
+      <RowlandEnterForm />
+    </Suspense>
+  );
+}
+
+function RowlandEnterForm() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const fromAdmin = searchParams.get('from') === 'admin';

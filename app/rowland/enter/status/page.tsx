@@ -4,7 +4,7 @@
 
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 
 interface StatusData {
@@ -25,7 +25,17 @@ const STATUS_STYLES: Record<StatusData['paymentStatus'], { badge: string; label:
   Paid: { badge: 'bg-green-100 text-green-700', label: 'Paid' },
 };
 
+// useSearchParams() (for ?token=) needs a Suspense boundary for static export — next
+// dev doesn't enforce this, next build does.
 export default function RowlandEntryStatusPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-gradient-to-b from-green-50 to-white" />}>
+      <RowlandEntryStatusInner />
+    </Suspense>
+  );
+}
+
+function RowlandEntryStatusInner() {
   const searchParams = useSearchParams();
   const token = searchParams.get('token');
 
