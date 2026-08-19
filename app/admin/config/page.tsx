@@ -166,7 +166,12 @@ export default function AdminConfigPage() {
 
   if (!session || !hasRole(session.user?.role, 'Admin')) return null;
 
-  const maintenanceOn = config.maintenance_mode === 'true';
+  // Case-insensitive — a value set directly via SQL/Table Editor (e.g. 'TRUE') is just
+  // as valid as one set through this checkbox ('true'), and isMaintenanceModeOn() (the
+  // real enforcement, src/lib/maintenance.ts) already compares case-insensitively.
+  // Comparing case-sensitively here was a real bug: the checkbox could show unchecked
+  // while maintenance mode was genuinely still on, found live during go-live 2026-08-19.
+  const maintenanceOn = (config.maintenance_mode || '').trim().toLowerCase() === 'true';
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -229,7 +234,7 @@ export default function AdminConfigPage() {
                   <input
                     type="checkbox"
                     disabled={!isEditingGeneral}
-                    checked={(isEditingGeneral ? editGeneral.maintenance_mode : config.maintenance_mode) === 'true'}
+                    checked={((isEditingGeneral ? editGeneral.maintenance_mode : config.maintenance_mode) || '').trim().toLowerCase() === 'true'}
                     onChange={(e) => setEditGeneral((prev) => ({ ...prev, maintenance_mode: e.target.checked ? 'true' : 'false' }))}
                     className="h-4 w-4 text-blue-600 border-gray-300 rounded"
                   />
