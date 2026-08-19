@@ -149,7 +149,7 @@ export function DiaryPanel() {
     <div className="bg-white overflow-hidden shadow rounded-lg text-gray-900">
       <div className="px-4 py-5 sm:p-6">
         {/* Panel heading */}
-        <h2 className="text-lg font-semibold text-gray-900 mb-1">Coming Up</h2>
+        <h2 className="text-lg font-semibold text-gray-900 mb-1">My Diary</h2>
         <p className="text-xs text-gray-700 mb-3">Your upcoming duties and games</p>
 
         {/* Loading state — show skeleton row while first fetch is in progress */}

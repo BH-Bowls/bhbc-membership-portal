@@ -153,7 +153,7 @@ export default function HelpLeaguesAdminPage() {
               page or the public Leagues page to add or remove names from either team&apos;s squad.
             </Body>
             <Note>
-              A match only shows up in a player&apos;s home page <strong>Coming Up</strong> diary
+              A match only shows up in a player&apos;s <strong>My Diary</strong> on the home page
               once it has a date set AND that player has been named in its lineup — squad
               membership alone isn&apos;t enough.
             </Note>

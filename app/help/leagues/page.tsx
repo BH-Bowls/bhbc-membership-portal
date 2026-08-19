@@ -113,7 +113,7 @@ export default function HelpLeaguesPage() {
             </Step>
             <Note>
               Once a match has a date set and you&apos;re named as playing, it appears in your{' '}
-              <strong>Coming Up</strong> diary on the home page. This only works while the match is
+              <strong>My Diary</strong> on the home page. This only works while the match is
               still unplayed — once a result is recorded, only the committee can change the date or lineup.
             </Note>
           </HelpSection>
