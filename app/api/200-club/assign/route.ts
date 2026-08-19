@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
-import { assignNumber } from '@/lib/two-hundred-club-sheets';
+import { assignNumber } from '@/lib/two-hundred-club-supabase';
 
 export async function POST(request: NextRequest) {
   try {

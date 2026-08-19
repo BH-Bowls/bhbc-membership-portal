@@ -11,8 +11,9 @@ import {
   getLeagueTeams,
   getLeagueSquad,
   getLeagueMatches,
+  getLeagueMatchLineups,
   updateLeague,
-} from '@/lib/leagues-sheets';
+} from '@/lib/leagues-supabase';
 import { calculateTable } from '@/types/leagues';
 
 export async function GET(
@@ -21,17 +22,18 @@ export async function GET(
 ) {
   const { leagueId } = await params;
   try {
-    const [league, teams, squad, matches] = await Promise.all([
+    const [league, teams, squad, matches, matchPlayers] = await Promise.all([
       getLeague(leagueId),
       getLeagueTeams(leagueId),
       getLeagueSquad(leagueId),
       getLeagueMatches(leagueId),
+      getLeagueMatchLineups(leagueId),
     ]);
 
     if (!league) return NextResponse.json({ error: 'League not found' }, { status: 404 });
 
     const table = calculateTable(teams, matches);
-    return NextResponse.json({ league, teams, squad, matches, table });
+    return NextResponse.json({ league, teams, squad, matches, table, matchPlayers });
   } catch (err) {
     console.error(`GET /api/leagues/${leagueId} error:`, err);
     return NextResponse.json({ error: 'Failed to load league' }, { status: 500 });

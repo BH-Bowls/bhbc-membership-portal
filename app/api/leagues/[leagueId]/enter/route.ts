@@ -11,7 +11,7 @@ import {
   enterLeague,
   withdrawFromLeague,
   isInLeagueSquad,
-} from '@/lib/leagues-sheets';
+} from '@/lib/leagues-supabase';
 
 export async function POST(
   req: NextRequest,

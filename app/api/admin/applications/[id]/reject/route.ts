@@ -1,15 +1,20 @@
 // app/api/admin/applications/[id]/reject/route.ts
-// PATCH — reject a listed application, recording decision notes. Sends no email
-// (rejection is communicated manually). Auth: Admin role required.
+// PATCH — decline a listed application, recording decision notes. Sends no email
+// (the decision is communicated manually). Auth: Admin role required.
+//
+// Writes status 'Declined' (not 'Rejected') — the Postgres applications table's status
+// CHECK constraint only allows Declined/Didn't Proceed as terminal non-approval states
+// (see specs/Phase_0_1_Migration_Plan.md, Step 2); the live Sheets version's single
+// 'Rejected' status was split into these two, Declined being the direct equivalent.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
 import { clearDiaryCache } from '@/lib/home-cache';
-import { getApplicationByRow, updateApplicationFields } from '@/lib/applications-sheets';
+import { getApplicationById, updateApplicationFields } from '@/lib/applications-supabase';
 
-// PATCH handler — sets status -> Rejected with notes
+// PATCH handler — sets status -> Declined with notes
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -26,23 +31,21 @@ export async function PATCH(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    // Parse and validate the application row number
     const { id } = await params;
-    const rowNumber = parseInt(id, 10);
-    if (isNaN(rowNumber)) {
+    if (!id) {
       return NextResponse.json({ error: 'Invalid application id' }, { status: 400 });
     }
 
     const body = await request.json();
 
     // Confirm the application exists and is currently Listed
-    const application = await getApplicationByRow(rowNumber);
+    const application = await getApplicationById(id);
     if (!application) {
       return NextResponse.json({ error: 'Application not found' }, { status: 404 });
     }
     if (application.status !== 'Listed') {
       return NextResponse.json(
-        { error: `Cannot reject an application with status "${application.status}"` },
+        { error: `Cannot decline an application with status "${application.status}"` },
         { status: 409 }
       );
     }
@@ -53,17 +56,17 @@ export async function PATCH(
       notes = body.notes.trim();
     }
 
-    await updateApplicationFields(rowNumber, {
-      status: 'Rejected',
+    await updateApplicationFields(id, {
+      status: 'Declined',
       decisionNotes: notes,
     });
 
-    // A rejected application no longer counts as pending action
+    // A declined application no longer counts as pending action
     clearDiaryCache(session.user.userName);
 
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[PATCH reject] Error:', error);
-    return NextResponse.json({ error: 'Failed to reject application' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to decline application' }, { status: 500 });
   }
 }

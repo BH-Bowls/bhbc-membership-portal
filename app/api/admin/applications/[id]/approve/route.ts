@@ -7,7 +7,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
 import { clearDiaryCache } from '@/lib/home-cache';
-import { getApplicationByRow, updateApplicationFields } from '@/lib/applications-sheets';
+import { getApplicationById, updateApplicationFields } from '@/lib/applications-supabase';
 import { sendApplicationPaymentEmail } from '@/lib/email/application-mailer';
 
 // PATCH handler — sets fee/status -> Approved and sends the payment email
@@ -27,17 +27,15 @@ export async function PATCH(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    // Parse and validate the application row number
     const { id } = await params;
-    const rowNumber = parseInt(id, 10);
-    if (isNaN(rowNumber)) {
+    if (!id) {
       return NextResponse.json({ error: 'Invalid application id' }, { status: 400 });
     }
 
     const body = await request.json();
 
     // Confirm the application exists and is currently Listed
-    const application = await getApplicationByRow(rowNumber);
+    const application = await getApplicationById(id);
     if (!application) {
       return NextResponse.json({ error: 'Application not found' }, { status: 404 });
     }
@@ -74,7 +72,7 @@ export async function PATCH(
       updates.decisionNotes = body.notes.trim();
     }
 
-    await updateApplicationFields(rowNumber, updates);
+    await updateApplicationFields(id, updates);
 
     // Send the payment-request email (with the recorded fee). Email failure does
     // not undo the approval — report it back so the admin can resend.

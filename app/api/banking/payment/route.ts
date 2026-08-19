@@ -6,10 +6,10 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import {
   generateNextPaymentId,
-  addPaymentToSheet,
-  updatePaymentInSheet,
+  addPayment,
+  updatePayment,
   getPayment,
-} from '@/lib/banking-sheets';
+} from '@/lib/banking-supabase';
 import { hasRole } from '@/lib/role-utils';
 
 export async function POST(request: NextRequest) {
@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
 
       const newId = await generateNextPaymentId();
 
-      await addPaymentToSheet({
+      await addPayment({
         payment_id: newId,
         date,
         type,
@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      await updatePaymentInSheet(payment_id, {
+      await updatePayment(payment_id, {
         date,
         type,
         reference,
@@ -112,7 +112,7 @@ export async function POST(request: NextRequest) {
       }
 
       // Soft delete
-      await updatePaymentInSheet(payment_id, { status: 'Deleted' });
+      await updatePayment(payment_id, { status: 'Deleted' });
 
       return NextResponse.json({ success: true });
     }

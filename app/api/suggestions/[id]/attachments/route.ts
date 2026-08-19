@@ -10,8 +10,8 @@ import {
   getAttachmentsBySuggestionId,
   createAttachment,
   validateAttachments,
-} from '@/lib/attachments-sheets';
-import { getSuggestionById } from '@/lib/suggestions-sheets';
+} from '@/lib/attachments-supabase';
+import { getSuggestionById } from '@/lib/suggestions-supabase';
 import { isCommitteeMember } from '@/lib/role-utils';
 import { setPublicReadPermission, driveViewUrl } from '@/lib/drive';
 

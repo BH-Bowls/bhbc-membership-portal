@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
-import { reinstateMember } from '@/lib/leavers-sheets';
+import { reinstateMember } from '@/lib/leavers-supabase';
 
 // POST handler — reinstates the leaver identified in the route
 export async function POST(

@@ -9,7 +9,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { isCommitteeMember } from '@/lib/role-utils';
-import { getCompetitionRulesText, setCompetitionRulesText, getAllCompetitions } from '@/lib/competitions-sheets';
+import { getCompetitionRulesText, setCompetitionRulesText, getAllCompetitions } from '@/lib/competitions-supabase';
 import type { Competition } from '@/types/competitions';
 
 // GET returns everything the public rules page needs — the three shared blocks plus

@@ -5,7 +5,7 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getUserByUsername } from '@/lib/sheets';
+import { getUserByUsername } from '@/lib/members-supabase';
 
 export async function POST() {
   try {

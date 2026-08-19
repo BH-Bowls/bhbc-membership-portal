@@ -7,12 +7,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getAppUrl } from '@/lib/app-url';
-import { getGames, getGameSheet, updateGameSheet, updatePlayerEntry, updateGameCounts, removePlayerFromGameSheet, getActiveEnteredCount } from '@/lib/friendlies-sheets';
+import { getGameSheet, updateGameSheet, updatePlayerEntry, removePlayerFromGameSheet, getActiveEnteredCount } from '@/lib/friendlies-sheets';
+import { getFixtures, updateFixture } from '@/lib/fixtures-supabase';
 import { clearDiaryCache } from '@/lib/home-cache';
 import { sendWithdrawalEmail, sendWithdrawalNoticeEmail, sendLinkedWithdrawalNoticeEmail } from '@/lib/email/friendlies';
-import type { WithdrawRequest, Game } from '@/lib/types/friendlies';
-import { getUserByUsername } from '@/lib/sheets';
-import { canManageUser } from '@/lib/buddies-sheets';
+import type { WithdrawRequest } from '@/lib/types/friendlies';
+import { getUserByUsername } from '@/lib/members-supabase';
+import { canManageUser } from '@/lib/buddies-supabase';
 
 // POST handler - Withdraws user from a game
 export async function POST(request: NextRequest) {
@@ -33,8 +34,8 @@ export async function POST(request: NextRequest) {
     // Get current user's username
     const userName = session.user.userName;
 
-    // Fetch all games from Games sheet
-    const games = await getGames();
+    // Fetch all fixtures
+    const games = await getFixtures();
 
     // Search for the game by tabName
     let game = null;
@@ -79,7 +80,7 @@ export async function POST(request: NextRequest) {
         await removePlayerFromGameSheet(game.tabName, target);
       }
 
-      // Recalculate entered count in Games sheet
+      // Recalculate entered count from the Players sheet (player-roster data stays on Sheets)
       const { getGoogleSheetsClient } = await import('@/lib/sheets');
       const sheets = getGoogleSheetsClient();
       const spreadsheetId = process.env.FRIENDLIES_SPREADSHEET_ID!;
@@ -112,8 +113,8 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        // Update the entered count in Games sheet
-        await updateGameCounts(game.tabName, { entered: enteredCount });
+        // Update the entered count on the fixture
+        await updateFixture(game.id, { entered: enteredCount });
       }
 
       // Joint game: pair the removal email with both games (mirror of the entry
@@ -197,7 +198,7 @@ export async function POST(request: NextRequest) {
       // Recalculate entered count, excluding the player who just withdrew
       try {
         const activeCount = await getActiveEnteredCount(game.tabName);
-        await updateGameCounts(game.tabName, { entered: activeCount });
+        await updateFixture(game.id, { entered: activeCount });
       } catch (countError) {
         console.error('[withdraw] Error updating entered count:', countError);
       }

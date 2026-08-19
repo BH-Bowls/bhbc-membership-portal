@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getEnteredLeagueIds } from '@/lib/leagues-sheets';
+import { getEnteredLeagueIds } from '@/lib/leagues-supabase';
 
 export async function GET() {
   const session = await getServerSession(authOptions);

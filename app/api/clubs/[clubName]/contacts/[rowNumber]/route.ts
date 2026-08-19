@@ -1,23 +1,15 @@
 // app/api/clubs/[clubName]/contacts/[rowNumber]/route.ts
-// PUT, DELETE — update or remove a contact (committee or own Club role)
+// PUT, DELETE — update or remove a contact (committee only)
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { updateContact, deleteContact, getClubWithContacts } from '@/lib/clubs-sheets';
-import { UpdateContactRequest } from '@/lib/types/clubs';
+import { updateContact, deleteContact, getClubWithContacts, UpdateContactRequest } from '@/lib/clubs-supabase';
 import { isMember } from '@/lib/role-utils';
 import { sendClubChangeNotification } from '@/lib/email/club-change-notifier';
 
 interface RouteParams {
   params: Promise<{ clubName: string; rowNumber: string }>;
-}
-
-function isOwnClub(session: any, clubName: string): boolean {
-  return (
-    session?.user?.role === 'Club' &&
-    (session?.user?.name ?? '').toLowerCase() === clubName.toLowerCase()
-  );
 }
 
 export async function PUT(request: NextRequest, { params }: RouteParams) {
@@ -30,28 +22,20 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
     const { clubName, rowNumber } = await params;
     const decodedClubName = decodeURIComponent(clubName);
+    const contactId = decodeURIComponent(rowNumber);
     const role = session.user.role ?? '';
-    const rowNum = parseInt(rowNumber, 10);
 
-    if (role === 'Club') {
-      if (!isOwnClub(session, decodedClubName)) {
-        return NextResponse.json({ error: 'You can only edit your own club' }, { status: 403 });
-      }
-    } else if (isMember(role)) {
+    if (isMember(role)) {
       return NextResponse.json({ error: 'Only committee members can update contacts' }, { status: 403 });
-    }
-
-    if (isNaN(rowNum)) {
-      return NextResponse.json({ error: 'Invalid row number' }, { status: 400 });
     }
 
     const body: UpdateContactRequest = await request.json();
 
     // Fetch before-state for change diff
     const before = await getClubWithContacts(decodedClubName);
-    const beforeContact = before?.contacts.find((c) => c._rowNumber === rowNum);
+    const beforeContact = before?.contacts.find((c) => c.id === contactId);
 
-    const contact = await updateContact(rowNum, body);
+    const contact = await updateContact(contactId, body);
 
     // Build change diff
     const fieldLabels: Record<string, string> = {
@@ -91,26 +75,18 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     const { clubName, rowNumber } = await params;
     const decodedClubName = decodeURIComponent(clubName);
+    const contactId = decodeURIComponent(rowNumber);
     const role = session.user.role ?? '';
-    const rowNum = parseInt(rowNumber, 10);
 
-    if (role === 'Club') {
-      if (!isOwnClub(session, decodedClubName)) {
-        return NextResponse.json({ error: 'You can only edit your own club' }, { status: 403 });
-      }
-    } else if (isMember(role)) {
+    if (isMember(role)) {
       return NextResponse.json({ error: 'Only committee members can delete contacts' }, { status: 403 });
-    }
-
-    if (isNaN(rowNum)) {
-      return NextResponse.json({ error: 'Invalid row number' }, { status: 400 });
     }
 
     // Fetch contact details before deleting for notification
     const before = await getClubWithContacts(decodedClubName);
-    const beforeContact = before?.contacts.find((c) => c._rowNumber === rowNum);
+    const beforeContact = before?.contacts.find((c) => c.id === contactId);
 
-    await deleteContact(decodedClubName, rowNum);
+    await deleteContact(decodedClubName, contactId);
 
     if (beforeContact) {
       sendClubChangeNotification(

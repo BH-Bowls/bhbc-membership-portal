@@ -12,7 +12,7 @@ import { Navbar } from '@/components/Navbar';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { getButtonClasses, getBadgeClasses, getInputClasses, getCardClasses } from '@/config/theme-helpers';
 import { parseUKDate } from '@/lib/date-utils';
-import type { Application } from '@/lib/applications-sheets';
+import type { Application } from '@/lib/applications-supabase';
 
 // Number of days the objection period runs after a name is listed.
 const OBJECTION_PERIOD_DAYS = 14;
@@ -73,7 +73,7 @@ function statusBadgeVariant(status: string): 'primary' | 'secondary' | 'success'
   if (status === 'Listed') return 'secondary';
   if (status === 'Approved') return 'primary';
   if (status === 'Paid') return 'success';
-  if (status === 'Rejected') return 'danger';
+  if (status === 'Declined') return 'danger';
   return 'primary';
 }
 
@@ -103,8 +103,8 @@ export default function ApplicationsPage() {
   const [modalApp, setModalApp] = useState<Application | null>(null);
   // True while a modal action request is in flight
   const [submitting, setSubmitting] = useState(false);
-  // Row number currently resending its payment email (for per-button feedback)
-  const [resendingRow, setResendingRow] = useState<number | null>(null);
+  // Application id currently resending its payment email (for per-button feedback)
+  const [resendingRow, setResendingRow] = useState<string | null>(null);
 
   // Form field state shared across modals
   const [listedDate, setListedDate] = useState(todayInput());
@@ -120,8 +120,8 @@ export default function ApplicationsPage() {
   const [showRejected, setShowRejected] = useState(false);
 
   // Rows whose objection ("waiting") period has been manually overridden so the
-  // admin can approve/reject before the deadline. Keyed by application row number.
-  const [overriddenRows, setOverriddenRows] = useState<Set<number>>(new Set());
+  // admin can approve/decline before the deadline. Keyed by application id.
+  const [overriddenRows, setOverriddenRows] = useState<Set<string>>(new Set());
 
   // Load all applications from the API
   const loadApplications = async () => {
@@ -204,14 +204,14 @@ export default function ApplicationsPage() {
   // Confirm handlers per modal kind
   const confirmListed = () => {
     if (!modalApp) return;
-    performAction(`/api/admin/applications/${modalApp.rowNumber}/set-listed-date`, 'PATCH', {
+    performAction(`/api/admin/applications/${modalApp.id}/set-listed-date`, 'PATCH', {
       listedDate,
     });
   };
 
   const confirmApprove = () => {
     if (!modalApp) return;
-    performAction(`/api/admin/applications/${modalApp.rowNumber}/approve`, 'PATCH', {
+    performAction(`/api/admin/applications/${modalApp.id}/approve`, 'PATCH', {
       feeDue: approveFee,
       notes: approveNotes,
     }, (json) => {
@@ -225,16 +225,16 @@ export default function ApplicationsPage() {
 
   const confirmReject = () => {
     if (!modalApp) return;
-    performAction(`/api/admin/applications/${modalApp.rowNumber}/reject`, 'PATCH', {
+    performAction(`/api/admin/applications/${modalApp.id}/reject`, 'PATCH', {
       notes: rejectNotes,
     }, () => {
-      setNotice('Application rejected.');
+      setNotice('Application declined.');
     });
   };
 
   const confirmPaid = () => {
     if (!modalApp) return;
-    performAction(`/api/admin/applications/${modalApp.rowNumber}/mark-paid`, 'PATCH', {
+    performAction(`/api/admin/applications/${modalApp.id}/mark-paid`, 'PATCH', {
       feePaid: paidFee,
       paymentMethod: paidMethod,
       paymentDate: paidDate,
@@ -245,7 +245,7 @@ export default function ApplicationsPage() {
 
   const confirmConvert = () => {
     if (!modalApp) return;
-    performAction(`/api/admin/applications/${modalApp.rowNumber}/convert`, 'POST', {}, (json) => {
+    performAction(`/api/admin/applications/${modalApp.id}/convert`, 'POST', {}, (json) => {
       const emailNote = json.emailSent === false
         ? ' (welcome email could not be sent — pass the login details on manually)'
         : '';
@@ -257,9 +257,9 @@ export default function ApplicationsPage() {
   const handleResend = async (app: Application) => {
     setError(null);
     setNotice(null);
-    setResendingRow(app.rowNumber);
+    setResendingRow(app.id);
     try {
-      const res = await fetch(`/api/admin/applications/${app.rowNumber}/resend-payment-email`, {
+      const res = await fetch(`/api/admin/applications/${app.id}/resend-payment-email`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
@@ -306,7 +306,7 @@ export default function ApplicationsPage() {
         paid.push(app);
       } else if (app.status === 'Converted') {
         converted.push(app);
-      } else if (app.status === 'Rejected') {
+      } else if (app.status === 'Declined') {
         rejected.push(app);
       }
     }
@@ -316,7 +316,7 @@ export default function ApplicationsPage() {
   const renderRow = (app: Application, actions: React.ReactNode) => {
     const deadline = objectionDeadline(app.listedDate);
     return (
-      <div key={app.rowNumber} className="border-b border-gray-100 py-3 last:border-b-0">
+      <div key={app.id} className="border-b border-gray-100 py-3 last:border-b-0">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0">
             <p className="text-sm font-semibold text-gray-900">
@@ -399,7 +399,7 @@ export default function ApplicationsPage() {
                         Approve
                       </button>
                       <button className={getButtonClasses('danger', 'sm')} onClick={() => openModal('reject', app)}>
-                        Reject
+                        Decline
                       </button>
                     </>
                   ));
@@ -414,20 +414,20 @@ export default function ApplicationsPage() {
                 <p className="text-sm text-gray-700">No applications in the objection period.</p>
               ) : (
                 pending.map((app) => renderRow(app, (
-                  overriddenRows.has(app.rowNumber) ? (
-                    // Waiting period overridden — allow approve/reject before the deadline
+                  overriddenRows.has(app.id) ? (
+                    // Waiting period overridden — allow approve/decline before the deadline
                     <>
                       <button className={getButtonClasses('success', 'sm')} onClick={() => openModal('approve', app)}>
                         Approve
                       </button>
                       <button className={getButtonClasses('danger', 'sm')} onClick={() => openModal('reject', app)}>
-                        Reject
+                        Decline
                       </button>
                       <button
                         className="text-xs text-gray-500 self-center hover:text-gray-700"
                         onClick={() => setOverriddenRows((prev) => {
                           const next = new Set(prev);
-                          next.delete(app.rowNumber);
+                          next.delete(app.id);
                           return next;
                         })}
                       >
@@ -439,7 +439,7 @@ export default function ApplicationsPage() {
                       <span className="text-xs text-gray-700 self-center">Awaiting objection deadline</span>
                       <button
                         className={getButtonClasses('secondary', 'sm')}
-                        onClick={() => setOverriddenRows((prev) => new Set(prev).add(app.rowNumber))}
+                        onClick={() => setOverriddenRows((prev) => new Set(prev).add(app.id))}
                       >
                         Override Waiting Period
                       </button>
@@ -462,10 +462,10 @@ export default function ApplicationsPage() {
                     </button>
                     <button
                       className={getButtonClasses('secondary', 'sm')}
-                      disabled={resendingRow === app.rowNumber}
+                      disabled={resendingRow === app.id}
                       onClick={() => handleResend(app)}
                     >
-                      {resendingRow === app.rowNumber ? 'Sending…' : 'Resend Payment Email'}
+                      {resendingRow === app.id ? 'Sending…' : 'Resend Payment Email'}
                     </button>
                   </>
                 )))
@@ -510,23 +510,23 @@ export default function ApplicationsPage() {
               ) : null}
             </div>
 
-            {/* Rejected (history, collapsible) */}
+            {/* Declined (history, collapsible) */}
             <div className={`${getCardClasses('md')} mb-4`}>
               <button
                 className="w-full flex items-center justify-between text-base font-semibold text-gray-900"
                 onClick={() => setShowRejected(!showRejected)}
               >
-                <span>Rejected ({rejected.length})</span>
+                <span>Declined ({rejected.length})</span>
                 <span className="text-gray-700">{showRejected ? '−' : '+'}</span>
               </button>
               {showRejected ? (
                 <div className="mt-2">
                   {rejected.length === 0 ? (
-                    <p className="text-sm text-gray-700">No rejected applications.</p>
+                    <p className="text-sm text-gray-700">No declined applications.</p>
                   ) : (
                     rejected.map((app) => renderRow(app, (
                       <span className="text-xs text-gray-700 self-center">
-                        {app.decisionNotes ? app.decisionNotes : 'Rejected'}
+                        {app.decisionNotes ? app.decisionNotes : 'Declined'}
                       </span>
                     )))
                   )}
@@ -582,12 +582,12 @@ export default function ApplicationsPage() {
         </div>
       </ConfirmDialog>
 
-      {/* Reject modal */}
+      {/* Decline modal */}
       <ConfirmDialog
         isOpen={modalKind === 'reject'}
-        title="Reject Application"
-        message={modalApp ? `Reject ${modalApp.firstName} ${modalApp.lastName}. No email is sent.` : ''}
-        confirmLabel="Reject"
+        title="Decline Application"
+        message={modalApp ? `Decline ${modalApp.firstName} ${modalApp.lastName}. No email is sent.` : ''}
+        confirmLabel="Decline"
         confirmVariant="danger"
         confirmDisabled={submitting}
         onConfirm={confirmReject}

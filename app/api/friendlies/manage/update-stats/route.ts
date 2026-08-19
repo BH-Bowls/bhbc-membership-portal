@@ -6,7 +6,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, getGameSheet, getFriendliesSpreadsheetId, getColumnMap, getColumnLetter, getSheetsClient, getActiveEnteredCount, updateGameCounts } from '@/lib/friendlies-sheets';
+import { getGameSheet, getFriendliesSpreadsheetId, getColumnMap, getColumnLetter, getSheetsClient, getActiveEnteredCount } from '@/lib/friendlies-sheets';
+import { getFixtures, updateFixture } from '@/lib/fixtures-supabase';
 import { UpdateStatsRequest, UpdateStatsResponse } from '@/lib/types/friendlies';
 import { hasRole } from '@/lib/role-utils';
 
@@ -29,10 +30,10 @@ export async function POST(request: NextRequest) {
     const body: UpdateStatsRequest = await request.json();
     const { tab_name } = body;
 
-    // Fetch all games from Games sheet
-    const games = await getGames();
+    // Fetch all fixtures for the active season (needed below for cancelledTabNames)
+    const games = await getFixtures();
 
-    // Search for the game matching the provided tab_name
+    // Search for the fixture matching the provided tab_name
     const game = games.find(g => g.tabName === tab_name);
 
     if (!game) {
@@ -314,7 +315,7 @@ export async function POST(request: NextRequest) {
     // withdraw route was fixed) is corrected whenever a captain runs Update Stats.
     try {
       const activeCount = await getActiveEnteredCount(tab_name);
-      await updateGameCounts(tab_name, { entered: activeCount });
+      await updateFixture(game.id, { entered: activeCount });
     } catch (countError) {
       console.error('[update-stats] Error recalculating entered count:', countError);
     }

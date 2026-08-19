@@ -5,11 +5,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { setPublicReadPermission, driveViewUrl } from '@/lib/drive';
-import { getRowlandMatches, updateRowlandMatch } from '@/lib/rowland-sheets';
+import { getRowlandMatches, updateRowlandMatch } from '@/lib/rowland-supabase';
 import { hasRole, isCommitteeMember } from '@/lib/role-utils';
 import type { RowlandCompId } from '@/types/rowland';
-
-const BHBC_CLUB_ID = 'burgess.hill';
+import { BHBC_CLUB_NAME } from '@/types/rowland';
 
 export async function POST(
   req: NextRequest,
@@ -22,27 +21,25 @@ export async function POST(
     }
 
     const role = session.user.role;
-    const isClub = hasRole(role, 'Club');
     const isRowlandPlayer = hasRole(role, 'RowlandPlayer');
     // Committee = general committee or the Rowland organiser — multi-role aware
     const isCommittee =
-      !isClub && !isRowlandPlayer &&
+      !isRowlandPlayer &&
       (isCommitteeMember(role) || hasRole(role, 'RowlandOrganiser'));
 
-    if (!isCommittee && !isClub && !isRowlandPlayer) {
+    if (!isCommittee && !isRowlandPlayer) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     const { compId, matchId } = await params;
 
-    if (isClub || isRowlandPlayer) {
-      const clubId = isRowlandPlayer ? BHBC_CLUB_ID : session.user.clubId;
+    if (isRowlandPlayer) {
       const matches = await getRowlandMatches(compId as RowlandCompId);
       const match = matches.find((m) => m.matchId === matchId);
       if (!match) {
         return NextResponse.json({ error: 'Match not found' }, { status: 404 });
       }
-      if (match.homeTeam?.clubId !== clubId && match.awayTeam?.clubId !== clubId) {
+      if (match.homeTeam?.clubName !== BHBC_CLUB_NAME && match.awayTeam?.clubName !== BHBC_CLUB_NAME) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
       }
     }

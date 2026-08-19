@@ -9,6 +9,7 @@ export type DiaryItemType =
   | 'friendly'
   | 'friendly-needs-players'
   | 'competition'
+  | 'league'
   | 'marker'
   | 'availability_nudge'
   | 'availability_confirmed'

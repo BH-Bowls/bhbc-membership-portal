@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
-import { createTeam } from '@/lib/leagues-sheets';
+import { createTeam } from '@/lib/leagues-supabase';
 
 export async function POST(
   req: NextRequest,

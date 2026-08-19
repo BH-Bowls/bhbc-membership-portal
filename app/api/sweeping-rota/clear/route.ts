@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { batchClearSweepingEntries } from '@/lib/sweeping-sheets';
+import { batchClearSweepingEntries } from '@/lib/sweeping-rota-supabase';
 import { generatePatternDates, parseDate } from '@/lib/sweeping-patterns';
 import { ClearDaysRequest, ClearDaysResponse } from '@/lib/types/sweeping';
 

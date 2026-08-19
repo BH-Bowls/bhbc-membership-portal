@@ -13,14 +13,14 @@ import { EmailLink, PhoneLink } from '@/components/ContactLink';
 import type { RowlandResultData } from '@/components/rowland/RowlandMatchDialog';
 import type { CompMatch, CompMemberInfo, CompRound } from '@/types/competitions';
 import type { RowlandComp, RowlandMatch } from '@/types/rowland';
-import { ROWLAND_COMP_NAMES, ROWLAND_ROUND_LABELS, rowlandTeamDisplayName } from '@/types/rowland';
+import { ROWLAND_COMP_NAMES, ROWLAND_ROUND_LABELS, rowlandTeamDisplayName, BHBC_CLUB_NAME } from '@/types/rowland';
 
 // Convert a Drive /view URL to a raw image URL usable in <img> tags.
 function driveImageSrc(url: string): string {
   const m = url?.match(/\/file\/d\/([^/]+)/);
   return m ? `/api/drive-image?id=${m[1]}` : url;
 }
-import type { ClubContact } from '@/lib/types/clubs';
+import type { ClubContact } from '@/lib/clubs-supabase';
 
 const LS_KEY = 'rowland_selected_club';
 
@@ -70,10 +70,7 @@ function inferFirstRoundCount(matches: CompMatch[]): number {
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 const ROWLAND_GUEST_BUTTONS = (
-  <>
-    <a href="/clublogin" className="px-3 py-1.5 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-md transition-colors">Club Login</a>
-    <a href="/login"     className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600  hover:bg-blue-700  rounded-md transition-colors">Member Login</a>
-  </>
+  <a href="/login" className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors">Member Login</a>
 );
 
 export default function RowlandCompPage({ params }: { params: Promise<{ compId: string }> }) {
@@ -99,18 +96,15 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
     opponentContacts: ClubContact[];
   } | null>(null);
   const [nextMatchClubName, setNextMatchClubName] = useState<string | null>(null);
-  const [guestClubId, setGuestClubId] = useState<string | null>(null);
-
-  const BHBC_CLUB_ID = 'burgess.hill';
+  const [guestClubName, setGuestClubName] = useState<string | null>(null);
 
   const role = session?.user?.role ?? '';
   const roles = role ? role.split(',').map(r => r.trim()) : [];
-  const isClub = role === 'Club';
   const isRowlandPlayer = roles.includes('RowlandPlayer');
   const isCaptain = roles.includes('Captain');
   // RowlandPlayer/Captain act like a club (restricted to BHBC matches) but see the full member nav
-  const isCommittee = !isClub && !isRowlandPlayer && !isCaptain && role !== 'Member' && role !== '';
-  const clubId = (isRowlandPlayer || isCaptain) ? BHBC_CLUB_ID : session?.user?.clubId;
+  const isCommittee = !isRowlandPlayer && !isCaptain && role !== 'Member' && role !== '';
+  const clubName = (isRowlandPlayer || isCaptain) ? BHBC_CLUB_NAME : undefined;
 
   function handlePrint() {
     const styleId = 'print-orientation-style';
@@ -150,29 +144,27 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
   useEffect(() => {
     if (status === 'loading') return;
 
-    let lookupClubId: string | null = null;
     let lookupClubName: string | null = null;
     let lookupContactName: string | null = null;
 
-    if ((isClub || isRowlandPlayer || isCaptain) && clubId) {
-      lookupClubId = clubId;
-    } else if (isGuest || (!isClub && !isRowlandPlayer && !isCaptain)) {
+    if ((isRowlandPlayer || isCaptain) && clubName) {
+      lookupClubName = clubName;
+    } else if (isGuest || (!isRowlandPlayer && !isCaptain)) {
       try {
         const stored = localStorage.getItem(LS_KEY);
         if (stored) {
           const parsed = JSON.parse(stored);
-          lookupClubId = parsed.clubId ?? null;
           lookupClubName = parsed.clubName ?? null;
           lookupContactName = parsed.contactName ?? null;
         }
       } catch {}
     }
 
-    if (!lookupClubId) { setNextMatchData(null); setGuestClubId(null); return; }
+    if (!lookupClubName) { setNextMatchData(null); setGuestClubName(null); return; }
 
     setNextMatchClubName(lookupClubName);
-    if (!isClub && !isRowlandPlayer) setGuestClubId(lookupClubId);
-    const qs = new URLSearchParams({ clubId: lookupClubId });
+    if (!isRowlandPlayer) setGuestClubName(lookupClubName);
+    const qs = new URLSearchParams({ clubName: lookupClubName });
     if (isGuest && lookupContactName) qs.set('contactName', lookupContactName);
     fetch(`/api/rowland/${compId}/next-match?${qs.toString()}`)
       .then((r) => r.json())
@@ -181,7 +173,7 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
         else setNextMatchData(null);
       })
       .catch(() => setNextMatchData(null));
-  }, [status, isClub, isRowlandPlayer, isGuest, clubId, compId]);
+  }, [status, isRowlandPlayer, isGuest, clubName, compId]);
 
   // ── Match click handling ──────────────────────────────────────────────────
 
@@ -196,10 +188,10 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
       return;
     }
 
-    // Club / RowlandPlayer: only allow if their club is in the match
+    // RowlandPlayer: only allow if their club is in the match
     // Captains can open any match (same as committee/admin)
-    if ((isClub || isRowlandPlayer) && clubId) {
-      if (rawMatch.homeTeam?.clubId !== clubId && rawMatch.awayTeam?.clubId !== clubId) return;
+    if (isRowlandPlayer && clubName) {
+      if (rawMatch.homeTeam?.clubName !== clubName && rawMatch.awayTeam?.clubName !== clubName) return;
     }
 
     setActiveMatch(compMatch);
@@ -241,19 +233,19 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
 
   // ── Derived values ────────────────────────────────────────────────────────
 
-  // Find display name for a given clubId from the raw match data
-  function findClubDisplayName(id: string): string | undefined {
+  // Find display name (incl. team letter) for a given clubName from the raw match data
+  function findClubDisplayName(name: string): string | undefined {
     for (const m of rawMatches) {
-      if (m.homeTeam?.clubId === id) return rowlandTeamDisplayName(m.homeTeam);
-      if (m.awayTeam?.clubId === id) return rowlandTeamDisplayName(m.awayTeam);
+      if (m.homeTeam?.clubName === name) return rowlandTeamDisplayName(m.homeTeam);
+      if (m.awayTeam?.clubName === name) return rowlandTeamDisplayName(m.awayTeam);
     }
     return undefined;
   }
 
-  // For Club / RowlandPlayer: highlight their team in the bracket.
+  // For RowlandPlayer/Captain: highlight their team in the bracket.
   // For guests with a selected club: highlight that club too.
-  const effectiveClubId = (isClub || isRowlandPlayer || isCaptain) ? clubId : guestClubId;
-  const myClubDisplayName = effectiveClubId ? findClubDisplayName(effectiveClubId) : undefined;
+  const effectiveClubName = (isRowlandPlayer || isCaptain) ? clubName : guestClubName;
+  const myClubDisplayName = effectiveClubName ? findClubDisplayName(effectiveClubName) : undefined;
 
   const roundPlayByDates: Record<string, string> = {};
   if (comp?.prelimPlayBy) roundPlayByDates['Prelim'] = comp.prelimPlayBy;
@@ -347,9 +339,9 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
         {/* Next match card */}
         {nextMatchData && (() => {
           const { match, opponentContacts } = nextMatchData;
-          const viewingAsClubId = (isClub || isRowlandPlayer || isCaptain) ? clubId : guestClubId;
-          const opponentTeam = viewingAsClubId
-            ? (match.homeTeam?.clubId === viewingAsClubId ? match.awayTeam : match.homeTeam)
+          const viewingAsClubName = (isRowlandPlayer || isCaptain) ? clubName : guestClubName;
+          const opponentTeam = viewingAsClubName
+            ? (match.homeTeam?.clubName === viewingAsClubName ? match.awayTeam : match.homeTeam)
             : (match.homeTeam ?? match.awayTeam);
 
           const rowlandContacts = opponentContacts.filter((c) =>
@@ -444,7 +436,7 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
               getInfo={getInfo}
               canEnterScores={!isGuest && (isCommittee || isCaptain)}
               currentUsername={myClubDisplayName}
-              allowCompleteInteraction={!isGuest && (isClub || isRowlandPlayer)}
+              allowCompleteInteraction={!isGuest && isRowlandPlayer}
               onMatchClick={handleMatchClick}
               roundPlayByDates={roundPlayByDates}
               roundOnDates={roundOnDates}

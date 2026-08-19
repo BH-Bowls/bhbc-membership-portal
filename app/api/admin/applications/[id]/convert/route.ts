@@ -8,7 +8,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
 import { clearDiaryCache } from '@/lib/home-cache';
-import { getApplicationByRow, convertApplicationToMember } from '@/lib/applications-sheets';
+import { getApplicationById, convertApplicationToMember } from '@/lib/applications-supabase';
 import { sendApplicationWelcomeEmail } from '@/lib/email/application-mailer';
 
 // POST handler — runs the full conversion to member
@@ -28,15 +28,13 @@ export async function POST(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    // Parse and validate the application row number
     const { id } = await params;
-    const rowNumber = parseInt(id, 10);
-    if (isNaN(rowNumber)) {
+    if (!id) {
       return NextResponse.json({ error: 'Invalid application id' }, { status: 400 });
     }
 
     // Confirm the application exists and is currently Paid
-    const application = await getApplicationByRow(rowNumber);
+    const application = await getApplicationById(id);
     if (!application) {
       return NextResponse.json({ error: 'Application not found' }, { status: 404 });
     }

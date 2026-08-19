@@ -35,7 +35,7 @@ export interface LeagueTeam {
 }
 
 export interface LeagueSquadMember {
-  rowNumber: number;
+  rowNumber: string;
   leagueId: string;
   teamId: string;       // blank if unassigned
   username: string;
@@ -63,6 +63,15 @@ export interface LeagueMatch {
   homePoints: number | null;   // points awarded to home (overrides calculation)
   awayPoints: number | null;   // points awarded to away (overrides calculation)
   status: LeagueMatchStatus;
+}
+
+/** A player named as playing in a specific match — separate from the team's overall
+ *  squad list. Drives who can enter that match's score and whether it shows up in
+ *  the named player's home-page Diary. */
+export interface LeagueMatchPlayer {
+  matchId: string;
+  username: string;
+  fullName: string;
 }
 
 export interface LeagueTableRow {

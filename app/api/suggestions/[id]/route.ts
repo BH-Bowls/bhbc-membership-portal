@@ -8,7 +8,7 @@ import {
   getSuggestionById,
   updateSuggestion,
   getAllMembersForCoordinator,
-} from '@/lib/suggestions-sheets';
+} from '@/lib/suggestions-supabase';
 import { getSuggestionStatus } from '@/types/suggestions';
 import { hasRole } from '@/lib/role-utils';
 

@@ -21,6 +21,7 @@ function getIcon(type: DiaryItemType): string {
   if (type === 'tea') return '🫖';
   if (type === 'friendly') return '🟢';
   if (type === 'competition') return '🏆';
+  if (type === 'league') return '🎯';
   if (type === 'marker') return '📋';
   if (type === 'availability_nudge') return '❓';
   if (type === 'availability_confirmed') return '✅';

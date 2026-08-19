@@ -9,7 +9,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import { Navbar } from '@/components/Navbar';
 import { getButtonClasses } from '@/config/theme-helpers';
-import { CleaningRotaEntry, CleaningPosition } from '@/lib/types/cleaning';
+import { CleaningRotaEntry, CleaningPosition } from '@/lib/cleaning-rota-supabase';
 import { saveDraft, restoreDraft, clearDraft } from '@/lib/form-draft-utils';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { SearchableSelect } from '@/components/SearchableSelect';
@@ -20,7 +20,7 @@ interface MemberOption {
 }
 
 interface TargetAssignment {
-  rowNumber: number;
+  id: string;
   displayDate: string;
   position: CleaningPosition;
   positionLabel: string;
@@ -34,7 +34,7 @@ interface SwapModalState {
 }
 
 interface EditedAssignments {
-  [rowNumber: number]: {
+  [id: string]: {
     lead: string;
     second: string;
     third: string;
@@ -154,7 +154,7 @@ export default function CleaningRotaPage() {
 
     const initial: EditedAssignments = {};
     entries.forEach(entry => {
-      initial[entry.rowNumber] = {
+      initial[entry.id] = {
         lead: entry.lead,
         second: entry.second,
         third: entry.third,
@@ -178,8 +178,8 @@ export default function CleaningRotaPage() {
     try {
       // Collect all modified rows
       const modifiedRows = Object.entries(editedAssignments)
-        .filter(([rowNum, edited]) => {
-          const original = entries.find(e => e.rowNumber === parseInt(rowNum));
+        .filter(([id, edited]) => {
+          const original = entries.find(e => e.id === id);
           if (!original) return false;
           return (
             original.lead !== edited.lead ||
@@ -188,8 +188,8 @@ export default function CleaningRotaPage() {
             original.fourth !== edited.fourth
           );
         })
-        .map(([rowNum, edited]) => ({
-          rowNumber: parseInt(rowNum),
+        .map(([id, edited]) => ({
+          id,
           lead: edited.lead,
           second: edited.second,
           third: edited.third,
@@ -223,11 +223,11 @@ export default function CleaningRotaPage() {
   }
 
   // Update edited assignment
-  function updateAssignment(rowNumber: number, field: keyof EditedAssignments[number], value: string) {
+  function updateAssignment(id: string, field: keyof EditedAssignments[number], value: string) {
     setEditedAssignments(prev => ({
       ...prev,
-      [rowNumber]: {
-        ...prev[rowNumber],
+      [id]: {
+        ...prev[id],
         [field]: value,
       },
     }));
@@ -323,20 +323,20 @@ export default function CleaningRotaPage() {
 
     try {
       const requestBody: {
-        rowNumber: number;
+        id: string;
         position: string;
         newUsername: string;
-        targetRowNumber?: number;
+        targetId?: string;
         targetPosition?: string;
       } = {
-        rowNumber: swapModal.entry.rowNumber,
+        id: swapModal.entry.id,
         position: swapModal.position,
         newUsername: swapUsername,
       };
 
       if (selectedTargetIndex !== null && targetAssignments[selectedTargetIndex]) {
         const target = targetAssignments[selectedTargetIndex];
-        requestBody.targetRowNumber = target.rowNumber;
+        requestBody.targetId = target.id;
         requestBody.targetPosition = target.position;
       }
 
@@ -366,7 +366,7 @@ export default function CleaningRotaPage() {
   // Get display value for cleaning assignment
   function getDisplayValue(entry: CleaningRotaEntry, position: CleaningPosition): string {
     if (isEditing) {
-      return editedAssignments[entry.rowNumber]?.[position] || '';
+      return editedAssignments[entry.id]?.[position] || '';
     }
     return entry[position] || '';
   }
@@ -519,7 +519,7 @@ export default function CleaningRotaPage() {
                 <tbody className="bg-white divide-y divide-gray-200">
                   {entries.map((entry) => (
                     <tr
-                      key={entry.rowNumber}
+                      key={entry.id}
                       className={hasUserAssignment(entry) ? 'bg-yellow-50' : 'hover:bg-gray-50'}
                     >
                       <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
@@ -536,7 +536,7 @@ export default function CleaningRotaPage() {
                             <SearchableSelect
                               options={members}
                               value={getDisplayValue(entry, position)}
-                              onChange={(value) => updateAssignment(entry.rowNumber, position, value)}
+                              onChange={(value) => updateAssignment(entry.id, position, value)}
                               placeholder="Search member..."
                               className="min-w-[140px]"
                             />
@@ -566,7 +566,7 @@ export default function CleaningRotaPage() {
             <div className="md:hidden space-y-4 print:hidden">
               {entries.map((entry) => (
                 <div
-                  key={entry.rowNumber}
+                  key={entry.id}
                   className={`bg-white rounded-lg shadow p-4 ${
                     hasUserAssignment(entry) ? 'border-2 border-yellow-300' : 'border border-gray-200'
                   }`}
@@ -586,7 +586,7 @@ export default function CleaningRotaPage() {
                           <SearchableSelect
                             options={members}
                             value={getDisplayValue(entry, position)}
-                            onChange={(value) => updateAssignment(entry.rowNumber, position, value)}
+                            onChange={(value) => updateAssignment(entry.id, position, value)}
                             placeholder="Search..."
                             className="w-40"
                           />
@@ -657,7 +657,7 @@ export default function CleaningRotaPage() {
               <div className="space-y-2 max-h-40 overflow-y-auto border border-gray-200 rounded-lg p-2">
                 {targetAssignments.map((assignment, index) => (
                   <label
-                    key={`${assignment.rowNumber}-${assignment.position}`}
+                    key={`${assignment.id}-${assignment.position}`}
                     className={`flex items-center p-2 rounded cursor-pointer ${
                       selectedTargetIndex === index ? 'bg-blue-50 border border-blue-300' : 'hover:bg-gray-50'
                     }`}

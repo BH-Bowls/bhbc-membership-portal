@@ -6,7 +6,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { isCommitteeMember } from '@/lib/role-utils';
-import { getLeagueMessage, setLeagueMessage } from '@/lib/leagues-sheets';
+import { getLeagueMessage, setLeagueMessage } from '@/lib/leagues-supabase';
 
 export async function GET() {
   try {

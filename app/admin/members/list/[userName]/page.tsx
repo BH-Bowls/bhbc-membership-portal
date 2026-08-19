@@ -44,6 +44,7 @@ interface MemberForm {
   otherSkills: string;
   socialEmails: boolean;
   handbookEntry: boolean;
+  competitionsEligibleOverride: boolean | null;
 }
 
 // Convert a possibly-null value to a string for a controlled input.
@@ -62,7 +63,6 @@ export default function MemberDetailPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   // Other members, for the buddy selector
   const [memberOptions, setMemberOptions] = useState<{ userName: string; name: string }[]>([]);
 
@@ -110,6 +110,7 @@ export default function MemberDetailPage() {
           otherSkills: str(m.otherSkills),
           socialEmails: m.socialEmails === true,
           handbookEntry: m.handbookEntry === true,
+          competitionsEligibleOverride: m.competitionsEligibleOverride === true ? true : m.competitionsEligibleOverride === false ? false : null,
         });
         setLoading(false);
       } catch {
@@ -146,7 +147,6 @@ export default function MemberDetailPage() {
     if (!form) return;
     setSaving(true);
     setError(null);
-    setNotice(null);
     try {
       const res = await fetch(`/api/admin/members/${encodeURIComponent(userNameParam)}`, {
         method: 'PUT',
@@ -159,8 +159,7 @@ export default function MemberDetailPage() {
         setSaving(false);
         return;
       }
-      setNotice('Changes saved.');
-      setSaving(false);
+      router.push('/admin/members/list');
     } catch {
       setError('Failed to save changes.');
       setSaving(false);
@@ -210,9 +209,6 @@ export default function MemberDetailPage() {
 
         {error ? (
           <div className="mb-4 rounded-md bg-red-50 border border-red-200 p-3 text-sm text-red-800">{error}</div>
-        ) : null}
-        {notice ? (
-          <div className="mb-4 rounded-md bg-green-50 border border-green-200 p-3 text-sm text-green-800">{notice}</div>
         ) : null}
 
         {loading ? (
@@ -314,6 +310,24 @@ export default function MemberDetailPage() {
                   </select>
                 </div>
                 {textField('GMC (blank or "GMC")', 'gmc')}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Club competitions eligibility</label>
+                  <select
+                    className={getInputClasses()}
+                    value={form.competitionsEligibleOverride === true ? 'Y' : form.competitionsEligibleOverride === false ? 'N' : ''}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      set('competitionsEligibleOverride', v === 'Y' ? true : v === 'N' ? false : null);
+                    }}
+                  >
+                    <option value="">No override (defaults to not eligible)</option>
+                    <option value="Y">Eligible</option>
+                    <option value="N">Not eligible</option>
+                  </select>
+                  <p className="mt-1 text-xs text-gray-700">
+                    Manual override shown on the member&apos;s renewal form — the automatic &quot;8 friendlies last season&quot; check isn&apos;t available yet.
+                  </p>
+                </div>
               </div>
               <div className="mt-3 flex flex-col gap-2">
                 <label className="flex items-center gap-2 text-sm text-gray-700">

@@ -1,10 +1,10 @@
 // app/api/rowland/clubs/route.ts
-// GET — return list of clubs from the Match Day Contacts spreadsheet
+// GET — return the club list for Rowland's team pickers.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getAllClubsForImpersonation } from '@/lib/clubs-sheets';
+import { getClubs } from '@/lib/clubs-supabase';
 
 export async function GET(_req: NextRequest) {
   try {
@@ -13,7 +13,8 @@ export async function GET(_req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const clubs = await getAllClubsForImpersonation();
+    const allClubs = await getClubs();
+    const clubs = allClubs.map((c) => ({ clubName: c.clubName }));
 
     return NextResponse.json({ clubs });
   } catch (error) {

@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole, isCommitteeMember } from '@/lib/role-utils';
-import { setupRowlandBracket, updateRowlandComp } from '@/lib/rowland-sheets';
+import { setupRowlandBracket, updateRowlandComp } from '@/lib/rowland-supabase';
 import type { RowlandCompId, RowlandTeamRef } from '@/types/rowland';
 
 export async function POST(

@@ -18,9 +18,9 @@ function formatExpiry(iso: string): string {
 }
 
 function PollRow({ poll }: { poll: OpenPollSummary }) {
-  const badge = poll.hasResponded
-    ? 'inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800'
-    : 'inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800';
+  // Every poll returned here is, by definition, one the member hasn't responded to yet
+  // (getOpenPollsForMember filters out already-responded and expired polls).
+  const badge = 'inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800';
 
   return (
     <Link
@@ -28,16 +28,20 @@ function PollRow({ poll }: { poll: OpenPollSummary }) {
       className="flex items-start justify-between gap-3 py-3 px-1 rounded-md hover:bg-gray-50 transition-colors"
     >
       <div className="flex-1 min-w-0">
+        {poll.groupName && (
+          <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide truncate">
+            {poll.groupName}
+          </p>
+        )}
         <p className="text-sm font-medium text-gray-900 truncate">{poll.title}</p>
         <p className="text-xs text-gray-700 mt-0.5">
           {poll.optionCount} {poll.optionCount === 1 ? 'option' : 'options'} ·{' '}
           {poll.responseCount} {poll.responseCount === 1 ? 'response' : 'responses'} ·{' '}
           Expires {formatExpiry(poll.expiresAt)}
-          {poll.groupName ? ` · ${poll.groupName}` : ''}
         </p>
       </div>
       <div className="flex items-center gap-2 flex-shrink-0">
-        <span className={badge}>{poll.hasResponded ? '✓ Responded' : 'Respond'}</span>
+        <span className={badge}>Respond</span>
         <span className="text-gray-400 text-sm">›</span>
       </div>
     </Link>
@@ -88,7 +92,7 @@ export function OpenPollsPanel() {
             All polls →
           </Link>
         </div>
-        <p className="text-xs text-gray-700 mb-3">Polls awaiting a decision</p>
+        <p className="text-xs text-gray-700 mb-3">Polls awaiting your response</p>
 
         {polls === null ? (
           // Loading skeleton

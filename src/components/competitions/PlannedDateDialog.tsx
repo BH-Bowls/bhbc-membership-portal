@@ -11,8 +11,8 @@ import type { CompMatch, CompMemberInfo } from '@/types/competitions';
 interface PlannedDateDialogProps {
   match: CompMatch;
   getInfo: (username: string) => CompMemberInfo;
-  // onSave receives the agreed date and, for singles, the chosen marker username (or '' to clear)
-  onSave: (matchId: string, date: string, marker?: string) => Promise<void>;
+  // onSave receives the agreed date, time, and, for singles, the chosen marker username (or '' to clear)
+  onSave: (matchId: string, date: string, time: string, marker?: string) => Promise<void>;
   onClose: () => void;
   // Whether this is a singles competition — controls visibility of the marker dropdown
   isSingles?: boolean;
@@ -29,8 +29,9 @@ function getSideLabel(usernames: string[], getInfo: (u: string) => CompMemberInf
 }
 
 export function PlannedDateDialog({ match, getInfo, onSave, onClose, isSingles = false, playingMembers = [] }: PlannedDateDialogProps) {
-  // Pre-fill from the match's existing arranged date (if any)
+  // Pre-fill from the match's existing arranged date/time (if any)
   const [dateValue, setDateValue] = useState(match.playedDate || '');
+  const [timeValue, setTimeValue] = useState(match.playedTime || '');
   // Pre-fill from the match's existing marker (if any)
   const [markerValue, setMarkerValue] = useState(match.marker || '');
   const [saving, setSaving] = useState(false);
@@ -39,8 +40,9 @@ export function PlannedDateDialog({ match, getInfo, onSave, onClose, isSingles =
   // Sync inputs when the match prop changes (e.g. when the dialog is reused)
   useEffect(() => {
     setDateValue(match.playedDate || '');
+    setTimeValue(match.playedTime || '');
     setMarkerValue(match.marker || '');
-  }, [match.playedDate, match.marker]);
+  }, [match.playedDate, match.playedTime, match.marker]);
 
   const side1Label = getSideLabel(match.side1Usernames, getInfo);
   const side2Usernames = match.side2Usernames || [];
@@ -63,9 +65,9 @@ export function PlannedDateDialog({ match, getInfo, onSave, onClose, isSingles =
     try {
       // Pass the marker value only for singles comps; undefined suppresses the field for pairs/triples
       if (isSingles) {
-        await onSave(match.matchId, dateValue, markerValue);
+        await onSave(match.matchId, dateValue, timeValue, markerValue);
       } else {
-        await onSave(match.matchId, dateValue);
+        await onSave(match.matchId, dateValue, timeValue);
       }
       onClose();
     } catch (err) {
@@ -124,6 +126,19 @@ export function PlannedDateDialog({ match, getInfo, onSave, onClose, isSingles =
               }}
               className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm text-gray-900"
               autoFocus
+            />
+          </div>
+
+          {/* Time (optional) */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Time <span className="font-normal text-gray-500">(optional)</span>
+            </label>
+            <input
+              type="time"
+              value={timeValue}
+              onChange={(e) => setTimeValue(e.target.value)}
+              className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm text-gray-900"
             />
           </div>
 

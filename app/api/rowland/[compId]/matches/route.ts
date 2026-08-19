@@ -2,7 +2,7 @@
 // GET all matches for a competition
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getRowlandMatches } from '@/lib/rowland-sheets';
+import { getRowlandMatches } from '@/lib/rowland-supabase';
 import type { RowlandCompId } from '@/types/rowland';
 
 export async function GET(

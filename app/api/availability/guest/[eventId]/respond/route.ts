@@ -12,7 +12,7 @@ import {
   upsertMemberResponse,
   deleteMemberResponse,
   deleteVisitorResponse,
-} from '@/lib/availability-events-sheets';
+} from '@/lib/availability-events-supabase';
 import { clearDiaryCache } from '@/lib/home-cache';
 import type { AvailabilityResponse } from '@/types/availability';
 

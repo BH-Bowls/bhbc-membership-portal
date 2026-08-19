@@ -18,7 +18,6 @@ interface UserProfile {
   ageDemographic: string;
   memberType: string; // PL=Playing Lady, SL=Social Lady, PM=Playing Man, SM=Social Man
   honorary: string | null; // "Y" or "N" or null
-  friendliesLastYear: number | string; // Can be a number or "X" for manual override
   emailAddress: string;
   title: string | null;
 }
@@ -95,10 +94,8 @@ export default function RenewalsPage() {
   const [emailWarning, setEmailWarning] = useState(''); // Warning if email failed
   const [eligibility, setEligibility] = useState<{
     canEnterCompetitions: boolean;
-    friendliesLastYear: number | string;
   }>({
     canEnterCompetitions: false,
-    friendliesLastYear: 0,
   });
 
   // Load renewal data on mount and when session changes (uses session.user.userName automatically)
@@ -909,8 +906,7 @@ export default function RenewalsPage() {
                     <div className="mb-4 space-y-2 text-sm text-gray-700">
                       <p>Entry to competitions will only be accepted by playing members who have made themselves available for 8 Friendly matches in the previous season.</p>
                       <p>
-                        According to our information, the number of friendlies that you made yourself available for was <span className="font-semibold">{eligibility.friendliesLastYear}</span>
-                        {eligibility.friendliesLastYear === 'X' && <span className="ml-1 text-xs text-blue-600">(manual override approved)</span>}, therefore you are <span className={eligibility.canEnterCompetitions ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}>{eligibility.canEnterCompetitions ? 'eligible' : 'NOT eligible'}</span> to enter Club Comps next year.
+                        You are <span className={eligibility.canEnterCompetitions ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}>{eligibility.canEnterCompetitions ? 'eligible' : 'NOT eligible'}</span> to enter Club Comps next year. {!eligibility.canEnterCompetitions && 'If you believe this is incorrect, please contact BHBC.'}
                       </p>
                       <p className="text-xs">New members shall not be eligible to enter any Club competition in their first full playing season. Exceptions will be made for experienced bowlers by the Tournament Committee.</p>
                       <p className="text-xs">The OLDLAND competition is open only to those members who have NOT won a BHBC singles competition.</p>

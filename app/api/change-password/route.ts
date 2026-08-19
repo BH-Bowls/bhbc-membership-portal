@@ -4,10 +4,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { changePassword } from '@/lib/auth-sheets';
-import { changeClubPassword } from '@/lib/clubs-sheets';
-import { sendTemplateEmail, isEmailConfigured } from '@/lib/email/mailer';
-import { getUserByUsername, updateEmailSentStatus, logMemberEmail } from '@/lib/sheets';
+import { changePassword } from '@/lib/auth-supabase';
+import { sendTemplateEmail, isEmailConfigured, withEmailLogContext } from '@/lib/email/mailer';
+import { getUserByUsername } from '@/lib/members-supabase';
 
 // ============================================================================
 // Type Definitions
@@ -62,29 +61,6 @@ export async function POST(request: NextRequest) {
     const originalRoles = originalRole.split(',').map((r: string) => r.trim());
     const isAdminManaging = session.user?.isImpersonating &&
                            originalRoles.some((r: string) => r === 'Admin' || r === 'RowlandOrganiser' || r === 'superadmin');
-
-    // ── Club password change ────────────────────────────────────────────────
-    if (session.user?.role === 'Club') {
-      const body = await request.json();
-      const { currentPassword, newPassword, forceChangeOnNextLogin } = body as { currentPassword?: string; newPassword: string; forceChangeOnNextLogin?: boolean };
-
-      if (!isAdminManaging && (!currentPassword || typeof currentPassword !== 'string')) {
-        return NextResponse.json({ error: 'Current password is required' }, { status: 400 });
-      }
-      if (!newPassword || typeof newPassword !== 'string') {
-        return NextResponse.json({ error: 'New password is required' }, { status: 400 });
-      }
-
-      const result = await changeClubPassword(
-        userName,
-        newPassword,
-        isAdminManaging ? undefined : currentPassword,
-        isAdminManaging ? (forceChangeOnNextLogin ?? false) : false,
-      );
-
-      if (result.success) return NextResponse.json({ success: true });
-      return NextResponse.json({ error: result.error || 'Failed to change password' }, { status: 400 });
-    }
 
     // Parse request body
     const body = await request.json();
@@ -165,54 +141,22 @@ export async function POST(request: NextRequest) {
               ? (session.user?.originalAdmin?.userName || 'Admin')
               : userName;
 
-            const emailResult = await sendTemplateEmail(
-              recipientEmail,
-              subject,
-              'password-changed',
-              {
-                memberName,
-              }
+            await withEmailLogContext({ sentBy, userName }, () =>
+              sendTemplateEmail(
+                recipientEmail,
+                subject,
+                'password-changed',
+                {
+                  memberName,
+                }
+              )
             );
-
-            // Log to MemberEmails sheet
-            await logMemberEmail({
-              userName,
-              emailAddress: recipientEmail,
-              templateName: 'Password Changed',
-              subject,
-              success: emailResult.success,
-              errorMessage: emailResult.error,
-              sentBy,
-              attachments: [],
-            });
-
-            // Update Member Email Sent Status in Members sheet
-            await updateEmailSentStatus(userName, emailResult.success, emailResult.error);
           }
         }
       } catch (emailError) {
-        // Log email error but don't fail the request
-        const errorMsg = emailError instanceof Error ? emailError.message : 'Unknown error';
+        // Password was changed successfully, just email failed — the mailer's own
+        // transporter wrapper already logged the failed attempt to member_emails.
         console.error('[change-password] Failed to send confirmation email:', emailError);
-
-        // Log failed attempt to MemberEmails sheet
-        await logMemberEmail({
-          userName,
-          emailAddress: null,
-          templateName: 'Password Changed',
-          subject: 'BHBC Password Changed Successfully',
-          success: false,
-          errorMessage: errorMsg,
-          sentBy: isAdminManaging
-            ? (session.user?.originalAdmin?.userName || 'Admin')
-            : userName,
-          attachments: [],
-        });
-
-        // Update Member Email Sent Status in Members sheet
-        await updateEmailSentStatus(userName, false, errorMsg);
-
-        // Password was changed successfully, just email failed
       }
 
       return NextResponse.json({ success: true });

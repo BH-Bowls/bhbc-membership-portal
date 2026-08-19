@@ -8,7 +8,7 @@ import { SearchableSelect } from '@/components/SearchableSelect';
 import { EmailLink, PhoneLink } from '@/components/ContactLink';
 import { getButtonClasses } from '@/config/theme-helpers';
 import { hasRole } from '@/lib/role-utils';
-import type { MarkerEntry } from '@/lib/markers-sheets';
+import type { MarkerEntry } from '@/lib/members-supabase';
 
 interface MemberOption {
   value: string;
@@ -117,7 +117,7 @@ export default function MarkersPage() {
     if (!deleteTarget) return;
     setDeleting(true);
     try {
-      const res = await fetch(`/api/markers/${deleteTarget.rowNumber}`, { method: 'DELETE' });
+      const res = await fetch(`/api/markers/${encodeURIComponent(deleteTarget.userName)}`, { method: 'DELETE' });
       if (!res.ok) {
         const data = await res.json();
         setError(data.error || 'Failed to delete marker');
@@ -136,13 +136,13 @@ export default function MarkersPage() {
     if (!search) return true;
     const term = search.toLowerCase();
     return (
-      (m.fullName ?? m.name).toLowerCase().includes(term) ||
-      m.name.toLowerCase().includes(term)
+      m.fullName.toLowerCase().includes(term) ||
+      m.userName.toLowerCase().includes(term)
     );
   });
 
   function displayName(m: MarkerEntry) {
-    return m.fullName ?? m.name;
+    return m.fullName || m.userName;
   }
 
   return (
@@ -212,7 +212,7 @@ export default function MarkersPage() {
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {filtered.map(m => (
-                    <tr key={m.rowNumber} className="hover:bg-gray-50">
+                    <tr key={m.userName} className="hover:bg-gray-50">
                       <td className="px-4 py-3 text-sm font-medium text-gray-900">
                         <div className="flex items-center gap-2">
                           {displayName(m)}
@@ -257,7 +257,7 @@ export default function MarkersPage() {
             {/* Mobile cards */}
             <div className="md:hidden space-y-3">
               {filtered.map(m => (
-                <div key={m.rowNumber} className="bg-white rounded-lg shadow border border-gray-200 p-4">
+                <div key={m.userName} className="bg-white rounded-lg shadow border border-gray-200 p-4">
                   <div className="flex justify-between items-start">
                     <div>
                       <div className="font-semibold text-gray-900">{displayName(m)}</div>

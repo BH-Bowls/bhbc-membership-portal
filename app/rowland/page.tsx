@@ -13,10 +13,7 @@ import { ROWLAND_COMP_NAMES } from '@/types/rowland';
 const LS_KEY = 'rowland_selected_club';
 
 const ROWLAND_GUEST_BUTTONS = (
-  <>
-    <a href="/clublogin" className="px-3 py-1.5 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-md transition-colors">Club Login</a>
-    <a href="/login"     className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600  hover:bg-blue-700  rounded-md transition-colors">Member Login</a>
-  </>
+  <a href="/login" className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors">Member Login</a>
 );
 
 const STATUS_STYLES: Record<RowlandCompStatus, { badge: string; label: string }> = {
@@ -39,16 +36,16 @@ export default function RowlandPage() {
   const router = useRouter();
 
   const role = session?.user?.role ?? '';
-  const isCommittee = role !== 'Member' && role !== 'Kiosk' && role !== 'Club' && role !== '';
+  const isCommittee = role !== 'Member' && role !== 'Kiosk' && role !== '';
 
   const [comps, setComps] = useState<RowlandComp[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Club selector (for guests / non-club members)
-  const isClubSession = role === 'Club' || role.split(',').map(r => r.trim()).includes('RowlandPlayer');
-  const [clubs, setClubs] = useState<{ clubId: string; clubName: string }[]>([]);
-  const [selectedClub, setSelectedClub] = useState<{ clubId: string; clubName: string } | null>(null);
+  // Club selector shown to guests/plain members (a RowlandPlayer is already identified, no picker needed)
+  const isClubSession = role.split(',').map(r => r.trim()).includes('RowlandPlayer');
+  const [clubs, setClubs] = useState<{ clubName: string }[]>([]);
+  const [selectedClub, setSelectedClub] = useState<{ clubName: string } | null>(null);
   const [guestContactName, setGuestContactName] = useState('');
   const [contactNameInput, setContactNameInput] = useState('');
 
@@ -86,7 +83,7 @@ export default function RowlandPage() {
         const stored = localStorage.getItem(LS_KEY);
         if (stored) {
           const parsed = JSON.parse(stored);
-          setSelectedClub({ clubId: parsed.clubId, clubName: parsed.clubName });
+          setSelectedClub({ clubName: parsed.clubName });
           if (parsed.contactName) {
             setGuestContactName(parsed.contactName);
             setContactNameInput(parsed.contactName);
@@ -137,7 +134,17 @@ export default function RowlandPage() {
       />
 
       <div className="container mx-auto px-4 py-8 max-w-4xl">
-        <h1 className="text-3xl font-bold text-gray-900 mb-6">Rowland Cup</h1>
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-3xl font-bold text-gray-900">Rowland Cup</h1>
+          {isCommittee && (
+            <button
+              onClick={() => router.push('/rowland/admin')}
+              className="px-3 py-1.5 text-sm font-medium text-blue-600 border border-blue-200 rounded-md hover:bg-blue-50"
+            >
+              Manage
+            </button>
+          )}
+        </div>
 
         {/* Message panel */}
         {(message || isCommittee) && (
@@ -236,7 +243,7 @@ export default function RowlandPage() {
               <select
                 defaultValue=""
                 onChange={(e) => {
-                  const club = clubs.find((c) => c.clubId === e.target.value) ?? null;
+                  const club = clubs.find((c) => c.clubName === e.target.value) ?? null;
                   setSelectedClub(club);
                   setGuestContactName('');
                   setContactNameInput('');
@@ -248,7 +255,7 @@ export default function RowlandPage() {
               >
                 <option value="" disabled>Select your club…</option>
                 {clubs.map((c) => (
-                  <option key={c.clubId} value={c.clubId}>{c.clubName}</option>
+                  <option key={c.clubName} value={c.clubName}>{c.clubName}</option>
                 ))}
               </select>
             )}

@@ -6,7 +6,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole, isCommitteeMember } from '@/lib/role-utils';
-import { getRowlandMessage, setRowlandMessage } from '@/lib/rowland-sheets';
+import { getRowlandMessage, setRowlandMessage } from '@/lib/rowland-supabase';
 
 export async function GET() {
   try {

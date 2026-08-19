@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
-import { bulkUpdateInclude } from '@/lib/members-admin';
+import { bulkUpdateInclude } from '@/lib/members-admin-supabase';
 
 // PATCH handler — applies the include changes
 export async function PATCH(request: NextRequest) {

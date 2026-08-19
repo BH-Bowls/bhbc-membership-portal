@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { unblockSweepingDate } from '@/lib/sweeping-sheets';
+import { unblockSweepingDate } from '@/lib/sweeping-rota-supabase';
 import { hasRole } from '@/lib/role-utils';
 
 interface RouteContext {

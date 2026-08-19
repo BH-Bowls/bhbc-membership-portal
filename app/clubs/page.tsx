@@ -10,7 +10,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Navbar } from '@/components/Navbar';
 import { getButtonClasses } from '@/config/theme-helpers';
-import { Club } from '@/lib/types/clubs';
+import { Club } from '@/lib/clubs-supabase';
 import { restoreDraft } from '@/lib/form-draft-utils';
 
 export default function ClubsPage() {
@@ -24,7 +24,7 @@ export default function ClubsPage() {
 
   // Check if user can create/edit clubs
   const userRole = session?.user?.role || 'Member';
-  const canEdit = userRole !== 'Member' && userRole !== 'Kiosk' && userRole !== 'Club'
+  const canEdit = userRole !== 'Member' && userRole !== 'Kiosk'
     && !userRole.split(',').some(r => r.trim() === 'RowlandOrganiser' || r.trim() === 'RowlandPlayer');
 
   // Check for draft and redirect to club being edited

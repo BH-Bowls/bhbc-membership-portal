@@ -6,8 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
-import { normalizeToUKDate } from '@/lib/date-utils';
-import { getApplicationByRow, updateApplicationFields } from '@/lib/applications-sheets';
+import { getApplicationById, updateApplicationFields } from '@/lib/applications-supabase';
 
 // Allowed payment methods for the Payment Method column
 const VALID_PAYMENT_METHODS = ['Bank Transfer', 'Card', 'Cash', 'Cheque'];
@@ -29,10 +28,8 @@ export async function PATCH(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    // Parse and validate the application row number
     const { id } = await params;
-    const rowNumber = parseInt(id, 10);
-    if (isNaN(rowNumber)) {
+    if (!id) {
       return NextResponse.json({ error: 'Invalid application id' }, { status: 400 });
     }
 
@@ -58,7 +55,7 @@ export async function PATCH(
     }
 
     // Confirm the application exists and is currently Approved
-    const application = await getApplicationByRow(rowNumber);
+    const application = await getApplicationById(id);
     if (!application) {
       return NextResponse.json({ error: 'Application not found' }, { status: 404 });
     }
@@ -69,11 +66,12 @@ export async function PATCH(
       );
     }
 
-    // Normalize the payment date to DD/MM/YYYY and write the update
-    await updateApplicationFields(rowNumber, {
+    // body.paymentDate is already YYYY-MM-DD (from an <input type="date">), which
+    // Postgres parses natively — no UK-format conversion needed here anymore.
+    await updateApplicationFields(id, {
       feePaid,
       paymentMethod: body.paymentMethod,
-      paymentDate: normalizeToUKDate(body.paymentDate),
+      paymentDate: body.paymentDate,
       status: 'Paid',
     });
 

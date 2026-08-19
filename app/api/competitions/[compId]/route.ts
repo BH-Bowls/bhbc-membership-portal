@@ -9,7 +9,7 @@ import {
   getCompetitionById,
   getCompetitionMatches,
   updateCompetition,
-} from '@/lib/competitions-sheets';
+} from '@/lib/competitions-supabase';
 import type { Competition } from '@/types/competitions';
 import { isMember } from '@/lib/role-utils';
 

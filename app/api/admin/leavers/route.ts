@@ -6,7 +6,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
-import { getAllLeavers } from '@/lib/leavers-sheets';
+import { getAllLeavers } from '@/lib/leavers-supabase';
 
 // GET handler — returns every leaver in the Leavers sheet
 export async function GET() {

@@ -13,7 +13,6 @@ import {
   updatePasswordHash,
   updateLastLogin,
   logLoginAttempt,
-  getRecentFailedAttempts,
   type User,
 } from './sheets';
 
@@ -126,17 +125,6 @@ export async function authenticateUser(
   error?: string;
 }> {
   try {
-    // TEMPORARILY SKIP RATE LIMITING - we'll add it back later
-    // Rate limiting would check for too many failed attempts from this identifier or IP
-    // const rateLimitResult = await checkRateLimit(identifier, '');
-    // if (!rateLimitResult.allowed) {
-    //   await logLoginAttempt(identifier, null, false, rateLimitResult.reason, '', '');
-    //   return {
-    //     success: false,
-    //     error: 'Too many login attempts. Please try again later.',
-    //   };
-    // }
-
     // Find user by flexible identifier (username, email, or username variants)
     // Catch SharedEmailError separately (family members sharing email)
     let user: User | null = null;
@@ -570,52 +558,3 @@ export function hasRole(user: User, allowedRoles: string[]): boolean {
 // RATE LIMITING (Currently Disabled)
 // ============================================================================
 
-/**
- * Check if login attempt should be rate limited
- * CURRENTLY DISABLED in authenticateUser() - kept for future use
- * Prevents brute force attacks by limiting failed login attempts
- * Two-tier approach: per-account limit (5) and per-IP limit (10)
- * @param identifier Username or email being attempted
- * @param ipAddress IP address of login attempt
- * @returns Promise with allowed status and reason if blocked
- */
-export async function checkRateLimit(
-  identifier: string,
-  ipAddress: string
-): Promise<{ allowed: boolean; reason?: string }> {
-  try {
-    // Get count of recent failed attempts (last 15 minutes)
-    // Function handles time window filtering internally
-    const recentAttempts = await getRecentFailedAttempts(identifier, ipAddress);
-
-    // Check identifier-based rate limit (5 attempts per 15 minutes)
-    // Prevents targeted attacks on specific accounts
-    if (recentAttempts.byIdentifier >= 5) {
-      return {
-        allowed: false,
-        reason: 'Too many failed attempts for this account',
-      };
-    }
-
-    // Check IP-based rate limit (10 attempts per 15 minutes)
-    // Prevents distributed attacks from single IP
-    if (ipAddress) {
-      if (recentAttempts.byIp >= 10) {
-        return {
-          allowed: false,
-          reason: 'Too many failed attempts from this IP',
-        };
-      }
-    }
-
-    // No rate limit hit - allow attempt
-    return { allowed: true };
-  } catch (error) {
-    // Log error for monitoring
-    console.error('Rate limit check error:', error);
-
-    // On error, allow the attempt (fail open for availability)
-    // Better to allow one potential attack than lock out legitimate users
-    return { allowed: true };
-  }
-}

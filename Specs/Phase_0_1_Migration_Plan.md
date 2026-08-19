@@ -41,7 +41,7 @@ create table user_roles (             -- replaces the comma-separated `role` str
 );
 ```
 
-`account_type = 'shared'` is deliberately generic (matches `SCHEMA.md` §10.2's own suggestion to replace the comma-separated role column). Captain and Kiosk are the complete set *today*, but a future shared login (a Bar duty login, say) is just a new `users` row with `account_type = 'shared'` — no schema change. **Confirmed 2026-07-29: Captain has no code marker by design, not by oversight** — it's an ordinary `Members`-row login (username `Captains`, role `Captain`) used on a shared club computer; every captain also has their own personal login on their own device. Kiosk is the only one with a code-level special case (username `clubhouse`, `src/lib/auth.ts:217`) because it needed one for something else entirely — there's no general mechanism distinguishing "shared" logins in code today, which is exactly the gap `account_type = 'shared'` is introducing. **Practical implication for the migration script:** identifying which `users` rows get `account_type = 'shared'` (`Captains`, `clubhouse`) is a manual/config-driven step (a short list of known shared usernames), not something derivable from any existing flag or pattern in the data. Two behaviours of shared logins carry forward unchanged from Sheets, not as regressions:
+`account_type = 'shared'` is deliberately generic (matches `SCHEMA.md` §10.2's own suggestion to replace the comma-separated role column). Captain and Kiosk are the complete set *today*, but a future shared login (a Bar duty login, say) is just a new `users` row with `account_type = 'shared'` — no schema change. **Confirmed 2026-07-29: Captain has no code marker by design, not by oversight** — it's an ordinary `Members`-row login (username `captains`, role `Captain`) used on a shared club computer; every captain also has their own personal login on their own device. Kiosk is the only one with a code-level special case (username `clubhouse`, `src/lib/auth.ts:217`) because it needed one for something else entirely — there's no general mechanism distinguishing "shared" logins in code today, which is exactly the gap `account_type = 'shared'` is introducing. **Practical implication for the migration script:** identifying which `users` rows get `account_type = 'shared'` (`captains`, `clubhouse`) is a manual/config-driven step (a short list of known shared usernames), not something derivable from any existing flag or pattern in the data. Two behaviours of shared logins carry forward unchanged from Sheets, not as regressions:
 
 - **Attribution gets coarser on shared logins.** Anything recording "who did this" (`last_modified_by`, `locked_by`, `ImpersonationLog`) shows `captain`, not a real person, when used from the shared account — already exactly how it works today.
 - **Session lifetime for "always logged in" shared devices** needs a deliberate decision (carry the normal expiry, or an explicit exemption for `account_type = 'shared'`) rather than falling out accidentally. **Verified 2026-07-29: the actual enforced expiry is 45-day inactivity / 90-day absolute** (`src/lib/auth.ts:264` sets `maxAge: 45 * 24 * 60 * 60`; the 90-day absolute ceiling is enforced separately at `auth.ts:213,221-228`) — not "30-day" as an earlier pass of this plan assumed. That 30-day figure traced back to a stale doc comment (`auth.ts:16`) that doesn't match the real `maxAge` three lines below it; worth fixing that comment while this code is being touched anyway, independent of the migration itself.
@@ -180,6 +180,8 @@ Either way it **wipes and re-seeds Dev from scratch each time it's run** — ful
 
 **Schema changes become versioned migration files, applied to Dev first, then Prod** — not ad hoc edits run by hand against whichever database. This is also the answer to "does every change need to go in this plan document": individual schema tweaks going forward (like the `worker_additional_info` column added above) don't need updating here indefinitely — this document covers the one-time Phase 0/1 migration itself; once that's done, ongoing schema evolution is "add a migration file, apply to Dev, verify, apply to Prod," normal engineering rather than a planning-document update.
 
+**Migration-branch deployments must point at Dev, never Prod.** Vercel supports separate env vars per deployment type (Production / Preview / Development). The migration work branch's **Preview** environment variables need to be set to the Dev Supabase project's credentials before the first push — otherwise a preview build could read or write real data through what's meant to be the safe sandbox. Confirm this in Vercel's project settings before pushing, not after. `main`'s Production env vars stay pointed at Sheets (and, later, Prod Postgres) throughout — the migration branch's preview deployments are fully isolated from production either way, per the existing branch/deploy workflow (`specs/CLAUDE.md`).
+
 ---
 
 ## Migration Sequencing
@@ -205,7 +207,11 @@ create table config (
   updated_at  timestamptz not null default now(),
   updated_by  text   -- username, informational only
 );
+
+alter table config enable row level security;
 ```
+
+**Standing rule from Step 0 onward, confirmed 2026-08-01: every table gets `enable row level security` with zero policies defined, no exceptions.** The app only ever talks to Postgres server-side via the `service_role` key (`src/lib/supabase.ts`), which bypasses RLS entirely regardless — so this costs nothing functionally. What it buys: Supabase auto-exposes every table via its REST API, gated by whichever key a caller uses; the `anon`/publishable key is meant to be safe to expose client-side *only if* RLS is locking down what it can touch. With RLS on and no policies, that key (and anything else that isn't `service_role`) is denied by default on every table — the correct posture given nothing client-side is ever meant to touch Postgres directly in this design.
 
 `config-supabase.ts` replaces `config-sheets.ts` with identical signatures (verified 2026-07-29: the real function names are `getLabelConfig`/`updateLabelConfig`, `src/lib/config-sheets.ts:13,30` — not `getConfigValue`/`setConfigValue` as an earlier pass of this plan assumed) — the lowest-risk possible first migration (nothing depends on its shape, just key lookups), and a genuine rehearsal of the whole pattern (Supabase client setup, an env-var getter matching the existing `getSpreadsheetId()` convention) before anything with real stakes.
 
@@ -246,20 +252,32 @@ create table member_profiles (
 
 No `email_address` (or any other member field) duplicated onto `users` — see the join-cost reasoning above. Deliberately no `user_name` column here either, for the same reason: the standard lookup pattern is `users join member_profiles on member_profiles.user_id = users.id where users.username = $1`, cheap at this data volume, and it means `username` has exactly one place it's ever stored as a primary/unique value.
 
-**Applications — new scope, not a straight port.** Live code has one terminal status (`Rejected`) — no `Declined`/`Didn't Proceed` split. Adding it deliberately: applicants processed through approval sometimes go quiet with no payment, which the current single status can't distinguish from an active review-stage decline.
+**Applications — new scope, not a straight port.** Live code has one terminal status (`Rejected`) — no `Declined`/`Didn't Proceed` split. Adding it deliberately: applicants processed through approval sometimes go quiet with no payment, which the current single status can't distinguish from an active review-stage decline. **On migration, existing `Rejected` rows become `Declined`** — `Didn't Proceed` has no historical equivalent, it only applies going forward.
+
+**Corrected 2026-08-01 against the live `Application` TypeScript interface** (`src/lib/applications-sheets.ts`) — no `SCHEMA.md` documentation exists for Applications at all, so the live interface was the only source of truth, and the original block below was significantly incomplete (same gap-class as `member_profiles`/`users`/`leaver_reason`). `decision_reason` renamed to `decision_notes` to match the live column name exactly, rather than keep two overlapping fields. `reviewed_by`/`reviewed_at` have no source in the live sheet at all — kept as new capture going forward, nothing to backfill.
 
 ```sql
 create table applications (
   id                uuid primary key default gen_random_uuid(),
   status            text not null default 'Submitted'
                       check (status in ('Submitted','Listed','Approved','Paid','Converted','Declined','Didn''t Proceed')),
-  first_name text, last_name text, email text, mobile text,
-  address_1 text, address_2 text, post_code text,
+  first_name text, last_name text, known_as text, gender text,
+  email text, landline text, mobile text,
+  address_1 text, address_2 text, address_3 text, post_code text,
+  age_demographic text, dob text,          -- dob freeform, matches birthdate's treatment
+  ft_education text,
   requested_member_type text,
+  previous_experience text, disabilities text,
+  proposer_name text, seconder_name text,
+  decision_notes    text,          -- informal free text — covers objections and threshold-cap declines alike, no separate objections table
   submitted_at      timestamptz not null default now(),
+  listed_date       timestamptz,
+  fee_due numeric, fee_paid numeric,
+  payment_method text, payment_date timestamptz,
+  approved_at       timestamptz,
+  converted_at      timestamptz,
   reviewed_by       text references users(username) on update cascade,
   reviewed_at       timestamptz,
-  decision_reason   text,          -- informal free text — covers objections and threshold-cap declines alike, no separate objections table
   converted_user_id uuid references users(id)   -- set on Converted, links forward rather than deleting the application
 );
 ```
@@ -494,6 +512,7 @@ Every auth-adjacent surface re-tested on a preview branch before merge, per `COD
 - [x] Handicap — confirmed genuinely new territory; calculation rule explicitly not guessed at; confirmed zero existing history/audit table of any kind
 - [x] Season entity `(corrected)` — no `season` field exists anywhere on Games/Friendlies today, not even as a string; year is implicit only in which spreadsheet/tab is active
 - [x] Config function names `(corrected)` — `getLabelConfig`/`updateLabelConfig` (`config-sheets.ts:13,30`), not `getConfigValue`/`setConfigValue`
-- [x] Captain shared-login row — **confirmed 2026-07-29**: an ordinary `Members` row (username `Captains`, role `Captain`) used on a shared club computer, by design has no code marker distinguishing it (captains also have their own personal logins); migration script identifies `Captains`/`clubhouse` as `account_type = 'shared'` via a short known-username list, not derived from data
+- [x] Captain shared-login row — **confirmed 2026-07-29**, username **corrected 2026-08-01 against real live data**: an ordinary `Members` row (real username `captains`, lowercase — `Captains` was an unconfirmed assumption; `full_name` is literally "Captains Laptop") used on a shared club computer, by design has no code marker distinguishing it (captains also have their own personal logins); migration script identifies `captains`/`clubhouse` as `account_type = 'shared'` via a short known-username list, not derived from data
+- [x] Real migration script run against live Members data (redacted) — **2026-08-01, `scripts/migrate-members.ts`**: 196 users, 194 member_profiles, 33 user_roles migrated to Dev successfully. Found and fixed live: Sheets timestamps are `DD/MM/YYYY HH:MM:SS`, not ISO despite `SCHEMA.md` claiming otherwise (see the note on `last_login_date` etc. — worth correcting that documentation separately); **3 real `buddy_user_name` anomalies exist in production data** (`torri.duffy`→`dawn.duffy`, `nigel.croucher`→`hazel.campell`, `frank.leach`→`annette.leach`, all non-matching current usernames — stale references or typos) — nulled by the script with a warning, **worth you reviewing and correcting in the live sheet independently of the migration**
 - [x] Duplicate-email audit — **resolved 2026-07-29**: ~20-30 members / 10-15 shared-email households (your estimate, partners and parent/grandchild sharing), club contacts not a factor (token-based access); ~6 members with no email at all noted as a real username-only-login case to test explicitly
 - [x] Season Planning ordering — **decided 2026-07-30**: wait for Games Step 4a (Postgres), no interim Sheets build

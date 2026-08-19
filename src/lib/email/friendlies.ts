@@ -3,8 +3,8 @@
 // Handles sending withdrawal notifications to captains and future game status notifications
 // Uses the club's email service to notify captains when players withdraw from selected teams
 
-import { sendEmail, commonMailHeaders } from './mailer';
-import { getUserByUsername, getAllUsers } from '../sheets';
+import { sendEmail, commonMailHeaders, withEmailLogContext } from './mailer';
+import { getUserByUsername, getAllUsers } from '../members-supabase';
 import { Game, GameSheetPlayer } from '../types/friendlies';
 import { hasRole } from '../role-utils';
 import { buildFriendlyICSAttachment, buildLinkedFriendlyICSAttachment, isGmailAddress, icsUpdatesEnabled } from '../ics-utils';
@@ -62,7 +62,7 @@ export async function getCaptainEmails(): Promise<string[]> {
  */
 export async function sendWithdrawalEmail(
   userName: string,
-  game: Game,
+  game: Omit<Game, 'rowNumber'>,
   selection: {
     selected: string;      // Selection status: Y=Playing, R=Reserve, T=Reserve Team
     team: number | null;   // Team number (1-4 typically)
@@ -260,7 +260,7 @@ Friendlies Management System
  */
 export async function sendRejoinEmail(
   userName: string,
-  game: Game,
+  game: Omit<Game, 'rowNumber'>,
   selection: {
     selected: string;      // Selection status: Y=Playing, R=Reserve, T=Reserve Team
     team: number | null;
@@ -375,7 +375,7 @@ export async function sendRejoinNoticeEmail(
   emailAddress: string,
   userName: string,
   fullName: string,
-  game: Game,
+  game: Omit<Game, 'rowNumber'>,
   appUrl: string,
 ): Promise<void> {
   const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}?me=${encodeURIComponent(userName)}`;
@@ -428,7 +428,9 @@ export async function sendRejoinNoticeEmail(
     buttonText: 'View Game',
   });
 
-  await sendEmail(emailAddress, subject, text, html, ics ? [ics] : undefined);
+  await withEmailLogContext({ userName }, () =>
+    sendEmail(emailAddress, subject, text, html, ics ? [ics] : undefined)
+  );
 }
 
 /**
@@ -440,7 +442,7 @@ export async function sendRejoinNoticeEmail(
  * @returns Object with success status, count of emails sent, and any players without emails
  */
 export async function sendGamePublishedEmail(
-  game: Game,
+  game: Omit<Game, 'rowNumber'>,
   players: Array<{
     userName?: string;   // Used in ICS UID — optional for backwards compatibility
     fullName: string;
@@ -699,15 +701,17 @@ Friendlies Management System
         : null;
 
       try {
-        await transporter.sendMail({
-          from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
-          to: player.email!,
-          subject,
-          text,
-          html,
-          headers: commonMailHeaders(),
-          ...(icsAttachment ? { attachments: [icsAttachment] } : {}),
-        });
+        await withEmailLogContext({ userName: player.userName, templateName: 'friendly-game-published' }, () =>
+          transporter.sendMail({
+            from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
+            to: player.email!,
+            subject,
+            text,
+            html,
+            headers: commonMailHeaders(),
+            ...(icsAttachment ? { attachments: [icsAttachment] } : {}),
+          })
+        );
         emailsSent++;
       } catch (playerError) {
         console.error(`Failed to send published email to ${player.fullName} (${player.email}):`, playerError);
@@ -745,7 +749,7 @@ Friendlies Management System
  * @returns Object with success status, count of emails sent, and any members without emails
  */
 export async function sendTeaRotaEmail(
-  game: Game,
+  game: Omit<Game, 'rowNumber'>,
   teaMembers: Array<{ role: string; fullName: string; email: string | null; phone: string | null }>,
   appUrl: string
 ): Promise<{ success: boolean; emailsSent: number; membersWithoutEmail: string[]; error?: string }> {
@@ -881,7 +885,7 @@ Friendlies Management System
  * Includes a METHOD:CANCEL ICS attachment to remove the event from their calendar
  */
 export async function sendGameCancelledEmail(
-  game: Game,
+  game: Omit<Game, 'rowNumber'>,
   players: Array<{ userName: string; fullName: string; email: string | null }>,
   appUrl: string,
   reason?: string,
@@ -993,15 +997,17 @@ export async function sendGameCancelledEmail(
 </html>`.trim();
 
       try {
-        await transporter.sendMail({
-          from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
-          to: player.email!,
-          subject,
-          text,
-          html,
-          headers: commonMailHeaders(),
-          ...(ics ? { attachments: [ics] } : {}),
-        });
+        await withEmailLogContext({ userName: player.userName, templateName: 'friendly-game-cancelled' }, () =>
+          transporter.sendMail({
+            from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
+            to: player.email!,
+            subject,
+            text,
+            html,
+            headers: commonMailHeaders(),
+            ...(ics ? { attachments: [ics] } : {}),
+          })
+        );
         emailsSent++;
       } catch (playerError) {
         console.error(`Failed to send cancellation email to ${player.fullName}:`, playerError);
@@ -1022,7 +1028,7 @@ export async function sendGameCancelledEmail(
  * Plain notification — no ICS needed since the tea rota email has no calendar event
  */
 export async function sendTeaRotaCancelledEmail(
-  game: Game,
+  game: Omit<Game, 'rowNumber'>,
   teaMembers: Array<{ role: string; fullName: string; email: string | null }>,
   reason?: string,
 ): Promise<{ success: boolean; emailsSent: number; membersWithoutEmail: string[]; error?: string }> {
@@ -1154,7 +1160,7 @@ function buildFriendlyPlayerHtml(opts: {
   headerColor: string;
   fullName: string;
   introHtml: string;
-  game: Game;
+  game: Omit<Game, 'rowNumber'>;
   noteHtml?: string;
   gameUrl: string;
   buttonText: string;
@@ -1214,7 +1220,7 @@ export async function sendEntryConfirmedEmail(
   emailAddress: string,
   userName: string,
   fullName: string,
-  game: Game,
+  game: Omit<Game, 'rowNumber'>,
   appUrl: string,
   addedByAdmin = false,
 ): Promise<void> {
@@ -1287,7 +1293,7 @@ export async function sendEntryConfirmedEmail(
     messageCaptainsUrl,
   });
 
-  await sendEmail(emailAddress, subject, text, html, [ics]);
+  await withEmailLogContext({ userName }, () => sendEmail(emailAddress, subject, text, html, [ics]));
 }
 
 /**
@@ -1301,8 +1307,8 @@ export async function sendLinkedEntryConfirmedEmail(
   emailAddress: string,
   userName: string,
   fullName: string,
-  gameA: Game,
-  gameB: Game,
+  gameA: Omit<Game, 'rowNumber'>,
+  gameB: Omit<Game, 'rowNumber'>,
   appUrl: string,
 ): Promise<void> {
   // Single "View Game" button pointing at the lead game (game A) — that's where the
@@ -1395,7 +1401,7 @@ export async function sendLinkedEntryConfirmedEmail(
 </body>
 </html>`.trim();
 
-  await sendEmail(emailAddress, subject, text, html, [ics]);
+  await withEmailLogContext({ userName }, () => sendEmail(emailAddress, subject, text, html, [ics]));
 }
 
 /**
@@ -1406,7 +1412,7 @@ export async function sendWithdrawalNoticeEmail(
   emailAddress: string,
   userName: string,
   fullName: string,
-  game: Game,
+  game: Omit<Game, 'rowNumber'>,
   appUrl: string,
 ): Promise<void> {
   const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}?me=${encodeURIComponent(userName)}`;
@@ -1459,7 +1465,9 @@ export async function sendWithdrawalNoticeEmail(
     buttonText: 'View Game',
   });
 
-  await sendEmail(emailAddress, subject, text, html, ics ? [ics] : undefined);
+  await withEmailLogContext({ userName }, () =>
+    sendEmail(emailAddress, subject, text, html, ics ? [ics] : undefined)
+  );
 }
 
 /**
@@ -1472,8 +1480,8 @@ export async function sendLinkedWithdrawalNoticeEmail(
   emailAddress: string,
   userName: string,
   fullName: string,
-  gameA: Game,
-  gameB: Game,
+  gameA: Omit<Game, 'rowNumber'>,
+  gameB: Omit<Game, 'rowNumber'>,
   appUrl: string,
 ): Promise<void> {
   const venueA = `${gameA.homeAway === 'H' ? 'Home' : 'Away'} - ${gameA.clubName}`;
@@ -1553,7 +1561,9 @@ export async function sendLinkedWithdrawalNoticeEmail(
 </body>
 </html>`.trim();
 
-  await sendEmail(emailAddress, subject, text, html, ics ? [ics] : undefined);
+  await withEmailLogContext({ userName }, () =>
+    sendEmail(emailAddress, subject, text, html, ics ? [ics] : undefined)
+  );
 }
 
 /**
@@ -1564,7 +1574,7 @@ export async function sendRemovedNoticeEmail(
   emailAddress: string,
   userName: string,
   fullName: string,
-  game: Game,
+  game: Omit<Game, 'rowNumber'>,
   appUrl: string,
 ): Promise<void> {
   const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}?me=${encodeURIComponent(userName)}`;
@@ -1617,7 +1627,9 @@ export async function sendRemovedNoticeEmail(
     buttonText: 'View Game',
   });
 
-  await sendEmail(emailAddress, subject, text, html, ics ? [ics] : undefined);
+  await withEmailLogContext({ userName }, () =>
+    sendEmail(emailAddress, subject, text, html, ics ? [ics] : undefined)
+  );
 }
 
 /**
@@ -1628,7 +1640,7 @@ export async function sendWithdrawnByAdminNoticeEmail(
   emailAddress: string,
   userName: string,
   fullName: string,
-  game: Game,
+  game: Omit<Game, 'rowNumber'>,
   appUrl: string,
 ): Promise<void> {
   const gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}?me=${encodeURIComponent(userName)}`;
@@ -1681,5 +1693,7 @@ export async function sendWithdrawnByAdminNoticeEmail(
     buttonText: 'View Game',
   });
 
-  await sendEmail(emailAddress, subject, text, html, ics ? [ics] : undefined);
+  await withEmailLogContext({ userName }, () =>
+    sendEmail(emailAddress, subject, text, html, ics ? [ics] : undefined)
+  );
 }

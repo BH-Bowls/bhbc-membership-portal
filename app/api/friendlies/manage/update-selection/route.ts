@@ -6,7 +6,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, getGameSheet, updateGameSheet, updateGameCounts, updateCaptain } from '@/lib/friendlies-sheets';
+import { getGameSheet, updateGameSheet } from '@/lib/friendlies-sheets';
+import { getFixtureByTabName, updateFixture } from '@/lib/fixtures-supabase';
 import { UpdateSelectionRequest, UpdateSelectionResponse } from '@/lib/types/friendlies';
 import { hasRole } from '@/lib/role-utils';
 
@@ -30,19 +31,10 @@ export async function POST(request: NextRequest) {
     const body: UpdateSelectionRequest = await request.json();
     const { tab_name, captain_username, selections } = body;
 
-    // Fetch all games from Games sheet. Fresh read — the lock guard below checks
+    // Fetch the fixture. Postgres reads are always fresh — the lock guard below checks
     // game.lockedBy, which must be current so a stale cache can't let a captain save
     // selections for a game another captain now holds the lock on.
-    const games = await getGames(undefined, undefined, true);
-
-    // Search for the game matching the provided tab_name
-    let game = null;
-    for (const g of games) {
-      if (g.tabName === tab_name) {
-        game = g;
-        break;
-      }
-    }
+    const game = await getFixtureByTabName(tab_name);
 
     // Return 404 if game doesn't exist
     if (!game) {
@@ -116,9 +108,9 @@ export async function POST(request: NextRequest) {
     // Update the game sheet with all reconciled selection changes in a single batch
     await updateGameSheet(game.tabName, mappedSelections);
 
-    // Write captain of the day to the Games sheet (captain_username = '' clears the field)
+    // Write captain of the day to the fixture (captain_username = '' clears the field)
     if (captain_username !== undefined) {
-      await updateCaptain(game.tabName, captain_username);
+      await updateFixture(game.id, { captain: captain_username });
     }
 
     // Fetch the updated player list from the game sheet to return to client
@@ -178,8 +170,8 @@ export async function POST(request: NextRequest) {
     // Count players marked as 'R' (reserve) or 'T' (reserve team)
     const reservesCount = allPlayers.filter(p => ['R', 'T'].includes(p.selected) && p.status !== 'W').length;
 
-    // Update the selected and reserves count columns in Games sheet
-    await updateGameCounts(game.tabName, {
+    // Update the selected and reserves counts on the fixture
+    await updateFixture(game.id, {
       selected: selectedCount,
       reserves: reservesCount,
     });

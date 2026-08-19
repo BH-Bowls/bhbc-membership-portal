@@ -1,18 +1,21 @@
 // src/lib/friendlies-utils.ts
 // Utility functions for the Friendlies system
 
-import { Game } from './types/friendlies';
+import { GameStatus } from './types/friendlies';
 
 /**
- * Represents either a standalone game or a paired game tuple.
+ * Represents either a standalone game/fixture or a paired tuple.
  * Paired games share the same date and both have paired='Y'.
+ * Generic so it works for both the Sheets-backed Game type and the Postgres-backed
+ * Fixture type (fixtures-supabase.ts) — they share the fields this needs (paired,
+ * status, date) but have different identifier fields (rowNumber vs id).
  */
-export type GameOrPair = Game | [Game, Game];
+export type GameOrPair<T> = T | [T, T];
 
 /**
  * Check if a GameOrPair is a paired tuple
  */
-export function isPairedGame(item: GameOrPair): item is [Game, Game] {
+export function isPairedGame<T>(item: GameOrPair<T>): item is [T, T] {
   return Array.isArray(item);
 }
 
@@ -45,23 +48,25 @@ export function parseNumberRequired(format: string): number | null {
 }
 
 /**
- * Group games that are paired (same date, both paired='Y') into tuples.
+ * Group games/fixtures that are paired (same date, both paired='Y') into tuples.
  * Only groups games in Upcoming ('') or Open ('O') status — once closed
  * (Selecting onward) the two games are managed/selected individually.
  * Preserves date ordering.
  *
- * @param games Array of Game objects
- * @returns Array of standalone Games and [GameA, GameB] tuples
+ * @param games Array of Game or Fixture objects
+ * @returns Array of standalone items and [A, B] tuples
  */
-export function groupPairedGames(games: Game[]): GameOrPair[] {
-  const result: GameOrPair[] = [];
-  const paired = new Set<number>(); // Track rowNumbers already paired
+export function groupPairedGames<T extends { paired?: string; status: GameStatus; date: string }>(
+  games: T[]
+): GameOrPair<T>[] {
+  const result: GameOrPair<T>[] = [];
+  const paired = new Set<T>(); // Track items already paired (by object identity)
 
   for (let i = 0; i < games.length; i++) {
     const game = games[i];
 
     // Skip if already grouped into a pair
-    if (paired.has(game.rowNumber)) continue;
+    if (paired.has(game)) continue;
 
     // Only group if this game is marked as paired and in Upcoming/Open status
     if (game.paired === 'Y' && (game.status === '' || game.status === 'O')) {
@@ -69,15 +74,15 @@ export function groupPairedGames(games: Game[]): GameOrPair[] {
       const partner = games.find(
         (g, j) =>
           j !== i &&
-          !paired.has(g.rowNumber) &&
+          !paired.has(g) &&
           g.paired === 'Y' &&
           g.date === game.date &&
           (g.status === '' || g.status === 'O')
       );
 
       if (partner) {
-        paired.add(game.rowNumber);
-        paired.add(partner.rowNumber);
+        paired.add(game);
+        paired.add(partner);
         result.push([game, partner]);
         continue;
       }

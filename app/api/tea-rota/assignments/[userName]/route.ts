@@ -5,10 +5,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getTeaRotaList } from '@/lib/friendlies-sheets';
+import { getTeaRotaList } from '@/lib/fixtures-supabase';
 
 interface TeaAssignment {
-  rowNumber: number;
+  id: string;
   displayDate: string;
   time: string;
   clubName: string;
@@ -49,7 +49,7 @@ export async function GET(
     for (const entry of entries) {
       if (entry.teaLead === decodedUserName) {
         assignments.push({
-          rowNumber: entry.rowNumber,
+          id: entry.id,
           displayDate: entry.displayDate,
           time: entry.time,
           clubName: entry.clubName,
@@ -59,7 +59,7 @@ export async function GET(
       }
       if (entry.teaFirst === decodedUserName) {
         assignments.push({
-          rowNumber: entry.rowNumber,
+          id: entry.id,
           displayDate: entry.displayDate,
           time: entry.time,
           clubName: entry.clubName,
@@ -69,7 +69,7 @@ export async function GET(
       }
       if (entry.teaSecond === decodedUserName) {
         assignments.push({
-          rowNumber: entry.rowNumber,
+          id: entry.id,
           displayDate: entry.displayDate,
           time: entry.time,
           clubName: entry.clubName,

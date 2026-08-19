@@ -4,11 +4,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { batchUpdateCleaningRotaAssignments } from '@/lib/cleaning-sheets';
+import { batchUpdateCleaningRotaAssignments } from '@/lib/cleaning-rota-supabase';
 
 interface BatchUpdateRequest {
   updates: {
-    rowNumber: number;
+    id: string;
     lead: string;
     second: string;
     third: string;
@@ -50,9 +50,9 @@ export async function PUT(request: NextRequest) {
 
     // Validate each update
     for (const update of updates) {
-      if (!update.rowNumber) {
+      if (!update.id) {
         return NextResponse.json(
-          { error: 'Missing rowNumber in update' },
+          { error: 'Missing id in update' },
           { status: 400 }
         );
       }

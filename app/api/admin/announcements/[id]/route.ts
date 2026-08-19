@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
-import { updateAnnouncement, deleteAnnouncement } from '@/lib/announcements-sheets';
+import { updateAnnouncement, deleteAnnouncement } from '@/lib/announcements-supabase';
 import { clearAnnouncementCache } from '@/lib/home-cache';
 
 // PATCH handler — updates message and expiry of an existing announcement

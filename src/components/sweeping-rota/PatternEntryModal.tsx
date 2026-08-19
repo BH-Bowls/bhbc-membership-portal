@@ -75,6 +75,10 @@ export function PatternEntryModal({
   const [removedDates, setRemovedDates] = useState<Set<string>>(new Set());
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  // Persists after successMessage's banner fades — only cleared when the user actually
+  // changes the pattern/range/date selection, so the button can't silently re-enable
+  // itself on a timer while the same already-submitted dates are still showing.
+  const [submitted, setSubmitted] = useState(false);
 
   const monthOptions = getMonthOptions();
 
@@ -91,6 +95,7 @@ export function PatternEntryModal({
       setPreviewDates([]);
       setRemovedDates(new Set());
       setSuccessMessage(null);
+      setSubmitted(false);
     }
   }, [isOpen, currentUserName]);
 
@@ -125,12 +130,15 @@ export function PatternEntryModal({
       setPreviewDates([]);
       setRemovedDates(new Set());
     }
+    // A new pattern/range means any previous confirmation no longer applies to what's shown.
+    setSuccessMessage(null);
+    setSubmitted(false);
   }, [patternType, dayOfWeek, fromMonth, toMonth]);
 
-  // Clear success message after 3 seconds
+  // Clear success message after 5 seconds
   useEffect(() => {
     if (successMessage) {
-      const timer = setTimeout(() => setSuccessMessage(null), 3000);
+      const timer = setTimeout(() => setSuccessMessage(null), 5000);
       return () => clearTimeout(timer);
     }
   }, [successMessage]);
@@ -150,7 +158,7 @@ export function PatternEntryModal({
   }, [isOpen, isSubmitting, onClose]);
 
   const finalDates = previewDates.filter(d => !removedDates.has(d));
-  const canSubmit = patternType !== '' && dayOfWeek !== '' && finalDates.length > 0 && !isSubmitting;
+  const canSubmit = patternType !== '' && dayOfWeek !== '' && finalDates.length > 0 && !isSubmitting && !submitted;
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
@@ -163,10 +171,10 @@ export function PatternEntryModal({
         action,
         action === 'assign' ? selectedUserName : undefined
       );
-      // Success - reset form for another entry
-      setPatternType('');
-      setDayOfWeek('');
-      setPreviewDates([]);
+      // Success — leave the pattern/preview as-is (don't reset) so the dialog doesn't
+      // collapse or shift; the button greys out via canSubmit's !submitted check instead,
+      // and clears again as soon as the user changes the pattern or a date — not on a timer.
+      setSubmitted(true);
 
       // Show appropriate message based on action and result
       const actionVerb = action === 'assign' ? 'Added' : action === 'block' ? 'Blocked' : 'Cleared';
@@ -189,6 +197,9 @@ export function PatternEntryModal({
   const getButtonText = () => {
     if (isSubmitting) {
       return action === 'assign' ? 'Adding...' : action === 'block' ? 'Blocking...' : 'Clearing...';
+    }
+    if (submitted) {
+      return action === 'assign' ? 'Added ✓' : action === 'block' ? 'Blocked ✓' : 'Cleared ✓';
     }
     return action === 'assign' ? 'Add Dates' : action === 'block' ? 'Block Dates' : 'Clear Dates';
   };
@@ -370,6 +381,9 @@ export function PatternEntryModal({
                         key={index}
                         type="button"
                         onClick={() => {
+                          // selection changed — previous confirmation is stale
+                          setSuccessMessage(null);
+                          setSubmitted(false);
                           const next = new Set(removedDates);
                           if (removed) next.delete(date);
                           else next.add(date);

@@ -7,8 +7,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
 import { clearDiaryCache } from '@/lib/home-cache';
-import { normalizeToUKDate } from '@/lib/date-utils';
-import { getApplicationByRow, updateApplicationFields } from '@/lib/applications-sheets';
+import { getApplicationById, updateApplicationFields } from '@/lib/applications-supabase';
 
 // PATCH handler — sets Listed Date and status -> Listed
 export async function PATCH(
@@ -27,10 +26,8 @@ export async function PATCH(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    // Parse and validate the application row number from the route
     const { id } = await params;
-    const rowNumber = parseInt(id, 10);
-    if (isNaN(rowNumber)) {
+    if (!id) {
       return NextResponse.json({ error: 'Invalid application id' }, { status: 400 });
     }
 
@@ -42,7 +39,7 @@ export async function PATCH(
     }
 
     // Confirm the application exists and is in the right state
-    const application = await getApplicationByRow(rowNumber);
+    const application = await getApplicationById(id);
     if (!application) {
       return NextResponse.json({ error: 'Application not found' }, { status: 404 });
     }
@@ -53,10 +50,10 @@ export async function PATCH(
       );
     }
 
-    // Normalize the date to DD/MM/YYYY and write the update
-    const listedDate = normalizeToUKDate(listedDateRaw);
-    await updateApplicationFields(rowNumber, {
-      listedDate,
+    // listedDateRaw is already YYYY-MM-DD (from an <input type="date">), which Postgres
+    // parses natively — no UK-format conversion needed here anymore.
+    await updateApplicationFields(id, {
+      listedDate: listedDateRaw,
       status: 'Listed',
     });
 

@@ -98,6 +98,26 @@ export default function HelpLeaguesPage() {
             </Body>
           </HelpSection>
 
+          <HelpSection title="Setting your match date/time and naming players">
+            <Body>
+              You don&apos;t need to wait for the committee to arrange your match. On the{' '}
+              <strong>Fixtures &amp; Results</strong> tab, any of your unplayed fixtures shows a{' '}
+              <strong>Date/Time</strong> button — tap it to set (or change) when the match is
+              actually being played, the same way you&apos;d arrange a friendly.
+            </Body>
+            <Step n={1}>Find your fixture and tap <strong>Date/Time</strong>.</Step>
+            <Step n={2}>Set the date and time, or tap <strong>Players</strong> in that dialog to name who&apos;s playing.</Step>
+            <Step n={3}>
+              In the Players list, tick anyone from your own team&apos;s squad who is playing —
+              not just yourself. You can only manage your own team&apos;s names, not the opponent&apos;s.
+            </Step>
+            <Note>
+              Once a match has a date set and you&apos;re named as playing, it appears in your{' '}
+              <strong>Coming Up</strong> diary on the home page. This only works while the match is
+              still unplayed — once a result is recorded, only the committee can change the date or lineup.
+            </Note>
+          </HelpSection>
+
           <HelpSection title="Scores and results">
             <Body>
               Results are entered by the committee once a match has been played. If a score looks

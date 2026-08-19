@@ -8,11 +8,11 @@ import {
   getRowlandMatches,
   updateRowlandMatch,
   propagateRowlandWinnerForMatch,
-} from '@/lib/rowland-sheets';
+} from '@/lib/rowland-supabase';
 import { getEmailTransporter, isEmailConfigured } from '@/lib/email/mailer';
 import { hasRole, isCommitteeMember } from '@/lib/role-utils';
 import type { RowlandCompId, RowlandMatch } from '@/types/rowland';
-import { ROWLAND_COMP_NAMES, ROWLAND_ROUND_LABELS } from '@/types/rowland';
+import { ROWLAND_COMP_NAMES, ROWLAND_ROUND_LABELS, BHBC_CLUB_NAME } from '@/types/rowland';
 
 export async function PATCH(
   req: NextRequest,
@@ -24,19 +24,16 @@ export async function PATCH(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const BHBC_CLUB_ID = 'burgess.hill';
-
     const role = session.user.role;
-    const isClub = hasRole(role, 'Club');
     const isRowlandPlayer = hasRole(role, 'RowlandPlayer');
     // RowlandPlayer acts like a club (restricted to BHBC matches). Committee =
     // general committee or the Rowland organiser — multi-role aware (the previous
     // raw string compare let Kiosk / multi-role member strings through).
     const isCommittee =
-      !isClub && !isRowlandPlayer &&
+      !isRowlandPlayer &&
       (isCommitteeMember(role) || hasRole(role, 'RowlandOrganiser'));
 
-    if (!isCommittee && !isClub && !isRowlandPlayer) {
+    if (!isCommittee && !isRowlandPlayer) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -48,15 +45,14 @@ export async function PATCH(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    // For clubs and RowlandPlayer, verify their club is a participant in the match
-    if (isClub || isRowlandPlayer) {
-      const clubId = isRowlandPlayer ? BHBC_CLUB_ID : session.user.clubId;
+    // For RowlandPlayer, verify their club is a participant in the match
+    if (isRowlandPlayer) {
       const matches = await getRowlandMatches(compId as RowlandCompId);
       const match = matches.find((m) => m.matchId === matchId);
       if (!match) {
         return NextResponse.json({ error: 'Match not found' }, { status: 404 });
       }
-      if (match.homeTeam?.clubId !== clubId && match.awayTeam?.clubId !== clubId) {
+      if (match.homeTeam?.clubName !== BHBC_CLUB_NAME && match.awayTeam?.clubName !== BHBC_CLUB_NAME) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
       }
     }

@@ -9,7 +9,7 @@ import {
   getEventById,
   getSlotsForEvent,
   setOfferedSlots,
-} from '@/lib/availability-events-sheets';
+} from '@/lib/availability-events-supabase';
 
 // POST /api/availability/events/[eventId]/offered
 // Body: { slotIds: string[] }  — up to 3 slotIds that belong to this event

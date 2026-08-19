@@ -164,7 +164,6 @@ const DRAFT_DISPLAY_NAMES: Record<string, string> = {
   Profile:                    'Your profile',
   Renewals:                   'Renewals',
   FriendliesGame:             'Friendlies game',
-  InternalGame:               'Internal game',
   CleaningRota:               'Cleaning rota',
   TeaRota:                    'Tea rota',
   MemberSuggestion:           'Member suggestion',

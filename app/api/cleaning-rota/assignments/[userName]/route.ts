@@ -4,11 +4,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getCleaningRotaList } from '@/lib/cleaning-sheets';
-import { CleaningPosition } from '@/lib/types/cleaning';
+import { getCleaningRotaList } from '@/lib/cleaning-rota-supabase';
+import { CleaningPosition } from '@/lib/cleaning-rota-supabase';
 
 interface CleaningAssignment {
-  rowNumber: number;
+  id: string;
   displayDate: string;
   position: CleaningPosition;
   positionLabel: string;
@@ -48,7 +48,7 @@ export async function GET(
     for (const entry of entries) {
       if (entry.lead === decodedUserName) {
         assignments.push({
-          rowNumber: entry.rowNumber,
+          id: entry.id,
           displayDate: entry.displayDate,
           position: 'lead',
           positionLabel: positionLabels.lead,
@@ -56,7 +56,7 @@ export async function GET(
       }
       if (entry.second === decodedUserName) {
         assignments.push({
-          rowNumber: entry.rowNumber,
+          id: entry.id,
           displayDate: entry.displayDate,
           position: 'second',
           positionLabel: positionLabels.second,
@@ -64,7 +64,7 @@ export async function GET(
       }
       if (entry.third === decodedUserName) {
         assignments.push({
-          rowNumber: entry.rowNumber,
+          id: entry.id,
           displayDate: entry.displayDate,
           position: 'third',
           positionLabel: positionLabels.third,
@@ -72,7 +72,7 @@ export async function GET(
       }
       if (entry.fourth === decodedUserName) {
         assignments.push({
-          rowNumber: entry.rowNumber,
+          id: entry.id,
           displayDate: entry.displayDate,
           position: 'fourth',
           positionLabel: positionLabels.fourth,

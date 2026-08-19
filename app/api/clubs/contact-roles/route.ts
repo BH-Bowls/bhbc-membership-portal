@@ -2,7 +2,7 @@
 // GET — return distinct contact roles across all clubs (for dropdown population)
 
 import { NextResponse } from 'next/server';
-import { getDistinctContactRoles } from '@/lib/clubs-sheets';
+import { getDistinctContactRoles } from '@/lib/clubs-supabase';
 
 export async function GET() {
   try {

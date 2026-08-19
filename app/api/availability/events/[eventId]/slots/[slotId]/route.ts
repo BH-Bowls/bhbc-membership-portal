@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
-import { getEventById, deleteSlot, updateSlot } from '@/lib/availability-events-sheets';
+import { getEventById, deleteSlot, updateSlot } from '@/lib/availability-events-supabase';
 import type { AvailabilitySlotType } from '@/types/availability';
 
 // PATCH /api/availability/events/[eventId]/slots/[slotId]

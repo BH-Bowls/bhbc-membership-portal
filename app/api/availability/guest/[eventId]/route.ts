@@ -3,7 +3,7 @@
 // Rate limit: 30 requests per minute per IP. No authentication required.
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getEventDetailForVisitor } from '@/lib/availability-events-sheets';
+import { getEventDetailForVisitor } from '@/lib/availability-events-supabase';
 
 // In-memory rate limit store — keyed by IP address.
 // Stores timestamps of all requests within the rate limit window.

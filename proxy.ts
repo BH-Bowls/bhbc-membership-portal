@@ -1,6 +1,7 @@
-// proxy.ts (formerly middleware.ts — Next.js 16 renamed the convention; Proxy defaults
-// to the Node.js runtime instead of Edge, which is why this file can use isMaintenanceModeOn()
-// below (it needs the googleapis-based Sheets client, which is Node-only).
+// proxy.ts (formerly middleware.ts — Next.js 16 renamed the convention and deprecated
+// the old filename). Maintenance-mode check (isMaintenanceModeOn()) reads Postgres via
+// Supabase, which is Edge-compatible, so this file doesn't need the Node.js runtime the
+// way a Sheets-backed check would have.
 // NextAuth request handling for route protection and role-based access control.
 // Runs on every request to protected pages before they are rendered.
 // Redirects unauthenticated users to login page.
@@ -37,10 +38,18 @@ function isPublicRoute(pathname: string): boolean {
   // /api/friendlies/game/[tabDate] — public API for game details
   if (pathname.startsWith('/api/friendlies/game/')) return true;
 
-  // /rowland/[compId] — but NOT setup pages
+  // /rowland/[compId] — but NOT setup pages (/rowland/[compId]/setup — 'setup' is the
+  // 4th segment, after compId) or the /rowland/admin/* section ('admin' is the 3rd
+  // segment, no compId in between). Checking only the 3rd segment here was a real bug
+  // (found 2026-08-18): it always held the compId, e.g. "edward-a", never literally
+  // "setup", so /rowland/[compId]/setup was never actually excluded — it worked only
+  // because the setup page's own client-side role check also blocks it, not because
+  // of this middleware layer. Fixed here to check both segment positions properly.
   if (pathname.startsWith('/rowland/')) {
-    const segment = pathname.split('/')[2];
-    if (segment && !['setup'].includes(segment)) return true;
+    const parts = pathname.split('/');
+    const isAdminSection = parts[2] === 'admin';
+    const isSetupPage = parts[3] === 'setup';
+    if (parts[2] && !isAdminSection && !isSetupPage) return true;
   }
 
   // /competitions/[compId] and sub-pages — but NOT admin/my/handicaps
@@ -54,7 +63,7 @@ function isPublicRoute(pathname: string): boolean {
 
   // Exact public API routes (GET — write endpoints remain protected at handler level)
   const exactApis = [
-    '/api/fixtures/games', '/api/tea-rota', '/api/cleaning-rota',
+    '/api/fixtures/games', '/api/fixtures/seasons', '/api/tea-rota', '/api/cleaning-rota',
     '/api/sweeping-rota', '/api/members/lookup', '/api/friendlies/games',
     '/api/competitions', '/api/competitions/rules-text', '/api/rowland', '/api/rowland/message',
     '/api/leagues', '/api/leagues/message',
@@ -64,10 +73,16 @@ function isPublicRoute(pathname: string): boolean {
   // /api/leagues/[leagueId] and sub-paths — public
   if (pathname.startsWith('/api/leagues/')) return true;
 
-  // /api/rowland/[compId] and matches — but NOT setup
+  // /api/rowland/[compId] and matches — but NOT setup (/api/rowland/[compId]/setup —
+  // 'setup' is the 5th segment, after compId) or /api/rowland/entries/* (committee-only
+  // entry management — 'entries' is the 4th segment, no compId in between). Same bug
+  // as the page-route check above: checking only the 4th segment always caught the
+  // compId, never literally "setup", so the exclusion never fired for that path shape.
   if (pathname.startsWith('/api/rowland/')) {
-    const segment = pathname.split('/')[3];
-    if (segment && !['setup'].includes(segment)) return true;
+    const parts = pathname.split('/');
+    const isEntriesApi = parts[3] === 'entries';
+    const isSetupApi = parts[4] === 'setup';
+    if (parts[3] && !isEntriesApi && !isSetupApi) return true;
   }
 
   // /api/clubs and all sub-paths
@@ -107,6 +122,10 @@ function isPinExempt(pathname: string): boolean {
   if (pathname === '/api/competitions/rules-text') return true;
   if (pathname.startsWith('/availability/guest/')) return true;
   if (pathname.startsWith('/api/availability/guest/')) return true;
+  // Duty-instruction PDFs (Tea Duty, Cleaning Duty, Captain guidelines) — non-sensitive,
+  // and linked from token-authenticated email pages (e.g. /friendlies/game/[tabDate])
+  // where the visitor has no PIN cookie.
+  if (pathname.startsWith('/api/guides/')) return true;
   return false;
 }
 
@@ -190,14 +209,6 @@ export default withAuth(
     if (token?.mustChangePassword && !token?.isImpersonating) {
       if (!pathname.startsWith('/change-password') && !pathname.startsWith('/api/')) {
         return NextResponse.redirect(new URL('/change-password', req.url));
-      }
-    }
-
-    // Restrict Club role to /clubs and /rowland (not when admin is impersonating)
-    if (token?.role === 'Club' && !token?.isImpersonating) {
-      const allowed = ['/clubs', '/rowland', '/api/', '/change-password', '/help'];
-      if (!allowed.some((p) => pathname.startsWith(p))) {
-        return NextResponse.redirect(new URL('/clubs', req.url));
       }
     }
 
@@ -304,6 +315,6 @@ export default withAuth(
  */
 export const config = {
   matcher: [
-    '/((?!api/auth|api/apply|api/unlock|unlock|login|clublogin|forgot-password|reset-password|kiosk|apply|help/login|_next/static|_next/image|favicon.ico|bhbc-logo.jpg|manifest.json|icons/).*)',
+    '/((?!api/auth|api/apply|api/unlock|unlock|login|forgot-password|reset-password|kiosk|apply|help/login|_next/static|_next/image|favicon.ico|bhbc-logo.jpg|manifest.json|icons/).*)',
   ],
 };

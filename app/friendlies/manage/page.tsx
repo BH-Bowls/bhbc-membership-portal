@@ -13,7 +13,8 @@ import { Navbar } from '@/components/Navbar';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { EnteredPlayersModal } from '@/components/game-management/EnteredPlayersModal';
 import { GameInstructionsDialog, type InstructionsDialogMode } from '@/components/game-management/GameInstructionsDialog';
-import { Game, GameStatus } from '@/lib/types/friendlies';
+import { GameStatus } from '@/lib/types/friendlies';
+import { Fixture as Game } from '@/lib/fixtures-supabase';
 
 interface PlayerStatRow {
   userName: string;
@@ -29,7 +30,8 @@ interface PlayerStatRow {
   total: number;
 }
 import { getButtonClasses } from '@/config/theme-helpers';
-import { groupPairedGames, isPairedGame, type GameOrPair } from '@/lib/friendlies-utils';
+import { groupPairedGames, isPairedGame, type GameOrPair as GameOrPairGeneric } from '@/lib/friendlies-utils';
+type GameOrPair = GameOrPairGeneric<Game>;
 
 // ============================================================================
 // Main Component
@@ -282,14 +284,11 @@ export default function ManageGamesPage() {
     tabName: string,
     action: string,
     additionalData?: any,
-    rowNumber?: number,
   ): Promise<{ success: boolean; data?: Record<string, unknown> }> {
-    setActionLoading(tabName || `row-${rowNumber}`);
+    setActionLoading(tabName);
 
     // Look up the game's current status so we can send expected_status
-    const currentGame = games.find(g =>
-      (tabName && g.tabName === tabName) || (rowNumber && g.rowNumber === rowNumber)
-    );
+    const currentGame = games.find(g => g.tabName === tabName);
 
     try {
       const response = await fetch('/api/friendlies/manage/status', {
@@ -297,7 +296,6 @@ export default function ManageGamesPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tab_name: tabName,
-          row_number: rowNumber,
           action,
           expected_status: currentGame?.status,
           ...additionalData,
@@ -307,7 +305,7 @@ export default function ManageGamesPage() {
       const data = await response.json();
 
       if (response.ok) {
-        const key = tabName || `row-${rowNumber}`;
+        const key = tabName;
         setActionSelections(prev => { const next = { ...prev }; delete next[key]; return next; });
         await fetchGames();
         return { success: true, data };
@@ -364,13 +362,13 @@ export default function ManageGamesPage() {
       message: `Open both ${gameA.clubName} and ${gameB.clubName} games for player entry?`,
       onConfirm: async () => {
         closeConfirmDialog();
-        setActionLoading(`paired-${gameA.rowNumber}-${gameB.rowNumber}`);
+        setActionLoading(`paired-${gameA.tabName}-${gameB.tabName}`);
         try {
           // Open the first; if it fails (e.g. the section-mismatch trap) stop so the
           // captain only sees one error rather than two.
-          const a = await changeStatus(gameA.tabName, 'open', undefined, gameA.rowNumber);
+          const a = await changeStatus(gameA.tabName, 'open');
           if (!a.success) return;
-          await changeStatus(gameB.tabName, 'open', undefined, gameB.rowNumber);
+          await changeStatus(gameB.tabName, 'open');
         } finally {
           setActionLoading(null);
         }
@@ -390,7 +388,7 @@ export default function ManageGamesPage() {
       game,
       onConfirm: () => {
         closeConfirmDialog();
-        changeStatus(game.tabName, action, undefined, game.rowNumber);
+        changeStatus(game.tabName, action);
       },
     });
   }
@@ -414,14 +412,14 @@ export default function ManageGamesPage() {
       message: `Close entries for ${gameA.clubName} and ${gameB.clubName}? Everyone is entered into the first game — you can move players across to the second game during selection.`,
       onConfirm: async () => {
         closeConfirmDialog();
-        const pairKey = `paired-${gameA.rowNumber}-${gameB.rowNumber}`;
+        const pairKey = `paired-${gameA.tabName}-${gameB.tabName}`;
         setActionLoading(pairKey);
         try {
           // Close game A (O → X)
           const resA = await fetch('/api/friendlies/manage/status', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tab_name: gameA.tabName, row_number: gameA.rowNumber, action: 'close' }),
+            body: JSON.stringify({ tab_name: gameA.tabName, action: 'close' }),
           });
           if (!resA.ok) {
             const data = await resA.json();
@@ -433,7 +431,7 @@ export default function ManageGamesPage() {
           const resB = await fetch('/api/friendlies/manage/status', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tab_name: gameB.tabName, row_number: gameB.rowNumber, action: 'close' }),
+            body: JSON.stringify({ tab_name: gameB.tabName, action: 'close' }),
           });
           if (!resB.ok) {
             const data = await resB.json();
@@ -716,7 +714,7 @@ export default function ManageGamesPage() {
           router.push(`/friendlies/manage/game/${encodeURIComponent(game.tabName)}`);
         };
         try {
-          const lockRes = await fetch(`/api/friendlies/manage/lock?tab_name=${encodeURIComponent(game.tabName)}`);
+          const lockRes = await fetch(`/api/friendlies/manage/lock?id=${encodeURIComponent(game.id)}`);
           if (lockRes.ok) {
             const lockData = await lockRes.json();
             if (lockData.lockedBy && lockData.lockedBy !== session?.user?.userName) {
@@ -760,7 +758,7 @@ export default function ManageGamesPage() {
       }
       case 'flag-needs-players':
       case 'unflag-needs-players':
-        await changeStatus(game.tabName, action, undefined, game.rowNumber);
+        await changeStatus(game.tabName, action);
         break;
     }
   }
@@ -1156,7 +1154,7 @@ export default function ManageGamesPage() {
                   // Paired game row — combined view for Upcoming/Open status
                   if (isPairedGame(item)) {
                     const [gameA, gameB] = item;
-                    const pairKey = `paired-${gameA.rowNumber}-${gameB.rowNumber}`;
+                    const pairKey = `paired-${gameA.tabName}-${gameB.tabName}`;
                     const combinedEntered = Math.max(gameA.entered, gameB.entered);
                     const isPairLoading = actionLoading === pairKey;
 
@@ -1307,7 +1305,7 @@ export default function ManageGamesPage() {
                               </select>
                               <button
                                 onClick={() => handleGoAction(game)}
-                                disabled={!selected || actionLoading === game.tabName || actionLoading === `row-${game.rowNumber}`}
+                                disabled={!selected || actionLoading === game.tabName}
                                 className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
                               >
                                 Go
@@ -1334,8 +1332,8 @@ export default function ManageGamesPage() {
           isOpen={instructionsDialog.isOpen}
           mode={instructionsDialog.mode}
           game={{
+            id: instructionsDialog.game.id,
             tabName: instructionsDialog.game.tabName,
-            rowNumber: instructionsDialog.game.rowNumber,
             clubName: instructionsDialog.game.clubName,
             date: instructionsDialog.game.date,
             time: instructionsDialog.game.time,

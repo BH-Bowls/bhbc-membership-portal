@@ -9,7 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
-import { getUserByUsername, updateUserProfile } from '@/lib/profile-sheets';
+import { getUserByUsername, updateUserProfile } from '@/lib/profile-supabase';
 import type { User } from '@/lib/sheets';
 
 // GET handler — returns a single member's details (without secret auth fields)

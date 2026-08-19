@@ -6,7 +6,7 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getOpenPollsForMember } from '@/lib/availability-events-sheets';
+import { getOpenPollsForMember } from '@/lib/availability-events-supabase';
 
 export async function GET() {
   try {

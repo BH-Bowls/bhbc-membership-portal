@@ -8,8 +8,8 @@ import {
   getAttachmentsByInviteGameId,
   createInviteGameAttachment,
   validateInviteGameAttachments,
-} from '@/lib/invite-games-attachments-sheets';
-import { getInviteGameById } from '@/lib/invite-games-sheets';
+} from '@/lib/invite-games-attachments-supabase';
+import { getInviteGameById } from '@/lib/invite-games-supabase';
 import { hasRole } from '@/lib/role-utils';
 import { setPublicReadPermission, driveViewUrl } from '@/lib/drive';
 

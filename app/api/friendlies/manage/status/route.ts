@@ -4,27 +4,29 @@
 // Paired games use L status for allocation before game sheets are created
 // Alternative endings: C (Cancelled) or A (Abandoned)
 // Each transition creates necessary Google Sheets structures and enforces business rules
+//
+// Fixture-row concerns (status, scores, reason/who, needs-players flag, paired flag,
+// captain-of-the-day, tea rota) live in Postgres (fixtures-supabase.ts). Player/roster
+// concerns (the Players EAV tab, individual per-game sheet tabs) stay on Sheets, keyed
+// by tabName — those functions never required the fixture to exist as a Sheets row.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getAppUrl } from '@/lib/app-url';
 import {
-  getGames,
-  updateGameStatus,
   createGameColumn,
   createGameSheet,
   getGameSheet,
-  getTeaRotaEntry,
-  setNeedsPlayersFlag,
   markGamePlayerEntriesAs,
   updateGameSheetStats,
   markBlankSelectionsAsReserve,
-  setGamePairedFlag,
+  appendManageLog,
 } from '@/lib/friendlies-sheets';
+import { getFixtures, updateFixture, getTeaRotaEntry, type Fixture } from '@/lib/fixtures-supabase';
 // addPlayerToGameSheet / removePlayerFromGameSheet imported below in enter/withdraw routes
 import { sendGamePublishedEmail, sendTeaRotaEmail, sendGameCancelledEmail, sendTeaRotaCancelledEmail } from '@/lib/email/friendlies';
-import { getAllUsers } from '@/lib/sheets';
+import { getAllUsers } from '@/lib/members-supabase';
 import { clearAllDiaryCaches, clearSheetDataCacheByPrefix } from '@/lib/home-cache';
 import { ChangeStatusRequest, ChangeStatusResponse, GameStatus } from '@/lib/types/friendlies';
 import { hasRole } from '@/lib/role-utils';
@@ -47,22 +49,20 @@ export async function POST(request: NextRequest) {
 
     // Parse request body
     const body: ChangeStatusRequest = await request.json();
-    const { tab_name, row_number, action, expected_status, bhbc_score, opponent_score, no_score, reason, who, send_email, email_player_names, send_tea_rota_email, publish_message } = body;
+    const { tab_name, id, action, expected_status, bhbc_score, opponent_score, no_score, reason, who, send_email, email_player_names, send_tea_rota_email, publish_message } = body;
 
-    // Fetch all games from Games sheet
-    const games = await getGames();
+    // Fetch all fixtures for the active season
+    const games = await getFixtures();
 
-    // Search for the game by tabName or rowNumber
-    let game = null;
-
-    // First try to find by tabName if provided and not empty
-    if (tab_name && tab_name.trim() !== '') {
-      game = games.find(g => g.tabName === tab_name) || null;
+    // Search for the fixture — id is preferred (always present, even before the fixture
+    // has ever been opened and so has no tabName yet); tabName is a fallback for older
+    // callers that only send it.
+    let game: Fixture | null = null;
+    if (id) {
+      game = games.find(g => g.id === id) || null;
     }
-
-    // If not found and rowNumber provided, find by rowNumber
-    if (!game && row_number) {
-      game = games.find(g => g.rowNumber === row_number) || null;
+    if (!game && tab_name && tab_name.trim() !== '') {
+      game = games.find(g => g.tabName === tab_name) || null;
     }
 
     // Return 404 if game doesn't exist
@@ -95,7 +95,6 @@ export async function POST(request: NextRequest) {
         if (!dateStr) return '';
 
         // Try format: "Day, DD Month" (e.g., "Sun, 26 April")
-        // This is your spreadsheet format
         const dayMonthMatch = dateStr.match(/(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),?\s+(\d{1,2})\s+(\w+)/i);
         if (dayMonthMatch) {
           const day = dayMonthMatch[1].padStart(2, '0');
@@ -139,10 +138,10 @@ export async function POST(request: NextRequest) {
       tabDatePart = formatTabDate(game.date);
     }
 
-    // Prefer the game's stored tab name — it is the canonical sheet/column key. Reconstruct
-    // from club name + date only for a game being opened for the first time (no tab name yet).
-    // This keeps reserve games (tab "<orig>-2") and any game whose club_name differs from its
-    // tab (e.g. a renamed reserve team) resolving to the correct sheet and Players column.
+    // Prefer the fixture's stored tab name — it is the canonical Players-tab/sheet key.
+    // Reconstruct from club name + date only for a game being opened for the first time
+    // (no tab name yet). This keeps reserve games (tab "<orig>-2") and any game whose
+    // club_name differs from its tab (e.g. a renamed reserve team) resolving correctly.
     const effectiveTabName = (game.tabName && game.tabName.trim() !== '')
       ? game.tabName.trim()
       : `${game.clubName} ${tabDatePart}`.trim();
@@ -156,14 +155,13 @@ export async function POST(request: NextRequest) {
     // Track new status and whether game sheet was created
     let newStatus: GameStatus = currentStatus;
     let gameSheetCreated = false;
-    let statusAlreadyUpdated = false; // set true when a case calls updateGameStatus early
+    let statusAlreadyUpdated = false; // set true when a case calls updateFixture early
     let emailResult: { emailsSent?: number; playersWithoutEmail?: string[]; emailError?: string } = {};
     let teaRotaEmailResult: { emailsSent?: number; membersWithoutEmail?: string[]; emailError?: string } = {};
 
     // Handle different status transition actions with validation and sheet operations
     switch (action) {
       // OPEN: Transition from blank to 'O' (Open for player entries)
-      // Also handles re-open after being stepped back to Upcoming (status='')
       case 'open':
         if (currentStatus !== '') {
           return NextResponse.json(
@@ -178,7 +176,7 @@ export async function POST(request: NextRequest) {
           const thisSection = (game.ladiesMen || '').trim().toLowerCase();
           for (let i = 0; i < games.length; i++) {
             const other = games[i];
-            if (other.rowNumber === game.rowNumber) continue;
+            if (other.id === game.id) continue;
             const otherPaired = other.paired === 'Y' || other.paired === 'C';
             if (otherPaired && other.date === game.date) {
               const otherSection = (other.ladiesMen || '').trim().toLowerCase();
@@ -197,12 +195,10 @@ export async function POST(request: NextRequest) {
         // Set new status to Open
         newStatus = 'O';
 
-        // Write the tabName and status to the Games sheet FIRST so that
-        // createGameColumn and createGameSheet can find the game by tabName.
-        await updateGameStatus(effectiveTabName, newStatus, {
-          modifiedBy: session.user.userName,
-          rowNumber: game.rowNumber,
-        });
+        // Write the tabName and status to the fixture FIRST so that createGameColumn
+        // and createGameSheet can find/create the right Sheets structures.
+        await updateFixture(game.id, { status: newStatus, tabName: effectiveTabName, lastModifiedBy: session.user.userName });
+        await appendManageLog({ username: session.user.userName, action: `status:${newStatus}`, tabName: effectiveTabName, oldStatus: currentStatus, newStatus });
         statusAlreadyUpdated = true;
 
         // Create column in Players sheet (skipped if it already exists)
@@ -211,7 +207,10 @@ export async function POST(request: NextRequest) {
         // Create the individual game sheet now (moved from Close)
         // createGameSheet skips if sheet already exists, and deduplicates players on re-open.
         // Skip stat computation here — stats are snapshotted for everyone at close.
-        await createGameSheet(effectiveTabName, undefined, true);
+        // createGameSheet also tries to write the entered count back to a Games sheet row
+        // (best-effort, swallowed if there isn't one) — persist it to the fixture here instead.
+        const { enteredCount } = await createGameSheet(effectiveTabName, undefined, true);
+        await updateFixture(game.id, { entered: enteredCount });
         gameSheetCreated = true;
         break;
 
@@ -228,12 +227,12 @@ export async function POST(request: NextRequest) {
         newStatus = 'X';
         // Game sheet was already created at Open time — no sheet work needed here
         // Clear needs-players flag — entries are now closed
-        await setNeedsPlayersFlag(effectiveTabName, false);
+        await updateFixture(game.id, { needsPlayers: false });
         // If this is a linked game, mark the pair as closed ('Y' → 'C'). Moves
         // still work ('C' is treated as linked), but the pair will no longer
         // re-group for combined entry, so reopening leaves them independent.
         if (game.paired === 'Y') {
-          await setGamePairedFlag(game.rowNumber, 'C');
+          await updateFixture(game.id, { paired: 'C' });
         }
         // Default any blank selections to Reserve so every active entrant is at
         // least a reserve (captain then promotes); covers manually-added rows.
@@ -308,7 +307,7 @@ export async function POST(request: NextRequest) {
         // If tea rota email requested and this is a home game, email those on duty
         if (send_tea_rota_email && game.homeAway === 'H') {
           try {
-            const teaEntry = await getTeaRotaEntry(game.rowNumber);
+            const teaEntry = await getTeaRotaEntry(game.id);
 
             if (teaEntry) {
               const allUsersForRota = await getAllUsers();
@@ -506,7 +505,7 @@ export async function POST(request: NextRequest) {
         // Email tea rota members for home games
         if (send_tea_rota_email && game.homeAway === 'H') {
           try {
-            const teaEntry = await getTeaRotaEntry(game.rowNumber);
+            const teaEntry = await getTeaRotaEntry(game.id);
             if (teaEntry) {
               const allUsersForRota = await getAllUsers();
               const rotaEmailMap = new Map<string, string>();
@@ -551,7 +550,7 @@ export async function POST(request: NextRequest) {
         }
 
         // Clear needs-players flag
-        await setNeedsPlayersFlag(effectiveTabName, false);
+        await updateFixture(game.id, { needsPlayers: false });
         break;
 
       // ABANDON: Transition from 'S' (Selected) to 'A' (Abandoned)
@@ -594,7 +593,7 @@ export async function POST(request: NextRequest) {
         }
         newStatus = '';
         // Clear needs-players flag — game is no longer open
-        await setNeedsPlayersFlag(effectiveTabName, false);
+        await updateFixture(game.id, { needsPlayers: false });
         break;
 
       // REOPEN-ENTRIES: Transition from 'X' (Selecting) back to 'O' (Open) — re-open entries
@@ -639,14 +638,14 @@ export async function POST(request: NextRequest) {
             { status: 400 }
           );
         }
-        await setNeedsPlayersFlag(effectiveTabName, true);
+        await updateFixture(game.id, { needsPlayers: true });
         clearSheetDataCacheByPrefix('friendlies-games:');
         clearAllDiaryCaches();
         return NextResponse.json({ success: true, new_status: currentStatus });
 
       // UNFLAG-NEEDS-PLAYERS: Captain removes the needs-players flag
       case 'unflag-needs-players':
-        await setNeedsPlayersFlag(effectiveTabName, false);
+        await updateFixture(game.id, { needsPlayers: false });
         clearSheetDataCacheByPrefix('friendlies-games:');
         clearAllDiaryCaches();
         return NextResponse.json({ success: true, new_status: currentStatus });
@@ -656,16 +655,19 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
     }
 
-    // Update the game status in the Games sheet (skip for republish — status unchanged,
+    // Update the fixture's status in Postgres (skip for republish — status unchanged,
     // or if already updated earlier in the switch e.g. 'open' action)
-    if (action !== 'republish' && !statusAlreadyUpdated) await updateGameStatus(effectiveTabName, newStatus, {
-      bhbcScore: bhbc_score,        // Our score (for played/abandoned games)
-      opponentScore: opponent_score, // Opponent score (for played/abandoned games)
-      reason,                        // Reason for cancellation/abandonment
-      who,                          // Who initiated cancellation
-      modifiedBy: session.user.userName, // Track who made this status change
-      rowNumber: game.rowNumber,    // Row number to find game if tabName is empty
-    });
+    if (action !== 'republish' && !statusAlreadyUpdated) {
+      await updateFixture(game.id, {
+        status: newStatus,
+        bhbcScore: bhbc_score,        // Our score (for played/abandoned games)
+        opponentScore: opponent_score, // Opponent score (for played/abandoned games)
+        reason,                        // Reason for cancellation/abandonment
+        who,                           // Who initiated cancellation
+        lastModifiedBy: session.user.userName, // Track who made this status change
+      });
+      await appendManageLog({ username: session.user.userName, action: `status:${newStatus}`, tabName: effectiveTabName, oldStatus: currentStatus, newStatus });
+    }
 
     // Build success response with new status and whether game sheet was created
     const response: ChangeStatusResponse & {

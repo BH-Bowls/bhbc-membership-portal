@@ -17,8 +17,10 @@ import {
   PlayerEntryStatus,
 } from './types/friendlies';
 import { parseNormalizedDate, normalizeToUKDate } from './date-utils';
-import { withRetry, registerSheetCacheInvalidator } from './sheets';
-import { getPetrolBands } from './clubs-sheets';
+import { withRetry } from './sheets';
+import { getPetrolBands, getClubByName, getContactsForClub } from './clubs-supabase';
+import { getAllUsers } from './members-supabase';
+import { getFixtureByTabName, updateFixture } from './fixtures-supabase';
 
 // ============================================================================
 // ENVIRONMENT VARIABLE GETTERS
@@ -37,44 +39,6 @@ export function getFriendliesSpreadsheetId(): string {
   // Verify that the environment variable is configured
   if (!id) {
     throw new Error('FRIENDLIES_SPREADSHEET_ID environment variable is not set');
-  }
-
-  return id;
-}
-
-/**
- * Get the Members spreadsheet ID from environment variables
- * This spreadsheet contains the Members sheet with user profiles, contact info, and preferences
- * Used to look up player details like full name, email, phone, driving status, and bar duty
- * Throws an error if the environment variable is not configured
- * @returns Spreadsheet ID string (e.g., "1a2b3c4d5e6f...")
- */
-export function getMembersSpreadsheetId(): string {
-  // Read the spreadsheet ID from environment variables
-  const id = process.env.MEMBERS_SPREADSHEET_ID;
-
-  // Verify that the environment variable is configured
-  if (!id) {
-    throw new Error('MEMBERS_SPREADSHEET_ID environment variable is not set');
-  }
-
-  return id;
-}
-
-/**
- * Get the Match Day Contacts spreadsheet ID from environment variables
- * This spreadsheet contains club contact details, addresses, and driving information for away games
- * Used to display opponent club contacts, venue details, and petrol costs on match cards
- * Throws an error if the environment variable is not configured
- * @returns Spreadsheet ID string (e.g., "1a2b3c4d5e6f...")
- */
-function getMatchDayContactsSpreadsheetId(): string {
-  // Read the spreadsheet ID from environment variables
-  const id = process.env.MATCH_DAY_CONTACTS_SPREADSHEET_ID;
-
-  // Verify that the environment variable is configured
-  if (!id) {
-    throw new Error('MATCH_DAY_CONTACTS_SPREADSHEET_ID environment variable is not set');
   }
 
   return id;
@@ -132,68 +96,6 @@ function getPrivateKey(): string {
  */
 let _sheetsClient: ReturnType<typeof google.sheets> | null = null;
 
-// ── Members sheet read cache ─────────────────────────────────────────────────
-// friendlies looks up member details (names, phone, driving, bar duty) from the
-// Members sheet in ~9 places, each otherwise re-reading the whole sheet on every
-// call via this module's own client — bypassing the cache in sheets.ts and
-// burning the shared read quota. Members changes rarely, so cache the raw rows
-// (24h) and clear them whenever the Members sheet is written, via the shared
-// invalidator registry in sheets.ts (fired by every write through that client).
-let _membersRowsCache: { rows: any[][]; at: number } | null = null;
-const MEMBERS_ROWS_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
-
-// Diagnostics (surfaced at /admin/cache and logged). Per serverless instance.
-interface FriendliesMembersInvalidation { invalidatedAt: number; hitsServed: number; windowMs: number; }
-const _membersCacheStats = {
-  windowHits: 0,
-  windowLoadedAt: null as number | null,
-  totalHits: 0,
-  totalLoads: 0,
-  totalInvalidations: 0,
-  startedAt: Date.now(),
-  recent: [] as FriendliesMembersInvalidation[],
-};
-const MEMBERS_CACHE_STATS_MAX = 50;
-
-/** Snapshot of the friendlies Members cache for the admin diagnostics view. */
-export function getFriendliesMembersCacheStats() {
-  const now = Date.now();
-  const loadedAt = _membersCacheStats.windowLoadedAt;
-  const rows = _membersRowsCache ? _membersRowsCache.rows.length : 0;
-  return {
-    cached: _membersRowsCache !== null,
-    count: rows > 0 ? rows - 1 : 0, // rows include the header
-    loadedAt,
-    ageMs: loadedAt !== null ? now - loadedAt : null,
-    ttlMs: MEMBERS_ROWS_TTL_MS,
-    currentWindowHits: _membersCacheStats.windowHits,
-    totalHits: _membersCacheStats.totalHits,
-    totalLoads: _membersCacheStats.totalLoads,
-    totalInvalidations: _membersCacheStats.totalInvalidations,
-    startedAt: _membersCacheStats.startedAt,
-    recentInvalidations: _membersCacheStats.recent.slice(),
-  };
-}
-
-registerSheetCacheInvalidator('Members', () => {
-  if (_membersRowsCache !== null && _membersCacheStats.windowLoadedAt !== null) {
-    const now = Date.now();
-    _membersCacheStats.recent.unshift({
-      invalidatedAt: now,
-      hitsServed: _membersCacheStats.windowHits,
-      windowMs: now - _membersCacheStats.windowLoadedAt,
-    });
-    if (_membersCacheStats.recent.length > MEMBERS_CACHE_STATS_MAX) {
-      _membersCacheStats.recent.length = MEMBERS_CACHE_STATS_MAX;
-    }
-    _membersCacheStats.totalInvalidations += 1;
-    console.log(`[friendlies members-cache] invalidated after serving ${_membersCacheStats.windowHits} reads over ${Math.round((now - _membersCacheStats.windowLoadedAt) / 1000)}s`);
-  }
-  _membersRowsCache = null;
-  _membersCacheStats.windowHits = 0;
-  _membersCacheStats.windowLoadedAt = null;
-});
-
 export function getSheetsClient() {
   if (_sheetsClient) return _sheetsClient;
   // Create Google Auth instance with service account credentials
@@ -226,32 +128,6 @@ export function getSheetsClient() {
       values[method] = (...args: any[]) => withRetry(() => original(...args));
     }
   }
-
-  // Serve the full Members-sheet read from a shared cache (see _membersRowsCache).
-  // Only the exact "Members!A:ZZ" read on the Members spreadsheet is cached; every
-  // other read passes straight through. Returns the same { data: { values } } shape
-  // callers already expect, so no call site needs to change.
-  const retriedGet = values.get.bind(values);
-  values.get = async (...args: any[]) => {
-    const arg = args && args.length > 0 ? args[0] : null;
-    if (arg && arg.range === 'Members!A:ZZ' && arg.spreadsheetId === getMembersSpreadsheetId()) {
-      if (_membersRowsCache && (Date.now() - _membersRowsCache.at) < MEMBERS_ROWS_TTL_MS) {
-        _membersCacheStats.windowHits += 1;
-        _membersCacheStats.totalHits += 1;
-        return { data: { values: _membersRowsCache.rows } };
-      }
-      const result = await retriedGet(...args);
-      const rows = result && result.data && result.data.values ? result.data.values : [];
-      const loadedAt = Date.now();
-      _membersRowsCache = { rows, at: loadedAt };
-      _membersCacheStats.windowLoadedAt = loadedAt;
-      _membersCacheStats.windowHits = 0;
-      _membersCacheStats.totalLoads += 1;
-      console.log(`[friendlies members-cache] loaded ${rows.length} rows from the sheet`);
-      return result;
-    }
-    return retriedGet(...args);
-  };
 
   _sheetsClient = sheets;
   return sheets;
@@ -405,8 +281,8 @@ export function clearColumnMapCacheForSheet(spreadsheetId: string, sheetName: st
 // ============================================================================
 
 // ── Games sheet read cache ───────────────────────────────────────────────────
-// The Games master sheet (Games!A2:ZZ) is read by getGames, getTeaRotaList and the
-// match-card lookup — several times per friendlies page load. It changes often
+// The Games master sheet (Games!A2:ZZ) is read by getGames — several times per
+// friendlies page load. It changes often
 // (entries, scores, selection, locks), but only DISPLAY reads use this cache; every
 // write-gating read (enter, add-players, lock, selection-save) passes forceFresh so
 // it always sees current state. Short TTL (90s), and a Games write invalidates it on
@@ -690,146 +566,6 @@ export function displayClubName(clubName: string, clubSuffix: string): string {
   return [clubName, clubSuffix].filter(Boolean).join(' ');
 }
 
-/**
- * Update game status and related fields in Games sheet
- * Called during status transitions in the game lifecycle
- * Status flow: blank → O (Open) → X (Selecting) → S (Selected) → P (Played)
- * Alternative endings: C (Cancelled) or A (Abandoned)
- * Uses batch update to update multiple cells atomically
- */
-export async function updateGameStatus(
-  tabName: string,
-  newStatus: GameStatus,
-  additionalData?: {
-    bhbcScore?: number;       // Our score (required for Played/Abandoned)
-    opponentScore?: number;   // Opponent score (required for Played/Abandoned)
-    reason?: string;          // Cancellation/abandonment reason
-    who?: string;             // Who initiated cancellation
-    modifiedBy?: string;      // Username of who made this change
-    rowNumber?: number;       // Row number to identify game (for unopened games with empty tabName)
-  }
-): Promise<void> {
-  // Get Friendlies spreadsheet ID from environment
-  const spreadsheetId = getFriendliesSpreadsheetId();
-
-  // Get column mappings for Games sheet (cached)
-  const colMap = await getColumnMap(spreadsheetId, 'Games');
-
-  // Initialize Google Sheets API client
-  const sheets = getSheetsClient();
-
-  // Fetch all games to find the row for this specific game
-  const games = await getGames();
-
-  // Search for the game we're updating.
-  // rowNumber is the authoritative identifier when provided — it comes directly from the
-  // game object found in the API route and cannot collide with another game's tabName
-  // (e.g. when opening a new game whose effectiveTabName matches an existing published game).
-  let game = null;
-
-  if (additionalData?.rowNumber) {
-    game = games.find(g => g.rowNumber === additionalData.rowNumber) || null;
-    if (!game && tabName && tabName.trim() !== '') {
-      game = games.find(g => g.tabName === tabName) || null;
-    }
-  } else if (tabName && tabName.trim() !== '') {
-    game = games.find(g => g.tabName === tabName) || null;
-  }
-
-  // Throw error if game not found in Games sheet
-  if (!game) {
-    throw new Error(`Game not found - tabName: ${tabName}, rowNumber: ${additionalData?.rowNumber}`);
-  }
-
-  // Build array of cell updates to apply in a single batch operation
-  // Start with the status update (always required)
-  const updates: any[] = [
-    {
-      range: `Games!${getColumnLetter(colMap['status'])}${game.rowNumber}`,
-      values: [[newStatus]],
-    },
-  ];
-
-  // Populate Tab Name when opening or closing game for first time
-  // This ensures the Tab Name column in spreadsheet matches the calculated tabName
-  // Always write it to ensure spreadsheet is populated even if parser calculated it as fallback
-  if ((newStatus === 'O' || newStatus === 'X') && colMap['tab_name'] !== undefined) {
-    updates.push({
-      range: `Games!${getColumnLetter(colMap['tab_name'])}${game.rowNumber}`,
-      values: [[tabName]],
-    });
-  }
-
-  // Add BHBC score if provided (used when transitioning to Played or Abandoned)
-  if (additionalData && additionalData.bhbcScore !== undefined) {
-    updates.push({
-      range: `Games!${getColumnLetter(colMap['bhbc_score'])}${game.rowNumber}`,
-      values: [[additionalData.bhbcScore]],
-    });
-  }
-
-  // Add opponent score if provided (used when transitioning to Played or Abandoned)
-  if (additionalData && additionalData.opponentScore !== undefined) {
-    updates.push({
-      range: `Games!${getColumnLetter(colMap['opponent_score'])}${game.rowNumber}`,
-      values: [[additionalData.opponentScore]],
-    });
-  }
-
-  // Add cancellation/abandonment reason if provided
-  // Required when transitioning to Cancelled or Abandoned status
-  if (additionalData && additionalData.reason) {
-    updates.push({
-      range: `Games!${getColumnLetter(colMap['reason'])}${game.rowNumber}`,
-      values: [[additionalData.reason]],
-    });
-  }
-
-  // Add who initiated the cancellation if provided
-  // Required when transitioning to Cancelled status
-  if (additionalData && additionalData.who) {
-    updates.push({
-      range: `Games!${getColumnLetter(colMap['who'])}${game.rowNumber}`,
-      values: [[additionalData.who]],
-    });
-  }
-
-  // Add audit trail information if provided
-  // Records who made the change and when it was made
-  if (additionalData && additionalData.modifiedBy) {
-    updates.push(
-      {
-        range: `Games!${getColumnLetter(colMap['last_modified_by'])}${game.rowNumber}`,
-        values: [[additionalData.modifiedBy]],
-      },
-      {
-        range: `Games!${getColumnLetter(colMap['last_modified_date'])}${game.rowNumber}`,
-        values: [[new Date().toISOString()]],
-      }
-    );
-  }
-
-  // Execute all updates in a single batch operation for atomicity
-  // This ensures all fields update together or none update at all
-  await sheets.spreadsheets.values.batchUpdate({
-    spreadsheetId: getFriendliesSpreadsheetId(),
-    requestBody: {
-      data: updates,
-      valueInputOption: 'USER_ENTERED',
-    },
-  });
-
-  // Append audit log entry (failures are swallowed inside appendManageLog)
-  await appendManageLog({
-    username: additionalData?.modifiedBy ?? '',
-    action: `status:${newStatus}`,
-    tabName: game.tabName || tabName,
-    rowNumber: game.rowNumber,
-    oldStatus: game.status,
-    newStatus,
-  });
-}
-
 // ============================================================================
 // MANAGE LOG
 // ============================================================================
@@ -903,170 +639,6 @@ export async function appendManageLog(entry: {
 // ============================================================================
 
 /**
- * Acquire the selection lock for a game.
- * If the game is already locked by someone else, returns the existing lock info
- * without overwriting (caller must use force=true to override).
- * Returns the resulting lock state.
- */
-export async function acquireGameLock(
-  tabName: string,
-  username: string,
-  rowNumber?: number,
-  force = false,
-): Promise<{ acquired: boolean; lockedBy: string; lockedAt: string }> {
-  const spreadsheetId = getFriendliesSpreadsheetId();
-  const colMap = await getColumnMap(spreadsheetId, 'Games');
-  const sheets = getSheetsClient();
-
-  if (colMap['locked_by'] === undefined || colMap['locked_at'] === undefined) {
-    // Column not set up yet — treat as unlocked, skip write
-    return { acquired: true, lockedBy: username, lockedAt: new Date().toISOString() };
-  }
-
-  // Fresh read — lock state must be current so two captains can't both acquire it
-  const games = await getGames(undefined, undefined, true);
-  const game = rowNumber
-    ? (games.find(g => g.rowNumber === rowNumber) ?? games.find(g => g.tabName === tabName))
-    : games.find(g => g.tabName === tabName);
-
-  if (!game) throw new Error(`Game not found: ${tabName}`);
-
-  // If already locked by someone else and not forcing, return existing lock
-  if (game.lockedBy && game.lockedBy !== username && !force) {
-    return { acquired: false, lockedBy: game.lockedBy, lockedAt: game.lockedAt };
-  }
-
-  const now = new Date().toISOString();
-  await sheets.spreadsheets.values.batchUpdate({
-    spreadsheetId,
-    requestBody: {
-      valueInputOption: 'RAW',
-      data: [
-        { range: `Games!${getColumnLetter(colMap['locked_by'])}${game.rowNumber}`, values: [[username]] },
-        { range: `Games!${getColumnLetter(colMap['locked_at'])}${game.rowNumber}`, values: [[now]] },
-      ],
-    },
-  });
-
-  return { acquired: true, lockedBy: username, lockedAt: now };
-}
-
-/**
- * Release the selection lock for a game.
- * Only clears the lock if it is currently held by the requesting user.
- * Silently succeeds if the lock is already clear or held by someone else.
- */
-export async function releaseGameLock(
-  tabName: string,
-  username: string,
-  rowNumber?: number,
-): Promise<void> {
-  const spreadsheetId = getFriendliesSpreadsheetId();
-  const colMap = await getColumnMap(spreadsheetId, 'Games');
-  const sheets = getSheetsClient();
-
-  if (colMap['locked_by'] === undefined || colMap['locked_at'] === undefined) return;
-
-  const games = await getGames();
-  const game = rowNumber
-    ? (games.find(g => g.rowNumber === rowNumber) ?? games.find(g => g.tabName === tabName))
-    : games.find(g => g.tabName === tabName);
-
-  if (!game) return;
-  if (game.lockedBy && game.lockedBy !== username) return; // someone else owns it
-
-  await sheets.spreadsheets.values.batchUpdate({
-    spreadsheetId,
-    requestBody: {
-      valueInputOption: 'RAW',
-      data: [
-        { range: `Games!${getColumnLetter(colMap['locked_by'])}${game.rowNumber}`, values: [['']] },
-        { range: `Games!${getColumnLetter(colMap['locked_at'])}${game.rowNumber}`, values: [['']] },
-      ],
-    },
-  });
-}
-
-/**
- * Update the special instructions message for a game in the Games sheet.
- * The 'message' column must exist in the Games sheet.
- */
-export async function updateGameMessage(tabName: string, message: string, rowNumber?: number, modifiedBy?: string): Promise<void> {
-  const spreadsheetId = getFriendliesSpreadsheetId();
-  const colMap = await getColumnMap(spreadsheetId, 'Games');
-  const sheets = getSheetsClient();
-
-  const games = await getGames();
-  let game = tabName ? games.find(g => g.tabName === tabName) : undefined;
-  if (!game && rowNumber) {
-    game = games.find(g => g.rowNumber === rowNumber);
-  }
-  if (!game) {
-    throw new Error(`Game not found: ${tabName || `row ${rowNumber}`}`);
-  }
-
-  // Accept either "Special Instructions" (new name) or "Message" (old name) as the column header
-  const msgColKey = colMap['special_instructions'] !== undefined ? 'special_instructions' : 'message';
-  if (colMap[msgColKey] === undefined) {
-    throw new Error('No "Special Instructions" or "Message" column found in Games sheet');
-  }
-
-  await sheets.spreadsheets.values.update({
-    spreadsheetId,
-    range: `Games!${getColumnLetter(colMap[msgColKey])}${game.rowNumber}`,
-    valueInputOption: 'RAW',
-    requestBody: { values: [[message]] },
-  });
-
-}
-
-/**
- * Set or clear the "Needs Players" flag for a game in the Games sheet.
- * Writes 'Y' when flag=true, '' when flag=false.
- */
-export async function setNeedsPlayersFlag(tabName: string, flag: boolean): Promise<void> {
-  const spreadsheetId = getFriendliesSpreadsheetId();
-  const colMap = await getColumnMap(spreadsheetId, 'Games');
-
-  if (colMap['needs_players'] === undefined) {
-    // Column doesn't exist yet — silently skip rather than throw
-    return;
-  }
-
-  const sheets = getSheetsClient();
-  const games = await getGames();
-  const game = games.find(g => g.tabName === tabName);
-  if (!game) {
-    throw new Error(`Game not found: ${tabName}`);
-  }
-
-  await sheets.spreadsheets.values.update({
-    spreadsheetId,
-    range: `Games!${getColumnLetter(colMap['needs_players'])}${game.rowNumber}`,
-    valueInputOption: 'RAW',
-    requestBody: { values: [[flag ? 'Y' : '']] },
-  });
-}
-
-/**
- * Set the `paired` flag on a Games row by row number.
- * 'Y' = linked and still open for combined entry; 'C' = linked but closed/split
- * (the move logic treats both as linked, but only 'Y' re-groups for entry, so a
- * closed pair stays as two independent games if it is reopened).
- */
-export async function setGamePairedFlag(rowNumber: number, value: string): Promise<void> {
-  const spreadsheetId = getFriendliesSpreadsheetId();
-  const colMap = await getColumnMap(spreadsheetId, 'Games');
-  if (colMap['paired'] === undefined) return;
-  await getSheetsClient().spreadsheets.values.update({
-    spreadsheetId,
-    range: `Games!${getColumnLetter(colMap['paired'])}${rowNumber}`,
-    valueInputOption: 'RAW',
-    requestBody: { values: [[value]] },
-  });
-}
-
-/**
  * Writes the given outcome status ('C' or 'A') to every player's entry in the
  * Players sheet for the specified game column.  Called on cancel/abandon so that
  * stale P/R/T values don't inflate percent_played the next time update-stats runs.
@@ -1109,39 +681,6 @@ export async function markGamePlayerEntriesAs(tabName: string, outcomeStatus: 'C
       data: updates,
     },
   });
-}
-
-/**
- * Update the pickup information for a game in the Games sheet.
- * The 'Pickup Info' column must exist in the Games sheet.
- */
-export async function updateGamePickupInfo(tabName: string, pickupInfo: string, rowNumber?: number, modifiedBy?: string): Promise<void> {
-  const spreadsheetId = getFriendliesSpreadsheetId();
-  const colMap = await getColumnMap(spreadsheetId, 'Games');
-  const sheets = getSheetsClient();
-
-  const games = await getGames();
-  let game = tabName ? games.find(g => g.tabName === tabName) : undefined;
-  if (!game && rowNumber) {
-    game = games.find(g => g.rowNumber === rowNumber);
-  }
-  if (!game) {
-    throw new Error(`Game not found: ${tabName || `row ${rowNumber}`}`);
-  }
-
-  // Accept either "Pickup Info" or "Pickup Information" as the column header
-  const pickupColKey = colMap['pickup_info'] !== undefined ? 'pickup_info' : 'pickup_information';
-  if (colMap[pickupColKey] === undefined) {
-    throw new Error('No "Pickup Info" or "Pickup Information" column found in Games sheet');
-  }
-
-  await sheets.spreadsheets.values.update({
-    spreadsheetId,
-    range: `Games!${getColumnLetter(colMap[pickupColKey])}${game.rowNumber}`,
-    valueInputOption: 'RAW',
-    requestBody: { values: [[pickupInfo]] },
-  });
-
 }
 
 /**
@@ -1221,36 +760,6 @@ export async function updateGameCounts(
 }
 
 /**
- * Update the captain of the day for a game in the Games sheet
- * Captain is stored as the player's userName in a "Captain" column on the Games sheet
- * Pass an empty string to clear the captain designation
- * @param tabName The game's tab name (used to find the row in Games sheet)
- * @param captainUserName The userName of the captain, or '' to clear
- */
-export async function updateCaptain(tabName: string, captainUserName: string): Promise<void> {
-  const spreadsheetId = getFriendliesSpreadsheetId();
-  const colMap = await getColumnMap(spreadsheetId, 'Games');
-
-  // If the Games sheet doesn't have a Captain column yet, do nothing
-  if (colMap['captain'] === undefined) {
-    console.warn('[updateCaptain] No Captain column found in Games sheet — skipping');
-    return;
-  }
-
-  const games = await getGames();
-  const game = games.find(g => g.tabName === tabName);
-  if (!game) throw new Error(`Game not found: ${tabName}`);
-
-  const sheets = getSheetsClient();
-  await sheets.spreadsheets.values.update({
-    spreadsheetId,
-    range: `Games!${getColumnLetter(colMap['captain'])}${game.rowNumber}`,
-    valueInputOption: 'USER_ENTERED',
-    requestBody: { values: [[captainUserName]] },
-  });
-}
-
-/**
  * Add players directly to a game sheet tab with their stats
  * Optimized version that fetches all data once and does a single batch write
  * Used by add-players API to add players in one operation
@@ -1268,14 +777,14 @@ export async function addPlayersToGameSheetDirect(
   const sheets = getSheetsClient();
 
   // Fetch all needed data in parallel for efficiency
-  const [gameSheetColMap, playersColMap, membersColMap] = await Promise.all([
+  const [gameSheetColMap, playersColMap, driverBarLookup] = await Promise.all([
     getColumnMap(spreadsheetId, tabName),
     getColumnMap(spreadsheetId, 'Players'),
-    getColumnMap(getMembersSpreadsheetId(), 'Members'),
+    buildDriverBarLookup(),
   ]);
 
-  // Fetch game sheet, Players sheet, and Members sheet in parallel
-  const [gameSheetResponse, playersResponse, membersResponse] = await Promise.all([
+  // Fetch game sheet and Players sheet in parallel
+  const [gameSheetResponse, playersResponse] = await Promise.all([
     sheets.spreadsheets.values.get({
       spreadsheetId,
       range: `'${tabName}'!A:ZZ`,
@@ -1284,16 +793,11 @@ export async function addPlayersToGameSheetDirect(
       spreadsheetId,
       range: 'Players!A:ZZ',
     }),
-    sheets.spreadsheets.values.get({
-      spreadsheetId: getMembersSpreadsheetId(),
-      range: 'Members!A:ZZ',
-    }),
   ]);
 
   const gameSheetRows = gameSheetResponse.data.values || [];
   const playersRows = playersResponse.data.values || [];
   const playersHeaders = playersRows[0] || [];
-  const membersRows = membersResponse.data.values || [];
 
   // Build set of existing players in game sheet (lowercase for comparison)
   const existingPlayers = new Set<string>();
@@ -1328,7 +832,7 @@ export async function addPlayersToGameSheetDirect(
     try {
       // Get stats from cached data
       const stats = getPlayerStatsFromCache(userName, playersRows, playersColMap, playersHeaders, tabName);
-      const driverBar = getDriverBarInfoFromCache(userName, membersRows, membersColMap);
+      const driverBar = getDriverBarInfoFromCache(userName, driverBarLookup);
 
       // Add player name
       batchData.push({
@@ -1376,62 +880,6 @@ export async function addPlayersToGameSheetDirect(
   }
 
   return newPlayers.length;
-}
-
-/**
- * Batch update game counts for multiple games in a single API call
- * More efficient than calling updateGameCounts multiple times
- * @param updates Array of game count updates with rowNumber pre-calculated
- */
-export async function batchUpdateGameCounts(
-  updates: {
-    rowNumber: number;
-    counts: {
-      entered?: number;
-      selected?: number;
-      reserves?: number;
-    };
-  }[]
-): Promise<void> {
-  if (updates.length === 0) return;
-
-  const spreadsheetId = getFriendliesSpreadsheetId();
-  const colMap = await getColumnMap(spreadsheetId, 'Games');
-  const sheets = getSheetsClient();
-
-  // Build array of cell updates for all games
-  const batchData: { range: string; values: number[][] }[] = [];
-
-  for (const update of updates) {
-    if (update.counts.entered !== undefined) {
-      batchData.push({
-        range: `Games!${getColumnLetter(colMap['entered'])}${update.rowNumber}`,
-        values: [[update.counts.entered]],
-      });
-    }
-    if (update.counts.selected !== undefined) {
-      batchData.push({
-        range: `Games!${getColumnLetter(colMap['selected'])}${update.rowNumber}`,
-        values: [[update.counts.selected]],
-      });
-    }
-    if (update.counts.reserves !== undefined) {
-      batchData.push({
-        range: `Games!${getColumnLetter(colMap['reserves'])}${update.rowNumber}`,
-        values: [[update.counts.reserves]],
-      });
-    }
-  }
-
-  if (batchData.length > 0) {
-    await sheets.spreadsheets.values.batchUpdate({
-      spreadsheetId,
-      requestBody: {
-        data: batchData,
-        valueInputOption: 'USER_ENTERED',
-      },
-    });
-  }
 }
 
 // ============================================================================
@@ -1609,60 +1057,12 @@ async function getPlayerLookupValue(userName: string, spreadsheetId: string, col
     nameColumn = colMap['name'];
   }
 
-  // If Players sheet has a name-type column, look up full name from Members sheet
+  // If Players sheet has a name-type column, look up full name from Postgres members
   if (nameColumn !== undefined) {
-    // Initialize Google Sheets API client
-    const sheets = getSheetsClient();
-
-    // Get Members spreadsheet ID and column mappings
-    const membersSpreadsheetId = getMembersSpreadsheetId();
-    const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
-
-    // Fetch all rows from Members sheet
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: membersSpreadsheetId,
-      range: 'Members!A:ZZ',
-    });
-
-    // Extract rows from response
-    const rows = response.data.values || [];
-
-    // Find which column in Members sheet contains user_name
-    let userNameCol = membersColMap['user_name'];
-
-    // Default to first column if user_name column not found
-    if (userNameCol === undefined) {
-      userNameCol = 0;
-    }
-
-    // Find which column in Members sheet contains full_name
-    let fullNameCol = membersColMap['full_name'];
-
-    // Try 'name' column if full_name not found
-    if (fullNameCol === undefined) {
-      fullNameCol = membersColMap['name'];
-    }
-
-    // Default to second column if neither found
-    if (fullNameCol === undefined) {
-      fullNameCol = 1;
-    }
-
-    // Search Members sheet for this user's row
-    let memberRow = null;
-
-    // Loop through all data rows (skip header at index 0)
-    for (let i = 1; i < rows.length; i++) {
-      // Check if this row's user_name matches the userName we're looking for
-      if (rows[i][userNameCol] === userName) {
-        memberRow = rows[i];
-        break;
-      }
-    }
-
-    // If we found the member and they have a full name, return it
-    if (memberRow && memberRow[fullNameCol]) {
-      return memberRow[fullNameCol];
+    const allUsers = await getAllUsers();
+    const member = allUsers.find((u) => u.userName === userName);
+    if (member?.fullName) {
+      return member.fullName;
     }
   }
 
@@ -1919,27 +1319,13 @@ export async function batchUpdatePlayerEntries(
   const userNameColIndex = colMap['user_name'] ?? colMap['full_name'] ?? colMap['name'] ?? 0;
   const usesUserName = colMap['user_name'] !== undefined;
 
-  // If Players sheet uses full_name, fetch Members sheet ONCE for all lookups
+  // If Players sheet uses full_name, fetch Postgres members ONCE for all lookups
   let membersLookup: Map<string, string> | null = null;
   if (!usesUserName) {
-    const membersSpreadsheetId = getMembersSpreadsheetId();
-    const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
-    const membersResponse = await sheets.spreadsheets.values.get({
-      spreadsheetId: membersSpreadsheetId,
-      range: 'Members!A:ZZ',
-    });
-    const membersRows = membersResponse.data.values || [];
-    const memberUserNameCol = membersColMap['user_name'] ?? 0;
-    const memberFullNameCol = membersColMap['full_name'] ?? membersColMap['name'] ?? 1;
-
+    const allUsers = await getAllUsers();
     membersLookup = new Map();
-    for (let i = 1; i < membersRows.length; i++) {
-      const row = membersRows[i];
-      const userName = row[memberUserNameCol];
-      const fullName = row[memberFullNameCol];
-      if (userName && fullName) {
-        membersLookup.set(userName.toLowerCase(), fullName);
-      }
+    for (const u of allUsers) {
+      if (u.userName && u.fullName) membersLookup.set(u.userName.toLowerCase(), u.fullName);
     }
   }
 
@@ -2080,31 +1466,11 @@ export async function getEnteredPlayers(
   const colMap = await getColumnMap(spreadsheetId, 'Players');
   const userNameColIndex = colMap['user_name'] ?? 0;
 
-  // Build a lookup map of userName -> fullName from Members sheet
-  const membersSpreadsheetId = getMembersSpreadsheetId();
-  const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
-
-  const membersResponse = await sheets.spreadsheets.values.get({
-    spreadsheetId: membersSpreadsheetId,
-    range: 'Members!A:ZZ',
-  });
-
-  const membersRows = membersResponse.data.values || [];
-  const memberUserNameCol = membersColMap['user_name'] ?? 0;
-  let memberFullNameCol = membersColMap['full_name'];
-  if (memberFullNameCol === undefined) {
-    memberFullNameCol = membersColMap['name'] ?? 1;
-  }
-
-  // Build lookup map
+  // Build a lookup map of userName -> fullName from Postgres members
+  const allUsers = await getAllUsers();
   const fullNameLookup: { [userName: string]: string } = {};
-  for (let i = 1; i < membersRows.length; i++) {
-    const memberRow = membersRows[i];
-    const memberUserName = memberRow[memberUserNameCol];
-    const memberFullName = memberRow[memberFullNameCol];
-    if (memberUserName) {
-      fullNameLookup[memberUserName] = memberFullName || memberUserName;
-    }
+  for (const u of allUsers) {
+    if (u.userName) fullNameLookup[u.userName] = u.fullName || u.userName;
   }
 
   // Skip header row, iterate through players
@@ -2345,57 +1711,26 @@ export async function getPlayerStats(userName: string): Promise<PlayerStats> {
  * Used by captains when adding offline players to a game
  */
 export async function getAllPlayers(playingMembersOnly: boolean = true): Promise<{ userName: string; fullName: string; memberType: string }[]> {
-  // Get all members from Members sheet (not Players sheet)
-  // This allows adding any club member to a game, not just those who have previously entered
-  const sheets = getSheetsClient();
-  const membersSpreadsheetId = getMembersSpreadsheetId();
-  const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
+  // Sourced from the same Postgres member data every other feature reads (not the
+  // Players sheet) — allows adding any club member to a game, not just those who have
+  // previously entered.
+  const allUsers = await getAllUsers();
 
-  const membersResponse = await sheets.spreadsheets.values.get({
-    spreadsheetId: membersSpreadsheetId,
-    range: 'Members!A:ZZ',
-  });
-
-  const membersRows = membersResponse.data.values || [];
-
-  // Return empty array if only header row or no rows at all
-  if (membersRows.length <= 1) {
-    return [];
-  }
-
-  const memberUserNameCol = membersColMap['user_name'] ?? 0;
-  let memberFullNameCol = membersColMap['full_name'];
-  if (memberFullNameCol === undefined) {
-    memberFullNameCol = membersColMap['name'] ?? 1;
-  }
-  const memberTypeCol = membersColMap['member_type'];
-
-  // Build array of members
-  const players: { userName: string; fullName: string; memberType: string }[] = [];
-
-  for (let i = 1; i < membersRows.length; i++) {
-    const memberRow = membersRows[i];
-    const userName = memberRow[memberUserNameCol];
-    const fullName = memberRow[memberFullNameCol];
-    const memberType = memberTypeCol !== undefined ? memberRow[memberTypeCol] : '';
-
-    // Only include members with a valid username
-    if (userName && userName.trim() !== '') {
-      // Filter by playing members if requested (PL=Playing Lady, PM=Playing Man)
-      if (playingMembersOnly && memberType) {
-        const isPlaying = memberType.startsWith('P') || memberType === 'Full';
-        if (!isPlaying) {
-          continue; // Skip social members for friendlies/internal games
-        }
+  const players = allUsers
+    .filter((u) => {
+      if (!u.userName || !u.userName.trim()) return false;
+      // Filter by playing members if requested (Playing Lady/Playing Man, or legacy "Full")
+      if (playingMembersOnly && u.memberType) {
+        const isPlaying = u.memberType.startsWith('P') || u.memberType === 'Full';
+        if (!isPlaying) return false; // Skip social members for friendlies/internal games
       }
-
-      players.push({
-        userName: userName.trim(),
-        fullName: (fullName || userName).trim(),
-        memberType: memberType || '',
-      });
-    }
-  }
+      return true;
+    })
+    .map((u) => ({
+      userName: u.userName.trim(),
+      fullName: (u.fullName || u.userName).trim(),
+      memberType: u.memberType || '',
+    }));
 
   // Sort players alphabetically by full name for easier dropdown selection
   players.sort((a, b) => a.fullName.localeCompare(b.fullName));
@@ -2421,22 +1756,11 @@ export async function createGameSheet(tabName: string, playerFilter?: string[], 
   // Initialize Google Sheets API client
   const sheets = getSheetsClient();
 
-  // Fetch all games to verify this game exists
-  const games = await getGames();
-
-  // Search for the game we're creating a sheet for
-  let game = null;
-  for (const g of games) {
-    if (g.tabName === tabName) {
-      game = g;
-      break;
-    }
-  }
-
-  // Throw error if game doesn't exist in Games sheet
-  if (!game) {
-    throw new Error(`Game not found: ${tabName}`);
-  }
+  // Note: this used to re-verify the game exists via getGames() (Sheets) here, but the
+  // canonical fixture record now lives in Postgres (fixtures-supabase.ts) for callers
+  // that have already been cut over — the caller (e.g. manage/status's 'open' action)
+  // is responsible for that check before calling this. This function only creates
+  // Sheets-side player/roster structures, keyed purely by tabName.
 
   // Get spreadsheet metadata including all sheet tabs
   const spreadsheet = await sheets.spreadsheets.get({
@@ -2622,18 +1946,11 @@ export async function createGameSheet(tabName: string, playerFilter?: string[], 
     const driverBarColIndex = gameSheetColMap['driver_bar'];
     const selectedColIndex = gameSheetColMap['selected'];
 
-    // Fetch Members sheet for driver/bar lookups — only when computing stats.
+    // Fetch driver/bar lookup — only when computing stats.
     // At open we skip stats (they're snapshotted at close), so this read is avoided.
-    let membersColMap: { [key: string]: number } = {};
-    let membersRows: any[] = [];
+    let driverBarLookup: Map<string, { driver: boolean; bar: boolean }> = new Map();
     if (!skipStats) {
-      const membersSpreadsheetId = getMembersSpreadsheetId();
-      membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
-      const membersResponse = await sheets.spreadsheets.values.get({
-        spreadsheetId: membersSpreadsheetId,
-        range: 'Members!A:ZZ',
-      });
-      membersRows = membersResponse.data.values || [];
+      driverBarLookup = await buildDriverBarLookup();
     }
 
     // Sort players alphabetically for easier captain selection
@@ -2655,7 +1972,7 @@ export async function createGameSheet(tabName: string, playerFilter?: string[], 
         // Add stats if columns exist (skipped for open games — filled at close)
         if (!skipStats) {
           const stats = getPlayerStatsFromCache(userName, rows, playersColMap, headers, tabName);
-          const driverBar = getDriverBarInfoFromCache(userName, membersRows, membersColMap);
+          const driverBar = getDriverBarInfoFromCache(userName, driverBarLookup);
 
           if (nameDownColIndex !== undefined) {
             batchUpdates.push({ range: `'${tabName}'!${getColumnLetter(nameDownColIndex)}${currentRow}`, values: [[stats.nameDown]] });
@@ -2708,8 +2025,15 @@ export async function createGameSheet(tabName: string, playerFilter?: string[], 
   }
 
   // Update the entered count in Games sheet to the TOTAL who entered this game
-  // (not just the newly-added rows — at allocation the players are already on the sheet)
-  await updateGameCounts(tabName, { entered: totalEnteredCount });
+  // (not just the newly-added rows — at allocation the players are already on the sheet).
+  // Best-effort: callers whose fixture now lives in Postgres (not a Games sheet row —
+  // e.g. manage/status) get a "Game not found" here, which is expected, not a real
+  // failure — they persist enteredCount themselves via the returned value instead.
+  try {
+    await updateGameCounts(tabName, { entered: totalEnteredCount });
+  } catch (e) {
+    console.error(`[createGameSheet] Failed to write entered count to Games sheet (expected if this fixture isn't a Sheets row):`, e);
+  }
 
   // Return the total entered count for this game
   return { enteredCount: totalEnteredCount };
@@ -2783,16 +2107,10 @@ export async function addPlayerToGameSheet(tabName: string, userName: string, se
     const playersRows = playersResponse.data.values || [];
     const playersHeaders = playersRows[0] || [];
 
-    const membersSpreadsheetId = getMembersSpreadsheetId();
-    const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
-    const membersResponse = await sheets.spreadsheets.values.get({
-      spreadsheetId: membersSpreadsheetId,
-      range: 'Members!A:ZZ',
-    });
-    const membersRows = membersResponse.data.values || [];
+    const driverBarLookup = await buildDriverBarLookup();
 
     const stats = getPlayerStatsFromCache(userName, playersRows, playersColMap, playersHeaders, tabName);
-    const driverBar = getDriverBarInfoFromCache(userName, membersRows, membersColMap);
+    const driverBar = getDriverBarInfoFromCache(userName, driverBarLookup);
 
     if (nameDownColIndex !== undefined) {
       batchUpdates.push({
@@ -2875,14 +2193,11 @@ export async function moveReservePlayers(
       return { success: true, moved: 0 };
     }
 
-    // Load games to validate the pairing and read current counts
-    const games = await getGames();
-    let fromGame = null;
-    let toGame = null;
-    for (const g of games) {
-      if (g.tabName === fromTab) fromGame = g;
-      if (g.tabName === toTab) toGame = g;
-    }
+    // Load fixtures to validate the pairing and read current counts
+    const [fromGame, toGame] = await Promise.all([
+      getFixtureByTabName(fromTab),
+      getFixtureByTabName(toTab),
+    ]);
     if (!fromGame || !toGame) {
       return { success: false, moved: 0, error: 'Game not found' };
     }
@@ -2932,32 +2247,18 @@ export async function moveReservePlayers(
     await batchUpdatePlayerEntries(fromTab, toMove.map(u => ({ userName: u, status: '' as const })));
     await batchUpdatePlayerEntries(toTab, toMove.map(u => ({ userName: u, status: 'R' as const })));
 
-    // Adjust both games' counts by the number moved. Written directly in a single
-    // batch using the row numbers we already have, so no extra getGames reads.
+    // Adjust both fixtures' counts by the number moved.
     const n = toMove.length;
-    const friendliesId = getFriendliesSpreadsheetId();
-    const gamesColMap = await getColumnMap(friendliesId, 'Games');
-    const enteredCol = gamesColMap['entered'];
-    const reservesCol = gamesColMap['reserves'];
-    const countData: { range: string; values: (string | number)[][] }[] = [];
-    if (fromGame.rowNumber && toGame.rowNumber) {
-      if (enteredCol !== undefined) {
-        const el = getColumnLetter(enteredCol);
-        countData.push({ range: `Games!${el}${fromGame.rowNumber}`, values: [[Math.max(0, (fromGame.entered || 0) - n)]] });
-        countData.push({ range: `Games!${el}${toGame.rowNumber}`, values: [[(toGame.entered || 0) + n]] });
-      }
-      if (reservesCol !== undefined) {
-        const rl = getColumnLetter(reservesCol);
-        countData.push({ range: `Games!${rl}${fromGame.rowNumber}`, values: [[Math.max(0, (fromGame.reserves || 0) - n)]] });
-        countData.push({ range: `Games!${rl}${toGame.rowNumber}`, values: [[(toGame.reserves || 0) + n]] });
-      }
-    }
-    if (countData.length > 0) {
-      await getSheetsClient().spreadsheets.values.batchUpdate({
-        spreadsheetId: friendliesId,
-        requestBody: { data: countData, valueInputOption: 'USER_ENTERED' },
-      });
-    }
+    await Promise.all([
+      updateFixture(fromGame.id, {
+        entered: Math.max(0, (fromGame.entered || 0) - n),
+        reserves: Math.max(0, (fromGame.reserves || 0) - n),
+      }),
+      updateFixture(toGame.id, {
+        entered: (toGame.entered || 0) + n,
+        reserves: (toGame.reserves || 0) + n,
+      }),
+    ]);
 
     return { success: true, moved: n };
   } catch (error) {
@@ -3020,13 +2321,12 @@ export async function addPlayersToGameSheet(
   const existing = new Set(existingRows.map((r: any[]) => (r[0] || '').toLowerCase()));
   let nextRow = 2 + existingRows.length;
 
-  // Read Players and Members sheets once for stat lookups — only when stats were
-  // not supplied by the caller (the move flow passes them in).
+  // Read Players sheet and driver/bar lookup once for stat lookups — only when stats
+  // were not supplied by the caller (the move flow passes them in).
   let playersRows: any[] = [];
   let playersHeaders: any[] = [];
   let playersColMap: { [key: string]: number } = {};
-  let membersRows: any[] = [];
-  let membersColMap: { [key: string]: number } = {};
+  let driverBarLookup: Map<string, { driver: boolean; bar: boolean }> = new Map();
   if (!statsByName) {
     playersColMap = await getColumnMap(spreadsheetId, 'Players');
     const playersResponse = await sheets.spreadsheets.values.get({
@@ -3036,13 +2336,7 @@ export async function addPlayersToGameSheet(
     playersRows = playersResponse.data.values || [];
     playersHeaders = playersRows[0] || [];
 
-    const membersSpreadsheetId = getMembersSpreadsheetId();
-    membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
-    const membersResponse = await sheets.spreadsheets.values.get({
-      spreadsheetId: membersSpreadsheetId,
-      range: 'Members!A:ZZ',
-    });
-    membersRows = membersResponse.data.values || [];
+    driverBarLookup = await buildDriverBarLookup();
   }
 
   const batchUpdates: { range: string; values: (string | number)[][] }[] = [];
@@ -3066,7 +2360,7 @@ export async function addPlayersToGameSheet(
       }
     } else {
       const stats = getPlayerStatsFromCache(userName, playersRows, playersColMap, playersHeaders, tabName);
-      const driverBar = getDriverBarInfoFromCache(userName, membersRows, membersColMap);
+      const driverBar = getDriverBarInfoFromCache(userName, driverBarLookup);
       nameDown = stats.nameDown;
       picked = stats.picked;
       percentPlayed = stats.percentPlayed;
@@ -3332,33 +2626,16 @@ export async function getGameSheet(tabName: string): Promise<GameSheetPlayer[]> 
   const playersRows = playersResponse.data.values || [];
   const playersHeaders = playersRows[0] || [];
 
-  // Fetch Members sheet to look up full names for display
-  const membersSpreadsheetId = getMembersSpreadsheetId();
-  const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
-  const membersResponse = await sheets.spreadsheets.values.get({
-    spreadsheetId: membersSpreadsheetId,
-    range: 'Members!A:ZZ',
-  });
-  const membersRows = membersResponse.data.values || [];
+  // Fetch Postgres members to look up full names for display
+  const allUsers = await getAllUsers();
 
   // Build lookup maps: userName -> fullName and userName -> lastName
   const fullNameLookup: Record<string, string> = {};
   const lastNameLookup: Record<string, string> = {};
-  const memberUserNameCol = membersColMap['user_name'];
-  const memberFullNameCol = membersColMap['full_name'] ?? membersColMap['full_known_as'] ?? membersColMap['name'];
-  const memberLastNameCol = membersColMap['last_name'] ?? membersColMap['surname'];
-
-  if (memberUserNameCol !== undefined && memberFullNameCol !== undefined) {
-    for (let j = 1; j < membersRows.length; j++) {
-      const memberRow = membersRows[j];
-      const memberUserName = memberRow[memberUserNameCol];
-      const memberFullName = memberRow[memberFullNameCol];
-      if (memberUserName) {
-        fullNameLookup[memberUserName.toLowerCase()] = memberFullName || memberUserName;
-        if (memberLastNameCol !== undefined) {
-          lastNameLookup[memberUserName.toLowerCase()] = memberRow[memberLastNameCol] || '';
-        }
-      }
+  for (const u of allUsers) {
+    if (u.userName) {
+      fullNameLookup[u.userName.toLowerCase()] = u.fullName || u.userName;
+      lastNameLookup[u.userName.toLowerCase()] = u.lastName || '';
     }
   }
 
@@ -3662,14 +2939,8 @@ export async function updateGameSheetStats(tabName: string): Promise<number> {
   // Track newly added player names (lowercase) to only update stats for these players
   const newlyAddedPlayers = new Set(playersToAdd.map(name => name.toLowerCase()));
 
-  // Fetch Members sheet ONCE for all driver/bar lookups (used by both add and update sections)
-  const membersSpreadsheetId = getMembersSpreadsheetId();
-  const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
-  const membersResponse = await sheets.spreadsheets.values.get({
-    spreadsheetId: membersSpreadsheetId,
-    range: 'Members!A:ZZ',
-  });
-  const membersRows = membersResponse.data.values || [];
+  // Fetch driver/bar lookup ONCE (used by both add and update sections)
+  const driverBarLookup = await buildDriverBarLookup();
 
   // Add missing players to the game sheet
   if (playersToAdd.length > 0) {
@@ -3694,7 +2965,7 @@ export async function updateGameSheetStats(tabName: string): Promise<number> {
         // Get stats from cached Players sheet data
         const stats = getPlayerStatsFromCache(userName, playersRows, playersColMap, playersHeaders, tabName);
         // Get driver/bar info from cached Members data
-        const driverBar = getDriverBarInfoFromCache(userName, membersRows, membersColMap);
+        const driverBar = getDriverBarInfoFromCache(userName, driverBarLookup);
 
         // Add player name
         addUpdates.push({
@@ -3743,7 +3014,7 @@ export async function updateGameSheetStats(tabName: string): Promise<number> {
     try {
       // Get stats for this player from cached Players sheet
       const stats = getPlayerStatsFromCache(player.name, playersRows, playersColMap, playersHeaders, tabName);
-      const driverBar = getDriverBarInfoFromCache(player.name, membersRows, membersColMap);
+      const driverBar = getDriverBarInfoFromCache(player.name, driverBarLookup);
 
       // Check if required columns exist in the game sheet
       const nameDownIdx = colMap['name_down'];
@@ -4031,47 +3302,30 @@ function getPlayerStatsFromCache(
 }
 
 // Helper function to get driver/bar info from cached data
+/** Build a userName (lowercase) -> driver/bar-availability lookup from Postgres members. */
+async function buildDriverBarLookup(): Promise<Map<string, { driver: boolean; bar: boolean }>> {
+  const allUsers = await getAllUsers();
+  const lookup = new Map<string, { driver: boolean; bar: boolean }>();
+  for (const u of allUsers) {
+    if (!u.userName) continue;
+    const driver = u.drivingAwayMatches === 'Yes' || u.drivingAwayMatches === 'Y';
+    const bar = u.barDuty === 'Yes' || u.barDuty === 'Y';
+    lookup.set(u.userName.trim().toLowerCase(), { driver, bar });
+  }
+  return lookup;
+}
+
 function getDriverBarInfoFromCache(
   userName: string,
-  membersRows: any[][],
-  colMap: { [key: string]: number }
+  driverBarLookup: Map<string, { driver: boolean; bar: boolean }>
 ): { code: string; driver: boolean; bar: boolean } {
-  // Look up by user_name column in Members sheet (we're passed userName, not fullName)
-  const userNameCol = colMap['user_name'];
-  if (userNameCol === undefined) {
-    console.warn('getDriverBarInfoFromCache: user_name column not found in Members sheet');
+  const entry = driverBarLookup.get(userName.trim().toLowerCase());
+  if (!entry) {
+    // User not found - return defaults
     return { code: '-', driver: false, bar: false };
   }
 
-  // Find the row for this user by userName
-  let userRowIndex = -1;
-  for (let i = 1; i < membersRows.length; i++) {
-    const memberUserName = membersRows[i][userNameCol];
-    if (!memberUserName) continue;
-
-    // Case-insensitive and trimmed comparison
-    if (memberUserName.toString().trim().toLowerCase() === userName.trim().toLowerCase()) {
-      userRowIndex = i;
-      break;
-    }
-  }
-
-  if (userRowIndex === -1) {
-    // User not in Members sheet - return defaults
-    return { code: '-', driver: false, bar: false };
-  }
-
-  const userRow = membersRows[userRowIndex];
-
-  const get = (field: string): string | null => {
-    const index = colMap[field];
-    return index !== undefined ? (userRow[index] || null) : null;
-  };
-
-  const driverValue = get('driving_away_matches');
-  const barValue = get('bar_duty');
-  const driver = driverValue === 'Yes' || driverValue === 'Y';
-  const bar = barValue === 'Yes' || barValue === 'Y';
+  const { driver, bar } = entry;
 
   let code = '-';
   if (driver && bar) {
@@ -4219,101 +3473,16 @@ export async function batchAddPlayersToGameSheet(
  * Used to display D/B indicators on game sheets and match cards
  */
 export async function getDriverBarInfo(userName: string): Promise<DriverBarInfo> {
-  // Initialize Google Sheets API client
-  const sheets = getSheetsClient();
-
-  // Fetch all data from Members sheet (up to 1000 rows)
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId: getMembersSpreadsheetId(),
-    range: 'Members!1:1000',
-  });
-
-  // Extract rows and headers from response
-  const rows = response.data.values || [];
-  const headers = rows[0] || [];
-
-  // Find column indices by searching through header row
-  // We manually search rather than using getColumnMap to avoid caching issues
-  let userNameCol = -1;
-  let drivingCol = -1;
-  let barCol = -1;
-
-  // Loop through all header cells to find the columns we need
-  for (let i = 0; i < headers.length; i++) {
-    // Normalize header text (lowercase, replace spaces with underscores)
-    const normalized = headers[i].toLowerCase().replace(/\s+/g, '_');
-
-    // Check if this is the user_name column
-    if (normalized === 'user_name') {
-      userNameCol = i;
-    }
-
-    // Check if this is the driving_away_matches column
-    if (normalized === 'driving_away_matches') {
-      drivingCol = i;
-    }
-
-    // Check if this is the bar_duty column
-    if (normalized === 'bar_duty') {
-      barCol = i;
-    }
-  }
-
-  // Throw error if user_name column not found (critical for lookups)
-  if (userNameCol === -1) {
-    throw new Error('user_name column not found in Members sheet');
-  }
-
-  // Search for this user's row in the Members sheet
-  let userRow = null;
-
-  // Loop through all data rows (skip header at index 0)
-  for (let i = 1; i < rows.length; i++) {
-    // Check if this row's username matches the requested user
-    if (rows[i][userNameCol] === userName) {
-      userRow = rows[i];
-      break;
-    }
-  }
+  const allUsers = await getAllUsers();
+  const member = allUsers.find((u) => u.userName === userName);
 
   // If user not found, return defaults (not a driver, no bar duty)
-  if (!userRow) {
+  if (!member) {
     return { driver: false, bar: false, code: '' };
   }
 
-  // Check if user is willing to drive to away matches
-  let driver = false;
-
-  // Only check if driving column exists in sheet
-  if (drivingCol !== -1) {
-    // Get the driving value from user's row
-    const drivingValue = userRow[drivingCol];
-
-    if (drivingValue) {
-      // Convert to lowercase for case-insensitive comparison
-      const lowerValue = drivingValue.toLowerCase();
-
-      // Accept "Yes" or "Y" as positive responses
-      driver = lowerValue === 'yes' || lowerValue === 'y';
-    }
-  }
-
-  // Check if user does bar duty
-  let bar = false;
-
-  // Only check if bar duty column exists in sheet
-  if (barCol !== -1) {
-    // Get the bar duty value from user's row
-    const barValue = userRow[barCol];
-
-    if (barValue) {
-      // Convert to lowercase for case-insensitive comparison
-      const lowerValue = barValue.toLowerCase();
-
-      // Accept "Yes" or "Y" as positive responses
-      bar = lowerValue === 'yes' || lowerValue === 'y';
-    }
-  }
+  const driver = member.drivingAwayMatches === 'Yes' || member.drivingAwayMatches === 'Y';
+  const bar = member.barDuty === 'Yes' || member.barDuty === 'Y';
 
   // Build display code based on driver and bar status
   // Code appears next to player name on game sheets and match cards
@@ -4351,92 +3520,37 @@ export async function getClubDetails(clubName: string): Promise<ClubDetails | nu
     return cached.data;
   }
 
-  // Get Match Day Contacts spreadsheet ID from environment
-  const spreadsheetId = getMatchDayContactsSpreadsheetId();
-
-  // Get column mappings for clubs sheet (cached)
-  const colMap = await getColumnMap(spreadsheetId, 'clubs');
-
-  // Initialize Google Sheets API client
-  const sheets = getSheetsClient();
-
-  // Fetch all data from clubs sheet
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: 'clubs!A:ZZ',
-  });
-
-  // Extract rows from response
-  const rows = response.data.values || [];
-
-  // Return null if no data in clubs sheet
-  if (rows.length === 0) return null;
-
-  // Helper function to get a string value from a row by field name
-  const get = (row: any[], field: string): string | null => {
-    const index = colMap[field];
-    return index !== undefined ? (row[index] || null) : null;
-  };
-
-  // Search for club by name
-  let matchingRow = null;
-
-  // Loop through all data rows (skip header at index 0)
-  for (let i = 1; i < rows.length; i++) {
-    const row = rows[i];
-
-    // Check if this row's club name matches the requested club
-    if (get(row, 'club_name') === clubName) {
-      matchingRow = row;
-      break;
-    }
-  }
-
-  // Return null if club not found in clubs sheet
-  if (!matchingRow) {
+  const club = await getClubByName(clubName);
+  if (!club) {
     _clubDetailsCache.set(clubName, { data: null, ts: Date.now() });
     return null;
   }
 
-  // Get driving band from sheet (A, B, C, or D) — normalise to uppercase for lookup
-  const drivingBand = (get(matchingRow, 'driving_band') || '').trim().toUpperCase();
-
-  // Look up petrol cost from the PetrolBands sheet (falls back to hardcoded values if sheet missing)
-  const petrolBands = await getPetrolBands();
-  const petrolCost = petrolBands[drivingBand] ?? 0;
-
-  // Extract all club details, cache, and return ClubDetails object
+  // googleAddress/bowlsEnglandUrl/bhWebsite: legacy Sheets columns never represented
+  // in the Postgres club_profiles schema — confirmed unused by every consumer of
+  // ClubDetails before dropping them here.
   const result: ClubDetails = {
-    // Contact information
-    clubName: get(matchingRow, 'club_name') || '',         // Official club name
-    clubNumber: get(matchingRow, 'club_number') || '',     // Club phone number
-    clubMobile: get(matchingRow, 'club_mobile') || '',     // Club mobile number
-    clubEmail: get(matchingRow, 'club_email_address') || get(matchingRow, 'club_email') || '',       // Club email address
-    clubEmailNote: get(matchingRow, 'club_email_note') || '', // Notes about email usage
-    generalInfo: get(matchingRow, 'general_information') || get(matchingRow, 'general_info') || '',   // General notes about club
-
-    // Driving information
-    drivingBand: drivingBand,  // Distance band (A-D)
-    petrolCost: petrolCost,    // Calculated reimbursement amount
-    miles: get(matchingRow, 'miles') || '',
-    travelTime: get(matchingRow, 'travel_time') || '',
-
-    // Address (stored in 4 separate fields for multiline addresses)
-    address1: get(matchingRow, 'address_1') || '',  // First line (street number/name)
-    address2: get(matchingRow, 'address_2') || '',  // Second line (area/district)
-    address3: get(matchingRow, 'address_3') || '',  // Third line (town/city)
-    address4: get(matchingRow, 'address_4') || '',  // Fourth line (county)
-    postCode: get(matchingRow, 'post_code') || '',  // Post code
-
-    // Location and mapping information
-    googleAddress: get(matchingRow, 'google_address') || '',  // Address formatted for Google Maps
-    latitude: get(matchingRow, 'latitude') || '',     // GPS latitude coordinate
-    longitude: get(matchingRow, 'longitude') || '',   // GPS longitude coordinate
-
-    // External links
-    bowlsEnglandUrl: get(matchingRow, 'bowls_england_url') || '',  // Bowls England profile URL
-    website: get(matchingRow, 'website') || '',        // Club's official website
-    bhWebsite: get(matchingRow, 'bh_website') || '',   // BHBC-specific website link
+    clubName: club.clubName,
+    clubNumber: club.clubNumber,
+    clubMobile: club.clubMobile,
+    clubEmail: club.clubEmailAddress,
+    clubEmailNote: club.clubEmailNote,
+    generalInfo: club.generalInformation,
+    drivingBand: club.drivingBand,
+    petrolCost: club.petrolCost,
+    miles: club.miles,
+    travelTime: club.travelTime,
+    address1: club.address1,
+    address2: club.address2,
+    address3: club.address3,
+    address4: club.address4,
+    postCode: club.postCode,
+    googleAddress: '',
+    latitude: club.latitude !== null ? String(club.latitude) : '',
+    longitude: club.longitude !== null ? String(club.longitude) : '',
+    bowlsEnglandUrl: '',
+    website: club.website,
+    bhWebsite: '',
   };
 
   _clubDetailsCache.set(clubName, { data: result, ts: Date.now() });
@@ -4450,858 +3564,21 @@ export async function getClubDetails(clubName: string): Promise<ClubDetails | nu
  * Multiple contacts per club are supported (e.g., Men's Captain, Ladies' Captain, Secretary)
  */
 export async function getClubContacts(clubName: string): Promise<ClubContact[]> {
-  // Get Match Day Contacts spreadsheet ID from environment
-  const spreadsheetId = getMatchDayContactsSpreadsheetId();
-
-  // Get column mappings for Contacts sheet (cached)
-  const colMap = await getColumnMap(spreadsheetId, 'Club Contacts');
-
-  // Initialize Google Sheets API client
-  const sheets = getSheetsClient();
-
-  // Fetch all contacts from Contacts sheet
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: "'Club Contacts'!A:ZZ",
-  });
-
-  // Extract rows from response
-  const rows = response.data.values || [];
-
-  // Return empty array if no contacts data
-  if (rows.length === 0) return [];
-
-  // Helper function to get a string value from a row by field name
-  const get = (row: any[], field: string): string | null => {
-    const index = colMap[field];
-    return index !== undefined ? (row[index] || null) : null;
-  };
-
-  // STEP 1: Filter contacts for this specific club
-  // Build array of all contacts that belong to this club
-  const clubContacts: ClubContact[] = [];
-
-  // Loop through all data rows (skip header at index 0)
-  for (let i = 1; i < rows.length; i++) {
-    const row = rows[i];
-
-    // Get club name for this contact
-    const rowClubName = get(row, 'club_name');
-
-    // Skip contacts that don't belong to the requested club
-    if (rowClubName !== clubName) {
-      continue;
-    }
-
-    // Extract all contact information from this row
-    const contact: ClubContact = {
-      clubName: get(row, 'club_name') || '',    // Club this contact belongs to
-      role: get(row, 'role') || '',              // Role (Captain, Secretary, etc.)
-      firstName: get(row, 'first_name') || '',   // Contact's first name
-      lastName: get(row, 'last_name') || '',     // Contact's last name
-      name: get(row, 'name') || '',              // Full name (if provided separately)
-      phoneNumber: get(row, 'phone_number') || '', // Landline phone number
-      mobileNumber: get(row, 'mobile_number') || '', // Mobile phone number
-      notes: get(row, 'notes') || '',            // Additional notes about contact
-      email: get(row, 'email') || '',            // Email address
-    };
-
-    // Add this contact to our club contacts array
-    clubContacts.push(contact);
-  }
-
-  // STEP 2: Sort contacts by role priority for logical display order
-  // Captains should appear first (most important contact), then Secretaries, then others
-  // This makes it easier to find the right contact on match day
-  const roleOrder: { [key: string]: number } = {
-    'Captain': 1,    // Highest priority (appears first)
-    'Secretary': 2,  // Second priority
-    // All other roles get priority 99 (appear after Captain and Secretary)
-  };
-
-  // Sort the contacts array by role priority
-  clubContacts.sort((a, b) => {
-    // Get priority order for contact A's role
-    let aOrder = roleOrder[a.role];
-
-    // If role not in priority map, assign low priority (99)
-    if (aOrder === undefined) {
-      aOrder = 99;
-    }
-
-    // Get priority order for contact B's role
-    let bOrder = roleOrder[b.role];
-
-    // If role not in priority map, assign low priority (99)
-    if (bOrder === undefined) {
-      bOrder = 99;
-    }
-
-    // Sort by priority (lower number = higher priority = appears first)
-    return aOrder - bOrder;
-  });
-
-  // Return sorted contacts array
-  return clubContacts;
+  // clubs-supabase.ts's getContactsForClub already sorts by role priority.
+  const contacts = await getContactsForClub(clubName);
+  return contacts.map((c) => ({
+    clubName: c.clubName,
+    role: c.role,
+    firstName: c.firstName,
+    lastName: c.lastName,
+    name: c.name,
+    phoneNumber: c.phoneNumber,
+    mobileNumber: c.mobileNumber,
+    notes: c.notes,
+    email: c.email,
+  }));
 }
 
-// ============================================================================
-// TEA ROTA OPERATIONS
-// ============================================================================
-
-/**
- * Get all home games with tea rota assignments
- * Returns games sorted by date (upcoming first)
- * Used for the tea rota list page
- */
-export async function getTeaRotaList(options?: { includeCancelled?: boolean }): Promise<TeaRotaEntry[]> {
-  // Get Friendlies spreadsheet ID from environment
-  const spreadsheetId = getFriendliesSpreadsheetId();
-
-  // Get column mappings for Games sheet (cached)
-  const colMap = await getColumnMap(spreadsheetId, 'Games');
-
-  // Fetch all data rows from Games sheet (cached, shared with getGames)
-  const rows = await getGamesRawRows();
-
-  // Helper function to get a string value from a row by field name
-  const get = (row: any[], field: string): string | null => {
-    const index = colMap[field];
-    return index !== undefined ? (row[index] || null) : null;
-  };
-
-  // Day names for display date formatting
-  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const monthNamesShort = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-  // Build array of tea rota entries for home games only
-  const teaRotaEntries: TeaRotaEntry[] = [];
-
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    const rowNumber = i + 2; // Row 1 is header, data starts at row 2
-
-    // Get home/away status - only include home games
-    // Try multiple possible column names: "Home/Away" -> "home_away", "H/A" -> "h_a"
-    const homeAwayValue = get(row, 'home_away') || get(row, 'h_a') || 'H';
-    if (homeAwayValue.trim().toUpperCase() !== 'H') continue;
-
-    // Get game status - skip cancelled games unless caller explicitly wants them
-    const status = get(row, 'status') || '';
-    if (status === 'C' && !options?.includeCancelled) continue;
-
-    // Only include Friendly games (tea rota doesn't apply to league/events)
-    // Rows with no type set are treated as friendlies for backward compatibility.
-    const gameType = get(row, 'type') || '';
-    if (gameType && gameType !== 'Friendly') continue;
-
-    // Extract game data - normalize date to DD/MM/YYYY immediately
-    const date = normalizeToUKDate(get(row, 'date') || '');
-    const time = get(row, 'time') || '';
-    const clubName = get(row, 'club_name') || '';
-    const format = get(row, 'format') || '';
-    const ladiesMen = get(row, 'ladies_men') || '';
-    const tabName = get(row, 'tab_name') || '';
-
-    // Extract tea assignments
-    const teaLead = get(row, 'tea_lead') || '';
-    const teaFirst = get(row, 'tea_first') || '';
-    const teaSecond = get(row, 'tea_second') || '';
-
-    // Format display date (e.g., "Sat 25 Apr") - date is now normalized to DD/MM/YYYY
-    let displayDate = date;
-    if (date) {
-      const dateObj = parseNormalizedDate(date);
-      if (!isNaN(dateObj.getTime())) {
-        const dayName = dayNames[dateObj.getDay()];
-        const day = dateObj.getDate();
-        const month = monthNamesShort[dateObj.getMonth()];
-        displayDate = `${dayName} ${day} ${month}`;
-      }
-    }
-
-    teaRotaEntries.push({
-      rowNumber,
-      tabName,
-      date,
-      displayDate,
-      time,
-      clubName,
-      format,
-      ladiesMen,
-      teaLead,
-      teaFirst,
-      teaSecond,
-      status,
-    });
-  }
-
-  // Sort by date (chronological order - past games first, then future)
-  teaRotaEntries.sort((a, b) => {
-    const dateA = parseNormalizedDate(a.date);
-    const dateB = parseNormalizedDate(b.date);
-    return dateA.getTime() - dateB.getTime();
-  });
-
-  return teaRotaEntries;
-}
-
-/**
- * Update tea rota assignments for a game
- * Used by committee members to edit tea assignments
- * @param rowNumber Row number in Games sheet
- * @param teaLead Username for tea lead
- * @param teaFirst Username for tea first
- * @param teaSecond Username for tea second
- */
-export async function updateTeaRotaAssignment(
-  rowNumber: number,
-  teaLead: string,
-  teaFirst: string,
-  teaSecond: string
-): Promise<void> {
-  // Get Friendlies spreadsheet ID from environment
-  const spreadsheetId = getFriendliesSpreadsheetId();
-
-  // Get column mappings for Games sheet (cached)
-  const colMap = await getColumnMap(spreadsheetId, 'Games');
-
-  // Get column indices for tea fields
-  const teaLeadCol = colMap['tea_lead'];
-  const teaFirstCol = colMap['tea_first'];
-  const teaSecondCol = colMap['tea_second'];
-
-  if (teaLeadCol === undefined || teaFirstCol === undefined || teaSecondCol === undefined) {
-    throw new Error('Tea columns not found in Games sheet. Expected: Tea Lead, Tea First, Tea Second');
-  }
-
-  // Initialize Google Sheets API client
-  const sheets = getSheetsClient();
-
-  // Build update data for each column
-  const updates = [
-    {
-      range: `Games!${getColumnLetter(teaLeadCol)}${rowNumber}`,
-      values: [[teaLead]],
-    },
-    {
-      range: `Games!${getColumnLetter(teaFirstCol)}${rowNumber}`,
-      values: [[teaFirst]],
-    },
-    {
-      range: `Games!${getColumnLetter(teaSecondCol)}${rowNumber}`,
-      values: [[teaSecond]],
-    },
-  ];
-
-  // Update all tea columns in a batch
-  await sheets.spreadsheets.values.batchUpdate({
-    spreadsheetId,
-    requestBody: {
-      valueInputOption: 'RAW',
-      data: updates,
-    },
-  });
-}
-
-/**
- * Batch update tea rota assignments for multiple rows
- * Updates all modified rows in a single Google Sheets API call
- * @param updates Array of updates containing rowNumber and tea assignments
- */
-export async function batchUpdateTeaRotaAssignments(
-  updates: {
-    rowNumber: number;
-    teaLead: string;
-    teaFirst: string;
-    teaSecond: string;
-  }[]
-): Promise<void> {
-  if (updates.length === 0) return;
-
-  // Get Friendlies spreadsheet ID from environment
-  const spreadsheetId = getFriendliesSpreadsheetId();
-
-  // Get column mappings for Games sheet (cached)
-  const colMap = await getColumnMap(spreadsheetId, 'Games');
-
-  // Get column indices for tea fields
-  const teaLeadCol = colMap['tea_lead'];
-  const teaFirstCol = colMap['tea_first'];
-  const teaSecondCol = colMap['tea_second'];
-
-  if (teaLeadCol === undefined || teaFirstCol === undefined || teaSecondCol === undefined) {
-    throw new Error('Tea columns not found in Games sheet. Expected: Tea Lead, Tea First, Tea Second');
-  }
-
-  // Initialize Google Sheets API client
-  const sheets = getSheetsClient();
-
-  // Build update data for all rows
-  const batchData: { range: string; values: string[][] }[] = [];
-
-  for (const update of updates) {
-    batchData.push(
-      {
-        range: `Games!${getColumnLetter(teaLeadCol)}${update.rowNumber}`,
-        values: [[update.teaLead]],
-      },
-      {
-        range: `Games!${getColumnLetter(teaFirstCol)}${update.rowNumber}`,
-        values: [[update.teaFirst]],
-      },
-      {
-        range: `Games!${getColumnLetter(teaSecondCol)}${update.rowNumber}`,
-        values: [[update.teaSecond]],
-      }
-    );
-  }
-
-  // Update all tea columns for all rows in a single batch
-  await sheets.spreadsheets.values.batchUpdate({
-    spreadsheetId,
-    requestBody: {
-      valueInputOption: 'RAW',
-      data: batchData,
-    },
-  });
-}
-
-/**
- * Swap tea assignment between two members across any games
- * If target is specified, swaps with that specific assignment
- * Otherwise searches ALL games to find where the new user is assigned
- * @param rowNumber Row number in Games sheet for the game where oldUser is assigned
- * @param position Which position oldUser is in: 'teaLead', 'teaFirst', or 'teaSecond'
- * @param oldUsername Current username in that position (the user initiating the swap)
- * @param newUsername Username to swap with
- * @param targetRowNumber Optional: specific row number for newUser's assignment
- * @param targetPosition Optional: specific position for newUser's assignment
- * @returns The updated tea rota entry for the original row
- */
-export async function swapTeaAssignment(
-  rowNumber: number,
-  position: 'teaLead' | 'teaFirst' | 'teaSecond',
-  oldUsername: string,
-  newUsername: string,
-  targetRowNumber?: number,
-  targetPosition?: 'teaLead' | 'teaFirst' | 'teaSecond'
-): Promise<TeaRotaEntry> {
-  // Get Friendlies spreadsheet ID from environment
-  const spreadsheetId = getFriendliesSpreadsheetId();
-
-  // Get column mappings for Games sheet (cached)
-  const colMap = await getColumnMap(spreadsheetId, 'Games');
-
-  // Get column indices for all tea fields
-  const teaLeadCol = colMap['tea_lead'];
-  const teaFirstCol = colMap['tea_first'];
-  const teaSecondCol = colMap['tea_second'];
-  const homeAwayCol = colMap['home_away'] ?? colMap['h_a'];
-
-  if (teaLeadCol === undefined || teaFirstCol === undefined || teaSecondCol === undefined) {
-    throw new Error('Tea columns not found in Games sheet');
-  }
-
-  const positionToCol: { [key: string]: number } = {
-    teaLead: teaLeadCol,
-    teaFirst: teaFirstCol,
-    teaSecond: teaSecondCol,
-  };
-
-  const colToPosition: { [key: number]: 'teaLead' | 'teaFirst' | 'teaSecond' } = {
-    [teaLeadCol]: 'teaLead',
-    [teaFirstCol]: 'teaFirst',
-    [teaSecondCol]: 'teaSecond',
-  };
-
-  // Fetch ALL rows to find where newUsername is assigned (cached, shared with getGames)
-  const allRows = await getGamesRawRows();
-  const sheets = getSheetsClient(); // used for the swap write below
-
-  // Verify oldUsername is in the specified position at the specified row
-  const oldUserRowIndex = rowNumber - 2; // Convert sheet row to array index (row 2 = index 0)
-  if (oldUserRowIndex < 0 || oldUserRowIndex >= allRows.length) {
-    throw new Error('Invalid row number');
-  }
-
-  const oldUserRow = allRows[oldUserRowIndex];
-  const oldUserCurrentValue = oldUserRow[positionToCol[position]] || '';
-  if (oldUserCurrentValue !== oldUsername) {
-    throw new Error(`Cannot swap: you are not assigned to ${position}`);
-  }
-
-  // Determine the target assignment (where newUser is assigned)
-  let newUserRowNumber: number | null = null;
-  let newUserPosition: 'teaLead' | 'teaFirst' | 'teaSecond' | null = null;
-
-  // If target is explicitly specified, use it
-  if (targetRowNumber && targetPosition) {
-    newUserRowNumber = targetRowNumber;
-    newUserPosition = targetPosition;
-  } else {
-    // Otherwise, search for newUsername in any tea position across ALL home games
-    for (let i = 0; i < allRows.length; i++) {
-      const row = allRows[i];
-      const sheetRowNumber = i + 2; // Convert array index to sheet row number
-
-      // Only check home games
-      const homeAway = homeAwayCol !== undefined ? row[homeAwayCol] : 'H';
-      if (homeAway !== 'H') continue;
-
-      // Check each tea position
-      if (row[teaLeadCol] === newUsername) {
-        newUserRowNumber = sheetRowNumber;
-        newUserPosition = 'teaLead';
-        break;
-      }
-      if (row[teaFirstCol] === newUsername) {
-        newUserRowNumber = sheetRowNumber;
-        newUserPosition = 'teaFirst';
-        break;
-      }
-      if (row[teaSecondCol] === newUsername) {
-        newUserRowNumber = sheetRowNumber;
-        newUserPosition = 'teaSecond';
-        break;
-      }
-    }
-  }
-
-  // Build the updates for the swap
-  const updates: { range: string; values: string[][] }[] = [];
-
-  // Put newUsername in oldUsername's position (at oldUsername's row)
-  updates.push({
-    range: `Games!${getColumnLetter(positionToCol[position])}${rowNumber}`,
-    values: [[newUsername]],
-  });
-
-  // If newUsername was assigned somewhere, put oldUsername there (completing the swap)
-  if (newUserRowNumber !== null && newUserPosition !== null) {
-    updates.push({
-      range: `Games!${getColumnLetter(positionToCol[newUserPosition])}${newUserRowNumber}`,
-      values: [[oldUsername]],
-    });
-  }
-
-  // Apply all updates in a batch
-  await sheets.spreadsheets.values.batchUpdate({
-    spreadsheetId,
-    requestBody: {
-      valueInputOption: 'RAW',
-      data: updates,
-    },
-  });
-
-  // Fetch the updated row to return the full entry
-  const updatedRowResponse = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `Games!A${rowNumber}:ZZ${rowNumber}`,
-  });
-
-  const updatedRow = updatedRowResponse.data.values?.[0] || [];
-
-  // Helper function to get a string value from the row
-  const get = (field: string): string | null => {
-    const index = colMap[field];
-    return index !== undefined ? (updatedRow[index] || null) : null;
-  };
-
-  // Normalize date to DD/MM/YYYY and format display date
-  const date = normalizeToUKDate(get('date') || '');
-  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const monthNamesShort = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  let displayDate = date;
-  if (date) {
-    const dateObj = parseNormalizedDate(date);
-    if (!isNaN(dateObj.getTime())) {
-      displayDate = `${dayNames[dateObj.getDay()]} ${dateObj.getDate()} ${monthNamesShort[dateObj.getMonth()]}`;
-    }
-  }
-
-  return {
-    rowNumber,
-    tabName: get('tab_name') || '',
-    date,
-    displayDate,
-    time: get('time') || '',
-    clubName: get('club_name') || '',
-    format: get('format') || '',
-    ladiesMen: get('ladies_men') || '',
-    teaLead: get('tea_lead') || '',
-    teaFirst: get('tea_first') || '',
-    teaSecond: get('tea_second') || '',
-    status: get('status') || '',
-  };
-}
-
-/**
- * Get a single tea rota entry by row number
- * Used to fetch details for swap confirmation
- */
-export async function getTeaRotaEntry(rowNumber: number): Promise<TeaRotaEntry | null> {
-  // Get Friendlies spreadsheet ID from environment
-  const spreadsheetId = getFriendliesSpreadsheetId();
-
-  // Get column mappings for Games sheet (cached)
-  const colMap = await getColumnMap(spreadsheetId, 'Games');
-
-  // Initialize Google Sheets API client
-  const sheets = getSheetsClient();
-
-  // Fetch the specific row
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `Games!A${rowNumber}:ZZ${rowNumber}`,
-  });
-
-  const row = response.data.values?.[0];
-  if (!row) return null;
-
-  // Helper function to get a string value from the row
-  const get = (field: string): string | null => {
-    const index = colMap[field];
-    return index !== undefined ? (row[index] || null) : null;
-  };
-
-  // Only return if this is a home game
-  // Try multiple possible column names: "Home/Away" -> "home_away", "H/A" -> "h_a"
-  const homeAway = get('home_away') || get('h_a') || 'H';
-  if (homeAway.trim().toUpperCase() !== 'H') return null;
-
-  // Normalize date to DD/MM/YYYY and format display date
-  const date = normalizeToUKDate(get('date') || '');
-  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const monthNamesShort = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  let displayDate = date;
-  if (date) {
-    const dateObj = parseNormalizedDate(date);
-    if (!isNaN(dateObj.getTime())) {
-      displayDate = `${dayNames[dateObj.getDay()]} ${dateObj.getDate()} ${monthNamesShort[dateObj.getMonth()]}`;
-    }
-  }
-
-  return {
-    rowNumber,
-    tabName: get('tab_name') || '',
-    date,
-    displayDate,
-    time: get('time') || '',
-    clubName: get('club_name') || '',
-    format: get('format') || '',
-    ladiesMen: get('ladies_men') || '',
-    teaLead: get('tea_lead') || '',
-    teaFirst: get('tea_first') || '',
-    teaSecond: get('tea_second') || '',
-    status: get('status') || '',
-  };
-}
-
-// ============================================================================
-// FIXTURE CRUD OPERATIONS
-// ============================================================================
-
-/**
- * Create a new fixture row in the Games sheet
- * Appends a new row with the provided fixture data
- * Used by Fixtures Management page for captains/admins
- */
-export async function createFixture(data: {
-  date: string;
-  time?: string;
-  type?: GameType;
-  clubName: string;
-  clubSuffix?: string;
-  homeAway?: 'H' | 'A';
-  format?: string;
-  ladiesMen?: string;
-  dress?: string;
-  paired?: string;
-  maxPlayers?: number;
-  message?: string;
-  pickupInfo?: string;
-  tabDate?: string;
-  tabName?: string;
-  status?: string;
-}): Promise<void> {
-  const spreadsheetId = getFriendliesSpreadsheetId();
-  const colMap = await getColumnMap(spreadsheetId, 'Games');
-  const sheets = getSheetsClient();
-
-  // Build a sparse row array mapping fields to their column positions
-  const maxColIndex = Math.max(...Object.values(colMap));
-  const row: string[] = new Array(maxColIndex + 1).fill('');
-
-  const set = (field: string, value: string | number | undefined | null) => {
-    if (value === undefined || value === null) return;
-    const idx = colMap[field];
-    if (idx !== undefined) {
-      row[idx] = String(value);
-    }
-  };
-
-  set('date', data.date);
-  set('time', data.time ?? '');
-  set('type', data.type ?? 'Friendly');
-  set('club_name', data.clubName);
-  set('club_suffix', data.clubSuffix ?? '');
-  if (colMap['home_away'] !== undefined) {
-    set('home_away', data.homeAway ?? 'H');
-  } else {
-    set('h_a', data.homeAway ?? 'H');
-  }
-  set('format', data.format ?? '');
-  set('ladies_men', data.ladiesMen ?? '');
-  set('dress', data.dress ?? '');
-  set('paired', data.paired ?? '');
-  if (data.maxPlayers !== undefined) set('max_capacity', data.maxPlayers);
-  // Write to "Special Instructions" column (renamed from "Message"); fall back to old name
-  const msgColKeyCreate = colMap['special_instructions'] !== undefined ? 'special_instructions' : 'message';
-  set(msgColKeyCreate, data.message ?? '');
-  const pickupColKey = colMap['pickup_info'] !== undefined ? 'pickup_info' : 'pickup_information';
-  set(pickupColKey, data.pickupInfo ?? '');
-  set('tab_date', data.tabDate ?? '');
-  set('tab_name', data.tabName ?? '');
-  set('status', data.status ?? '');
-
-  await sheets.spreadsheets.values.append({
-    spreadsheetId,
-    range: 'Games!A:A',
-    valueInputOption: 'USER_ENTERED',
-    requestBody: {
-      values: [row],
-    },
-  });
-}
-
-/**
- * Create a same-club "reserve game" for an oversubscribed standalone game.
- *
- * Appends a Games row that copies the original game's full row, then overrides:
- * tab name → `<orig>-2`, club_suffix → '2', paired → 'C', status → 'X', the
- * counts zeroed, and the tea duty blanked (tea belongs to the original only).
- * The original is paired back (suffix '1', paired 'C'). 'C' (not 'Y') because the
- * pair is born in the selection phase, so it must never re-group for combined
- * entry — but the move logic treats 'C' as linked. Finally creates the Players
- * column and an empty game sheet so the captain can move overflow reserves in.
- *
- * Guards here: original must exist and not already be paired, and the -2 game
- * must not already exist. Status/oversubscription are enforced by the API.
- */
-export async function createReserveGame(
-  originalTabName: string,
-  options?: { teamName?: string; format?: string }
-): Promise<{ tabName: string }> {
-  const spreadsheetId = getFriendliesSpreadsheetId();
-  const sheets = getSheetsClient();
-
-  const games = await getGames();
-  const original = games.find(g => g.tabName === originalTabName);
-  if (!original) throw new Error(`Game not found: ${originalTabName}`);
-  if (original.paired) throw new Error('Game is already part of a pair');
-
-  const newTabName = `${originalTabName}-2`;
-  if (games.some(g => g.tabName === newTabName)) {
-    throw new Error(`A reserve game already exists for ${originalTabName}`);
-  }
-
-  const colMap = await getColumnMap(spreadsheetId, 'Games');
-
-  // Read the original's full row so the reserve game copies every column
-  const rowResp = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `Games!${original.rowNumber}:${original.rowNumber}`,
-  });
-  const row: string[] = (rowResp.data.values?.[0] || []).map(v => (v == null ? '' : String(v)));
-  const maxColIndex = Math.max(...Object.values(colMap));
-  while (row.length <= maxColIndex) row.push('');
-
-  const setCol = (field: string, value: string | number) => {
-    const idx = colMap[field];
-    if (idx !== undefined) row[idx] = String(value);
-  };
-
-  // Reserve-game overrides
-  setCol('tab_name', newTabName);
-  // Give the reserve a distinct display name so it isn't a second "Newick". The team name
-  // (default "<club> BH Reserves") is stored in club_name; the suffix is cleared so it shows
-  // exactly the chosen name. Falls back to the legacy "<club> 2" suffix if none is supplied.
-  if (options && options.teamName && options.teamName.trim()) {
-    setCol('club_name', options.teamName.trim());
-    setCol('club_suffix', '');
-  } else {
-    setCol('club_suffix', '2');
-  }
-  // Format defaults (in the dialog) to the original's format, but can be changed
-  if (options && options.format && options.format.trim()) {
-    setCol('format', options.format.trim());
-  }
-  setCol('paired', 'C');
-  setCol('status', 'X');
-  setCol('entered', 0);
-  setCol('selected', 0);
-  setCol('reserves', 0);
-  // Tea duty belongs to the original (home) game only
-  setCol('tea_lead', '');
-  setCol('tea_first', '');
-  setCol('tea_second', '');
-
-  // Append the reserve game row
-  await sheets.spreadsheets.values.append({
-    spreadsheetId,
-    range: 'Games!A:A',
-    valueInputOption: 'USER_ENTERED',
-    requestBody: { values: [row] },
-  });
-
-  // Pair the original game: paired 'C' (closed-link — see above). The original keeps its
-  // own name/suffix unchanged — the reserve now carries a distinct team name, so there's no
-  // need to relabel the original as "<club> 1".
-  const origUpdates: { range: string; values: (string | number)[][] }[] = [];
-  if (colMap['paired'] !== undefined) {
-    origUpdates.push({ range: `Games!${getColumnLetter(colMap['paired'])}${original.rowNumber}`, values: [['C']] });
-  }
-  if (origUpdates.length > 0) {
-    await sheets.spreadsheets.values.batchUpdate({
-      spreadsheetId,
-      requestBody: { data: origUpdates, valueInputOption: 'USER_ENTERED' },
-    });
-  }
-
-  // Players-sheet column + empty game sheet (skip stats — nobody's in it yet)
-  await createGameColumn(newTabName);
-  await createGameSheet(newTabName, [], true);
-
-  return { tabName: newTabName };
-}
-
-/**
- * Update specific fields in an existing Games sheet row
- * Uses batch update to efficiently update only the changed columns
- * @param rowNumber Row number in the Games sheet (1-indexed, row 1 is header)
- * @param fields Fields to update (only provided fields are changed)
- */
-export async function updateFixture(
-  rowNumber: number,
-  fields: {
-    date?: string;
-    time?: string;
-    type?: GameType;
-    clubName?: string;
-    clubSuffix?: string;
-    homeAway?: 'H' | 'A';
-    format?: string;
-    ladiesMen?: string;
-    dress?: string;
-    paired?: string;
-    maxPlayers?: number;
-    message?: string;
-    pickupInfo?: string;
-    tabDate?: string;
-    tabName?: string;
-    status?: string;
-  }
-): Promise<void> {
-  const spreadsheetId = getFriendliesSpreadsheetId();
-  const colMap = await getColumnMap(spreadsheetId, 'Games');
-  const sheets = getSheetsClient();
-
-  const updates: { range: string; values: any[][] }[] = [];
-
-  const addUpdate = (field: string, value: string | number | undefined) => {
-    if (value === undefined) return;
-    const idx = colMap[field];
-    if (idx !== undefined) {
-      updates.push({
-        range: `Games!${getColumnLetter(idx)}${rowNumber}`,
-        values: [[value]],
-      });
-    }
-  };
-
-  addUpdate('date', fields.date);
-  addUpdate('time', fields.time);
-  addUpdate('type', fields.type);
-  addUpdate('club_name', fields.clubName);
-  addUpdate('club_suffix', fields.clubSuffix);
-  if (colMap['home_away'] !== undefined) {
-    addUpdate('home_away', fields.homeAway);
-  } else {
-    addUpdate('h_a', fields.homeAway);
-  }
-  addUpdate('format', fields.format);
-  addUpdate('ladies_men', fields.ladiesMen);
-  addUpdate('dress', fields.dress);
-  addUpdate('paired', fields.paired);
-  addUpdate('max_capacity', fields.maxPlayers);
-  // Write to "Special Instructions" column (renamed from "Message"); fall back to old name
-  const msgColKeyUpdate = colMap['special_instructions'] !== undefined ? 'special_instructions' : 'message';
-  if (fields.message !== undefined) addUpdate(msgColKeyUpdate, fields.message);
-  const pickupKey = colMap['pickup_info'] !== undefined ? 'pickup_info' : 'pickup_information';
-  if (fields.pickupInfo !== undefined) addUpdate(pickupKey, fields.pickupInfo);
-  addUpdate('tab_date', fields.tabDate);
-  addUpdate('tab_name', fields.tabName);
-  addUpdate('status', fields.status);
-
-  if (updates.length > 0) {
-    await sheets.spreadsheets.values.batchUpdate({
-      spreadsheetId,
-      requestBody: {
-        data: updates,
-        valueInputOption: 'USER_ENTERED',
-      },
-    });
-  }
-}
-
-/**
- * Physically delete a row from the Games sheet
- * Uses the Sheets API batchUpdate deleteDimension request
- * @param rowNumber Row number in the Games sheet (1-indexed, row 1 is header)
- */
-export async function deleteFixtureRow(rowNumber: number): Promise<void> {
-  const spreadsheetId = getFriendliesSpreadsheetId();
-  const sheets = getSheetsClient();
-
-  // Get spreadsheet metadata to find the numeric sheetId of the 'Games' tab
-  const metadata = await sheets.spreadsheets.get({
-    spreadsheetId,
-    fields: 'sheets.properties',
-  });
-
-  const gamesSheet = metadata.data.sheets?.find(
-    s => s.properties?.title === 'Games'
-  );
-
-  if (!gamesSheet || gamesSheet.properties?.sheetId === undefined) {
-    throw new Error('Games sheet not found in spreadsheet');
-  }
-
-  const sheetId = gamesSheet.properties.sheetId;
-
-  // Delete the row (0-indexed: rowNumber - 1 to rowNumber)
-  await sheets.spreadsheets.batchUpdate({
-    spreadsheetId,
-    requestBody: {
-      requests: [
-        {
-          deleteDimension: {
-            range: {
-              sheetId,
-              dimension: 'ROWS',
-              startIndex: rowNumber - 1,
-              endIndex: rowNumber,
-            },
-          },
-        },
-      ],
-    },
-  });
-
-  // Clear the column map cache for Games sheet since row positions have changed
-  clearColumnMapCacheForSheet(spreadsheetId, 'Games');
-}
 
 // =============================================================================
 // Selection Helper cache — stores snapshots in a hidden _SelectionCache tab
@@ -5573,14 +3850,7 @@ export async function validateGameToken(
     return null;
   }
 
-  const games = await getGames();
-  let game = null;
-  for (const g of games) {
-    if (g.tabName === tabName) {
-      game = g;
-      break;
-    }
-  }
+  const game = await getFixtureByTabName(tabName);
 
   if (!game) {
     return null;

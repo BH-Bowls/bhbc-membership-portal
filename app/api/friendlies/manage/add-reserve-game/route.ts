@@ -7,7 +7,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
-import { getGames, createReserveGame } from '@/lib/friendlies-sheets';
+import { createGameColumn, createGameSheet } from '@/lib/friendlies-sheets';
+import { getFixtureByTabName, createReserveFixture } from '@/lib/fixtures-supabase';
 import { parseNumberRequired } from '@/lib/friendlies-utils';
 
 // Minimum overflow (players beyond a full team) before a reserve game is offered
@@ -33,8 +34,7 @@ export async function POST(request: NextRequest) {
     const teamName = typeof body.team_name === 'string' ? body.team_name.trim() : '';
     const format = typeof body.format === 'string' ? body.format.trim() : '';
 
-    const games = await getGames();
-    const game = games.find(g => g.tabName === tabName);
+    const game = await getFixtureByTabName(tabName);
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
@@ -58,7 +58,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result = await createReserveGame(tabName, { teamName, format });
+    const result = await createReserveFixture(game.id, { teamName, format });
+    // Players-sheet column + empty game sheet (skip stats — nobody's in it yet)
+    await createGameColumn(result.tabName);
+    await createGameSheet(result.tabName, [], true);
     return NextResponse.json({ success: true, tabName: result.tabName });
   } catch (error) {
     console.error('[POST /api/friendlies/manage/add-reserve-game] Error:', error);

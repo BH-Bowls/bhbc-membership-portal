@@ -1,22 +1,22 @@
 // src/lib/maintenance.ts
 // Maintenance-mode flag, checked at two enforcement points:
-//   1. authenticateUser() (src/lib/auth-sheets.ts) — blocks new non-Admin logins
-//   2. proxy.ts — redirects already-logged-in non-Admin sessions on their next request
-// proxy.ts (formerly middleware.ts) can call this because Next.js 16's Proxy convention
-// defaults to the Node.js runtime, not Edge — the old middleware.ts filename defaulted to
-// Edge, which can't load the googleapis-based Sheets client this depends on.
-// Reads a `maintenance_mode` key ('true'/'false') from the Labels sheet in the Portal
-// Config spreadsheet, via the same getLabelConfig() the label-printing feature already
-// uses — no extra Sheets read cost. That row must exist in the sheet already (key column
-// A, value column B) since updateLabelConfig only updates existing rows, never inserts.
+//   1. authenticateUser() — blocks new non-Admin logins. Checked in both
+//      auth-sheets.ts and auth-supabase.ts (the latter added when auth.ts's
+//      authorize() was cut over to Postgres; club login, which used to fall back
+//      to auth-sheets.ts's authenticateClub(), has since been removed entirely —
+//      Rowland is moving to a token-based access design instead).
+//   2. proxy.ts (formerly middleware.ts) — redirects already-logged-in non-Admin
+//      sessions on their next request
+// See specs/Phase_0_1_Migration_Plan.md, Step 0.
 //
-// In-memory TTL cache to avoid hitting the Sheets read-quota on every login attempt.
-// This only needs to be eventually consistent within a few seconds, not instantaneous —
-// a cold serverless instance does one fresh fetch, which is fine.
+// In-memory TTL cache to avoid hitting Postgres on every request/login attempt. Same
+// per-instance caveat as the diary/announcements caches (Caching & Egress Strategy in the
+// plan): a cold serverless instance does one fresh fetch, which is fine — this only needs
+// to be *eventually* consistent within a few seconds, not instantaneous.
 
-import { getLabelConfig } from './config-sheets';
+import { getConfig } from './config-supabase';
 
-const CACHE_TTL_MS = 20_000; // 20s
+const CACHE_TTL_MS = 20_000; // 20s, within the plan's 15-30s range
 
 let cachedValue: boolean | null = null;
 let cachedAt = 0;
@@ -27,10 +27,9 @@ export async function isMaintenanceModeOn(): Promise<boolean> {
     return cachedValue;
   }
 
-  const config = await getLabelConfig();
-  // Sheets auto-converts a typed "true"/"false" to its native boolean type, and the API
-  // returns boolean cells as the formatted string "TRUE"/"FALSE" (uppercase) — so this
-  // must be a case-insensitive comparison, not a strict === 'true'.
+  const config = await getConfig();
+  // Case-insensitive: whoever last toggled this by hand in Supabase's Table Editor might
+  // have typed "TRUE"/"True" — don't rely on exact-case matching for a human-edited value.
   const rawValue = config.maintenance_mode || '';
   cachedValue = rawValue.trim().toLowerCase() === 'true';
   cachedAt = now;

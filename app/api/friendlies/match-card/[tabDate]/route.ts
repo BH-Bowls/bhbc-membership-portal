@@ -3,15 +3,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import {
-  getGames,
   getGameSheet,
-  getTeaRotaList,
   getClubDetails,
   getClubContacts,
-  getMembersSpreadsheetId,
-  getColumnMap,
-  getSheetsClient,
 } from '@/lib/friendlies-sheets';
+import { getFixtureByTabName, getTeaRotaList } from '@/lib/fixtures-supabase';
+import { getAllUsers } from '@/lib/members-supabase';
 import { MatchCardData, Team, ReservePlayer } from '@/lib/types/friendlies';
 
 const BHBC_PLACE_ID = 'ChIJcfipELGNdUgRmS1st4mG9X0';
@@ -37,17 +34,8 @@ export async function GET(
       type = 'main'; // main or reserves
     }
 
-    // Get game details
-    const games = await getGames();
-
-    // Find the game with this tabName (URL parameter is called tabDate but contains tabName)
-    let game = null;
-    for (const g of games) {
-      if (g.tabName === tabDate) {
-        game = g;
-        break;
-      }
-    }
+    // Get fixture details (URL parameter is called tabDate but contains tabName)
+    const game = await getFixtureByTabName(tabDate);
 
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
@@ -225,29 +213,11 @@ export async function GET(
         const teaRotaList = await getTeaRotaList();
         const teaRotaEntry = teaRotaList.find(t => t.tabName === game.tabName);
         if (teaRotaEntry && (teaRotaEntry.teaLead || teaRotaEntry.teaFirst || teaRotaEntry.teaSecond)) {
-          // Build full name lookup from Members sheet
-          const membersSpreadsheetId = getMembersSpreadsheetId();
-          const membersColMap = await getColumnMap(membersSpreadsheetId, 'Members');
-          const sheets = getSheetsClient();
-          const membersResponse = await sheets.spreadsheets.values.get({
-            spreadsheetId: membersSpreadsheetId,
-            range: 'Members!A:ZZ',
-          });
-          const membersRows = membersResponse.data.values || [];
-
-          // Build userName -> fullName lookup
+          // Build full name lookup from Postgres members
+          const allUsers = await getAllUsers();
           const fullNameLookup: Record<string, string> = {};
-          const memberUserNameCol = membersColMap['user_name'];
-          const memberFullNameCol = membersColMap['full_name'] ?? membersColMap['full_known_as'] ?? membersColMap['name'];
-          if (memberUserNameCol !== undefined && memberFullNameCol !== undefined) {
-            for (let j = 1; j < membersRows.length; j++) {
-              const memberRow = membersRows[j];
-              const memberUserName = memberRow[memberUserNameCol];
-              const memberFullName = memberRow[memberFullNameCol];
-              if (memberUserName) {
-                fullNameLookup[memberUserName.toLowerCase()] = memberFullName || memberUserName;
-              }
-            }
+          for (const u of allUsers) {
+            if (u.userName) fullNameLookup[u.userName.toLowerCase()] = u.fullName || u.userName;
           }
 
           // Helper to get full name from username

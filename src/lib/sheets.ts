@@ -226,6 +226,7 @@ export interface User {
   friendlies2023: number;
   friendlies2024: number;
   friendliesLastYear: number | string; // Can be number or "X" for manual override
+  competitionsEligibleOverride: boolean | null; // Admin-set club-competitions entry eligibility override (0032) — null = no override set, defaults to not eligible; see renewals eligibility check
   comments: string | null;
   socialEmails: boolean;
   handbookEntry: boolean;
@@ -239,6 +240,10 @@ export interface User {
   gmc: string | null; // "GMC" or blank - General Management Committee member
   profileUpdatedDate: string | null;
   handicap: number | null; // Integer 0-10, null if not set (Playing members only)
+  isMarker: boolean;
+  isWorker: boolean; // daytime worker — usually unavailable to mark day games
+  workerAdditionalInfo: string | null; // exceptions to the default 9-5 weekday assumption
+  maxGamesPerDay: number; // 1 or 2 — member-availability pre-fill preference, default 2
 
   // Renewal Email Fields
   include: string | null; // "Y" or "N" - controls whether member receives renewal emails
@@ -257,6 +262,12 @@ export interface User {
   resetTokenExpires: string | null;
   createdAt: string;
   updatedAt: string;
+
+  // Computed, Postgres-era only (undefined via this module's own getAllUsers — the
+  // Sheets/migration-script path never needed it, Gmail Labels are compute-on-read
+  // in members-supabase.ts). See specs/Phase_0_1_Migration_Plan.md's "Gmail Labels"
+  // section for the formula this reproduces.
+  gmailLabel?: string;
 
   _rowNumber?: number;
 }
@@ -604,55 +615,6 @@ export async function updateLastLogin(userName: string, success: boolean): Promi
 }
 
 /**
- * Update email sent status in Members sheet
- * Records success with date or error message
- * @param userName Username of the member
- * @param success Whether email was sent successfully
- * @param errorMessage Error message if failed
- * @param columnName Column to update (defaults to 'member_email_sent_status')
- */
-export async function updateEmailSentStatus(
-  userName: string,
-  success: boolean,
-  errorMessage?: string,
-  columnName: string = 'member_email_sent_status'
-): Promise<void> {
-  try {
-    const user = await getUserByUsername(userName);
-    if (!user || !user._rowNumber) return;
-
-    const colMap = await getColumnMap('Members');
-    const colIndex = colMap[columnName];
-
-    if (colIndex === undefined) {
-      console.error(`Column ${columnName} not found in sheet`);
-      return;
-    }
-
-    const colLetter = getColumnLetter(colIndex);
-    const sheets = getGoogleSheetsClient();
-
-    // Format: "Success. Email sent DD/MM/YYYY" or "Error: [message]"
-    const now = new Date();
-    const dateStr = `${now.getDate().toString().padStart(2, '0')}/${(now.getMonth() + 1).toString().padStart(2, '0')}/${now.getFullYear()}`;
-    const statusValue = success
-      ? `Success. Email sent ${dateStr}`
-      : `Error: ${errorMessage || 'Unknown error'}`;
-
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: getSpreadsheetId(),
-      range: `Members!${colLetter}${user._rowNumber}`,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: {
-        values: [[statusValue]]
-      }
-    });
-  } catch (error) {
-    console.error('Error updating email sent status:', error);
-  }
-}
-
-/**
  * Update a single member's handicap value in the Members sheet.
  * Prefer batchUpdateMemberHandicaps when updating multiple members at once.
  */
@@ -864,6 +826,7 @@ function parseUserRow(row: any[], rowNumber: number, colMap: { [key: string]: nu
       if (!value) return 0;
       return parseInt(value, 10) || 0;
     })(),
+    competitionsEligibleOverride: null, // Postgres-only field (0032), no Sheets equivalent
     comments: get('comments'),
     socialEmails: getBool('social_emails'),
     handbookEntry: getBool('handbook_entry'),
@@ -882,6 +845,12 @@ function parseUserRow(row: any[], rowNumber: number, colMap: { [key: string]: nu
       const parsed = parseInt(val, 10);
       return isNaN(parsed) ? null : parsed;
     })(),
+    // Markers lives on a separate sheet, not a Members-row column — not derivable here.
+    // This whole function is superseded by members-supabase.ts for live reads.
+    isMarker: false,
+    isWorker: false,
+    workerAdditionalInfo: null,
+    maxGamesPerDay: 2, // member_profiles column, not a Sheets column — not derivable here
 
     // Renewal Email Fields
     include: get('include'), // "Y" or "N" - controls who receives renewal emails
@@ -951,103 +920,6 @@ export async function logLoginAttempt(attempt: {
     });
   } catch (error) {
     console.error('Error logging login attempt:', error);
-  }
-}
-
-/**
- * Log a member email attempt to MemberEmails sheet
- * Tracks email campaign history with full audit trail
- */
-export async function logMemberEmail(email: {
-  userName: string;
-  emailAddress: string | null;
-  templateName: string;
-  subject: string;
-  success: boolean;
-  errorMessage?: string | null;
-  sentBy: string;
-  attachments?: string[];
-}): Promise<void> {
-  try {
-    const sheets = getGoogleSheetsClient();
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: getSpreadsheetId(),
-      range: 'MemberEmails!A:A',
-    });
-
-    const nextId = (response.data.values?.length || 1);
-    const now = new Date().toISOString();
-
-    // Format attachments as comma-separated list
-    const attachmentsList = email.attachments && email.attachments.length > 0
-      ? email.attachments.join(', ')
-      : '';
-
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: getSpreadsheetId(),
-      range: 'MemberEmails!A:J',
-      valueInputOption: 'USER_ENTERED',
-      requestBody: {
-        values: [[
-          nextId,
-          email.userName,
-          email.emailAddress || '',
-          email.templateName,
-          email.subject,
-          email.success ? 'Y' : 'N',
-          email.errorMessage || '',
-          email.sentBy,
-          attachmentsList,
-          now
-        ]]
-      }
-    });
-  } catch (error) {
-    console.error('Error logging member email:', error);
-  }
-}
-
-/**
- * Get recent failed login attempts (for rate limiting)
- */
-export async function getRecentFailedAttempts(
-  identifier: string,
-  ipAddress?: string
-): Promise<{ byIdentifier: number; byIp: number }> {
-  try {
-    const sheets = getGoogleSheetsClient();
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: getSpreadsheetId(),
-      range: 'LoginAttempts!A2:H',
-    });
-
-    const rows = response.data.values || [];
-    const fifteenMinutesAgo = Date.now() - (15 * 60 * 1000);
-
-    let byIdentifier = 0;
-    let byIp = 0;
-
-    for (const row of rows) {
-      const attemptIdentifier = row[1];
-      const success = row[3] === 'Y';
-      const attemptIp = row[5];
-      const attemptedAt = new Date(row[7]).getTime();
-
-      if (attemptedAt < fifteenMinutesAgo || success) continue;
-
-      if (attemptIdentifier.toLowerCase() === identifier.toLowerCase()) {
-        byIdentifier++;
-      }
-
-      if (ipAddress && attemptIp === ipAddress) {
-        byIp++;
-      }
-    }
-
-    return { byIdentifier, byIp };
-  } catch (error) {
-    console.error('Error getting recent attempts:', error);
-    return { byIdentifier: 0, byIp: 0 };
   }
 }
 

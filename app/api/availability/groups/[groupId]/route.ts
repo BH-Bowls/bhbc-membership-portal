@@ -1,5 +1,5 @@
 // app/api/availability/groups/[groupId]/route.ts
-// API endpoints for reading, updating, and archiving a single availability group
+// API endpoints for reading, updating, and deleting a single availability group
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
@@ -9,10 +9,10 @@ import {
   getGroupById,
   getGroupDetail,
   updateGroup,
-  archiveGroup,
+  deleteGroup,
   isGroupMember,
   canManageGroupMembers,
-} from '@/lib/availability-groups-sheets';
+} from '@/lib/availability-groups-supabase';
 
 // GET /api/availability/groups/[groupId]
 // Returns full group detail for the group page
@@ -134,7 +134,8 @@ export async function PUT(
 }
 
 // DELETE /api/availability/groups/[groupId]
-// Archive (soft-delete) a group
+// Permanently delete a group and everything in it (events/slots/responses/members) —
+// irreversible, the frontend must confirm with the user before calling this.
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ groupId: string }> }
@@ -155,7 +156,7 @@ export async function DELETE(
       return NextResponse.json({ error: 'Group not found' }, { status: 404 });
     }
 
-    // Access check: only group creator or Admin can archive
+    // Access check: only group creator or Admin can delete
     const userName = session.user.userName;
     const userRole = session.user.role || '';
     const isAdmin = hasRole(userRole, 'Admin');
@@ -165,12 +166,11 @@ export async function DELETE(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    // Archive the group (soft-delete — sets status to 'archived')
-    await archiveGroup(groupId);
+    await deleteGroup(groupId);
 
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[DELETE /api/availability/groups/[groupId]] Error:', error);
-    return NextResponse.json({ error: 'Failed to archive group' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to delete group' }, { status: 500 });
   }
 }

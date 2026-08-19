@@ -82,9 +82,12 @@ export type HomeAway = 'H' | 'A';
  * Used to filter games on different pages and in different management workflows
  */
 export type GameType = 'Friendly' | 'N/S A' | 'N/S B' | 'MSL' | 'JSL' | 'BL' | 'Event' | 'Test';
-export const LEAGUE_GAME_TYPES: GameType[] = ['N/S A', 'N/S B', 'MSL', 'JSL', 'BL'];
 export const ALL_GAME_TYPES: GameType[] = ['Friendly', 'N/S A', 'N/S B', 'MSL', 'JSL', 'BL', 'Event'];
 // Test type is intentionally excluded from ALL_GAME_TYPES — it is only shown to Admin role
+
+/** The 5 league GameTypes, split out for Season Planning's Leagues stage (slot generation, type filter) — kept here rather than duplicated, since this file has no Supabase dependency and is already safely runtime-imported by client components (e.g. app/fixtures/page.tsx). */
+export type LeagueGameType = 'N/S A' | 'N/S B' | 'MSL' | 'JSL' | 'BL';
+export const LEAGUE_GAME_TYPES: LeagueGameType[] = ['N/S A', 'N/S B', 'MSL', 'JSL', 'BL'];
 
 // ============================================================================
 // CORE DATA INTERFACES
@@ -96,6 +99,7 @@ export const ALL_GAME_TYPES: GameType[] = ['Friendly', 'N/S A', 'N/S B', 'MSL', 
  * Each row in the Games sheet becomes one Game object
  */
 export interface Game {
+  id?: string;                  // Fixture UUID (fixtures-supabase.ts) — preferred identifier; rowNumber below is a Sheets-era leftover the Postgres-backed API never populates
   rowNumber: number;           // Row number in Games sheet (for updates)
   date: string;                 // Game date in "YYYY-MM-DD" format
   tabDate: string;              // Short date for tab names (e.g., "25-Sep")
@@ -129,6 +133,7 @@ export interface Game {
   lockedBy: string;             // Username of captain currently editing the selection ('' if unlocked)
   lockedAt: string;             // ISO timestamp when lock was acquired ('' if unlocked)
   needsPlayers?: boolean;       // true when captain has flagged this game as needing players
+  description?: string | null;  // Free-text label for fixtures with no real club opponent (internal Events, ad-hoc games) — see 0023_rename_games_to_fixtures.sql
 }
 
 /**
@@ -435,7 +440,8 @@ export interface WithdrawRequest {
  */
 export interface ChangeStatusRequest {
   tab_name: string;    // Game tabName to update (may be empty for unopened games)
-  row_number?: number; // Row number in Games sheet (used to identify unopened games)
+  row_number?: number; // Row number in Games sheet (used to identify unopened games) — legacy, Sheets-only
+  id?: string;         // Fixture UUID (fixtures-supabase.ts) — preferred identifier, always present even before a tabName exists
   action: 'open' | 'close' | 'publish' | 'republish' | 'played' | 'cancel' | 'abandon' | 'reopen' | 'reopen-entries' | 'unpublish' | 'revert-to-selected' | 'flag-needs-players' | 'unflag-needs-players'; // Status transition action
   expected_status?: string; // Client's known current status — server rejects with 409 if it doesn't match
   bhbc_score?: number;      // Burgess Hill score (required for 'played' and 'abandon')

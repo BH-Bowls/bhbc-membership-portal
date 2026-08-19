@@ -1,13 +1,15 @@
 // src/lib/auth.ts
 // NextAuth configuration for BHBC Members Portal
 // Handles user authentication, JWT token generation, and session management
-// Uses credentials provider to authenticate against Google Sheets database
+// Uses credentials provider to authenticate against Postgres (member login).
+// Club login (a separate 'Club' role, was a Sheets-only fallback here) has been
+// removed entirely — Rowland is moving to a token-based access design instead
+// (see specs/Planning_next_year_s_fixture_contacts.md), so it was never migrated.
 
 import { NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
-import { authenticateUser } from './auth-sheets';
+import { authenticateUser } from './auth-supabase';
 import { clearColumnMapCache } from './sheets';
-import { authenticateClub } from './clubs-sheets';
 import { parseRoles } from './role-utils';
 
 /**
@@ -62,7 +64,7 @@ export const authOptions: NextAuthOptions = {
                          req?.body?.headers?.['user-agent'] ||
                          '';
 
-        // Authenticate against Google Sheets database
+        // Authenticate against Postgres (auth-supabase.ts)
         const result = await authenticateUser(
           credentials.identifier,
           credentials.password,
@@ -75,21 +77,6 @@ export const authOptions: NextAuthOptions = {
           return result.user;
         }
 
-        // Member auth failed — try club login
-        const clubResult = await authenticateClub(credentials.identifier, credentials.password);
-        if (clubResult.success && clubResult.club) {
-          return {
-            id: clubResult.club.clubId,
-            userName: clubResult.club.clubId,
-            name: clubResult.club.clubName,
-            email: '',
-            role: 'Club',
-            clubId: clubResult.club.clubId,
-            mustChangePassword: clubResult.club.mustChangePassword,
-          };
-        }
-
-        // Both failed — throw the member auth error (more informative)
         throw new Error(result.error || 'Invalid username or password');
       },
     }),
@@ -118,7 +105,6 @@ export const authOptions: NextAuthOptions = {
         token.roles = parseRoles(user.role);
         token.name = user.name;
         token.email = user.email;
-        token.clubId = user.clubId; // set for Club role, undefined otherwise
         token.mustChangePassword = user.mustChangePassword ?? false;
 
         // Store login time for absolute expiration check
@@ -162,7 +148,6 @@ export const authOptions: NextAuthOptions = {
           token.name = session.targetUser.name;
           token.role = session.targetUser.role;
           token.roles = parseRoles(session.targetUser.role);
-          token.clubId = session.targetUser.clubId ?? undefined;
           token.mustChangePassword = session.targetUser.mustChangePassword ?? false;
           token.isImpersonating = true;
           token.impersonationStartTime = Date.now();
@@ -185,7 +170,6 @@ export const authOptions: NextAuthOptions = {
           token.originalAdmin = undefined;
           token.impersonationStartTime = undefined;
           token.impersonationSessionId = undefined;
-          token.clubId = undefined;
           token.mustChangePassword = false; // admins never have temp passwords
         }
       }
@@ -238,7 +222,6 @@ export const authOptions: NextAuthOptions = {
         session.user.roles = (token.roles as string[]) ?? parseRoles(token.role as string);
         session.user.name = token.name as string;
         session.user.email = token.email as string;
-        session.user.clubId = token.clubId as string | undefined;
         session.user.mustChangePassword = (token.mustChangePassword as boolean | undefined) ?? false;
 
         // Add impersonation fields to session

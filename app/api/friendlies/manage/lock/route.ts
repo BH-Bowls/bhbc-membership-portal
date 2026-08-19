@@ -2,14 +2,27 @@
 // GET   — read current lock status (no modification)
 // POST  — acquire selection lock for a game
 // DELETE — release selection lock for a game
+//
+// Accepts either `id` (preferred — the fixture's UUID, always present) or `tab_name`
+// (fallback, resolved to an id via a lookup) — the still-Sheets-backed selection page
+// (manage/game/[tabDate]) only has tabName available, since its own game data hasn't
+// been cut over to Postgres yet.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { acquireGameLock, releaseGameLock, getGames } from '@/lib/friendlies-sheets';
+import { acquireFixtureLock, releaseFixtureLock, getFixtures } from '@/lib/fixtures-supabase';
 import { hasRole } from '@/lib/role-utils';
 
-// GET /api/friendlies/manage/lock?tab_name=...
+async function resolveId(id: string, tabName: string): Promise<string | null> {
+  if (id) return id;
+  if (!tabName) return null;
+  const games = await getFixtures();
+  const game = games.find(g => g.tabName === tabName);
+  return game?.id ?? null;
+}
+
+// GET /api/friendlies/manage/lock?id=... or ?tab_name=...
 // Returns the current lock state for a game without acquiring or releasing.
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -20,16 +33,17 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
+  const idParam = req.nextUrl.searchParams.get('id') ?? '';
   const tabName = req.nextUrl.searchParams.get('tab_name') ?? '';
-  if (!tabName) {
-    return NextResponse.json({ error: 'tab_name is required' }, { status: 400 });
+  if (!idParam && !tabName) {
+    return NextResponse.json({ error: 'id or tab_name is required' }, { status: 400 });
   }
 
   try {
-    // Fresh read — this reports the current lock holder to the manage UI, so it must
-    // not be served from the (up to 90s stale) Games cache.
-    const games = await getGames(undefined, undefined, true);
-    const game = games.find(g => g.tabName === tabName);
+    // Postgres reads are always fresh — no cache layer to bypass here (unlike the old
+    // Sheets version, which needed forceFresh to skip its up-to-90s in-memory cache).
+    const games = await getFixtures();
+    const game = idParam ? games.find(g => g.id === idParam) : games.find(g => g.tabName === tabName);
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
@@ -41,7 +55,7 @@ export async function GET(req: NextRequest) {
 }
 
 // POST /api/friendlies/manage/lock
-// Body: { tab_name: string, row_number?: number, force?: boolean }
+// Body: { id?: string, tab_name?: string, force?: boolean }
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.userName) {
@@ -52,16 +66,15 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json();
-  const tabName: string = body.tab_name ?? '';
-  const rowNumber: number | undefined = body.row_number ?? undefined;
   const force: boolean = body.force === true;
 
-  if (!tabName && !rowNumber) {
-    return NextResponse.json({ error: 'tab_name or row_number required' }, { status: 400 });
-  }
-
   try {
-    const result = await acquireGameLock(tabName, session.user.userName, rowNumber, force);
+    const id = await resolveId(body.id ?? '', body.tab_name ?? '');
+    if (!id) {
+      return NextResponse.json({ error: 'id or tab_name required' }, { status: 400 });
+    }
+
+    const result = await acquireFixtureLock(id, session.user.userName, force);
     if (!result.acquired) {
       return NextResponse.json(
         { error: 'locked', lockedBy: result.lockedBy, lockedAt: result.lockedAt },
@@ -76,7 +89,7 @@ export async function POST(req: NextRequest) {
 }
 
 // DELETE /api/friendlies/manage/lock
-// Body: { tab_name: string, row_number?: number }
+// Body: { id?: string, tab_name?: string }
 export async function DELETE(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.userName) {
@@ -87,11 +100,14 @@ export async function DELETE(req: NextRequest) {
   }
 
   const body = await req.json();
-  const tabName: string = body.tab_name ?? '';
-  const rowNumber: number | undefined = body.row_number ?? undefined;
 
   try {
-    await releaseGameLock(tabName, session.user.userName, rowNumber);
+    const id = await resolveId(body.id ?? '', body.tab_name ?? '');
+    if (!id) {
+      return NextResponse.json({ released: true }); // nothing to release
+    }
+
+    await releaseFixtureLock(id, session.user.userName);
     return NextResponse.json({ released: true });
   } catch (err: any) {
     console.error('[lock] DELETE error:', err);

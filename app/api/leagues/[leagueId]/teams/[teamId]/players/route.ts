@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
-import { setTeamPlayers } from '@/lib/leagues-sheets';
+import { setTeamPlayers } from '@/lib/leagues-supabase';
 
 export async function PUT(
   req: NextRequest,

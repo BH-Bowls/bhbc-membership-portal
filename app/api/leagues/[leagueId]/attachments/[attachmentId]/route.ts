@@ -6,7 +6,7 @@ import { authOptions } from '@/lib/auth';
 import {
   getLeagueAttachmentById,
   deleteLeagueAttachment,
-} from '@/lib/leagues-attachments-sheets';
+} from '@/lib/leagues-attachments-supabase';
 import { hasRole } from '@/lib/role-utils';
 import { deleteFileFromDrive, driveEmbedUrl, driveDownloadUrl } from '@/lib/drive';
 

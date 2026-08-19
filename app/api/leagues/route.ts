@@ -6,7 +6,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
-import { getAllLeagues, createLeague } from '@/lib/leagues-sheets';
+import { getAllLeagues, createLeague } from '@/lib/leagues-supabase';
 import type { LeagueType } from '@/types/leagues';
 
 export async function GET() {

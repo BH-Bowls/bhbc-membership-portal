@@ -6,9 +6,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getAppUrl } from '@/lib/app-url';
-import { getGames, updatePlayerEntry, updateGameCounts, removePlayerFromGameSheet, getGameSheet, updateGameSheet, getActiveEnteredCount } from '@/lib/friendlies-sheets';
+import { updatePlayerEntry, removePlayerFromGameSheet, getGameSheet, updateGameSheet, getActiveEnteredCount } from '@/lib/friendlies-sheets';
+import { getFixtures, updateFixture } from '@/lib/fixtures-supabase';
 import { hasRole } from '@/lib/role-utils';
-import { getUserByUsername } from '@/lib/sheets';
+import { getUserByUsername } from '@/lib/members-supabase';
 import { sendWithdrawnByAdminNoticeEmail, sendRemovedNoticeEmail, sendLinkedWithdrawalNoticeEmail } from '@/lib/email/friendlies';
 
 // POST handler - Removes a player from a game (Players column + game sheet row)
@@ -42,8 +43,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    // Fetch all games to verify game exists
-    const allGames = await getGames();
+    // Fetch all fixtures to verify game exists
+    const allGames = await getFixtures();
     const game = allGames.find(g => g.tabName === gameId);
 
     if (!game) {
@@ -86,7 +87,7 @@ export async function POST(request: NextRequest) {
       // Recalculate entered count, excluding the player who was just withdrawn
       try {
         const activeCount = await getActiveEnteredCount(game.tabName);
-        await updateGameCounts(game.tabName, { entered: activeCount });
+        await updateFixture(game.id, { entered: activeCount });
       } catch (countError) {
         console.error('[remove-player] Error updating entered count:', countError);
       }
@@ -113,7 +114,7 @@ export async function POST(request: NextRequest) {
 
     try {
       const activeCount = await getActiveEnteredCount(game.tabName);
-      await updateGameCounts(game.tabName, { entered: activeCount });
+      await updateFixture(game.id, { entered: activeCount });
     } catch {
       // Don't fail — player was removed successfully
     }

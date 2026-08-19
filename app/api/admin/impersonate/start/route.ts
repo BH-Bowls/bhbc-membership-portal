@@ -4,10 +4,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getUserByUsername } from '@/lib/sheets';
-import { canImpersonate } from '@/lib/buddies-sheets';
-import { logImpersonationEvent } from '@/lib/sheets';
-import { getClubLoginRecord } from '@/lib/clubs-sheets';
+import { getUserByUsername, logImpersonationEvent } from '@/lib/members-supabase';
+import { canImpersonate } from '@/lib/buddies-supabase';
 import { v4 as uuidv4 } from 'uuid';
 
 export async function POST(request: NextRequest) {
@@ -26,61 +24,8 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { targetUserName, targetClubId, targetType } = body as {
-      targetUserName?: string;
-      targetClubId?: string;
-      targetType?: 'user' | 'club';
-    };
+    const { targetUserName } = body as { targetUserName?: string };
 
-    const isClubImpersonation = targetType === 'club' && !!targetClubId;
-
-    // ── Club impersonation ────────────────────────────────────────────────────
-    if (isClubImpersonation) {
-      // Only Admin or RowlandOrganiser can impersonate clubs
-      const callerRole = session.user.role;
-      const callerRoles = callerRole.split(',').map((r: string) => r.trim());
-      if (!callerRoles.some((r: string) => r === 'Admin' || r === 'RowlandOrganiser' || r === 'superadmin')) {
-        return NextResponse.json(
-          { error: 'You do not have permission to switch to a club' },
-          { status: 403 }
-        );
-      }
-
-      const club = await getClubLoginRecord(targetClubId!);
-      if (!club) {
-        return NextResponse.json({ error: 'Club not found' }, { status: 404 });
-      }
-
-      const sessionId = uuidv4();
-
-      await logImpersonationEvent({
-        sessionId,
-        action: 'START',
-        adminUserName: session.user.userName,
-        adminName: session.user.name || '',
-        adminRole: session.user.role,
-        targetUserName: club.clubId,
-        targetName: club.clubName,
-        targetRole: 'Club',
-        ipAddress: request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || '',
-        userAgent: request.headers.get('user-agent') || '',
-      });
-
-      return NextResponse.json({
-        success: true,
-        action: 'START_IMPERSONATION',
-        targetUser: {
-          userName: club.clubId,
-          email: '',
-          name: club.clubName,
-          role: 'Club',
-          clubId: club.clubId,
-        },
-        sessionId,
-      });
-    }
-
-    // ── User impersonation (existing behaviour) ───────────────────────────────
     if (!targetUserName) {
       return NextResponse.json({ error: 'Target userName required' }, { status: 400 });
     }

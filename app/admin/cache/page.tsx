@@ -132,7 +132,6 @@ export default function CacheViewPage() {
   const { data: session } = useSession();
 
   const [usersCache, setUsersCache] = useState<CacheStats | null>(null);
-  const [friendliesCache, setFriendliesCache] = useState<CacheStats | null>(null);
   const [gamesCache, setGamesCache] = useState<CacheStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -146,7 +145,6 @@ export default function CacheViewPage() {
       if (!res.ok) throw new Error('Failed to load cache stats');
       const data = await res.json();
       setUsersCache(data.usersCache);
-      setFriendliesCache(data.friendliesMembersCache);
       setGamesCache(data.gamesCache);
     } catch (err) {
       console.error('[CacheViewPage] load error:', err);
@@ -187,8 +185,7 @@ export default function CacheViewPage() {
             <span className="font-medium">These numbers are for one server instance</span> — the lambda
             that answered this request. Production runs several, each with its own cache, so this won’t
             show app-wide totals and may read zero if this lambda hasn’t done member reads. For the full
-            picture, watch the <code className="bg-gray-100 px-1 rounded">[users-cache]</code>,{' '}
-            <code className="bg-gray-100 px-1 rounded">[friendlies members-cache]</code> and{' '}
+            picture, watch the <code className="bg-gray-100 px-1 rounded">[users-cache]</code> and{' '}
             <code className="bg-gray-100 px-1 rounded">[games-cache]</code> lines in your dev terminal or
             in Vercel → Logs.
           </p>
@@ -212,15 +209,6 @@ export default function CacheViewPage() {
           />
         )}
 
-        {friendliesCache && (
-          <CacheSection
-            title="Friendlies members cache"
-            subtitle="Used by the friendlies pages (game / games / entered-players), which read Members via their own client. TTL 24h."
-            countLabel="Members held"
-            stats={friendliesCache}
-          />
-        )}
-
         {gamesCache && (
           <CacheSection
             title="Games cache"
@@ -234,8 +222,7 @@ export default function CacheViewPage() {
           <p className="text-sm">
             Each <span className="font-medium">read served from cache</span> is one Google Sheets read
             request avoided. A hit rate near 100% means the cache is doing its job. Browsing friendlies
-            moves the friendlies members + games caches; profile/competitions/leagues/admin move the main
-            members cache.
+            moves the games cache; profile/competitions/leagues/admin move the main members cache.
           </p>
         </div>
       </div>

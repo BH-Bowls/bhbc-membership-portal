@@ -9,7 +9,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import { Navbar } from '@/components/Navbar';
 import { getButtonClasses } from '@/config/theme-helpers';
-import { TeaRotaEntry } from '@/lib/types/friendlies';
+import { TeaRotaEntry } from '@/lib/fixtures-supabase';
 import { saveDraft, restoreDraft, clearDraft } from '@/lib/form-draft-utils';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { SearchableSelect } from '@/components/SearchableSelect';
@@ -20,7 +20,7 @@ interface MemberOption {
 }
 
 interface TargetAssignment {
-  rowNumber: number;
+  id: string;
   displayDate: string;
   time: string;
   clubName: string;
@@ -36,7 +36,7 @@ interface SwapModalState {
 }
 
 interface EditedAssignments {
-  [rowNumber: number]: {
+  [id: string]: {
     teaLead: string;
     teaFirst: string;
     teaSecond: string;
@@ -158,7 +158,7 @@ export default function TeaRotaPage() {
     const initial: EditedAssignments = {};
     entries.forEach(entry => {
       if (entry.status === 'C' || entry.status === 'P') return;
-      initial[entry.rowNumber] = {
+      initial[entry.id] = {
         teaLead: entry.teaLead,
         teaFirst: entry.teaFirst,
         teaSecond: entry.teaSecond,
@@ -181,8 +181,8 @@ export default function TeaRotaPage() {
     try {
       // Collect all modified rows
       const modifiedRows = Object.entries(editedAssignments)
-        .filter(([rowNum, edited]) => {
-          const original = entries.find(e => e.rowNumber === parseInt(rowNum));
+        .filter(([id, edited]) => {
+          const original = entries.find(e => e.id === id);
           if (!original) return false;
           return (
             original.teaLead !== edited.teaLead ||
@@ -190,8 +190,8 @@ export default function TeaRotaPage() {
             original.teaSecond !== edited.teaSecond
           );
         })
-        .map(([rowNum, edited]) => ({
-          rowNumber: parseInt(rowNum),
+        .map(([id, edited]) => ({
+          id,
           teaLead: edited.teaLead,
           teaFirst: edited.teaFirst,
           teaSecond: edited.teaSecond,
@@ -224,11 +224,11 @@ export default function TeaRotaPage() {
   }
 
   // Update edited assignment
-  function updateAssignment(rowNumber: number, field: keyof EditedAssignments[number], value: string) {
+  function updateAssignment(id: string, field: keyof EditedAssignments[number], value: string) {
     setEditedAssignments(prev => ({
       ...prev,
-      [rowNumber]: {
-        ...prev[rowNumber],
+      [id]: {
+        ...prev[id],
         [field]: value,
       },
     }));
@@ -327,13 +327,13 @@ export default function TeaRotaPage() {
     try {
       // Build the request body
       const requestBody: {
-        rowNumber: number;
+        id: string;
         position: string;
         newUsername: string;
-        targetRowNumber?: number;
+        targetId?: string;
         targetPosition?: string;
       } = {
-        rowNumber: swapModal.entry.rowNumber,
+        id: swapModal.entry.id,
         position: swapModal.position,
         newUsername: swapUsername,
       };
@@ -341,7 +341,7 @@ export default function TeaRotaPage() {
       // If a target assignment is selected, include it
       if (selectedTargetIndex !== null && targetAssignments[selectedTargetIndex]) {
         const target = targetAssignments[selectedTargetIndex];
-        requestBody.targetRowNumber = target.rowNumber;
+        requestBody.targetId = target.id;
         requestBody.targetPosition = target.position;
       }
 
@@ -372,7 +372,7 @@ export default function TeaRotaPage() {
   // Get display value for tea assignment
   function getDisplayValue(entry: TeaRotaEntry, position: 'teaLead' | 'teaFirst' | 'teaSecond'): string {
     if (isEditing) {
-      return editedAssignments[entry.rowNumber]?.[position] || '';
+      return editedAssignments[entry.id]?.[position] || '';
     }
     return entry[position] || '';
   }
@@ -536,7 +536,7 @@ export default function TeaRotaPage() {
                       : null;
                     return (
                     <tr
-                      key={entry.rowNumber}
+                      key={entry.id}
                       className={
                         isLocked
                           ? 'bg-gray-50 opacity-60'
@@ -574,7 +574,7 @@ export default function TeaRotaPage() {
                               <SearchableSelect
                                 options={members}
                                 value={getDisplayValue(entry, position)}
-                                onChange={(value) => updateAssignment(entry.rowNumber, position, value)}
+                                onChange={(value) => updateAssignment(entry.id, position, value)}
                                 placeholder="Search member..."
                                 className="min-w-[140px] print:hidden"
                               />
@@ -616,7 +616,7 @@ export default function TeaRotaPage() {
                   : null;
                 return (
                 <div
-                  key={entry.rowNumber}
+                  key={entry.id}
                   className={`bg-white rounded-lg shadow p-4 ${
                     isLocked
                       ? 'border border-gray-200 opacity-60'
@@ -654,7 +654,7 @@ export default function TeaRotaPage() {
                           <SearchableSelect
                             options={members}
                             value={getDisplayValue(entry, position)}
-                            onChange={(value) => updateAssignment(entry.rowNumber, position, value)}
+                            onChange={(value) => updateAssignment(entry.id, position, value)}
                             placeholder="Search..."
                             className="w-40"
                           />
@@ -726,7 +726,7 @@ export default function TeaRotaPage() {
               <div className="space-y-2 max-h-40 overflow-y-auto border border-gray-200 rounded-lg p-2">
                 {targetAssignments.map((assignment, index) => (
                   <label
-                    key={`${assignment.rowNumber}-${assignment.position}`}
+                    key={`${assignment.id}-${assignment.position}`}
                     className={`flex items-center p-2 rounded cursor-pointer ${
                       selectedTargetIndex === index ? 'bg-blue-50 border border-blue-300' : 'hover:bg-gray-50'
                     }`}

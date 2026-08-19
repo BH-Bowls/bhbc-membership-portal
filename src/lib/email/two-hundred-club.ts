@@ -5,9 +5,9 @@
 // IMPORTANT: sends are SEQUENTIAL (await in a loop), never Promise.all — Gmail
 // rate-limits/suspends on parallel SMTP connections (see specs/CLAUDE.md).
 
-import { sendEmail } from './mailer';
-import { getUserByUsername } from '../sheets';
-import type { RecordedWinner } from '../two-hundred-club-sheets';
+import { sendEmail, withEmailLogContext } from './mailer';
+import { getUserByUsername } from '../members-supabase';
+import type { RecordedWinner } from '../two-hundred-club-supabase';
 
 function gbp(n: number): string {
   return `£${Number(n).toLocaleString('en-GB')}`;
@@ -54,7 +54,9 @@ export async function sendWinnerEmails(season: string, winners: RecordedWinner[]
       `<p>Your prize will be paid out by the club.</p>` +
       `<p>Burgess Hill Bowls Club</p>`;
 
-    const res = await sendEmail(email, subject, text, html);
+    const res = await withEmailLogContext({ userName: w.username, templateName: 'two-hundred-club-winner' }, () =>
+      sendEmail(email, subject, text, html)
+    );
     if (res.success) sent++;
   }
   return { sent };

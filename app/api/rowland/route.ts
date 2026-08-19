@@ -2,7 +2,7 @@
 // GET all Rowland Cup competitions
 
 import { NextResponse } from 'next/server';
-import { getAllRowlandComps } from '@/lib/rowland-sheets';
+import { getAllRowlandComps } from '@/lib/rowland-supabase';
 
 export async function GET() {
   try {

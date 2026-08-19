@@ -11,7 +11,7 @@ import Link from 'next/link';
 import { Navbar } from '@/components/Navbar';
 import { EmailLink, PhoneLink } from '@/components/ContactLink';
 import { getButtonClasses } from '@/config/theme-helpers';
-import { Club, ClubContact, UpdateClubRequest, UpdateContactRequest } from '@/lib/types/clubs';
+import { Club, ClubContact, UpdateClubRequest, UpdateContactRequest } from '@/lib/clubs-supabase';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { saveDraft, restoreDraft, clearDraft } from '@/lib/form-draft-utils';
 
@@ -77,7 +77,7 @@ export default function ClubDetailPage({ params }: PageProps) {
   const [savingClub, setSavingClub] = useState(false);
 
   // Contact edit states
-  const [editingContactRow, setEditingContactRow] = useState<number | null>(null);
+  const [editingContactRow, setEditingContactRow] = useState<string | null>(null);
   const [editedContact, setEditedContact] = useState<UpdateContactRequest>({});
   const [savingContact, setSavingContact] = useState(false);
 
@@ -98,7 +98,7 @@ export default function ClubDetailPage({ params }: PageProps) {
   const [deleteConfirm, setDeleteConfirm] = useState<{
     isOpen: boolean;
     type: 'club' | 'contact';
-    contactRow?: number;
+    contactRow?: string;
   }>({ isOpen: false, type: 'club' });
   const [deleting, setDeleting] = useState(false);
 
@@ -248,14 +248,14 @@ export default function ClubDetailPage({ params }: PageProps) {
       email: contact.email,
       notes: contact.notes,
     });
-    setEditingContactRow(contact._rowNumber);
+    setEditingContactRow(contact.id);
   }
 
   // Save contact changes
-  async function saveContactChanges(rowNumber: number) {
+  async function saveContactChanges(id: string) {
     setSavingContact(true);
     try {
-      const response = await fetch(`/api/clubs/${encodeURIComponent(clubName)}/contacts/${rowNumber}`, {
+      const response = await fetch(`/api/clubs/${encodeURIComponent(clubName)}/contacts/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(editedContact),
@@ -305,10 +305,10 @@ export default function ClubDetailPage({ params }: PageProps) {
   }
 
   // Delete contact
-  async function deleteContact(rowNumber: number) {
+  async function deleteContact(id: string) {
     setDeleting(true);
     try {
-      const response = await fetch(`/api/clubs/${encodeURIComponent(clubName)}/contacts/${rowNumber}`, {
+      const response = await fetch(`/api/clubs/${encodeURIComponent(clubName)}/contacts/${id}`, {
         method: 'DELETE',
       });
       if (!response.ok) {
@@ -906,8 +906,8 @@ export default function ClubDetailPage({ params }: PageProps) {
           ) : (
             <div className="space-y-4">
               {contacts.map((contact) => (
-                <div key={contact._rowNumber} className="border border-gray-200 rounded-lg p-4">
-                  {editingContactRow === contact._rowNumber ? (
+                <div key={contact.id} className="border border-gray-200 rounded-lg p-4">
+                  {editingContactRow === contact.id ? (
                     // Edit mode for contact
                     <div>
                       <div className="grid md:grid-cols-2 gap-4">
@@ -1000,7 +1000,7 @@ export default function ClubDetailPage({ params }: PageProps) {
                           Cancel
                         </button>
                         <button
-                          onClick={() => saveContactChanges(contact._rowNumber)}
+                          onClick={() => saveContactChanges(contact.id)}
                           disabled={savingContact}
                           className={getButtonClasses('primary', 'sm')}
                         >
@@ -1054,7 +1054,7 @@ export default function ClubDetailPage({ params }: PageProps) {
                             </svg>
                           </button>
                           <button
-                            onClick={() => setDeleteConfirm({ isOpen: true, type: 'contact', contactRow: contact._rowNumber })}
+                            onClick={() => setDeleteConfirm({ isOpen: true, type: 'contact', contactRow: contact.id })}
                             className="text-red-600 hover:text-red-700"
                             title="Delete"
                           >
@@ -1092,13 +1092,13 @@ export default function ClubDetailPage({ params }: PageProps) {
                 let resultEl: React.ReactNode;
                 if (f.status === 'C') {
                   resultEl = <span className="text-xs text-gray-400">Cancelled</span>;
-                } else if (f.status === 'P') {
-                  resultEl = <span className="text-xs text-gray-400">Postponed</span>;
-                } else if (f.reason?.toLowerCase().includes('abandon')) {
+                } else if (f.status === 'A' || f.reason?.toLowerCase().includes('abandon')) {
                   resultEl = <span className="text-xs text-gray-400">Abandoned</span>;
                 } else if (hasScore) {
+                  const resultColor = won ? 'text-green-600' : lost ? 'text-red-600' : 'text-gray-600';
                   resultEl = (
-                    <span className={`text-sm font-semibold tabular-nums ${won ? 'text-green-600' : lost ? 'text-red-600' : 'text-gray-600'}`}>
+                    <span className={`text-sm font-semibold tabular-nums ${resultColor}`}>
+                      {won ? 'W' : lost ? 'L' : 'D'}{' '}
                       {f.bhbcScore} – {f.opponentScore}
                     </span>
                   );

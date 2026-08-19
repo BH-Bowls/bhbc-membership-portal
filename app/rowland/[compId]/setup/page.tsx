@@ -11,10 +11,10 @@ import type { RowlandComp, RowlandMatch, RowlandMatchStatus, RowlandTeamRef } fr
 import { ROWLAND_COMP_NAMES, ROWLAND_ROUND_LABELS } from '@/types/rowland';
 import { getInputClasses } from '@/config/theme-helpers';
 
-interface Club { clubId: string; clubName: string; }
+interface Club { clubName: string; }
 
 // ============================================================================
-// BRACKET MATH (mirrors computeRowlandBracket in rowland-sheets.ts)
+// BRACKET MATH (mirrors computeRowlandBracket in src/types/rowland.ts)
 // ============================================================================
 
 interface BracketInfo {
@@ -61,14 +61,14 @@ function ClubSelect({ team, clubs, placeholder = 'Search club…', onSave }: Clu
   // Sync the club name input whenever the selected club changes
   useEffect(() => {
     setInputText(team?.clubName ?? '');
-  }, [team?.clubId, team?.clubName]);
+  }, [team?.clubName]);
 
   // Reset the letter only when a DIFFERENT club is selected (not on every save)
-  // Using clubId as dep prevents the useEffect from wiping a typed-but-unsaved letter
+  // Using clubName as dep prevents the useEffect from wiping a typed-but-unsaved letter
   useEffect(() => {
     setLetter(team?.teamLetter ?? '');
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [team?.clubId]);
+  }, [team?.clubName]);
 
   // Close on outside click, resetting input to the current team name
   useEffect(() => {
@@ -93,7 +93,7 @@ function ClubSelect({ team, clubs, placeholder = 'Search club…', onSave }: Clu
     setInputText(club.clubName);
     setSaving(true);
     try {
-      await onSave({ clubId: club.clubId, clubName: club.clubName, teamLetter: letter.toUpperCase().slice(0, 1) });
+      await onSave({ clubName: club.clubName, teamLetter: letter.toUpperCase().slice(0, 1) });
     } finally {
       setSaving(false);
     }
@@ -155,7 +155,7 @@ function ClubSelect({ team, clubs, placeholder = 'Search club…', onSave }: Clu
             )}
             {filtered.map(club => (
               <button
-                key={club.clubId}
+                key={club.clubName}
                 onMouseDown={e => { e.preventDefault(); handleSelect(club); }}
                 className="w-full text-left px-3 py-1.5 text-sm hover:bg-blue-50"
               >
@@ -214,7 +214,7 @@ export default function RowlandSetupPage({ params }: { params: Promise<{ compId:
   });
 
   const role        = session?.user?.role ?? '';
-  const isCommittee = role !== 'Member' && role !== 'Club' && role !== '';
+  const isCommittee = role !== 'Member' && role !== '';
 
   useEffect(() => {
     if (session && !isCommittee) router.replace('/rowland');

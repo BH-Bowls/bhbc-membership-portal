@@ -1,7 +1,7 @@
 // src/lib/banking-match.ts
 // Banking reconciliation matching logic
 
-import type { Payment, RenewalForBanking } from './banking-sheets';
+import type { Payment, RenewalForBanking } from './banking-supabase';
 
 // ============================================================================
 // Constants

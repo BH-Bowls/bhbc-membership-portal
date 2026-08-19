@@ -1,23 +1,15 @@
 // app/api/clubs/[clubName]/contacts/route.ts
-// POST — add a contact to a club (committee or own Club role)
+// POST — add a contact to a club (committee only)
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { addContact } from '@/lib/clubs-sheets';
-import { CreateContactRequest } from '@/lib/types/clubs';
+import { addContact, CreateContactRequest } from '@/lib/clubs-supabase';
 import { isMember } from '@/lib/role-utils';
 import { sendClubChangeNotification } from '@/lib/email/club-change-notifier';
 
 interface RouteParams {
   params: Promise<{ clubName: string }>;
-}
-
-function isOwnClub(session: any, clubName: string): boolean {
-  return (
-    session?.user?.role === 'Club' &&
-    (session?.user?.name ?? '').toLowerCase() === clubName.toLowerCase()
-  );
 }
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
@@ -32,11 +24,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const decodedClubName = decodeURIComponent(clubName);
     const role = session.user.role ?? '';
 
-    if (role === 'Club') {
-      if (!isOwnClub(session, decodedClubName)) {
-        return NextResponse.json({ error: 'You can only edit your own club' }, { status: 403 });
-      }
-    } else if (isMember(role)) {
+    if (isMember(role)) {
       return NextResponse.json({ error: 'Only committee members can add contacts' }, { status: 403 });
     }
 

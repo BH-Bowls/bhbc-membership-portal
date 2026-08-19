@@ -4,7 +4,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, addPlayerToGameSheet, updatePlayerEntry } from '@/lib/friendlies-sheets';
+import { addPlayerToGameSheet, updatePlayerEntry } from '@/lib/friendlies-sheets';
+import { getFixtureByTabName } from '@/lib/fixtures-supabase';
 import { AddPlayerRequest } from '@/lib/types/friendlies';
 import { hasRole } from '@/lib/role-utils';
 
@@ -36,18 +37,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Fetch all games from Games sheet. Fresh read — status gates whether the player
-    // can be added, so it must not come from the Games cache.
-    const games = await getGames(undefined, undefined, true);
-
-    // Search for the game by tabName
-    let game = null;
-    for (const g of games) {
-      if (g.tabName === tab_name) {
-        game = g;
-        break;
-      }
-    }
+    // Fetch the fixture. Postgres reads are always fresh — status gates whether the
+    // player can be added, so no cache layer to worry about here.
+    const game = await getFixtureByTabName(tab_name);
 
     // Return 404 if game doesn't exist
     if (!game) {

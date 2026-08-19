@@ -147,3 +147,21 @@ export function formatGameDate(
 ): string {
   return parseUKDate(dateStr).toLocaleDateString('en-GB', options);
 }
+
+/**
+ * Format a date string as "28th February 2027" — full month name, ordinal day.
+ * Intl.DateTimeFormat has no ordinal-suffix option, so the day and suffix are built
+ * separately and combined with the locale's own month/year formatting.
+ * @param dateStr - Date string in any format parseUKDate supports (UK, ISO, formatted)
+ * @returns e.g. "28th February 2027"
+ */
+export function formatOrdinalDate(dateStr: string): string {
+  const date = parseUKDate(dateStr);
+  const day = date.getDate();
+  const suffix =
+    day % 10 === 1 && day !== 11 ? 'st' :
+    day % 10 === 2 && day !== 12 ? 'nd' :
+    day % 10 === 3 && day !== 13 ? 'rd' : 'th';
+  const monthYear = date.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+  return `${day}${suffix} ${monthYear}`;
+}

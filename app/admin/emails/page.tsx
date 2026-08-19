@@ -30,17 +30,12 @@ interface ProgressEvent {
   failed?: number;
 }
 
-type RecipientType = 'members' | 'club-contacts';
-
 export default function SendMemberEmailsPage() {
   const { data: session, status } = useSession();
 
   const [currentStep, setCurrentStep] = useState(1);
 
-  // Step 1: Recipients
-  const [recipientType, setRecipientType] = useState<RecipientType>('members');
-
-  // Step 2: Template
+  // Step 2: Template (step 1, recipients, is fixed to "all members" — see help text below)
   const [emailTemplates, setEmailTemplates] = useState<EmailTemplate[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState('');
   const [loadingTemplates, setLoadingTemplates] = useState(false);
@@ -75,10 +70,7 @@ export default function SendMemberEmailsPage() {
   async function loadTemplates() {
     setLoadingTemplates(true);
     try {
-      const url = recipientType === 'club-contacts'
-        ? '/api/admin/emails/templates?type=club'
-        : '/api/admin/emails/templates';
-      const res = await fetch(url);
+      const res = await fetch('/api/admin/emails/templates');
       const data = await res.json();
       if (res.ok) {
         setEmailTemplates(data.emailTemplates || []);
@@ -96,15 +88,9 @@ export default function SendMemberEmailsPage() {
   async function loadRecipients() {
     setLoadingRecipients(true);
     try {
-      if (recipientType === 'club-contacts') {
-        const res = await fetch('/api/admin/emails/club-contacts');
-        const data = await res.json();
-        if (res.ok) setRecipientCount(data.count || 0);
-      } else {
-        const res = await fetch('/api/admin/emails/recipients');
-        const data = await res.json();
-        if (res.ok) setRecipientCount(data.count);
-      }
+      const res = await fetch('/api/admin/emails/recipients');
+      const data = await res.json();
+      if (res.ok) setRecipientCount(data.count);
     } catch {
       alert('Failed to load recipients');
     } finally {
@@ -117,26 +103,15 @@ export default function SendMemberEmailsPage() {
       const abortController = new AbortController();
       abortControllerRef.current = abortController;
 
-      let response: Response;
-
-      if (recipientType === 'club-contacts') {
-        response = await fetch('/api/admin/emails/club-contacts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ templateId: selectedTemplate }),
-          signal: abortController.signal,
-        });
-      } else {
-        response = await fetch('/api/admin/emails/send', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            templateId: selectedTemplate,
-            attachmentIds: Array.from(selectedAttachments),
-          }),
-          signal: abortController.signal,
-        });
-      }
+      const response = await fetch('/api/admin/emails/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          templateId: selectedTemplate,
+          attachmentIds: Array.from(selectedAttachments),
+        }),
+        signal: abortController.signal,
+      });
 
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
@@ -184,7 +159,6 @@ export default function SendMemberEmailsPage() {
 
   function handleNext() {
     if (currentStep === 1) {
-      // Load templates for the chosen recipient type
       setEmailTemplates([]);
       setSelectedTemplate('');
       loadTemplates();
@@ -223,7 +197,6 @@ export default function SendMemberEmailsPage() {
 
   function handleStartOver() {
     setCurrentStep(1);
-    setRecipientType('members');
     setSelectedTemplate('');
     setSelectedAttachments(new Set());
     setRecipientCount(0);
@@ -273,7 +246,7 @@ export default function SendMemberEmailsPage() {
       <Navbar userName={session.user?.name ?? undefined} userRole={session.user?.role ?? undefined} />
       <div className="container mx-auto p-6 max-w-4xl">
         <h1 className="text-3xl font-bold mb-2 text-gray-900">Send Emails</h1>
-        <p className="text-gray-600 mb-6">Send emails to members or club contacts</p>
+        <p className="text-gray-600 mb-6">Send emails to members</p>
 
         {/* Progress Indicator */}
         {!isSending && !isComplete && (
@@ -303,26 +276,10 @@ export default function SendMemberEmailsPage() {
         {/* Step 1: Recipients */}
         {currentStep === 1 && !isSending && !isComplete && (
           <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-xl font-bold mb-4 text-gray-900">Step 1: Select Recipients</h2>
-            <div className="space-y-3 mb-6">
-              <label className={`flex items-start p-4 border-2 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors`}
-                style={{ borderColor: recipientType === 'members' ? '#3b82f6' : '#e5e7eb' }}>
-                <input type="radio" name="recipientType" value="members" checked={recipientType === 'members'}
-                  onChange={() => setRecipientType('members')} className="mt-1 mr-3" />
-                <div>
-                  <div className="font-semibold text-gray-900">All members</div>
-                  <div className="text-sm text-gray-600 mt-1">Members with Include = Y in the Members sheet</div>
-                </div>
-              </label>
-              <label className={`flex items-start p-4 border-2 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors`}
-                style={{ borderColor: recipientType === 'club-contacts' ? '#3b82f6' : '#e5e7eb' }}>
-                <input type="radio" name="recipientType" value="club-contacts" checked={recipientType === 'club-contacts'}
-                  onChange={() => setRecipientType('club-contacts')} className="mt-1 mr-3" />
-                <div>
-                  <div className="font-semibold text-gray-900">Club contacts</div>
-                  <div className="text-sm text-gray-600 mt-1">Contacts with Include = Y in the Match Day Contacts spreadsheet</div>
-                </div>
-              </label>
+            <h2 className="text-xl font-bold mb-4 text-gray-900">Step 1: Recipients</h2>
+            <div className="p-4 border-2 border-blue-500 rounded-lg mb-6">
+              <div className="font-semibold text-gray-900">All members</div>
+              <div className="text-sm text-gray-600 mt-1">Members with Include = Y in the Members sheet</div>
             </div>
             <div className="flex justify-end">
               <button onClick={handleNext} className={getButtonClasses('primary', 'md')}>Next</button>
@@ -337,7 +294,7 @@ export default function SendMemberEmailsPage() {
             {loadingTemplates ? (
               <p className="text-gray-600">Loading templates...</p>
             ) : emailTemplates.length === 0 ? (
-              <p className="text-red-600">No email templates found{recipientType === 'club-contacts' ? ' — add HTML files to src/lib/email/templates/Club Emails/Email Templates/' : ''}</p>
+              <p className="text-red-600">No email templates found</p>
             ) : (
               <div className="space-y-3">
                 {emailTemplates.map(template => (
@@ -351,7 +308,7 @@ export default function SendMemberEmailsPage() {
                     </div>
                     <button
                       type="button"
-                      onClick={e => { e.preventDefault(); window.open(`/api/admin/emails/templates/preview?id=${encodeURIComponent(template.id)}&type=${recipientType === 'club-contacts' ? 'club' : 'member'}`, '_blank'); }}
+                      onClick={e => { e.preventDefault(); window.open(`/api/admin/emails/templates/preview?id=${encodeURIComponent(template.id)}&type=member`, '_blank'); }}
                       className="ml-4 shrink-0 text-xs px-3 py-1 border border-gray-300 rounded hover:bg-gray-100 text-gray-600"
                     >
                       Preview
@@ -371,9 +328,7 @@ export default function SendMemberEmailsPage() {
         {currentStep === 3 && !isSending && !isComplete && (
           <div className="bg-white rounded-lg shadow p-6">
             <h2 className="text-xl font-bold mb-4 text-gray-900">Step 3: Attachments</h2>
-            {recipientType === 'club-contacts' ? (
-              <p className="text-gray-600 italic">Attachments are not available for club contact emails.</p>
-            ) : attachmentTemplates.length === 0 ? (
+            {attachmentTemplates.length === 0 ? (
               <p className="text-gray-600">No attachment templates available</p>
             ) : (
               <>
@@ -403,38 +358,31 @@ export default function SendMemberEmailsPage() {
             <div className="space-y-4">
               <div className="border-b pb-4">
                 <h3 className="font-semibold text-gray-700 mb-2">Recipients</h3>
-                <p className="text-gray-900">
-                  {recipientType === 'members' ? 'All members (Include = Y)' : 'Club contacts (Include = Y)'}
-                </p>
+                <p className="text-gray-900">All members (Include = Y)</p>
               </div>
               <div className="border-b pb-4">
                 <h3 className="font-semibold text-gray-700 mb-2">Email Template</h3>
                 <p className="text-gray-900">{emailTemplates.find(t => t.id === selectedTemplate)?.name}</p>
                 <p className="text-sm text-gray-600 mt-1">Subject: {emailTemplates.find(t => t.id === selectedTemplate)?.subject}</p>
               </div>
-              {recipientType === 'members' && (
-                <div className="border-b pb-4">
-                  <h3 className="font-semibold text-gray-700 mb-2">Attachments</h3>
-                  {selectedAttachments.size === 0 ? (
-                    <p className="text-gray-600 italic">No attachments selected</p>
-                  ) : (
-                    <ul className="list-disc list-inside space-y-1">
-                      {attachmentTemplates.filter(a => selectedAttachments.has(a.id)).map(a => (
-                        <li key={a.id} className="text-gray-900">{a.name}</li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              )}
+              <div className="border-b pb-4">
+                <h3 className="font-semibold text-gray-700 mb-2">Attachments</h3>
+                {selectedAttachments.size === 0 ? (
+                  <p className="text-gray-600 italic">No attachments selected</p>
+                ) : (
+                  <ul className="list-disc list-inside space-y-1">
+                    {attachmentTemplates.filter(a => selectedAttachments.has(a.id)).map(a => (
+                      <li key={a.id} className="text-gray-900">{a.name}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
               <div>
                 <h3 className="font-semibold text-gray-700 mb-2">Will send to</h3>
                 {loadingRecipients ? (
                   <p className="text-gray-600">Loading...</p>
                 ) : (
-                  <p className="text-2xl font-bold text-blue-500">{recipientCount} {recipientType === 'members' ? 'members' : 'contacts'}</p>
-                )}
-                {recipientType === 'club-contacts' && (
-                  <p className="text-sm text-gray-500 mt-1">Contacts with both an email address and a Club ID set</p>
+                  <p className="text-2xl font-bold text-blue-500">{recipientCount} members</p>
                 )}
               </div>
             </div>

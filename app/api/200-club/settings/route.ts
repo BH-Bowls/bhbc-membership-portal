@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
-import { saveSettings, MAX_PRIZES, DEFAULT_NUMBERS } from '@/lib/two-hundred-club-sheets';
+import { saveSettings, MAX_PRIZES, DEFAULT_NUMBERS } from '@/lib/two-hundred-club-supabase';
 
 export async function POST(request: NextRequest) {
   try {

@@ -75,43 +75,29 @@ export default function HomePage() {
                 Quick Start
               </h3>
 
-              {session.user.role === 'Club' ? (
-                /* Club login quick start */
-                <div className="text-sm text-gray-600 space-y-2">
-                  <p>
-                    Use the menu to access the <strong>Rowland Cup</strong> — your draw, match schedule, and results — and <strong>Clubs</strong> to find contact details for others in your section.
-                  </p>
-                  <p>
-                    Once you have played a match, submit your result directly from the Rowland Cup page. You can also update your own club&apos;s contact details from the <strong>Clubs</strong> section.
-                  </p>
-                </div>
-              ) : (
-                <>
-                  {/* Message for narrow screens (mobile) */}
-                  <div className="md:hidden text-sm text-gray-600 space-y-2">
-                    <p>
-                      Tap the menu (<span className="inline-flex items-center font-medium text-gray-900">
-                        <svg className="h-4 w-4 mx-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                        </svg>
-                      </span>) in the top right to get around. Check <strong>Friendlies</strong> for upcoming matches, <strong>Competitions</strong> for your draw, and <strong>Leagues</strong> to enter or follow club leagues.
-                    </p>
-                    <p>
-                      Not sure where something is? Tap <strong>Help</strong> in the menu.
-                    </p>
-                  </div>
+              {/* Message for narrow screens (mobile) */}
+              <div className="md:hidden text-sm text-gray-600 space-y-2">
+                <p>
+                  Tap the menu (<span className="inline-flex items-center font-medium text-gray-900">
+                    <svg className="h-4 w-4 mx-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                    </svg>
+                  </span>) in the top right to get around. Check <strong>Friendlies</strong> for upcoming matches, <strong>Competitions</strong> for your draw, and <strong>Leagues</strong> to enter or follow club leagues.
+                </p>
+                <p>
+                  Not sure where something is? Tap <strong>Help</strong> in the menu.
+                </p>
+              </div>
 
-                  {/* Message for wide screens (desktop) */}
-                  <div className="hidden md:block text-sm text-gray-600 space-y-2">
-                    <p>
-                      Use the navigation bar above to get around. Check <strong>Friendlies</strong> for upcoming matches, <strong>Competitions</strong> for your draw, and <strong>Leagues</strong> to enter or follow club leagues. Click your profile icon in the top right to manage your profile and settings.
-                    </p>
-                    <p>
-                      Not sure where something is? Open <strong>Help</strong> from the menu.
-                    </p>
-                  </div>
-                </>
-              )}
+              {/* Message for wide screens (desktop) */}
+              <div className="hidden md:block text-sm text-gray-600 space-y-2">
+                <p>
+                  Use the navigation bar above to get around. Check <strong>Friendlies</strong> for upcoming matches, <strong>Competitions</strong> for your draw, and <strong>Leagues</strong> to enter or follow club leagues. Click your profile icon in the top right to manage your profile and settings.
+                </p>
+                <p>
+                  Not sure where something is? Open <strong>Help</strong> from the menu.
+                </p>
+              </div>
             </div>
           </div>
         </div>

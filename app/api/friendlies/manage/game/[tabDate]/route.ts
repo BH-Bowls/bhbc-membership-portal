@@ -2,7 +2,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames, getGameSheet, getEnteredPlayers } from '@/lib/friendlies-sheets';
+import { getGameSheet, getEnteredPlayers } from '@/lib/friendlies-sheets';
+import { getFixtureByTabName, getFixtures } from '@/lib/fixtures-supabase';
 import { hasRole } from '@/lib/role-utils';
 
 export async function GET(
@@ -26,17 +27,8 @@ export async function GET(
     // Note: Despite the param name, this is actually the tabName (sheet name)
     const tabName = decodeURIComponent(tabDate);
 
-    // Get game details
-    const games = await getGames();
-
-    // Find the game with this tabName
-    let game = null;
-    for (const g of games) {
-      if (g.tabName === tabName) {
-        game = g;
-        break;
-      }
-    }
+    // Get fixture details
+    const game = await getFixtureByTabName(tabName);
 
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
@@ -108,7 +100,8 @@ export async function GET(
     let pairedTabName = '';
     let pairedClubName = '';
     if (isLinked(game.paired)) {
-      for (const g of games) {
+      const seasonGames = await getFixtures();
+      for (const g of seasonGames) {
         if (isLinked(g.paired) && g.date === game.date && g.tabName !== game.tabName) {
           pairedTabName = g.tabName;
           pairedClubName = g.clubName;

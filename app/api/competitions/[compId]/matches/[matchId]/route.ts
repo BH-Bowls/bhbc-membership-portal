@@ -10,7 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getCompetitionMatches, updateMatch, propagateWinnerToNextRound, getMemberInfoMap, getNextRoundMatch, resetMatch } from '@/lib/competitions-sheets';
+import { getCompetitionMatches, updateMatch, propagateWinnerToNextRound, getMemberInfoMap, getNextRoundMatch, resetMatch } from '@/lib/competitions-supabase';
 import { clearDiaryCache } from '@/lib/home-cache';
 import { hasRole } from '@/lib/role-utils';
 
@@ -81,7 +81,7 @@ export async function PATCH(
           return NextResponse.json({ error: 'Only committee can correct a result' }, { status: 403 });
         }
 
-        const { score1, score2, winnerSide, status: newStatus, playedDate, marker } = body;
+        const { score1, score2, winnerSide, status: newStatus, playedDate, playedTime, marker } = body;
 
         // Resolve the corrected winner from the new score / walkover
         let newWinnerSide: 1 | 2;
@@ -126,6 +126,7 @@ export async function PATCH(
             winnerSide: newWinnerSide,
             status: 'Complete',
             playedDate: playedDate || match.playedDate || correctToday,
+            ...(playedTime !== undefined && { playedTime }),
             ...(marker !== undefined && { marker }),
           });
         } else {
@@ -135,6 +136,7 @@ export async function PATCH(
             winnerSide: newWinnerSide,
             status: 'Walkover',
             playedDate: playedDate || match.playedDate || correctToday,
+            ...(playedTime !== undefined && { playedTime }),
             ...(marker !== undefined && { marker }),
           });
         }
@@ -189,28 +191,28 @@ export async function PATCH(
         );
       }
 
-      // Members may only send playedDate and/or marker — reject any other fields
+      // Members may only send playedDate, playedTime, and/or marker — reject any other fields
       const bodyKeys = Object.keys(body);
       for (let i = 0; i < bodyKeys.length; i++) {
         // Check each submitted key against the whitelist of allowed member fields
-        if (bodyKeys[i] !== 'playedDate' && bodyKeys[i] !== 'marker') {
+        if (bodyKeys[i] !== 'playedDate' && bodyKeys[i] !== 'playedTime' && bodyKeys[i] !== 'marker') {
           return NextResponse.json(
-            { error: 'Members may only update the planned date and marker for their match' },
+            { error: 'Members may only update the planned date/time and marker for their match' },
             { status: 403 }
           );
         }
       }
 
-      // At least one of playedDate or marker must be supplied
-      if (body.playedDate === undefined && body.marker === undefined) {
+      // At least one of playedDate, playedTime, or marker must be supplied
+      if (body.playedDate === undefined && body.playedTime === undefined && body.marker === undefined) {
         return NextResponse.json(
-          { error: 'playedDate or marker is required' },
+          { error: 'playedDate, playedTime, or marker is required' },
           { status: 400 }
         );
       }
 
       // Build the updates object to write to the sheet
-      const memberUpdates: { playedDate?: string; marker?: string } = {};
+      const memberUpdates: { playedDate?: string; playedTime?: string; marker?: string } = {};
 
       // Validate and accept playedDate if provided
       if (body.playedDate !== undefined) {
@@ -240,6 +242,25 @@ export async function PATCH(
           }
 
           memberUpdates.playedDate = playedDate;
+        }
+      }
+
+      // Validate and accept playedTime if provided
+      if (body.playedTime !== undefined) {
+        const playedTime = body.playedTime;
+
+        // Empty string clears an arranged time entered in error
+        if (playedTime === '') {
+          memberUpdates.playedTime = '';
+        } else {
+          const timeRegex = /^\d{2}:\d{2}$/;
+          if (!timeRegex.test(playedTime)) {
+            return NextResponse.json(
+              { error: 'playedTime must be a valid time in HH:MM format' },
+              { status: 400 }
+            );
+          }
+          memberUpdates.playedTime = playedTime;
         }
       }
 
@@ -280,7 +301,7 @@ export async function PATCH(
 
     // ── Committee path (Captain / Admin — full access) ────────────────────────
     // Extract all allowed committee fields from the request body
-    const { score1, score2, winnerSide, status, playedDate, side1Usernames, side2Usernames, playByDate, marker } = body;
+    const { score1, score2, winnerSide, status, playedDate, playedTime, side1Usernames, side2Usernames, playByDate, marker } = body;
 
     // Substitution is committee-only
     if ((side1Usernames || side2Usernames) && !committee) {
@@ -340,6 +361,7 @@ export async function PATCH(
         winnerSide: resolvedWinnerSide,
         status: 'Complete',
         playedDate: playedDate || today,
+        ...(playedTime !== undefined && { playedTime }),
         ...(marker !== undefined && { marker }),
       });
     } else if (status === 'Walkover') {
@@ -348,6 +370,7 @@ export async function PATCH(
         winnerSide: resolvedWinnerSide,
         status: 'Walkover',
         playedDate: playedDate || today,
+        ...(playedTime !== undefined && { playedTime }),
         ...(marker !== undefined && { marker }),
       });
     } else {
@@ -360,6 +383,7 @@ export async function PATCH(
       if (side2Usernames !== undefined) partialUpdates.side2Usernames = side2Usernames;
       if (playByDate !== undefined) partialUpdates.playByDate = playByDate;
       if (playedDate !== undefined) partialUpdates.playedDate = playedDate;
+      if (playedTime !== undefined) partialUpdates.playedTime = playedTime;
       if (marker !== undefined) partialUpdates.marker = marker;
 
       // Only call updateMatch if there is actually something to write
@@ -377,6 +401,10 @@ export async function PATCH(
         console.error('[propagateWinner] Error:', err);
       }
     }
+
+    // Invalidate the diary cache so the home page reflects the updated result/date/marker
+    // (the other three write paths in this route already do this — this one was missing it)
+    clearDiaryCache(currentUsername);
 
     return NextResponse.json({ success: true });
   } catch (error) {

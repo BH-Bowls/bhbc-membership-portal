@@ -5,7 +5,7 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getTeaRotaList } from '@/lib/friendlies-sheets';
+import { getTeaRotaList } from '@/lib/fixtures-supabase';
 
 /**
  * GET /api/tea-rota

@@ -6,7 +6,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
-import { getAllApplications } from '@/lib/applications-sheets';
+import { getAllApplications } from '@/lib/applications-supabase';
 
 // GET handler — returns every application in the sheet
 export async function GET() {

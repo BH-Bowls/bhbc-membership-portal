@@ -5,16 +5,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { swapTeaAssignment, getTeaRotaEntry } from '@/lib/friendlies-sheets';
-import { getUserByUsername } from '@/lib/sheets';
+import { swapTeaAssignment, getTeaRotaEntry } from '@/lib/fixtures-supabase';
+import { getUserByUsername } from '@/lib/members-supabase';
 import { sendTemplateEmail } from '@/lib/email/mailer';
 
 interface SwapRequest {
-  rowNumber: number;
+  id: string;
   position: 'teaLead' | 'teaFirst' | 'teaSecond';
   newUsername: string;
   // Target assignment (the other user's assignment to swap with)
-  targetRowNumber?: number;
+  targetId?: string;
   targetPosition?: 'teaLead' | 'teaFirst' | 'teaSecond';
 }
 
@@ -32,11 +32,11 @@ export async function POST(request: NextRequest) {
     }
 
     const body: SwapRequest = await request.json();
-    const { rowNumber, position, newUsername, targetRowNumber, targetPosition } = body;
+    const { id, position, newUsername, targetId, targetPosition } = body;
 
-    if (!rowNumber || !position || !newUsername) {
+    if (!id || !position || !newUsername) {
       return NextResponse.json(
-        { error: 'Missing required fields: rowNumber, position, newUsername' },
+        { error: 'Missing required fields: id, position, newUsername' },
         { status: 400 }
       );
     }
@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Get the current tea rota entry to verify the current user is assigned
-    const currentEntry = await getTeaRotaEntry(rowNumber);
+    const currentEntry = await getTeaRotaEntry(id);
     if (!currentEntry) {
       return NextResponse.json(
         { error: 'Tea rota entry not found' },
@@ -71,17 +71,17 @@ export async function POST(request: NextRequest) {
 
     // Get the target entry details before the swap (if recipient had an assignment)
     let targetEntry = null;
-    if (targetRowNumber) {
-      targetEntry = await getTeaRotaEntry(targetRowNumber);
+    if (targetId) {
+      targetEntry = await getTeaRotaEntry(targetId);
     }
 
     // Perform the swap
     const updatedEntry = await swapTeaAssignment(
-      rowNumber,
+      id,
       position,
       currentUsername,
       newUsername,
-      targetRowNumber,
+      targetId,
       targetPosition
     );
 

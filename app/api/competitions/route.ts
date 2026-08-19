@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getAllCompetitions } from '@/lib/competitions-sheets';
+import { getAllCompetitions } from '@/lib/competitions-supabase';
 
 export async function GET(request: NextRequest) {
   try {

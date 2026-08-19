@@ -217,12 +217,15 @@ export default function CompetitionBracketPage({
     }
   }
 
-  // ── Planned date / marker save ─────────────────────────────────────────────
+  // ── Planned date/time / marker save ────────────────────────────────────────
   // Used by both PlannedDateDialog (members) and ScoreDialog date-only path (committee).
   // marker is optional — only passed for singles comps.
-  async function handleSavePlannedDate(matchId: string, date: string, marker?: string) {
-    // Build the request body — always include date; include marker when provided
+  async function handleSavePlannedDate(matchId: string, date: string, time?: string, marker?: string) {
+    // Build the request body — always include date; include time/marker when provided
     const patchBody: Record<string, string> = { playedDate: date };
+    if (time !== undefined) {
+      patchBody.playedTime = time;
+    }
     if (marker !== undefined) {
       patchBody.marker = marker;
     }
@@ -241,9 +244,9 @@ export default function CompetitionBracketPage({
   }
 
   // Called from ScoreDialog onSaveDateOnly — sync wrapper (dialog handles its own close)
-  function handleSaveDateOnly(matchId: string, date: string, marker: string) {
+  function handleSaveDateOnly(matchId: string, date: string, time: string, marker: string) {
     setSaving(true);
-    handleSavePlannedDate(matchId, date, marker)
+    handleSavePlannedDate(matchId, date, time, marker)
       .then(() => setActiveMatch(null))
       .catch(() => {})
       .finally(() => setSaving(false));

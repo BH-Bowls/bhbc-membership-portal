@@ -8,13 +8,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import {
-  getGames,
   getPlayerEntries,
   getColumnMap,
   getSheetsClient,
   getFriendliesSpreadsheetId,
-  getMembersSpreadsheetId,
 } from '@/lib/friendlies-sheets';
+import { getFixtures } from '@/lib/fixtures-supabase';
+import { getAllUsers } from '@/lib/members-supabase';
 import { hasRole } from '@/lib/role-utils';
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -73,7 +73,7 @@ export async function GET(request: NextRequest) {
     // Fetch player entries and games in parallel
     const [entries, games] = await Promise.all([
       getPlayerEntries(targetUser),
-      getGames(),
+      getFixtures(),
     ]);
 
     // Build a fast tabName → game lookup
@@ -158,21 +158,12 @@ async function buildPlayerList(): Promise<{ userName: string; fullName: string }
   const userNameColIndex = colMap['user_name'] ?? colMap['full_name'] ?? colMap['name'] ?? 0;
   const usesUserName = colMap['user_name'] !== undefined;
 
-  // Build fullName lookup from Members sheet when Players sheet uses userName
+  // Build fullName lookup from Postgres members when Players sheet uses userName
   const fullNameLookup = new Map<string, string>();
   if (usesUserName) {
-    const membersId = getMembersSpreadsheetId();
-    const membersColMap = await getColumnMap(membersId, 'Members');
-    const membersResp = await sheets.spreadsheets.values.get({
-      spreadsheetId: membersId,
-      range: 'Members!A:ZZ',
-    });
-    const membersRows = membersResp.data.values || [];
-    const uCol = membersColMap['user_name'] ?? 0;
-    const fCol = membersColMap['full_name'] ?? membersColMap['name'] ?? 1;
-    for (let i = 1; i < membersRows.length; i++) {
-      const r = membersRows[i];
-      if (r[uCol] && r[fCol]) fullNameLookup.set(r[uCol], r[fCol]);
+    const allUsers = await getAllUsers();
+    for (const u of allUsers) {
+      if (u.userName && u.fullName) fullNameLookup.set(u.userName, u.fullName);
     }
   }
 

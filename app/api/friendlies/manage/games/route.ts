@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGames } from '@/lib/friendlies-sheets';
+import { getFixtures } from '@/lib/fixtures-supabase';
 import { GameType } from '@/lib/types/friendlies';
 import { hasRole } from '@/lib/role-utils';
 import { parseNormalizedDate } from '@/lib/date-utils';
@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
     const typeFilter: GameType[] = isAdmin ? ['Friendly', 'Test'] : ['Friendly'];
 
     // Fetch games from Games sheet filtered by type
-    const games = await getGames(undefined, typeFilter);
+    const games = await getFixtures(undefined, typeFilter);
 
     // Sort games by date descending (most recent first for easier management)
     // game.date is DD/MM/YYYY — must use parseNormalizedDate, not new Date()
