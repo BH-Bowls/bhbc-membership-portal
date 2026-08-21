@@ -321,11 +321,14 @@ async function fetchFriendliesItems(userName: string, todayStr: string): Promise
       const tabName = getGameCol(row, 'tab_name');
       const clubName = getGameCol(row, 'club_name');
       const clubSuffix = getGameCol(row, 'club_suffix');
-      // Same resolution as friendlies-sheets.ts's own Games parser: a blank H/A cell
-      // means Home (the sheet's implicit default), not "unknown" — matching that
-      // here too, since the diary previously only recognised an explicit 'H' and
-      // left the label off entirely for the (common) blank-means-Home case.
-      const homeAwayRaw = getGameCol(row, 'home_away') || getGameCol(row, 'h_a') || 'H';
+      // The real Games sheet header is "H/A" — getColumnMap only lowercases and turns
+      // whitespace into underscores, it doesn't touch slashes, so the real column-map
+      // key is 'h/a', not 'home_away' or 'h_a' (confirmed against the live header row;
+      // both guesses always missed, which is why every fixture silently fell back to
+      // Home below regardless of its actual H/A value). A blank H/A cell still means
+      // Home (the sheet's implicit default), not "unknown" — that part of the fallback
+      // stays intended, only the wrong lookup key was the bug.
+      const homeAwayRaw = getGameCol(row, 'h/a') || 'H';
       const homeAway = homeAwayRaw.trim().toUpperCase() === 'A' ? 'A' : 'H';
       const needsPlayers = getGameCol(row, 'needs_players').toUpperCase() === 'Y';
 
