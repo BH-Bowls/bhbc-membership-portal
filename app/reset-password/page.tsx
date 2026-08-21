@@ -4,12 +4,11 @@
 'use client';
 
 import { useState, Suspense, useEffect } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { getButtonClasses, getLinkClasses, getInputClasses } from '@/config/theme-helpers';
 
 function ResetPasswordForm() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const token = searchParams.get('token');
 
@@ -30,6 +29,9 @@ function ResetPasswordForm() {
   const validatePassword = (pwd: string): string | null => {
     if (!pwd) {
       return 'Please enter a password';
+    }
+    if (pwd.length < 8) {
+      return 'Password must be at least 8 characters';
     }
     return null;
   };
@@ -76,11 +78,6 @@ function ResetPasswordForm() {
       }
 
       setSuccess(true);
-
-      // Redirect to login after 3 seconds
-      setTimeout(() => {
-        router.push('/login');
-      }, 3000);
     } catch (err) {
       setError('An unexpected error occurred. Please try again.');
       setIsLoading(false);
@@ -118,7 +115,6 @@ function ResetPasswordForm() {
                 </h3>
                 <div className="mt-2 text-sm text-green-700">
                   <p>You can now log in with your new password.</p>
-                  <p className="mt-2">Redirecting to login page...</p>
                 </div>
               </div>
             </div>

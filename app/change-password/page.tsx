@@ -4,12 +4,14 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useSession } from 'next-auth/react';
+import { useSession, signOut } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { useNavbarConfig } from '@/lib/navbar-config';
+import { getLinkClasses } from '@/config/theme-helpers';
 
 export default function ChangePasswordPage() {
-  const { data: session, status, update } = useSession();
+  const { data: session, status } = useSession();
   const router = useRouter();
 
   // Check if admin is managing another user
@@ -57,6 +59,16 @@ export default function ChangePasswordPage() {
     setError('');
     setSuccess(false);
 
+    // Validate new password length. This used to rely on the inputs' native
+    // minLength/required attributes, but those only fire on a real <form> submit —
+    // the button that calls this now lives in the persistent navbar (a plain
+    // onClick, not a submit button inside this form), so they were silently inert.
+    const minLength = isAdminManaging ? 1 : 8;
+    if (newPassword.length < minLength) {
+      setError(`New password must be at least ${minLength} characters`);
+      return;
+    }
+
     // Validate passwords match
     if (newPassword !== confirmPassword) {
       setError('New passwords do not match');
@@ -89,26 +101,20 @@ export default function ChangePasswordPage() {
 
       if (response.ok && data.success) {
         // Password changed successfully
-        setSuccess(true);
         setCurrentPassword('');
         setNewPassword('');
         setConfirmPassword('');
+        setSuccess(true);
 
-        // Clear mustChangePassword flag from the JWT so middleware no longer intercepts
-        await update({
-          action: 'REFRESH_USER_DATA',
-          userData: {
-            role: session?.user?.role,
-            name: session?.user?.name,
-            email: session?.user?.email,
-            mustChangePassword: false,
-          },
-        });
-
-        // Force a full page reload so the updated JWT is read fresh by middleware
-        setTimeout(() => {
-          window.location.href = '/';
-        }, 2000);
+        if (!isAdminManaging) {
+          // Self-service change: sign out rather than trying to keep the current
+          // session valid and the navbar (Save/Cancel buttons, disabled) in some
+          // in-between state — same "success banner + return to login" pattern as
+          // forgot-password/reset-password, just reached from inside the app.
+          await signOut({ redirect: false });
+        }
+        // else: admin is managing someone else's password while impersonating —
+        // stays on this page, logged in as themselves, banner shown inline.
       } else {
         // Show error message
         setError(data.error || 'Failed to change password');
@@ -126,24 +132,32 @@ export default function ChangePasswordPage() {
     router.push('/');
   };
 
-  useNavbarConfig({
-    hasUnsavedChanges,
-    actionButtons: {
-      primary: {
-        label: isAdminManaging ? 'Set Password' : 'Change Password',
-        onClick: handleSubmit,
-        loading: isSubmitting,
-        disabled: success,
-        variant: 'primary' as const,
-      },
-      secondary: isForcedChange ? undefined : {
-        label: 'Cancel',
-        onClick: handleCancel,
-        disabled: isSubmitting,
-        variant: 'secondary' as const,
-      },
-    },
-  });
+  // Self-service success is shown as a standalone "return to login" screen (matching
+  // forgot-password/reset-password), not the normal form + navbar action buttons.
+  const showSuccessScreen = success && !isAdminManaging;
+
+  useNavbarConfig(
+    showSuccessScreen
+      ? { showLogoOnly: true }
+      : {
+          hasUnsavedChanges,
+          actionButtons: {
+            primary: {
+              label: isAdminManaging ? 'Set Password' : 'Change Password',
+              onClick: handleSubmit,
+              loading: isSubmitting,
+              disabled: success,
+              variant: 'primary' as const,
+            },
+            secondary: isForcedChange ? undefined : {
+              label: 'Cancel',
+              onClick: handleCancel,
+              disabled: isSubmitting,
+              variant: 'secondary' as const,
+            },
+          },
+        }
+  );
 
   // Show loading state while checking session
   if (status === 'loading') {
@@ -152,6 +166,47 @@ export default function ChangePasswordPage() {
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
           <p className="mt-4 text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Shown regardless of session state — checked before the !session redirect below
+  // since a successful self-service change signs the user out, so `session` will
+  // clear shortly after and would otherwise bounce this straight to /login.
+  if (showSuccessScreen) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-md w-full space-y-8">
+          <div>
+            <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
+              Password Changed
+            </h2>
+          </div>
+
+          <div className="rounded-md bg-green-50 p-4">
+            <div className="flex">
+              <div className="flex-shrink-0">
+                <svg className="h-5 w-5 text-green-400" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                </svg>
+              </div>
+              <div className="ml-3">
+                <h3 className="text-sm font-medium text-green-800">
+                  Your password has been changed successfully.
+                </h3>
+                <p className="mt-2 text-sm text-green-700">
+                  Please log in again with your new password.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="text-center">
+            <Link href="/login" className={getLinkClasses('primary')}>
+              Back to login
+            </Link>
+          </div>
         </div>
       </div>
     );
@@ -343,7 +398,7 @@ export default function ChangePasswordPage() {
                       </div>
                       <div className="ml-3">
                         <p className="text-sm text-green-800">
-                          Password changed successfully! Redirecting...
+                          Password changed successfully.
                         </p>
                       </div>
                     </div>
@@ -357,6 +412,7 @@ export default function ChangePasswordPage() {
               <div className="mt-4 text-sm text-gray-600">
                 <p>Password requirements:</p>
                 <ul className="list-disc list-inside mt-2 space-y-1">
+                  <li>At least 8 characters</li>
                   <li>Must be different from your current password</li>
                 </ul>
               </div>

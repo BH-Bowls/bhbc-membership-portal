@@ -84,6 +84,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Admins setting a temporary password for someone else can use a short one;
+    // everyone else (including a forced change on their own account) needs 8+.
+    const minLength = isAdminManaging ? 1 : 8;
+    if (newPassword.length < minLength) {
+      return NextResponse.json(
+        { error: `New password must be at least ${minLength} characters` },
+        { status: 400 }
+      );
+    }
+
     // Check that new password is different from current (if current password provided)
     if (currentPassword && currentPassword === newPassword) {
       return NextResponse.json(
