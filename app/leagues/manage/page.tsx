@@ -6,7 +6,6 @@
 import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
 import type { League, LeagueStatus, LeagueType } from '@/types/leagues';
 
 const STATUS_STYLES: Record<LeagueStatus, string> = {
@@ -74,7 +73,6 @@ export default function LeagueManagePage() {
   if (status === 'loading') {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar userRole="" />
         <div className="text-center py-20 text-gray-400">Loading…</div>
       </div>
     );
@@ -82,7 +80,6 @@ export default function LeagueManagePage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={session?.user?.name ?? undefined} userRole={role} />
 
       <div className="container mx-auto px-4 py-8 max-w-4xl">
         <div className="flex items-center justify-between mb-6">

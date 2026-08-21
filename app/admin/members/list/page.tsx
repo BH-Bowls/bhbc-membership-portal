@@ -8,7 +8,6 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { Navbar } from '@/components/Navbar';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { getButtonClasses, getInputClasses, getCardClasses } from '@/config/theme-helpers';
 
@@ -124,7 +123,6 @@ export default function MembersListPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={userName} userRole={userRole} />
 
       <main className="max-w-3xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
         <Link href="/admin/members" className="text-sm text-gray-700 mb-2 inline-block hover:text-gray-900">← Member Management</Link>

@@ -8,7 +8,6 @@
 
 import React, { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
-import { Navbar } from '@/components/Navbar';
 import { RouterBackLink } from '@/components/RouterBackLink';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { getButtonClasses, getBadgeClasses, getAlertClasses } from '@/config/theme-helpers';
@@ -188,7 +187,6 @@ export default function AdminLogsPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
-      <Navbar userName={displayName} userRole={role} />
 
       <div className="container mx-auto px-4 py-8 max-w-4xl">
         <div className="mb-4">

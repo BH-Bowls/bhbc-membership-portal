@@ -8,7 +8,7 @@ import { useEffect, useState, useCallback, Suspense } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { Navbar } from '@/components/Navbar';
+import { useNavbarConfig } from '@/lib/navbar-config';
 import { Game, GameType, ALL_GAME_TYPES } from '@/lib/types/friendlies';
 import { hasRole } from '@/lib/role-utils';
 
@@ -164,15 +164,12 @@ function FixturesPageInner() {
   const typeFilterOptions: ('All' | GameType)[] = ['All', ...ALL_GAME_TYPES];
   const activeYear = seasons.find((s) => s.isActive)?.year ?? 0;
 
+  useNavbarConfig({ showLogoOnly: isGuest });
+
   if (status === 'loading') return null;
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar
-        userName={session?.user?.name ?? undefined}
-        userRole={userRole}
-        showLogoOnly={isGuest}
-      />
 
       <main className="max-w-5xl mx-auto px-4 py-6">
         {/* Header */}

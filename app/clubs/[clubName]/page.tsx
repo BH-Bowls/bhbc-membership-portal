@@ -8,7 +8,7 @@ import { useEffect, useState, use } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { Navbar } from '@/components/Navbar';
+import { useNavbarConfig } from '@/lib/navbar-config';
 import { EmailLink, PhoneLink } from '@/components/ContactLink';
 import { getButtonClasses } from '@/config/theme-helpers';
 import { Club, ClubContact, UpdateClubRequest, UpdateContactRequest } from '@/lib/clubs-supabase';
@@ -351,10 +351,25 @@ export default function ClubDetailPage({ params }: PageProps) {
     return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}`;
   };
 
+  useNavbarConfig({
+    showLogoOnly: !session,
+    actionButtons: (session && isEditingClub) ? {
+      primary: {
+        label: 'Save',
+        onClick: handleSaveClubChanges,
+        loading: savingClub,
+      },
+      secondary: {
+        label: 'Cancel',
+        onClick: handleCancelEdit,
+        disabled: savingClub,
+      },
+    } : undefined,
+  });
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar userName={session?.user?.name ?? undefined} userRole={session?.user?.role ?? undefined} showLogoOnly={!session} />
         <div className="container mx-auto px-4 py-8 max-w-4xl">
           <div className="text-center py-12">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
@@ -368,7 +383,6 @@ export default function ClubDetailPage({ params }: PageProps) {
   if (error || !club) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar userName={session?.user?.name ?? undefined} userRole={session?.user?.role ?? undefined} showLogoOnly={!session} />
         <div className="container mx-auto px-4 py-8 max-w-4xl">
           <div className="text-center py-12 bg-white rounded-lg shadow">
             <p className="text-red-600">{error || 'Club not found'}</p>
@@ -401,32 +415,9 @@ export default function ClubDetailPage({ params }: PageProps) {
     }
   }
 
-  // Build navbar action buttons - only when editing
-  const getNavbarActionButtons = () => {
-    if (!isEditingClub) return undefined;
-
-    return {
-      primary: {
-        label: 'Save',
-        onClick: handleSaveClubChanges,
-        loading: savingClub,
-      },
-      secondary: {
-        label: 'Cancel',
-        onClick: handleCancelEdit,
-        disabled: savingClub,
-      },
-    };
-  };
-
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar
-        userName={session?.user?.name ?? undefined}
-        userRole={session?.user?.role ?? undefined}
-        actionButtons={session ? getNavbarActionButtons() : undefined}
-        showLogoOnly={!session}
-      />
+
 
       <div className="container mx-auto px-4 py-8 max-w-4xl">
         {/* Header */}

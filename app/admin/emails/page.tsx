@@ -3,7 +3,6 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useSession } from 'next-auth/react';
-import { Navbar } from '@/components/Navbar';
 import { getButtonClasses } from '@/config/theme-helpers';
 
 interface EmailTemplate {
@@ -215,7 +214,6 @@ export default function SendMemberEmailsPage() {
   if (status === 'loading') {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar />
         <div className="container mx-auto p-6"><p>Loading...</p></div>
       </div>
     );
@@ -224,7 +222,6 @@ export default function SendMemberEmailsPage() {
   if (!session) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar />
         <div className="container mx-auto p-6"><p className="text-red-600">Please log in to access this page.</p></div>
       </div>
     );
@@ -233,7 +230,6 @@ export default function SendMemberEmailsPage() {
   if (session.user?.role !== 'Admin') {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar userName={session.user?.name ?? undefined} userRole={session.user?.role ?? undefined} />
         <div className="container mx-auto p-6"><p className="text-red-600">Access denied. Admin privileges required.</p></div>
       </div>
     );
@@ -243,7 +239,6 @@ export default function SendMemberEmailsPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={session.user?.name ?? undefined} userRole={session.user?.role ?? undefined} />
       <div className="container mx-auto p-6 max-w-4xl">
         <h1 className="text-3xl font-bold mb-2 text-gray-900">Send Emails</h1>
         <p className="text-gray-600 mb-6">Send emails to members</p>

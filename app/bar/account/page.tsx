@@ -6,7 +6,6 @@
 
 import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
-import { Navbar } from '@/components/Navbar';
 import type { BarLedgerEntry } from '@/lib/bar-supabase';
 
 const fmt = (pence: number) => `£${(pence / 100).toFixed(2)}`;
@@ -34,7 +33,6 @@ export default function MyBarAccountPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={session?.user?.name ?? undefined} userRole={session?.user?.role ?? undefined} />
       <div className="container mx-auto px-4 py-8 max-w-lg">
         <h1 className="text-2xl font-bold text-gray-900 mb-1">My Bar Account</h1>
         <p className="text-gray-600 text-sm mb-6">Your prepaid cash balance at the bar.</p>

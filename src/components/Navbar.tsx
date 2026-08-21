@@ -13,6 +13,7 @@ import { getNavItemClasses, getProfileIconClasses, getButtonClasses } from '@/co
 import { VersionDisplay } from './VersionDisplay';
 import { checkForUnsavedChanges, clearAllDrafts, getUnsavedChangesSummary } from '@/lib/form-draft-utils';
 import { ConfirmDialog } from './ConfirmDialog';
+import { useNavbarConfigValue, type NavbarActionButton as ActionButton } from '@/lib/navbar-config';
 
 interface SubMenuItem {
   name: string;
@@ -37,29 +38,7 @@ interface NavItem {
   subItemGroups?: SubMenuGroup[];
 }
 
-interface ActionButton {
-  label: string;
-  onClick: () => void;
-  icon?: string;
-  loading?: boolean;
-  disabled?: boolean;
-  variant?: 'primary' | 'secondary' | 'danger';
-}
-
-interface NavbarProps {
-  userName?: string;
-  userRole?: string;
-  hasUnsavedChanges?: boolean;
-  showLogoOnly?: boolean;
-  isTokenMode?: boolean;
-  guestButtons?: React.ReactNode;
-  actionButtons?: {
-    primary?: ActionButton;
-    secondary?: ActionButton;
-  };
-}
-
-export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogoOnly = false, isTokenMode = false, guestButtons, actionButtons }: NavbarProps) {
+export function Navbar() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
   // Which category is expanded within a two-level (subItemGroups) dropdown —
@@ -71,6 +50,22 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
   const profileDropdownRef = useRef<HTMLDivElement>(null);
   const pathname = usePathname();
   const router = useRouter();
+
+  // Identity comes straight from the session — no longer passed down as props, since
+  // every caller was just forwarding its own useSession() call anyway.
+  const { data: session } = useSession();
+  const userName = session?.user?.name ?? undefined;
+  const userRole = session?.user?.role ?? undefined;
+
+  // Page-level customization (action buttons, guest mode, etc.) registered via
+  // useNavbarConfig() from whichever page is currently mounted.
+  const {
+    hasUnsavedChanges = false,
+    showLogoOnly = false,
+    isTokenMode = false,
+    guestButtons,
+    actionButtons,
+  } = useNavbarConfigValue();
 
   // Confirmation dialog state
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -103,8 +98,7 @@ export function Navbar({ userName, userRole, hasUnsavedChanges = false, showLogo
     return () => window.removeEventListener('drafts-changed', handler);
   }, []);
 
-  // Get session for impersonation state
-  const { data: session } = useSession();
+  // Impersonation state/actions (reads the same session internally)
   const {
     isImpersonating,
     originalAdmin,

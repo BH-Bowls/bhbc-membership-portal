@@ -6,7 +6,7 @@
 import { use, useEffect, useState, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
+import { useNavbarConfig } from '@/lib/navbar-config';
 import { BracketView } from '@/components/competitions/BracketView';
 import { RowlandMatchDialog } from '@/components/rowland/RowlandMatchDialog';
 import { EmailLink, PhoneLink } from '@/components/ContactLink';
@@ -265,11 +265,10 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
     ? rawMatches.find((m) => m.matchId === activeMatch.matchId) ?? null
     : null;
 
+  useNavbarConfig({ showLogoOnly: isGuest, guestButtons: ROWLAND_GUEST_BUTTONS });
+
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="print:hidden">
-        <Navbar userName={session?.user?.name ?? undefined} userRole={role} showLogoOnly={isGuest} guestButtons={ROWLAND_GUEST_BUTTONS} />
-      </div>
 
       <div className="container mx-auto px-4 py-6 max-w-full">
         {/* Header */}

@@ -7,7 +7,6 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
-import { Navbar } from '@/components/Navbar';
 import { getCardClasses, getBadgeClasses } from '@/config/theme-helpers';
 
 // Member Management hub page
@@ -49,7 +48,6 @@ export default function MembersHubPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={userName} userRole={userRole} />
 
       <main className="max-w-3xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
         <h1 className="text-2xl font-bold text-gray-900 mb-1">Member Management</h1>

@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
+import { useNavbarConfig } from '@/lib/navbar-config';
 import type { RowlandComp, RowlandCompStatus } from '@/types/rowland';
 import { ROWLAND_COMP_NAMES } from '@/types/rowland';
 
@@ -124,14 +124,10 @@ export default function RowlandPage() {
     }
   }
 
+  useNavbarConfig({ showLogoOnly: isGuest, guestButtons: ROWLAND_GUEST_BUTTONS });
+
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar
-        userName={session?.user?.name ?? undefined}
-        userRole={role}
-        showLogoOnly={isGuest}
-        guestButtons={ROWLAND_GUEST_BUTTONS}
-      />
 
       <div className="container mx-auto px-4 py-8 max-w-4xl">
         <div className="flex items-center justify-between mb-6">

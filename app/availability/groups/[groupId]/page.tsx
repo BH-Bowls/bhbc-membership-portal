@@ -7,7 +7,6 @@ import React, { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
 import { useSessionRefresh } from '@/hooks/useSessionRefresh';
 import {
   getButtonClasses,
@@ -426,7 +425,6 @@ export default function GroupPage({
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
-      <Navbar userName={displayName} userRole={role} />
 
       <div className="container mx-auto px-4 py-8 max-w-3xl">
 

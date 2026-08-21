@@ -1,7 +1,6 @@
 'use client';
 
 import { useSession } from 'next-auth/react';
-import { Navbar } from '@/components/Navbar';
 import { getBadgeClasses } from '@/config/theme-helpers';
 import { useSessionRefresh } from '@/hooks/useSessionRefresh';
 import { AnnouncementsPanel } from '@/components/AnnouncementsPanel';
@@ -35,7 +34,6 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={session.user?.name ?? undefined} userRole={session.user?.role ?? undefined} />
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">

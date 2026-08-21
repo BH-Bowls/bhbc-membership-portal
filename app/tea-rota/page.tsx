@@ -7,7 +7,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
-import { Navbar } from '@/components/Navbar';
+import { useNavbarConfig } from '@/lib/navbar-config';
 import { getButtonClasses } from '@/config/theme-helpers';
 import { TeaRotaEntry } from '@/lib/fixtures-supabase';
 import { saveDraft, restoreDraft, clearDraft } from '@/lib/form-draft-utils';
@@ -428,15 +428,13 @@ export default function TeaRotaPage() {
     window.print();
   }
 
+  useNavbarConfig({
+    actionButtons: isGuest ? undefined : getNavbarActionButtons(),
+    showLogoOnly: isGuest,
+  });
+
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar
-        userName={session?.user?.name ?? undefined}
-        userRole={session?.user?.role ?? undefined}
-        actionButtons={isGuest ? undefined : getNavbarActionButtons()}
-        showLogoOnly={isGuest}
-      />
-
       <div className="container mx-auto px-4 py-8 max-w-6xl">
         {/* Page header */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6 print:mb-4">

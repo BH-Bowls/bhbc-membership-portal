@@ -13,7 +13,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
 import { useSession } from 'next-auth/react';
 import { GameWithUserStatus, FriendliesBuddy } from '@/lib/types/friendlies';
-import { Navbar } from '@/components/Navbar';
+import { useNavbarConfig } from '@/lib/navbar-config';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import Link from 'next/link';
 import { getButtonClasses } from '@/config/theme-helpers';
@@ -515,10 +515,10 @@ export default function FriendliesPage() {
   // Render UI
   // ============================================================================
 
+  useNavbarConfig({ showLogoOnly: isGuest });
+
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Navigation bar with user info and role */}
-      <Navbar userName={session?.user.name ?? undefined} userRole={session?.user.role ?? undefined} showLogoOnly={isGuest} />
 
       <div className="container mx-auto px-4 py-8 max-w-6xl">
         {/* Page header with title and optional Manage button for Captains/Admins */}

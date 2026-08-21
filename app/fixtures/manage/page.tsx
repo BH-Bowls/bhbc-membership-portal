@@ -7,7 +7,6 @@ import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Navbar } from '@/components/Navbar';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { GameType, ALL_GAME_TYPES } from '@/lib/types/friendlies';
 import { Fixture as Game } from '@/lib/fixtures-supabase';
@@ -503,10 +502,6 @@ export default function FixturesManagePage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar
-        userName={session?.user?.name ?? undefined}
-        userRole={userRole}
-      />
 
       <main className="max-w-6xl mx-auto px-4 py-6">
         {/* Header */}

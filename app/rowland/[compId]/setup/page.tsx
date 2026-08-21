@@ -6,7 +6,6 @@
 import { use, useEffect, useState, useRef, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
 import type { RowlandComp, RowlandMatch, RowlandMatchStatus, RowlandTeamRef } from '@/types/rowland';
 import { ROWLAND_COMP_NAMES, ROWLAND_ROUND_LABELS } from '@/types/rowland';
 import { getInputClasses } from '@/config/theme-helpers';
@@ -331,7 +330,6 @@ export default function RowlandSetupPage({ params }: { params: Promise<{ compId:
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={session?.user?.name ?? undefined} userRole={role} />
 
       <div className="container mx-auto px-4 py-8 max-w-2xl">
         <div className="mb-6">

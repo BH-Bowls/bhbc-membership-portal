@@ -3,10 +3,10 @@
 
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
+import { useNavbarConfig } from '@/lib/navbar-config';
 
 export default function ChangePasswordPage() {
   const { data: session, status, update } = useSession();
@@ -31,6 +31,15 @@ export default function ChangePasswordPage() {
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  // Scroll to top when a success/error banner appears — the submit button lives in
+  // the sticky navbar so it's reachable while scrolled down, but the banner itself
+  // renders at the top of the page content and would otherwise go unseen.
+  useEffect(() => {
+    if (success || error) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [success, error]);
 
   // Admin option to mark the new password as temporary (force change on next login)
   const [forceChangeOnNextLogin, setForceChangeOnNextLogin] = useState(true);
@@ -117,6 +126,25 @@ export default function ChangePasswordPage() {
     router.push('/');
   };
 
+  useNavbarConfig({
+    hasUnsavedChanges,
+    actionButtons: {
+      primary: {
+        label: isAdminManaging ? 'Set Password' : 'Change Password',
+        onClick: handleSubmit,
+        loading: isSubmitting,
+        disabled: success,
+        variant: 'primary' as const,
+      },
+      secondary: isForcedChange ? undefined : {
+        label: 'Cancel',
+        onClick: handleCancel,
+        disabled: isSubmitting,
+        variant: 'secondary' as const,
+      },
+    },
+  });
+
   // Show loading state while checking session
   if (status === 'loading') {
     return (
@@ -137,26 +165,6 @@ export default function ChangePasswordPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar
-        userName={session.user.name ?? undefined}
-        userRole={session.user.role ?? undefined}
-        hasUnsavedChanges={hasUnsavedChanges}
-        actionButtons={{
-          primary: {
-            label: isAdminManaging ? 'Set Password' : 'Change Password',
-            onClick: handleSubmit,
-            loading: isSubmitting,
-            disabled: success,
-            variant: 'primary' as const,
-          },
-          secondary: isForcedChange ? undefined : {
-            label: 'Cancel',
-            onClick: handleCancel,
-            disabled: isSubmitting,
-            variant: 'secondary' as const,
-          },
-        }}
-      />
 
       <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         <div className="px-4 py-6 sm:px-0">

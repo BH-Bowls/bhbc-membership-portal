@@ -6,7 +6,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
 import type { League, LeagueStatus } from '@/types/leagues';
 import { isCommitteeMember } from '@/lib/role-utils';
 
@@ -93,10 +92,6 @@ export default function LeaguesPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar
-        userName={session?.user?.name ?? undefined}
-        userRole={role}
-      />
 
       <div className="container mx-auto px-4 py-8 max-w-4xl">
         <h1 className="text-3xl font-bold text-gray-900 mb-6">Club Leagues</h1>

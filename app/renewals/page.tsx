@@ -6,7 +6,7 @@
 import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
+import { useNavbarConfig } from '@/lib/navbar-config';
 import { hasRole } from '@/lib/role-utils';
 import { getMemberTypeDisplay, getMemberTypeOptions, isPlayer } from '@/lib/member-type-utils';
 import { saveDraft, restoreDraft, clearDraft } from '@/lib/form-draft-utils';
@@ -135,6 +135,15 @@ export default function RenewalsPage() {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   }, [error]);
+
+  // Scroll to top on successful save too — the Save button lives in the sticky navbar
+  // so it's reachable while scrolled down, but the success view/banner renders at the
+  // top of the page content and would otherwise go unseen.
+  useEffect(() => {
+    if (isSubmitted) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [isSubmitted]);
 
   const loadRenewalData = async () => {
     try {
@@ -386,6 +395,23 @@ export default function RenewalsPage() {
     return true;
   };
 
+  useNavbarConfig({
+    actionButtons: isEditing ? {
+      primary: {
+        label: editedRenewal?.renewingMembership ? 'Submit Renewal' : 'Save',
+        onClick: handleSave,
+        loading: isSaving,
+        variant: 'primary' as const,
+      },
+      secondary: {
+        label: 'Cancel',
+        onClick: handleCancel,
+        disabled: isSaving,
+        variant: 'secondary' as const,
+      },
+    } : undefined,
+  });
+
   if (status === 'loading' || isLoading || !profile || !renewal) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -407,7 +433,6 @@ export default function RenewalsPage() {
   if (renewal.renewalsClosed && !isAdmin && !isImpersonating) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar userName={session?.user?.name ?? undefined} userRole={session?.user?.role ?? undefined} />
         <main className="max-w-3xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
           <div className="bg-white shadow rounded-lg p-8 text-center">
             <p className="text-gray-700 text-lg">
@@ -431,8 +456,6 @@ export default function RenewalsPage() {
 
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar userName={session?.user?.name ?? undefined} userRole={session?.user?.role ?? undefined} />
-
         <main className="max-w-3xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
           <div className="bg-white shadow-lg rounded-lg overflow-hidden">
             <div className="bg-green-50 px-6 py-4 border-b border-green-100">
@@ -538,25 +561,6 @@ export default function RenewalsPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar
-        userName={session?.user?.name ?? undefined}
-        userRole={session?.user?.role ?? undefined}
-        actionButtons={isEditing ? {
-          primary: {
-            label: editedRenewal?.renewingMembership ? 'Submit Renewal' : 'Save',
-            onClick: handleSave,
-            loading: isSaving,
-            variant: 'primary' as const,
-          },
-          secondary: {
-            label: 'Cancel',
-            onClick: handleCancel,
-            disabled: isSaving,
-            variant: 'secondary' as const,
-          },
-        } : undefined}
-      />
-
       {/* Main Content */}
       <main className="max-w-4xl mx-auto py-6 sm:px-6 lg:px-8">
         {/* Error Message */}

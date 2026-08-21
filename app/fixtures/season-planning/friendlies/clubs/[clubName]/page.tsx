@@ -12,7 +12,6 @@ import { useEffect, useState, use } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Navbar } from '@/components/Navbar';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { SeasonPlanningCalendar } from '@/components/SeasonPlanningCalendar';
 import { hasRole } from '@/lib/role-utils';
@@ -148,7 +147,6 @@ export default function ClubInfoPage({ params }: PageProps) {
   if (!session || !canAccess) return null;
   if (loading) return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={session.user.name || undefined} userRole={role} />
       <div className="container mx-auto px-4 py-8 max-w-3xl text-center text-gray-700">Loading…</div>
     </div>
   );
@@ -260,7 +258,6 @@ export default function ClubInfoPage({ params }: PageProps) {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={session.user.name || undefined} userRole={role} />
 
       <div className="container mx-auto px-4 py-8 max-w-3xl">
         <div className="flex items-center justify-between mb-2">

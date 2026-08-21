@@ -7,7 +7,6 @@
 import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
-import { Navbar } from '@/components/Navbar';
 import { useSessionRefresh } from '@/hooks/useSessionRefresh';
 import { getButtonClasses, getBadgeClasses, getAlertClasses } from '@/config/theme-helpers';
 import type { AvailabilityGroupSummary } from '@/types/availability';
@@ -94,7 +93,6 @@ export default function AvailabilityHubPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
-      <Navbar userName={displayName} userRole={role} />
 
       <div className="container mx-auto px-4 py-8 max-w-4xl">
 

@@ -6,7 +6,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
-import { Navbar } from '@/components/Navbar';
+import { useNavbarConfig } from '@/lib/navbar-config';
 import { MonthCalendar } from '@/components/sweeping-rota/MonthCalendar';
 import { PatternEntryModal } from '@/components/sweeping-rota/PatternEntryModal';
 import { ConfirmAddModal } from '@/components/sweeping-rota/ConfirmAddModal';
@@ -479,13 +479,10 @@ export default function SweepingRotaPage() {
     return memberLookup[cancelUserName] || cancelUserName;
   };
 
+  useNavbarConfig({ showLogoOnly: isGuest });
+
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar
-        userName={session?.user?.name || ''}
-        userRole={session?.user?.role || ''}
-        showLogoOnly={isGuest}
-      />
 
       <main className="max-w-4xl mx-auto px-4 py-6">
         {/* Header */}

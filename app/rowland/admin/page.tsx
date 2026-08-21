@@ -11,7 +11,6 @@
 import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
 import type { RowlandComp, RowlandCompStatus } from '@/types/rowland';
 import { ROWLAND_COMP_NAMES } from '@/types/rowland';
 
@@ -160,7 +159,6 @@ export default function RowlandAdminPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={session?.user?.name ?? undefined} userRole={role} />
 
       <div className="container mx-auto px-4 py-8 max-w-5xl">
         <div className="mb-6">

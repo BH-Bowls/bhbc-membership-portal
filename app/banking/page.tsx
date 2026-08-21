@@ -6,7 +6,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
 import { hasRole } from '@/lib/role-utils';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import {
@@ -582,7 +581,6 @@ export default function BankingPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={session?.user?.name ?? undefined} userRole={session?.user?.role ?? undefined} />
 
       {/* FULL WIDTH CONTAINER */}
       <main className="w-full px-6 py-6">

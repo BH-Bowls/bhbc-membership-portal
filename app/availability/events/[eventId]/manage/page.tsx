@@ -7,7 +7,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
 import { RouterBackLink } from '@/components/RouterBackLink';
 import { useSessionRefresh } from '@/hooks/useSessionRefresh';
 import {
@@ -637,7 +636,6 @@ export default function ManageEventPage({
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
-      <Navbar userName={displayName} userRole={role} />
 
       <div className="container mx-auto px-4 py-8 max-w-4xl">
 

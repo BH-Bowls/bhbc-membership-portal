@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
+import { useNavbarConfig } from '@/lib/navbar-config';
 import { RichText } from '@/components/RichText';
 import type { Competition, CompStatus, CompType } from '@/types/competitions';
 
@@ -112,13 +112,10 @@ export default function CompetitionsPage() {
     { heading: 'Complete',    statuses: ['Complete'] },
   ];
 
+  useNavbarConfig({ showLogoOnly: isGuest });
+
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar
-        userName={session?.user?.name ?? undefined}
-        userRole={session?.user?.role ?? undefined}
-        showLogoOnly={isGuest}
-      />
 
       <div className="container mx-auto px-4 py-8 max-w-4xl">
         <div className="flex justify-between items-center mb-6">

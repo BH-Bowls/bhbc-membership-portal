@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
+import { useNavbarConfig } from '@/lib/navbar-config';
 import { BracketView } from '@/components/competitions/BracketView';
 import { ScoreDialog } from '@/components/competitions/ScoreDialog';
 import { PlannedDateDialog } from '@/components/competitions/PlannedDateDialog';
@@ -347,14 +347,11 @@ export default function CompetitionBracketPage({
       )
   );
 
+  useNavbarConfig({ showLogoOnly: isGuest });
+
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar
-        userName={session?.user?.name ?? undefined}
-        userRole={session?.user?.role ?? undefined}
-        showLogoOnly={isGuest}
-      />
 
       <div className="container mx-auto px-4 py-6 max-w-full print:p-0">
         {/* Header */}

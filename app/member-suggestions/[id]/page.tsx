@@ -7,7 +7,7 @@
 import React, { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
+import { useNavbarConfig } from '@/lib/navbar-config';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { SearchableSelect } from '@/components/SearchableSelect';
 import type { MemberSuggestion } from '@/types/suggestions';
@@ -343,10 +343,29 @@ export default function SuggestionDetailPage({ params }: { params: Promise<{ id:
   // Render UI
   // ============================================================================
 
+  useNavbarConfig({
+    actionButtons:
+      (canEdit || canEditBasicFields) && isEditing
+        ? {
+            primary: {
+              label: 'Save',
+              onClick: saveSuggestion,
+              loading: isSaving,
+              variant: 'primary' as const,
+            },
+            secondary: {
+              label: 'Cancel',
+              onClick: handleCancel,
+              disabled: isSaving,
+              variant: 'secondary' as const,
+            },
+          }
+        : undefined,
+  });
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar userName={session?.user?.name ?? undefined} userRole={session?.user?.role ?? undefined} />
         <div className="container mx-auto px-4 py-8">
           <div className="text-center py-12">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
@@ -360,7 +379,6 @@ export default function SuggestionDetailPage({ params }: { params: Promise<{ id:
   if (!current) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar userName={session?.user?.name ?? undefined} userRole={session?.user?.role ?? undefined} />
         <div className="container mx-auto px-4 py-8">
           <div className="text-center py-12">
             <p className="text-gray-600">Suggestion not found</p>
@@ -378,29 +396,6 @@ export default function SuggestionDetailPage({ params }: { params: Promise<{ id:
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Navigation bar with action buttons */}
-      <Navbar
-        userName={session?.user?.name ?? undefined}
-        userRole={session?.user?.role ?? undefined}
-        actionButtons={
-          (canEdit || canEditBasicFields) && isEditing
-            ? {
-                primary: {
-                  label: 'Save',
-                  onClick: saveSuggestion,
-                  loading: isSaving,
-                  variant: 'primary' as const,
-                },
-                secondary: {
-                  label: 'Cancel',
-                  onClick: handleCancel,
-                  disabled: isSaving,
-                  variant: 'secondary' as const,
-                },
-              }
-            : undefined
-        }
-      />
 
       <div className="container mx-auto px-4 py-8 max-w-5xl">
         {/* Back button */}

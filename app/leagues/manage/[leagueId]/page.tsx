@@ -6,7 +6,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useParams, useRouter } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
 import { AttachmentUpload } from '@/components/AttachmentUpload';
 import { AttachmentsList } from '@/components/AttachmentsList';
 import type { Attachment } from '@/types/attachments';
@@ -674,7 +673,6 @@ export default function LeagueManageDetailPage() {
   if (status === 'loading' || loading) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar userName={session?.user?.name ?? undefined} userRole={role} />
         <div className="text-center py-20 text-gray-400">Loading…</div>
       </div>
     );
@@ -683,7 +681,6 @@ export default function LeagueManageDetailPage() {
   if (error || !league) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar userName={session?.user?.name ?? undefined} userRole={role} />
         <div className="text-center py-20 text-red-500">{error ?? 'League not found'}</div>
       </div>
     );
@@ -691,7 +688,6 @@ export default function LeagueManageDetailPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={session?.user?.name ?? undefined} userRole={role} />
 
       <div className="container mx-auto px-4 py-8 max-w-5xl">
         {/* Header */}

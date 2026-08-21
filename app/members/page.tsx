@@ -7,7 +7,7 @@
 import { useEffect, useState, Suspense } from 'react';
 import { useSession } from 'next-auth/react';
 import { useSearchParams } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
+import { useNavbarConfig } from '@/lib/navbar-config';
 import { ContactLink, EmailLink } from '@/components/ContactLink';
 
 interface MemberLookupResult {
@@ -77,9 +77,10 @@ function MembersPageInner() {
     return member.mobile || member.landline || '-';
   };
 
+  useNavbarConfig({ showLogoOnly: isGuest });
+
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={session?.user?.name ?? undefined} userRole={session?.user?.role ?? undefined} showLogoOnly={isGuest} />
 
       <div className="container mx-auto px-4 py-8 max-w-6xl">
         {/* Page header */}

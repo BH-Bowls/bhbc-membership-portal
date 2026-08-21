@@ -6,7 +6,6 @@
 import { useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
 import { hasRole } from '@/lib/role-utils';
 
 interface PaymentRow {
@@ -131,7 +130,6 @@ export default function AddPaymentsPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={session?.user?.name ?? undefined} userRole={session?.user?.role ?? undefined} />
 
       <main className="max-w-7xl mx-auto px-4 py-6 sm:px-6 lg:px-8">
         {/* Header */}
