@@ -25,6 +25,11 @@ export default function ChangePasswordPage() {
   // True when the user was forced here because their password is temporary
   const isForcedChange = !isAdminManaging && session?.user?.mustChangePassword === true;
 
+  // Admins changing their own (not impersonated) password can use a short one too —
+  // typing 8+ characters every time you log in/out while testing gets old fast.
+  const isSelfAdmin = !isAdminManaging && hasRole(session?.user?.role, 'Admin');
+  const minPasswordLength = (isAdminManaging || isSelfAdmin) ? 1 : 8;
+
   // Form state
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -67,6 +72,27 @@ export default function ChangePasswordPage() {
     confirmPassword.trim() !== ''
   );
 
+  // Exit impersonation and return to the admin's own identity. Used both when a
+  // password change succeeds and when the admin cancels out — either way, this page
+  // was reached to do one specific thing to someone else's account, not to linger
+  // logged in as them.
+  const exitImpersonation = async () => {
+    try {
+      const stopRes = await fetch('/api/admin/impersonate/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: 'stored-in-jwt' }),
+      });
+      const stopData = await stopRes.json();
+      if (stopRes.ok) {
+        await update(stopData);
+      }
+    } catch {
+      // Non-fatal — worst case the admin exits manually via the profile menu's
+      // "Exit Switch".
+    }
+  };
+
   // Handle form submission (called from navbar button)
   const handleSubmit = async () => {
     // Clear previous errors
@@ -77,9 +103,8 @@ export default function ChangePasswordPage() {
     // minLength/required attributes, but those only fire on a real <form> submit —
     // the button that calls this now lives in the persistent navbar (a plain
     // onClick, not a submit button inside this form), so they were silently inert.
-    const minLength = isAdminManaging ? 1 : 8;
-    if (newPassword.length < minLength) {
-      setError(`New password must be at least ${minLength} characters`);
+    if (newPassword.length < minPasswordLength) {
+      setError(`New password must be at least ${minPasswordLength} characters`);
       return;
     }
 
@@ -138,20 +163,7 @@ export default function ChangePasswordPage() {
           // "Back to Members" was just a link that left the admin still logged in AS
           // the member whose password they just set, landing on a page with no admin
           // nav at all (that account isn't an admin).
-          try {
-            const stopRes = await fetch('/api/admin/impersonate/stop', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ sessionId: 'stored-in-jwt' }),
-            });
-            const stopData = await stopRes.json();
-            if (stopRes.ok) {
-              await update(stopData);
-            }
-          } catch {
-            // Non-fatal — the password change itself already succeeded; worst case
-            // the admin exits manually via the profile menu's "Exit Switch".
-          }
+          await exitImpersonation();
         }
       } else {
         // Show error message
@@ -165,8 +177,13 @@ export default function ChangePasswordPage() {
     }
   };
 
-  // Handle cancel - navigate back to home (not available during forced change)
-  const handleCancel = () => {
+  // Handle cancel - navigate back to home (not available during forced change).
+  // Admin-managing: exit impersonation first — this page was reached to do one
+  // specific thing to someone else's account, not to linger logged in as them.
+  const handleCancel = async () => {
+    if (isAdminManaging) {
+      await exitImpersonation();
+    }
     router.push('/');
   };
 
@@ -384,7 +401,7 @@ export default function ChangePasswordPage() {
                       onChange={(e) => setNewPassword(e.target.value)}
                       className="block w-full px-3 py-2 pr-10 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                       required
-                      minLength={isAdminManaging ? 1 : 8}
+                      minLength={minPasswordLength}
                       disabled={isSubmitting || success}
                     />
                     <button
@@ -420,7 +437,7 @@ export default function ChangePasswordPage() {
                       onChange={(e) => setConfirmPassword(e.target.value)}
                       className="block w-full px-3 py-2 pr-10 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                       required
-                      minLength={isAdminManaging ? 1 : 8}
+                      minLength={minPasswordLength}
                       disabled={isSubmitting || success}
                     />
                     <button
@@ -481,7 +498,7 @@ export default function ChangePasswordPage() {
               <div className="mt-4 text-sm text-gray-600">
                 <p>Password requirements:</p>
                 <ul className="list-disc list-inside mt-2 space-y-1">
-                  <li>At least 8 characters</li>
+                  {!isSelfAdmin && <li>At least 8 characters</li>}
                   <li>Must be different from your current password</li>
                 </ul>
               </div>

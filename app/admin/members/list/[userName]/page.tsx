@@ -8,6 +8,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
+import Link from 'next/link';
 import { getButtonClasses, getInputClasses, getCardClasses } from '@/config/theme-helpers';
 
 // The editable fields we send on save (must match the API whitelist).
@@ -57,6 +58,10 @@ export default function MemberDetailPage() {
   const router = useRouter();
   const params = useParams();
   const userNameParam = decodeURIComponent(String(params.userName));
+  // Impersonation can't target yourself (canImpersonate rejects it, 403), so the
+  // "set password via impersonation" button can never work on your own record —
+  // link straight to the normal self-service page instead.
+  const isOwnAccount = (session?.user?.userName || '').toLowerCase() === userNameParam.toLowerCase();
 
   const [form, setForm] = useState<MemberForm | null>(null);
   const [loading, setLoading] = useState(true);
@@ -363,17 +368,30 @@ export default function MemberDetailPage() {
                 </label>
               </div>
               <div className="mt-4 pt-3 border-t border-gray-200">
-                <button
-                  type="button"
-                  className={getButtonClasses('secondary', 'sm')}
-                  disabled={settingPassword}
-                  onClick={handleSetPassword}
-                >
-                  {settingPassword ? 'Starting…' : 'Change Password'}
-                </button>
-                <p className="mt-1 text-xs text-gray-700">
-                  Sets a temporary password for this member and takes you to the password screen.
-                </p>
+                {isOwnAccount ? (
+                  <>
+                    <Link href="/change-password" className={getButtonClasses('secondary', 'sm')}>
+                      Change Your Password
+                    </Link>
+                    <p className="mt-1 text-xs text-gray-700">
+                      This is your own account — takes you to the normal password change page.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className={getButtonClasses('secondary', 'sm')}
+                      disabled={settingPassword}
+                      onClick={handleSetPassword}
+                    >
+                      {settingPassword ? 'Starting…' : 'Change Password'}
+                    </button>
+                    <p className="mt-1 text-xs text-gray-700">
+                      Sets a temporary password for this member and takes you to the password screen.
+                    </p>
+                  </>
+                )}
               </div>
             </div>
 

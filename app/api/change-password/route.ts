@@ -7,6 +7,7 @@ import { authOptions } from '@/lib/auth';
 import { changePassword } from '@/lib/auth-supabase';
 import { sendTemplateEmail, isEmailConfigured, withEmailLogContext } from '@/lib/email/mailer';
 import { getUserByUsername } from '@/lib/members-supabase';
+import { hasRole } from '@/lib/role-utils';
 
 // ============================================================================
 // Type Definitions
@@ -85,8 +86,10 @@ export async function POST(request: NextRequest) {
     }
 
     // Admins setting a temporary password for someone else can use a short one;
-    // everyone else (including a forced change on their own account) needs 8+.
-    const minLength = isAdminManaging ? 1 : 8;
+    // so can an admin changing their own (non-impersonated) password — everyone
+    // else (including a forced change on their own account) needs 8+.
+    const isSelfAdmin = !session.user?.isImpersonating && hasRole(session.user?.role, 'Admin');
+    const minLength = (isAdminManaging || isSelfAdmin) ? 1 : 8;
     if (newPassword.length < minLength) {
       return NextResponse.json(
         { error: `New password must be at least ${minLength} characters` },
