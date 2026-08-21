@@ -91,6 +91,7 @@ function FixturesPageInner() {
   const [games, setGames] = useState<Game[]>([]);
   const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState<'All' | GameType>(initialTab);
+  const [searchTerm, setSearchTerm] = useState('');
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -157,9 +158,16 @@ function FixturesPageInner() {
     }
   }
 
-  const filteredGames = typeFilter === 'All'
-    ? games
-    : games.filter(g => g.gameType === typeFilter);
+  // Search matches the opponent club name (or description, for events without a club),
+  // the same field shown as the row's headline text.
+  const searchLower = searchTerm.trim().toLowerCase();
+  const filteredGames = games.filter(g => {
+    const matchesType = typeFilter === 'All' || g.gameType === typeFilter;
+    if (!matchesType) return false;
+    if (!searchLower) return true;
+    const clubDisplay = displayClubName(g.clubName, g.clubSuffix) || g.description || '';
+    return clubDisplay.toLowerCase().includes(searchLower);
+  });
 
   const typeFilterOptions: ('All' | GameType)[] = ['All', ...ALL_GAME_TYPES];
   const activeYear = seasons.find((s) => s.isActive)?.year ?? 0;
@@ -209,30 +217,87 @@ function FixturesPageInner() {
           </div>
         )}
 
-        {/* Type filter tabs */}
-        <div className="flex flex-wrap gap-1 mb-6 border-b border-gray-200">
-          {typeFilterOptions.map(t => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={`px-3 py-2 text-sm font-medium rounded-t-lg border-b-2 transition-colors ${
-                typeFilter === t
-                  ? 'border-green-600 text-green-700 bg-green-50'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-              }`}
-            >
-              {t}
-            </button>
-          ))}
+        {/* Search and filter controls */}
+        <div className="bg-white rounded-lg shadow p-4 mb-6">
+          <div className="flex flex-col md:flex-row gap-4">
+            {/* Search box */}
+            <div className="flex-1">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Search by Opponent</label>
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Enter club name..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full px-4 py-2 pl-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+                <svg
+                  className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                  />
+                </svg>
+                {searchTerm && (
+                  <button
+                    onClick={() => setSearchTerm('')}
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Filter dropdown */}
+            <div className="md:w-64">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Filter</label>
+              <select
+                value={typeFilter}
+                onChange={(e) => setTab(e.target.value as 'All' | GameType)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                {typeFilterOptions.map(t => (
+                  <option key={t} value={t}>{t === 'All' ? 'All Types' : t}</option>
+                ))}
+              </select>
+            </div>
+          </div>
         </div>
 
         {/* Games list */}
         {loading ? (
           <div className="text-center py-12 text-gray-500">Loading fixtures…</div>
         ) : filteredGames.length === 0 ? (
-          <div className="text-center py-12 text-gray-500">No fixtures found.</div>
+          <div className="text-center py-12 bg-white rounded-lg shadow text-gray-500">
+            {searchTerm ? (
+              <>
+                <p>No fixtures found matching &quot;{searchTerm}&quot;</p>
+                <button
+                  onClick={() => setSearchTerm('')}
+                  className="mt-2 text-blue-500 hover:text-blue-600"
+                >
+                  Clear search
+                </button>
+              </>
+            ) : (
+              <p>No fixtures found.</p>
+            )}
+          </div>
         ) : (
-          <div className="space-y-2">
+          <>
+            <p className="text-sm text-gray-500 mb-4">
+              Showing {filteredGames.length} fixture{filteredGames.length !== 1 ? 's' : ''}
+            </p>
+            <div className="space-y-2">
             {filteredGames.map(game => {
               const isExpanded = expandedRow === game.id;
               const st = statusLabel(game.status);
@@ -307,7 +372,8 @@ function FixturesPageInner() {
                 </div>
               );
             })}
-          </div>
+            </div>
+          </>
         )}
       </main>
     </div>

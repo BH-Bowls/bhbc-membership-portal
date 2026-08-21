@@ -9,14 +9,18 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useNavbarConfig } from '@/lib/navbar-config';
 import { getLinkClasses } from '@/config/theme-helpers';
+import { hasRole } from '@/lib/role-utils';
 
 export default function ChangePasswordPage() {
-  const { data: session, status } = useSession();
+  const { data: session, status, update } = useSession();
   const router = useRouter();
 
-  // Check if admin is managing another user
-  const isAdminManaging = session?.user?.isImpersonating &&
-                         session?.user?.originalAdmin?.role === 'Admin';
+  // Check if admin is managing another user. originalAdmin.role is a comma-separated
+  // roles string (e.g. "Admin,GMC"), not a single value — matches the same
+  // Admin/RowlandOrganiser/superadmin check /api/change-password already does
+  // server-side, so the UI mode and what the API actually allows stay in sync.
+  const isAdminManaging = !!session?.user?.isImpersonating &&
+                         hasRole(session?.user?.originalAdmin?.role, 'Admin', 'RowlandOrganiser', 'superadmin');
 
   // True when the user was forced here because their password is temporary
   const isForcedChange = !isAdminManaging && session?.user?.mustChangePassword === true;
@@ -30,6 +34,16 @@ export default function ChangePasswordPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  // Captured at the moment of a successful submit, not read live: exiting
+  // impersonation as part of the admin-managing success path flips the reactive
+  // isAdminManaging flag to false on the next render, which would otherwise make the
+  // success screen pick the wrong (self-service, "log in again") branch right under
+  // itself once impersonation actually stops.
+  const [successWasAdminManaging, setSuccessWasAdminManaging] = useState(false);
+  // Also captured at success time, for the same reason: session.user.name is the
+  // impersonated member's name right up until stop-impersonation resolves, after
+  // which it reverts to the admin's own name.
+  const [managedMemberName, setManagedMemberName] = useState('');
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -100,21 +114,45 @@ export default function ChangePasswordPage() {
       const data = await response.json();
 
       if (response.ok && data.success) {
-        // Password changed successfully
+        // Password changed successfully. Capture isAdminManaging + the managed
+        // member's name now — stopping impersonation below changes both live values.
+        const wasAdminManaging = isAdminManaging;
         setCurrentPassword('');
         setNewPassword('');
         setConfirmPassword('');
+        setSuccessWasAdminManaging(wasAdminManaging);
+        if (wasAdminManaging) {
+          setManagedMemberName(session?.user?.name || '');
+        }
         setSuccess(true);
 
-        if (!isAdminManaging) {
+        if (!wasAdminManaging) {
           // Self-service change: sign out rather than trying to keep the current
           // session valid and the navbar (Save/Cancel buttons, disabled) in some
           // in-between state — same "success banner + return to login" pattern as
           // forgot-password/reset-password, just reached from inside the app.
           await signOut({ redirect: false });
+        } else {
+          // Admin finished setting someone else's password — exit impersonation and
+          // return to being themselves before the success screen shows. Without this,
+          // "Back to Members" was just a link that left the admin still logged in AS
+          // the member whose password they just set, landing on a page with no admin
+          // nav at all (that account isn't an admin).
+          try {
+            const stopRes = await fetch('/api/admin/impersonate/stop', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ sessionId: 'stored-in-jwt' }),
+            });
+            const stopData = await stopRes.json();
+            if (stopRes.ok) {
+              await update(stopData);
+            }
+          } catch {
+            // Non-fatal — the password change itself already succeeded; worst case
+            // the admin exits manually via the profile menu's "Exit Switch".
+          }
         }
-        // else: admin is managing someone else's password while impersonating —
-        // stays on this page, logged in as themselves, banner shown inline.
       } else {
         // Show error message
         setError(data.error || 'Failed to change password');
@@ -132,13 +170,24 @@ export default function ChangePasswordPage() {
     router.push('/');
   };
 
+  // Success screen choice uses the captured successWasAdminManaging, not the live
+  // isAdminManaging — the admin-managing path exits impersonation as part of
+  // succeeding, which flips the live flag false right underneath this render.
+  //
   // Self-service success is shown as a standalone "return to login" screen (matching
   // forgot-password/reset-password), not the normal form + navbar action buttons.
-  const showSuccessScreen = success && !isAdminManaging;
+  const showSuccessScreen = success && !successWasAdminManaging;
+  // Admin-managing success: impersonation has already been exited by this point, so
+  // this is really "welcome back to your own account" — drop the actionButtons
+  // entirely so the navbar reverts to its normal full menu instead of sitting there
+  // with a permanently-disabled Save button and no other way to navigate.
+  const showAdminSuccessScreen = success && successWasAdminManaging;
 
   useNavbarConfig(
     showSuccessScreen
       ? { showLogoOnly: true }
+      : showAdminSuccessScreen
+      ? {}
       : {
           hasUnsavedChanges,
           actionButtons: {
@@ -205,6 +254,43 @@ export default function ChangePasswordPage() {
           <div className="text-center">
             <Link href="/login" className={getLinkClasses('primary')}>
               Back to login
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Admin-managing success: impersonation has already been exited (see handleSubmit),
+  // so this is the admin's own session again — no "back to login" needed.
+  if (showAdminSuccessScreen) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-md w-full space-y-8">
+          <div>
+            <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
+              Password Set
+            </h2>
+          </div>
+
+          <div className="rounded-md bg-green-50 p-4">
+            <div className="flex">
+              <div className="flex-shrink-0">
+                <svg className="h-5 w-5 text-green-400" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                </svg>
+              </div>
+              <div className="ml-3">
+                <h3 className="text-sm font-medium text-green-800">
+                  Password set successfully for {managedMemberName || 'the member'}.
+                </h3>
+              </div>
+            </div>
+          </div>
+
+          <div className="text-center">
+            <Link href="/admin/members/list" className={getLinkClasses('primary')}>
+              Back to Members
             </Link>
           </div>
         </div>
@@ -387,23 +473,6 @@ export default function ChangePasswordPage() {
                   </div>
                 )}
 
-                {/* Success Message */}
-                {success && (
-                  <div className="rounded-md bg-green-50 p-4">
-                    <div className="flex">
-                      <div className="flex-shrink-0">
-                        <svg className="h-5 w-5 text-green-400" viewBox="0 0 20 20" fill="currentColor">
-                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                        </svg>
-                      </div>
-                      <div className="ml-3">
-                        <p className="text-sm text-green-800">
-                          Password changed successfully.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
 

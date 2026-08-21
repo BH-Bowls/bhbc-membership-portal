@@ -53,7 +53,7 @@ function str(value: any): string {
 }
 
 export default function MemberDetailPage() {
-  const { data: session } = useSession();
+  const { data: session, update } = useSession();
   const router = useRouter();
   const params = useParams();
   const userNameParam = decodeURIComponent(String(params.userName));
@@ -62,6 +62,7 @@ export default function MemberDetailPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [settingPassword, setSettingPassword] = useState(false);
   // Other members, for the buddy selector
   const [memberOptions, setMemberOptions] = useState<{ userName: string; name: string }[]>([]);
 
@@ -165,8 +166,32 @@ export default function MemberDetailPage() {
     }
   };
 
-  const navName = session && session.user && session.user.name ? session.user.name : undefined;
-  const navRole = session && session.user ? session.user.role : undefined;
+  // Set/reset this member's password: start impersonating them (so /change-password's
+  // admin-managing mode is available — no old password needed, and it stays as a
+  // temporary password by default), then go straight there instead of the impersonate
+  // flow's usual behaviour of reloading back onto the current page.
+  const handleSetPassword = async () => {
+    setSettingPassword(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/admin/impersonate/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetUserName: userNameParam }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || 'Failed to start password reset');
+        setSettingPassword(false);
+        return;
+      }
+      await update(data);
+      window.location.href = '/change-password';
+    } catch {
+      setError('Failed to start password reset');
+      setSettingPassword(false);
+    }
+  };
 
   // A labelled text input bound to a form field
   const textField = (label: string, field: keyof MemberForm, type: string = 'text') => (
@@ -337,9 +362,19 @@ export default function MemberDetailPage() {
                   Include in handbook
                 </label>
               </div>
-              <p className="mt-3 text-xs text-gray-700">
-                Password reset is handled separately via the password reset flow.
-              </p>
+              <div className="mt-4 pt-3 border-t border-gray-200">
+                <button
+                  type="button"
+                  className={getButtonClasses('secondary', 'sm')}
+                  disabled={settingPassword}
+                  onClick={handleSetPassword}
+                >
+                  {settingPassword ? 'Starting…' : 'Change Password'}
+                </button>
+                <p className="mt-1 text-xs text-gray-700">
+                  Sets a temporary password for this member and takes you to the password screen.
+                </p>
+              </div>
             </div>
 
             {/* Volunteering */}

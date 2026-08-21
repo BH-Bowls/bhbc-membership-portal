@@ -11,6 +11,7 @@ import { SearchableSelect } from '@/components/SearchableSelect';
 import { getMemberTypeDisplay, getMemberTypeOptions } from '@/lib/member-type-utils';
 import { saveDraft, restoreDraft, clearDraft } from '@/lib/form-draft-utils';
 import { useSessionRefresh } from '@/hooks/useSessionRefresh';
+import { hasRole } from '@/lib/role-utils';
 
 interface ProfileData {
   title: string;
@@ -52,9 +53,12 @@ export default function ProfilePage() {
   // Refresh session data from database (picks up role changes, etc.)
   useSessionRefresh();
 
-  // Check if admin is managing another user
-  const isAdminManaging = session?.user?.isImpersonating &&
-                         session?.user?.originalAdmin?.role === 'Admin';
+  // Check if admin is managing another user. originalAdmin.role is a comma-separated
+  // roles string (e.g. "Admin,GMC"), not a single value — a strict === here would
+  // wrongly hide the Role field for any admin holding more than just "Admin". Matches
+  // canEditProfileField('role')'s own Admin-only gate server-side.
+  const isAdminManaging = !!session?.user?.isImpersonating &&
+                         hasRole(session?.user?.originalAdmin?.role, 'Admin');
 
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [buddyName, setBuddyName] = useState<string | null>(null);

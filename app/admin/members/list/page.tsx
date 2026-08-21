@@ -20,7 +20,14 @@ interface ActiveMember {
   memberType: string;
   yearStarted: number | null;
   emailAddress: string;
+  greenMaintenance: string;
+  drivingAwayMatches: string;
+  barDuty: string;
+  gmc: string;
 }
+
+// Same options as /members' filter — kept in sync deliberately.
+type FilterType = 'none' | 'greenMaintenance' | 'drivingAway' | 'barDuty' | 'gmc';
 
 // Build today's date as YYYY-MM-DD for the archive date input default.
 function todayInput(): string {
@@ -37,6 +44,7 @@ export default function MembersListPage() {
 
   const [members, setMembers] = useState<ActiveMember[] | null>(null);
   const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<FilterType>('none');
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -108,14 +116,31 @@ export default function MembersListPage() {
   const userName = session && session.user && session.user.name ? session.user.name : undefined;
   const userRole = session && session.user ? session.user.role : undefined;
 
-  // Filter members by the search term (name match)
+  // Filter members by the search term (name match) and the volunteering/GMC filter
+  // (same options and fields as /members' filter dropdown).
   const searchLower = search.trim().toLowerCase();
   const filtered: ActiveMember[] = [];
   if (members) {
     for (let i = 0; i < members.length; i++) {
       const m = members[i];
       const fullName = `${m.firstName} ${m.lastName}`.toLowerCase();
-      if (searchLower === '' || fullName.includes(searchLower)) {
+      const matchesSearch = searchLower === '' || fullName.includes(searchLower);
+      let matchesFilter = true;
+      switch (filter) {
+        case 'greenMaintenance':
+          matchesFilter = m.greenMaintenance === 'Y';
+          break;
+        case 'drivingAway':
+          matchesFilter = m.drivingAwayMatches === 'Y';
+          break;
+        case 'barDuty':
+          matchesFilter = m.barDuty === 'Y';
+          break;
+        case 'gmc':
+          matchesFilter = m.gmc === 'GMC';
+          break;
+      }
+      if (matchesSearch && matchesFilter) {
         filtered.push(m);
       }
     }
@@ -147,13 +172,26 @@ export default function MembersListPage() {
         ) : null}
 
         <div className={`${getCardClasses('md')}`}>
-          <input
-            type="text"
-            placeholder="Search by name…"
-            className={`${getInputClasses()} mb-3`}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+          <div className="flex flex-col sm:flex-row gap-3 mb-3">
+            <input
+              type="text"
+              placeholder="Search by name…"
+              className={`${getInputClasses()} flex-1`}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <select
+              className={`${getInputClasses()} sm:w-56`}
+              value={filter}
+              onChange={(e) => setFilter(e.target.value as FilterType)}
+            >
+              <option value="none">All Members</option>
+              <option value="greenMaintenance">Green Maintenance</option>
+              <option value="drivingAway">Driving Away Matches</option>
+              <option value="barDuty">Bar Duty</option>
+              <option value="gmc">GMC (Committee)</option>
+            </select>
+          </div>
           {members === null ? (
             <p className="text-sm text-gray-700">Loading members…</p>
           ) : filtered.length === 0 ? (
@@ -163,7 +201,9 @@ export default function MembersListPage() {
               {filtered.map((m) => (
                 <div key={m.userName} className="border-b border-gray-100 py-2 last:border-b-0 flex items-center justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-gray-900">{m.firstName} {m.lastName}</p>
+                    <p className="text-sm font-medium text-gray-900">
+                      {m.firstName || m.lastName ? `${m.firstName} ${m.lastName}` : m.userName}
+                    </p>
                     <p className="text-xs text-gray-700">
                       {m.memberType}{m.yearStarted ? ` · Joined ${m.yearStarted}` : ''}{m.emailAddress ? ` · ${m.emailAddress}` : ''}
                     </p>
