@@ -396,6 +396,8 @@ export default function FixturesManagePage() {
   const [confirmDelete, setConfirmDelete] = useState<Game | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [clubNames, setClubNames] = useState<string[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [typeFilter, setTypeFilter] = useState<'All' | GameType>('All');
 
   const userRole = (session?.user as any)?.role || '';
   const isAdmin = hasRole(userRole, 'Admin');
@@ -500,6 +502,18 @@ export default function FixturesManagePage() {
 
   if (!session || !canAccess) return null;
 
+  // Search matches the opponent club name (or description, for fixtures without a
+  // club), the same field shown in the table's Club column.
+  const typeFilterOptions: ('All' | GameType)[] = ['All', ...ALL_GAME_TYPES, ...(isAdmin ? (['Test'] as GameType[]) : [])];
+  const searchLower = searchTerm.trim().toLowerCase();
+  const filteredGames = games.filter(g => {
+    const matchesType = typeFilter === 'All' || g.gameType === typeFilter;
+    if (!matchesType) return false;
+    if (!searchLower) return true;
+    const clubDisplay = displayClubName(g.clubName, g.clubSuffix) || g.description || '';
+    return clubDisplay.toLowerCase().includes(searchLower);
+  });
+
   return (
     <div className="min-h-screen bg-gray-50">
 
@@ -526,13 +540,87 @@ export default function FixturesManagePage() {
           </div>
         )}
 
+        {/* Search and filter controls */}
+        <div className="bg-white rounded-lg shadow p-4 mb-6">
+          <div className="flex flex-col md:flex-row gap-4">
+            {/* Search box */}
+            <div className="flex-1">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Search by Opponent</label>
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Enter club name..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full px-4 py-2 pl-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+                <svg
+                  className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                  />
+                </svg>
+                {searchTerm && (
+                  <button
+                    onClick={() => setSearchTerm('')}
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Filter dropdown */}
+            <div className="md:w-64">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Filter</label>
+              <select
+                value={typeFilter}
+                onChange={(e) => setTypeFilter(e.target.value as 'All' | GameType)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                {typeFilterOptions.map(t => (
+                  <option key={t} value={t}>{t === 'All' ? 'All Types' : t}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+
         {/* Games table */}
         {loading ? (
           <div className="text-center py-12 text-gray-500">Loading…</div>
-        ) : games.length === 0 ? (
-          <div className="text-center py-12 text-gray-500">No fixtures. Add one above.</div>
+        ) : filteredGames.length === 0 ? (
+          <div className="text-center py-12 bg-white rounded-lg shadow text-gray-500">
+            {searchTerm || typeFilter !== 'All' ? (
+              <>
+                <p>No fixtures found matching your search/filter.</p>
+                <button
+                  onClick={() => { setSearchTerm(''); setTypeFilter('All'); }}
+                  className="mt-2 text-blue-500 hover:text-blue-600"
+                >
+                  Clear search &amp; filter
+                </button>
+              </>
+            ) : (
+              <p>No fixtures. Add one above.</p>
+            )}
+          </div>
         ) : (
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <>
+            <p className="text-sm text-gray-500 mb-4">
+              Showing {filteredGames.length} fixture{filteredGames.length !== 1 ? 's' : ''}
+            </p>
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 border-b border-gray-200">
@@ -548,7 +636,7 @@ export default function FixturesManagePage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {games.map(game => (
+                  {filteredGames.map(game => (
                     <tr key={game.id} className="hover:bg-gray-50 transition-colors">
                       <td className="px-4 py-3 whitespace-nowrap text-gray-900">
                         {formatDisplayDate(game.date)}
@@ -595,7 +683,8 @@ export default function FixturesManagePage() {
                 </tbody>
               </table>
             </div>
-          </div>
+            </div>
+          </>
         )}
       </main>
 
