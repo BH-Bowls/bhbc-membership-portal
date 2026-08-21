@@ -6,11 +6,12 @@
 import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
+import { useNavbarConfig } from '@/lib/navbar-config';
 import { SearchableSelect } from '@/components/SearchableSelect';
 import { getMemberTypeDisplay, getMemberTypeOptions } from '@/lib/member-type-utils';
 import { saveDraft, restoreDraft, clearDraft } from '@/lib/form-draft-utils';
 import { useSessionRefresh } from '@/hooks/useSessionRefresh';
+import { hasRole } from '@/lib/role-utils';
 
 interface ProfileData {
   title: string;
@@ -52,9 +53,12 @@ export default function ProfilePage() {
   // Refresh session data from database (picks up role changes, etc.)
   useSessionRefresh();
 
-  // Check if admin is managing another user
-  const isAdminManaging = session?.user?.isImpersonating &&
-                         session?.user?.originalAdmin?.role === 'Admin';
+  // Check if admin is managing another user. originalAdmin.role is a comma-separated
+  // roles string (e.g. "Admin,GMC"), not a single value — a strict === here would
+  // wrongly hide the Role field for any admin holding more than just "Admin". Matches
+  // canEditProfileField('role')'s own Admin-only gate server-side.
+  const isAdminManaging = !!session?.user?.isImpersonating &&
+                         hasRole(session?.user?.originalAdmin?.role, 'Admin');
 
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [buddyName, setBuddyName] = useState<string | null>(null);
@@ -78,6 +82,15 @@ export default function ProfilePage() {
     setIsEditing(false);
     setEditedProfile({}); // Clear edited data to prevent auto-save race condition
   }, [session?.user?.userName]);
+
+  // Scroll to top when a success/error banner appears — the Save button lives in the
+  // sticky navbar so it's reachable while scrolled down, but the banner itself renders
+  // at the top of the page content and would otherwise go unseen.
+  useEffect(() => {
+    if (successMessage || error) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [successMessage, error]);
 
   const loadProfile = async () => {
     try {
@@ -228,6 +241,23 @@ export default function ProfilePage() {
     return dateStr;
   };
 
+  useNavbarConfig({
+    actionButtons: isEditing ? {
+      primary: {
+        label: 'Save',
+        onClick: handleSave,
+        loading: isSaving,
+        variant: 'primary' as const,
+      },
+      secondary: {
+        label: 'Cancel',
+        onClick: handleCancel,
+        disabled: isSaving,
+        variant: 'secondary' as const,
+      },
+    } : undefined,
+  });
+
   if (status === 'loading' || !profile) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -238,24 +268,6 @@ export default function ProfilePage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar
-        userName={session?.user?.name ?? undefined}
-        userRole={session?.user?.role ?? undefined}
-        actionButtons={isEditing ? {
-          primary: {
-            label: 'Save',
-            onClick: handleSave,
-            loading: isSaving,
-            variant: 'primary' as const,
-          },
-          secondary: {
-            label: 'Cancel',
-            onClick: handleCancel,
-            disabled: isSaving,
-            variant: 'secondary' as const,
-          },
-        } : undefined}
-      />
 
       {/* Main Content */}
       <main className="max-w-4xl mx-auto py-6 sm:px-6 lg:px-8">

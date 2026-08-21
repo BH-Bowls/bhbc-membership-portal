@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
+import { useNavbarConfig } from '@/lib/navbar-config';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { parseUKDate } from '@/lib/date-utils';
 import Link from 'next/link';
@@ -711,11 +711,12 @@ export default function GameDetailsPage() {
   const tokenParam = searchParams.get('token');
   const isTokenMode = !session && !!tokenParam;
 
+  useNavbarConfig({ showLogoOnly: isGuest, isTokenMode });
+
   // Show loading spinner while fetching game details or validating token
   if (loading || tokenValidating) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar userName={session?.user.name ?? undefined} userRole={session?.user.role ?? undefined} showLogoOnly={isGuest} isTokenMode={isTokenMode} />
         <div className="container mx-auto px-4 py-8 max-w-6xl">
           <div className="text-center py-12">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
@@ -730,7 +731,6 @@ export default function GameDetailsPage() {
   if (fetchError) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar userName={session?.user.name ?? undefined} userRole={session?.user.role ?? undefined} showLogoOnly={isGuest} isTokenMode={isTokenMode} />
         <div className="container mx-auto px-4 py-8 max-w-6xl">
           <div className="max-w-md mx-auto mt-16 bg-white rounded-lg shadow border border-red-200 p-8 text-center">
             <p className="text-red-700 font-medium mb-2">Unable to load game details</p>
@@ -762,8 +762,6 @@ export default function GameDetailsPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Navigation bar */}
-      <Navbar userName={session?.user.name ?? undefined} userRole={session?.user.role ?? undefined} showLogoOnly={isGuest} isTokenMode={isTokenMode} />
 
       <div className="container mx-auto px-4 py-8 max-w-6xl">
         {/* Flash message for success/error feedback */}

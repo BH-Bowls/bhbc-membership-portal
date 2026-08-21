@@ -8,7 +8,6 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { Navbar } from '@/components/Navbar';
 import { getButtonClasses, getInputClasses, getCardClasses } from '@/config/theme-helpers';
 
 // Result shown after a successful create
@@ -82,7 +81,6 @@ export default function CreateMemberPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={navName} userRole={navRole} />
 
       <main className="max-w-2xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
         <button className="text-sm text-gray-700 mb-2 hover:text-gray-900" onClick={() => router.push('/admin/members/list')}>

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
-import { Navbar } from '@/components/Navbar';
+import { useNavbarConfig } from '@/lib/navbar-config';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { SearchableSelect } from '@/components/SearchableSelect';
 import { EmailLink, PhoneLink } from '@/components/ContactLink';
@@ -145,13 +145,10 @@ export default function MarkersPage() {
     return m.fullName || m.userName;
   }
 
+  useNavbarConfig({ showLogoOnly: isGuest });
+
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar
-        userName={session?.user?.name ?? undefined}
-        userRole={session?.user?.role ?? undefined}
-        showLogoOnly={isGuest}
-      />
 
       <div className="container mx-auto px-4 py-8 max-w-5xl">
         {/* Header */}

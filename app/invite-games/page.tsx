@@ -6,7 +6,6 @@
 import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
 import type { InviteGame } from '@/types/invite-games';
 
 export default function InviteGamesPage() {
@@ -61,10 +60,6 @@ export default function InviteGamesPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar
-        userName={session?.user?.name ?? undefined}
-        userRole={session?.user?.role ?? undefined}
-      />
 
       <div className="container mx-auto px-4 py-8 max-w-5xl">
         <div className="flex justify-between items-center mb-6">

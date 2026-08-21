@@ -25,25 +25,32 @@ export async function GET() {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    // Read all active members and surface only the fields the archive list needs
+    // Read all active members and surface only the fields the archive list needs.
+    // Sorted the same way as /api/members/lookup so the admin list matches /members.
     const users = await getAllUsers();
-    const members = users.map((user) => {
-      return {
-        userName: user.userName,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        knownAs: user.knownAs || '',
-        memberType: user.memberType,
-        yearStarted: user.yearStarted,
-        emailAddress: user.emailAddress || '',
-        // Extra fields for the email-inclusion page filters
-        include: user.include || '',
-        ageDemographic: user.ageDemographic || '',
-        honorary: user.honorary || '',
-        role: user.role || '',
-        gmc: user.gmc || '',
-      };
-    });
+    const members = [...users]
+      .sort((a, b) => a.fullName.localeCompare(b.fullName))
+      .map((user) => {
+        return {
+          userName: user.userName,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          knownAs: user.knownAs || '',
+          memberType: user.memberType,
+          yearStarted: user.yearStarted,
+          emailAddress: user.emailAddress || '',
+          // Extra fields for the email-inclusion page filters
+          include: user.include || '',
+          ageDemographic: user.ageDemographic || '',
+          honorary: user.honorary || '',
+          role: user.role || '',
+          gmc: user.gmc || '',
+          // Volunteering flags, for the same filter options /members offers
+          greenMaintenance: user.greenMaintenance || '',
+          drivingAwayMatches: user.drivingAwayMatches || '',
+          barDuty: user.barDuty || '',
+        };
+      });
 
     return NextResponse.json({ members });
   } catch (error) {

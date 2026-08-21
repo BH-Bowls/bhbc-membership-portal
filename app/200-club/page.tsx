@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useSession } from 'next-auth/react';
-import { Navbar } from '@/components/Navbar';
 import { hasRole } from '@/lib/role-utils';
 
 interface Entry { number: string; member: string; username: string; season: string; }
@@ -133,7 +132,6 @@ export default function TwoHundredClubPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={session?.user?.name ?? undefined} userRole={role} />
       <main className="mx-auto max-w-5xl px-4 py-6">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-2xl font-bold text-gray-900">200 Club</h1>

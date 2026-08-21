@@ -6,7 +6,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
 import { hasRole } from '@/lib/role-utils';
 
 interface RenewalReportRow {
@@ -232,7 +231,6 @@ export default function BankingReportPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={session?.user?.name ?? undefined} userRole={session?.user?.role ?? undefined} />
 
       <main className="max-w-7xl mx-auto px-6 py-6">
         {/* Header */}

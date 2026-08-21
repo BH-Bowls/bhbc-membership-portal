@@ -6,7 +6,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { Navbar } from '@/components/Navbar';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { getButtonClasses, getCardClasses } from '@/config/theme-helpers';
 import type { LeaverDetail } from '@/lib/leavers-supabase';
@@ -82,7 +81,6 @@ export default function LeaverViewPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={navName} userRole={navRole} />
 
       <main className="max-w-2xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
         <button className="text-sm text-gray-700 mb-2 hover:text-gray-900" onClick={() => router.push('/admin/members/leavers')}>

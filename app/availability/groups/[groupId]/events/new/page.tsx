@@ -8,7 +8,6 @@
 import React, { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
 import { RouterBackLink } from '@/components/RouterBackLink';
 import { getButtonClasses, getInputClasses, getAlertClasses } from '@/config/theme-helpers';
 import type { AvailabilitySlotType } from '@/types/availability';
@@ -393,7 +392,6 @@ export default function NewGroupEventPage({
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
-      <Navbar userName={displayName} userRole={role} />
 
       <div className="container mx-auto px-4 py-8 max-w-2xl">
         <div className="mb-6">

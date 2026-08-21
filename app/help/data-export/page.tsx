@@ -1,6 +1,5 @@
 'use client';
 import { useSession } from 'next-auth/react';
-import { Navbar } from '@/components/Navbar';
 import { HelpSection, Step, Note, Body, BackLink } from '../_components';
 
 export default function HelpDataExportPage() {
@@ -8,7 +7,6 @@ export default function HelpDataExportPage() {
   const role = session?.user?.role ?? '';
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={session?.user?.name ?? undefined} userRole={role} />
       <div className="container mx-auto px-4 py-8 max-w-2xl">
         <div className="mb-6">
           <BackLink href="/help" label="Help" />

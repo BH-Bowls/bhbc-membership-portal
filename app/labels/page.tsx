@@ -7,7 +7,6 @@ import { useEffect, useState, useMemo } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Navbar } from '@/components/Navbar';
 import { hasRole } from '@/lib/role-utils';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -280,7 +279,6 @@ export default function LabelsPage() {
 
       {/* Screen content — hidden when printing */}
       <div className="screen-only min-h-screen bg-gray-50">
-      <Navbar userName={session.user?.name ?? undefined} userRole={session.user?.role ?? undefined} />
 
       <main className="max-w-5xl mx-auto py-6 sm:px-6 lg:px-8">
         <div className="px-4 sm:px-0 space-y-6">

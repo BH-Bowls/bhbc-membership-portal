@@ -6,7 +6,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
-import { Navbar } from '@/components/Navbar';
+import { useNavbarConfig } from '@/lib/navbar-config';
 import { useEditMode } from '@/hooks/useEditMode';
 import { getButtonClasses, getInputClasses, getCardClasses, getAlertClasses } from '@/config/theme-helpers';
 import type { StandardWeekEntry, AvailabilityOverride, Commitment, Session, OverrideSession } from '@/lib/member-availability';
@@ -211,10 +211,14 @@ export default function MyAvailabilityPage() {
     }
   }
 
+  useNavbarConfig({
+    showLogoOnly: isGuest,
+    actionButtons: isGuest ? undefined : editMode.getNavbarActions(),
+  });
+
   if (isGuest) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar showLogoOnly />
         <div className="container mx-auto px-4 py-8 max-w-3xl text-center text-gray-700">
           Please log in to manage your availability.
         </div>
@@ -224,11 +228,6 @@ export default function MyAvailabilityPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar
-        userName={authSession?.user?.name ?? undefined}
-        userRole={authSession?.user?.role ?? undefined}
-        actionButtons={editMode.getNavbarActions()}
-      />
 
       <div className="container mx-auto px-4 py-8 max-w-3xl space-y-6">
         <div>

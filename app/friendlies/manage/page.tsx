@@ -9,7 +9,6 @@ import { useEffect, useState, useLayoutEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Navbar } from '@/components/Navbar';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { EnteredPlayersModal } from '@/components/game-management/EnteredPlayersModal';
 import { GameInstructionsDialog, type InstructionsDialogMode } from '@/components/game-management/GameInstructionsDialog';
@@ -902,7 +901,6 @@ export default function ManageGamesPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Navigation bar */}
-      <Navbar userName={session?.user.name ?? undefined} userRole={session?.user.role ?? undefined} />
 
       <div className="container mx-auto px-4 py-8 max-w-7xl">
         {/* Page header with title and link to player view */}

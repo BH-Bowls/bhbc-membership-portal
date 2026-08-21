@@ -8,7 +8,6 @@ import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Navbar } from '@/components/Navbar';
 import type { MemberSuggestion, SuggestionStatus } from '@/types/suggestions';
 import { getSuggestionStatus, getStatusLabel, getStatusColor } from '@/types/suggestions';
 import { restoreDraft } from '@/lib/form-draft-utils';
@@ -155,10 +154,6 @@ export default function MemberSuggestionsPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Navigation bar */}
-      <Navbar
-        userName={session?.user?.name ?? undefined}
-        userRole={session?.user?.role ?? undefined}
-      />
 
       <div className="container mx-auto px-4 py-8 max-w-7xl">
         {/* Page header with title and add button */}

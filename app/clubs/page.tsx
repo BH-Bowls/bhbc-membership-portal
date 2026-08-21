@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Navbar } from '@/components/Navbar';
+import { useNavbarConfig } from '@/lib/navbar-config';
 import { getButtonClasses } from '@/config/theme-helpers';
 import { Club } from '@/lib/clubs-supabase';
 import { restoreDraft } from '@/lib/form-draft-utils';
@@ -92,9 +92,10 @@ export default function ClubsPage() {
     }
   };
 
+  useNavbarConfig({ showLogoOnly: isGuest });
+
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={session?.user?.name ?? undefined} userRole={session?.user?.role ?? undefined} showLogoOnly={isGuest} />
 
       <div className="container mx-auto px-4 py-8 max-w-6xl">
         {/* Page header */}

@@ -7,7 +7,7 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useSession } from 'next-auth/react';
 import { useParams, useRouter } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
+import { useNavbarConfig } from '@/lib/navbar-config';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { EnteredPlayersModal } from '@/components/game-management/EnteredPlayersModal';
 import { SelectionHelperPanel } from '@/components/game-management/SelectionHelperPanel';
@@ -967,6 +967,24 @@ export default function TeamSelectionPage() {
     return { teams, reserves, reserveTeams, carGroups, ownTransport, opposition, withdrawn };
   }, [players]);
 
+  // Build navbar action buttons - only show Save/Cancel when editing
+  const navbarActionButtons = isEditing
+    ? {
+        primary: {
+          label: 'Save',
+          onClick: handleSave,
+          loading: saving,
+        },
+        secondary: {
+          label: 'Cancel',
+          onClick: handleCancel,
+          variant: 'secondary' as const,
+        },
+      }
+    : undefined;
+
+  useNavbarConfig({ actionButtons: navbarActionButtons });
+
   // ============================================================================
   // Loading State
   // ============================================================================
@@ -974,7 +992,6 @@ export default function TeamSelectionPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar userName={session?.user.name ?? undefined} userRole={session?.user.role ?? undefined} />
         <div className="px-4 py-8">
           <div className="text-center py-12">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
@@ -1003,34 +1020,12 @@ export default function TeamSelectionPage() {
   // Position display: stored as '1' (Lead) but shown as 'L'
   const positionLabel = (pos: string) => pos === '1' ? 'L' : (pos || '-');
 
-  // Build navbar action buttons - only show Save/Cancel when editing
-  const navbarActionButtons = isEditing
-    ? {
-        primary: {
-          label: 'Save',
-          onClick: handleSave,
-          loading: saving,
-        },
-        secondary: {
-          label: 'Cancel',
-          onClick: handleCancel,
-          variant: 'secondary' as const,
-        },
-      }
-    : undefined;
-
   // ============================================================================
   // Render UI
   // ============================================================================
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar
-        userName={session?.user.name ?? undefined}
-        userRole={session?.user.role ?? undefined}
-        actionButtons={navbarActionButtons}
-      />
-
       <div className="px-4 py-8">
         {/* Two-column layout: left = all content, right = preview / helper panel */}
         <div className="lg:flex lg:gap-6">

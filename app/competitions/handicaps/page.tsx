@@ -6,7 +6,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
+import { useNavbarConfig } from '@/lib/navbar-config';
 
 interface HandicapMember {
   username: string;
@@ -182,27 +182,26 @@ export default function HandicapsPage() {
     );
   }
 
+  useNavbarConfig({
+    actionButtons: isEditing ? {
+      primary: {
+        label: saving ? 'Saving…' : 'Save',
+        onClick: handleSave,
+        loading: saving,
+        variant: 'primary' as const,
+      },
+      secondary: {
+        label: 'Cancel',
+        onClick: handleCancel,
+        disabled: saving,
+        variant: 'secondary' as const,
+      },
+    } : undefined,
+  });
+
   // ── Page ────────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar
-        userName={session?.user?.name ?? undefined}
-        userRole={role}
-        actionButtons={isEditing ? {
-          primary: {
-            label: saving ? 'Saving…' : 'Save',
-            onClick: handleSave,
-            loading: saving,
-            variant: 'primary' as const,
-          },
-          secondary: {
-            label: 'Cancel',
-            onClick: handleCancel,
-            disabled: saving,
-            variant: 'secondary' as const,
-          },
-        } : undefined}
-      />
 
       <div className="container mx-auto px-4 py-8 max-w-3xl">
         <div className="mb-6">

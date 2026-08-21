@@ -6,7 +6,6 @@
 import { useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
 import Link from 'next/link';
 import { usePhoneBackNavigation } from '@/hooks/usePhoneBackNavigation';
 
@@ -71,10 +70,6 @@ export default function NewInviteGamePage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar
-        userName={session?.user?.name ?? undefined}
-        userRole={session?.user?.role ?? undefined}
-      />
 
       <div className="container mx-auto px-4 py-8 max-w-2xl">
         <Link href="/invite-games" className="mb-4 text-blue-600 hover:text-blue-800 inline-block">← Back to Invite Games</Link>

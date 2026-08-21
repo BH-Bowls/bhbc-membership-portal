@@ -5,7 +5,6 @@
 
 import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
-import { Navbar } from '@/components/Navbar';
 import { RouterBackLink } from '@/components/RouterBackLink';
 
 // Shape of the stats object returned from /api/admin/stats
@@ -138,7 +137,6 @@ export default function MembershipStatsPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar userName={navUserName} userRole={navUserRole} />
         <div className="px-4 py-8">
           <div className="text-center py-12">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
@@ -153,7 +151,6 @@ export default function MembershipStatsPage() {
   if (error) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar userName={navUserName} userRole={navUserRole} />
         <div className="px-4 py-8 max-w-3xl mx-auto">
           <RouterBackLink fallbackHref="/" label="Back to Home" />
           <div className="mt-4 rounded-md bg-red-50 border border-red-200 p-4">
@@ -173,7 +170,6 @@ export default function MembershipStatsPage() {
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={navUserName} userRole={navUserRole} />
 
       <div className="px-4 py-8 max-w-4xl mx-auto">
         <RouterBackLink fallbackHref="/" label="Back to Home" />

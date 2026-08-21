@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
-import { Navbar } from '@/components/Navbar';
 import DocumentsAccordion from './DocumentsAccordion';
 import type { DocumentFolder } from '@/lib/drive';
 
@@ -25,7 +24,6 @@ export default function DocumentsPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={session?.user?.name ?? undefined} userRole={session?.user?.role ?? undefined} />
 
       <div className="container mx-auto px-4 py-8 max-w-4xl">
         <div className="mb-6">

@@ -3,21 +3,32 @@
 
 'use client';
 
-import { useState } from 'react';
-import { useSession } from 'next-auth/react';
+import { useState, useEffect } from 'react';
+import { useSession, signOut } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
+import Link from 'next/link';
+import { useNavbarConfig } from '@/lib/navbar-config';
+import { getLinkClasses } from '@/config/theme-helpers';
+import { hasRole } from '@/lib/role-utils';
 
 export default function ChangePasswordPage() {
   const { data: session, status, update } = useSession();
   const router = useRouter();
 
-  // Check if admin is managing another user
-  const isAdminManaging = session?.user?.isImpersonating &&
-                         session?.user?.originalAdmin?.role === 'Admin';
+  // Check if admin is managing another user. originalAdmin.role is a comma-separated
+  // roles string (e.g. "Admin,GMC"), not a single value — matches the same
+  // Admin/RowlandOrganiser/superadmin check /api/change-password already does
+  // server-side, so the UI mode and what the API actually allows stay in sync.
+  const isAdminManaging = !!session?.user?.isImpersonating &&
+                         hasRole(session?.user?.originalAdmin?.role, 'Admin', 'RowlandOrganiser', 'superadmin');
 
   // True when the user was forced here because their password is temporary
   const isForcedChange = !isAdminManaging && session?.user?.mustChangePassword === true;
+
+  // Admins changing their own (not impersonated) password can use a short one too —
+  // typing 8+ characters every time you log in/out while testing gets old fast.
+  const isSelfAdmin = !isAdminManaging && hasRole(session?.user?.role, 'Admin');
+  const minPasswordLength = (isAdminManaging || isSelfAdmin) ? 1 : 8;
 
   // Form state
   const [currentPassword, setCurrentPassword] = useState('');
@@ -28,9 +39,28 @@ export default function ChangePasswordPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  // Captured at the moment of a successful submit, not read live: exiting
+  // impersonation as part of the admin-managing success path flips the reactive
+  // isAdminManaging flag to false on the next render, which would otherwise make the
+  // success screen pick the wrong (self-service, "log in again") branch right under
+  // itself once impersonation actually stops.
+  const [successWasAdminManaging, setSuccessWasAdminManaging] = useState(false);
+  // Also captured at success time, for the same reason: session.user.name is the
+  // impersonated member's name right up until stop-impersonation resolves, after
+  // which it reverts to the admin's own name.
+  const [managedMemberName, setManagedMemberName] = useState('');
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  // Scroll to top when a success/error banner appears — the submit button lives in
+  // the sticky navbar so it's reachable while scrolled down, but the banner itself
+  // renders at the top of the page content and would otherwise go unseen.
+  useEffect(() => {
+    if (success || error) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [success, error]);
 
   // Admin option to mark the new password as temporary (force change on next login)
   const [forceChangeOnNextLogin, setForceChangeOnNextLogin] = useState(true);
@@ -42,11 +72,41 @@ export default function ChangePasswordPage() {
     confirmPassword.trim() !== ''
   );
 
+  // Exit impersonation and return to the admin's own identity. Used both when a
+  // password change succeeds and when the admin cancels out — either way, this page
+  // was reached to do one specific thing to someone else's account, not to linger
+  // logged in as them.
+  const exitImpersonation = async () => {
+    try {
+      const stopRes = await fetch('/api/admin/impersonate/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: 'stored-in-jwt' }),
+      });
+      const stopData = await stopRes.json();
+      if (stopRes.ok) {
+        await update(stopData);
+      }
+    } catch {
+      // Non-fatal — worst case the admin exits manually via the profile menu's
+      // "Exit Switch".
+    }
+  };
+
   // Handle form submission (called from navbar button)
   const handleSubmit = async () => {
     // Clear previous errors
     setError('');
     setSuccess(false);
+
+    // Validate new password length. This used to rely on the inputs' native
+    // minLength/required attributes, but those only fire on a real <form> submit —
+    // the button that calls this now lives in the persistent navbar (a plain
+    // onClick, not a submit button inside this form), so they were silently inert.
+    if (newPassword.length < minPasswordLength) {
+      setError(`New password must be at least ${minPasswordLength} characters`);
+      return;
+    }
 
     // Validate passwords match
     if (newPassword !== confirmPassword) {
@@ -79,27 +139,32 @@ export default function ChangePasswordPage() {
       const data = await response.json();
 
       if (response.ok && data.success) {
-        // Password changed successfully
-        setSuccess(true);
+        // Password changed successfully. Capture isAdminManaging + the managed
+        // member's name now — stopping impersonation below changes both live values.
+        const wasAdminManaging = isAdminManaging;
         setCurrentPassword('');
         setNewPassword('');
         setConfirmPassword('');
+        setSuccessWasAdminManaging(wasAdminManaging);
+        if (wasAdminManaging) {
+          setManagedMemberName(session?.user?.name || '');
+        }
+        setSuccess(true);
 
-        // Clear mustChangePassword flag from the JWT so middleware no longer intercepts
-        await update({
-          action: 'REFRESH_USER_DATA',
-          userData: {
-            role: session?.user?.role,
-            name: session?.user?.name,
-            email: session?.user?.email,
-            mustChangePassword: false,
-          },
-        });
-
-        // Force a full page reload so the updated JWT is read fresh by middleware
-        setTimeout(() => {
-          window.location.href = '/';
-        }, 2000);
+        if (!wasAdminManaging) {
+          // Self-service change: sign out rather than trying to keep the current
+          // session valid and the navbar (Save/Cancel buttons, disabled) in some
+          // in-between state — same "success banner + return to login" pattern as
+          // forgot-password/reset-password, just reached from inside the app.
+          await signOut({ redirect: false });
+        } else {
+          // Admin finished setting someone else's password — exit impersonation and
+          // return to being themselves before the success screen shows. Without this,
+          // "Back to Members" was just a link that left the admin still logged in AS
+          // the member whose password they just set, landing on a page with no admin
+          // nav at all (that account isn't an admin).
+          await exitImpersonation();
+        }
       } else {
         // Show error message
         setError(data.error || 'Failed to change password');
@@ -112,10 +177,53 @@ export default function ChangePasswordPage() {
     }
   };
 
-  // Handle cancel - navigate back to home (not available during forced change)
-  const handleCancel = () => {
+  // Handle cancel - navigate back to home (not available during forced change).
+  // Admin-managing: exit impersonation first — this page was reached to do one
+  // specific thing to someone else's account, not to linger logged in as them.
+  const handleCancel = async () => {
+    if (isAdminManaging) {
+      await exitImpersonation();
+    }
     router.push('/');
   };
+
+  // Success screen choice uses the captured successWasAdminManaging, not the live
+  // isAdminManaging — the admin-managing path exits impersonation as part of
+  // succeeding, which flips the live flag false right underneath this render.
+  //
+  // Self-service success is shown as a standalone "return to login" screen (matching
+  // forgot-password/reset-password), not the normal form + navbar action buttons.
+  const showSuccessScreen = success && !successWasAdminManaging;
+  // Admin-managing success: impersonation has already been exited by this point, so
+  // this is really "welcome back to your own account" — drop the actionButtons
+  // entirely so the navbar reverts to its normal full menu instead of sitting there
+  // with a permanently-disabled Save button and no other way to navigate.
+  const showAdminSuccessScreen = success && successWasAdminManaging;
+
+  useNavbarConfig(
+    showSuccessScreen
+      ? { showLogoOnly: true }
+      : showAdminSuccessScreen
+      ? {}
+      : {
+          hasUnsavedChanges,
+          actionButtons: {
+            primary: {
+              label: isAdminManaging ? 'Set Password' : 'Change Password',
+              onClick: handleSubmit,
+              loading: isSubmitting,
+              disabled: success,
+              variant: 'primary' as const,
+            },
+            secondary: isForcedChange ? undefined : {
+              label: 'Cancel',
+              onClick: handleCancel,
+              disabled: isSubmitting,
+              variant: 'secondary' as const,
+            },
+          },
+        }
+  );
 
   // Show loading state while checking session
   if (status === 'loading') {
@@ -129,6 +237,84 @@ export default function ChangePasswordPage() {
     );
   }
 
+  // Shown regardless of session state — checked before the !session redirect below
+  // since a successful self-service change signs the user out, so `session` will
+  // clear shortly after and would otherwise bounce this straight to /login.
+  if (showSuccessScreen) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-md w-full space-y-8">
+          <div>
+            <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
+              Password Changed
+            </h2>
+          </div>
+
+          <div className="rounded-md bg-green-50 p-4">
+            <div className="flex">
+              <div className="flex-shrink-0">
+                <svg className="h-5 w-5 text-green-400" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                </svg>
+              </div>
+              <div className="ml-3">
+                <h3 className="text-sm font-medium text-green-800">
+                  Your password has been changed successfully.
+                </h3>
+                <p className="mt-2 text-sm text-green-700">
+                  Please log in again with your new password.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="text-center">
+            <Link href="/login" className={getLinkClasses('primary')}>
+              Back to login
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Admin-managing success: impersonation has already been exited (see handleSubmit),
+  // so this is the admin's own session again — no "back to login" needed.
+  if (showAdminSuccessScreen) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-md w-full space-y-8">
+          <div>
+            <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
+              Password Set
+            </h2>
+          </div>
+
+          <div className="rounded-md bg-green-50 p-4">
+            <div className="flex">
+              <div className="flex-shrink-0">
+                <svg className="h-5 w-5 text-green-400" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                </svg>
+              </div>
+              <div className="ml-3">
+                <h3 className="text-sm font-medium text-green-800">
+                  Password set successfully for {managedMemberName || 'the member'}.
+                </h3>
+              </div>
+            </div>
+          </div>
+
+          <div className="text-center">
+            <Link href="/admin/members/list" className={getLinkClasses('primary')}>
+              Back to Members
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // Redirect to login if not authenticated
   if (!session) {
     router.push('/login');
@@ -137,26 +323,6 @@ export default function ChangePasswordPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar
-        userName={session.user.name ?? undefined}
-        userRole={session.user.role ?? undefined}
-        hasUnsavedChanges={hasUnsavedChanges}
-        actionButtons={{
-          primary: {
-            label: isAdminManaging ? 'Set Password' : 'Change Password',
-            onClick: handleSubmit,
-            loading: isSubmitting,
-            disabled: success,
-            variant: 'primary' as const,
-          },
-          secondary: isForcedChange ? undefined : {
-            label: 'Cancel',
-            onClick: handleCancel,
-            disabled: isSubmitting,
-            variant: 'secondary' as const,
-          },
-        }}
-      />
 
       <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         <div className="px-4 py-6 sm:px-0">
@@ -235,7 +401,7 @@ export default function ChangePasswordPage() {
                       onChange={(e) => setNewPassword(e.target.value)}
                       className="block w-full px-3 py-2 pr-10 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                       required
-                      minLength={isAdminManaging ? 1 : 8}
+                      minLength={minPasswordLength}
                       disabled={isSubmitting || success}
                     />
                     <button
@@ -271,7 +437,7 @@ export default function ChangePasswordPage() {
                       onChange={(e) => setConfirmPassword(e.target.value)}
                       className="block w-full px-3 py-2 pr-10 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                       required
-                      minLength={isAdminManaging ? 1 : 8}
+                      minLength={minPasswordLength}
                       disabled={isSubmitting || success}
                     />
                     <button
@@ -324,23 +490,6 @@ export default function ChangePasswordPage() {
                   </div>
                 )}
 
-                {/* Success Message */}
-                {success && (
-                  <div className="rounded-md bg-green-50 p-4">
-                    <div className="flex">
-                      <div className="flex-shrink-0">
-                        <svg className="h-5 w-5 text-green-400" viewBox="0 0 20 20" fill="currentColor">
-                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                        </svg>
-                      </div>
-                      <div className="ml-3">
-                        <p className="text-sm text-green-800">
-                          Password changed successfully! Redirecting...
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
 
@@ -349,6 +498,7 @@ export default function ChangePasswordPage() {
               <div className="mt-4 text-sm text-gray-600">
                 <p>Password requirements:</p>
                 <ul className="list-disc list-inside mt-2 space-y-1">
+                  {!isSelfAdmin && <li>At least 8 characters</li>}
                   <li>Must be different from your current password</li>
                 </ul>
               </div>

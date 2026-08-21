@@ -6,7 +6,7 @@
 import React, { useEffect, useState, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { Navbar } from '@/components/Navbar';
+import { useNavbarConfig } from '@/lib/navbar-config';
 import { getBadgeClasses, getButtonClasses, getAlertClasses } from '@/config/theme-helpers';
 import type {
   AvailabilityEvent,
@@ -699,9 +699,10 @@ export default function GuestEventPage({
     }
   }, [isLoggedIn, eventId, router]);
 
+  useNavbarConfig({ showLogoOnly: true, isTokenMode: true });
+
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar showLogoOnly isTokenMode />
 
       {isLoggedIn ? (
         <div className="text-center py-16">

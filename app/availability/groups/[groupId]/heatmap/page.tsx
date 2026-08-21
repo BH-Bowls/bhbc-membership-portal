@@ -7,7 +7,6 @@ import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
-import { Navbar } from '@/components/Navbar';
 import { getAlertClasses } from '@/config/theme-helpers';
 
 interface HeatmapCell {
@@ -70,10 +69,6 @@ export default function GroupHeatmapPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar
-        userName={authSession?.user?.name ?? undefined}
-        userRole={authSession?.user?.role ?? undefined}
-      />
 
       <div className="container mx-auto px-4 py-8 max-w-4xl">
         <div className="flex items-center justify-between mb-4">

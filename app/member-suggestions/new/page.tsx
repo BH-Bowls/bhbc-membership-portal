@@ -7,7 +7,7 @@
 import { useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
+import { useNavbarConfig } from '@/lib/navbar-config';
 import { usePhoneBackNavigation } from '@/hooks/usePhoneBackNavigation';
 
 // ============================================================================
@@ -122,27 +122,25 @@ export default function NewSuggestionPage() {
   // Render UI
   // ============================================================================
 
+  useNavbarConfig({
+    actionButtons: {
+      primary: {
+        label: 'Submit',
+        onClick: handleSubmit,
+        loading: isSubmitting,
+        variant: 'primary' as const,
+      },
+      secondary: {
+        label: 'Cancel',
+        onClick: handleCancel,
+        disabled: isSubmitting,
+        variant: 'secondary' as const,
+      },
+    },
+  });
+
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Navigation bar with action buttons */}
-      <Navbar
-        userName={session?.user?.name ?? undefined}
-        userRole={session?.user?.role ?? undefined}
-        actionButtons={{
-          primary: {
-            label: 'Submit',
-            onClick: handleSubmit,
-            loading: isSubmitting,
-            variant: 'primary' as const,
-          },
-          secondary: {
-            label: 'Cancel',
-            onClick: handleCancel,
-            disabled: isSubmitting,
-            variant: 'secondary' as const,
-          },
-        }}
-      />
 
       <div className="container mx-auto px-4 py-8 max-w-3xl">
         {/* Back button */}

@@ -8,7 +8,6 @@
 import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useParams, useRouter } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
 import Link from 'next/link';
 import { usePhoneBackNavigation } from '@/hooks/usePhoneBackNavigation';
 import { GameSheetPlayer } from '@/lib/types/friendlies';
@@ -132,7 +131,6 @@ export default function PickerSheetPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar userName={session?.user.name ?? undefined} userRole={session?.user.role ?? undefined} />
         <div className="px-4 py-8">
           <div className="text-center py-12">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
@@ -241,7 +239,6 @@ export default function PickerSheetPage() {
       <div className="min-h-screen bg-gray-50">
         {/* Navigation - hidden when printing */}
         <div className="no-print">
-          <Navbar userName={session?.user.name ?? undefined} userRole={session?.user.role ?? undefined} />
         </div>
 
         {/* Header with back link and print button - hidden when printing */}

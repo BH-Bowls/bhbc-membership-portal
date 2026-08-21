@@ -8,7 +8,7 @@ import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Navbar } from '@/components/Navbar';
+import { useNavbarConfig } from '@/lib/navbar-config';
 import { getButtonClasses } from '@/config/theme-helpers';
 import { CreateClubRequest } from '@/lib/clubs-supabase';
 import { saveDraft, restoreDraft, clearDraft } from '@/lib/form-draft-utils';
@@ -111,10 +111,33 @@ export default function NewClubPage() {
     }
   }
 
+  // Handle form submission from navbar button
+  function handleNavbarSubmit() {
+    // Trigger the form submission
+    const form = document.getElementById('create-club-form') as HTMLFormElement;
+    if (form) {
+      form.requestSubmit();
+    }
+  }
+
+  useNavbarConfig({
+    actionButtons: canCreate ? {
+      primary: {
+        label: 'Create Club',
+        onClick: handleNavbarSubmit,
+        loading: saving,
+      },
+      secondary: {
+        label: 'Cancel',
+        onClick: handleCancel,
+        disabled: saving,
+      },
+    } : undefined,
+  });
+
   if (status === 'loading') {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar userName={undefined} userRole={undefined} />
         <div className="container mx-auto px-4 py-8 max-w-2xl">
           <div className="text-center py-12">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
@@ -128,7 +151,6 @@ export default function NewClubPage() {
   if (!canCreate) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar userName={session?.user?.name ?? undefined} userRole={session?.user?.role ?? undefined} />
         <div className="container mx-auto px-4 py-8 max-w-2xl">
           <div className="text-center py-12 bg-white rounded-lg shadow">
             <p className="text-red-600">You do not have permission to create clubs.</p>
@@ -141,33 +163,8 @@ export default function NewClubPage() {
     );
   }
 
-  // Handle form submission from navbar button
-  function handleNavbarSubmit() {
-    // Trigger the form submission
-    const form = document.getElementById('create-club-form') as HTMLFormElement;
-    if (form) {
-      form.requestSubmit();
-    }
-  }
-
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar
-        userName={session?.user?.name ?? undefined}
-        userRole={session?.user?.role ?? undefined}
-        actionButtons={{
-          primary: {
-            label: 'Create Club',
-            onClick: handleNavbarSubmit,
-            loading: saving,
-          },
-          secondary: {
-            label: 'Cancel',
-            onClick: handleCancel,
-            disabled: saving,
-          },
-        }}
-      />
 
       <div className="container mx-auto px-4 py-8 max-w-2xl">
         {/* Header */}

@@ -8,7 +8,6 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
-import { Navbar } from '@/components/Navbar';
 import { getButtonClasses, getInputClasses, getCardClasses } from '@/config/theme-helpers';
 
 // A member with the fields the inclusion filters need.
@@ -244,7 +243,6 @@ export default function EmailInclusionPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={navName} userRole={navRole} />
 
       <main className="max-w-3xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
         <Link href="/admin/members/list" className="text-sm text-gray-700 mb-2 inline-block hover:text-gray-900">← Back to members</Link>

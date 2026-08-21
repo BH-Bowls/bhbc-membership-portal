@@ -8,7 +8,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
 import { COMP_ROUND_LABELS, ROUND_ORDER } from '@/types/competitions';
 import type { Competition, CompMatch, CompMemberInfo, CompRound } from '@/types/competitions';
 
@@ -888,7 +887,6 @@ export default function CompetitionSetupPage({
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar userName={session?.user?.name ?? undefined} userRole={role} />
         <div className="flex items-center justify-center py-24 text-gray-400">Loading…</div>
       </div>
     );
@@ -897,7 +895,6 @@ export default function CompetitionSetupPage({
   if (error) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar userName={session?.user?.name ?? undefined} userRole={role} />
         <div className="container mx-auto px-4 py-12 max-w-2xl">
           <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700">{error}</div>
         </div>
@@ -927,7 +924,6 @@ export default function CompetitionSetupPage({
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={session?.user?.name ?? undefined} userRole={role} />
 
       <div className="container mx-auto px-4 py-8 max-w-4xl">
         {/* Header */}

@@ -4,7 +4,16 @@
 'use client';
 
 import { SessionProvider } from 'next-auth/react';
+import { NavbarConfigProvider } from '@/lib/navbar-config';
+import { PersistentNavbar } from '@/components/PersistentNavbar';
 
 export function Providers({ children }: { children: React.ReactNode }) {
-  return <SessionProvider>{children}</SessionProvider>;
+  return (
+    <SessionProvider>
+      <NavbarConfigProvider>
+        <PersistentNavbar />
+        {children}
+      </NavbarConfigProvider>
+    </SessionProvider>
+  );
 }

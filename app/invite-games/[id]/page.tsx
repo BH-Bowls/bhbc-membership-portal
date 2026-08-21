@@ -6,7 +6,7 @@
 import React, { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
+import { useNavbarConfig } from '@/lib/navbar-config';
 import Link from 'next/link';
 import { usePhoneBackNavigation } from '@/hooks/usePhoneBackNavigation';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -226,10 +226,29 @@ export default function InviteGameDetailPage({
   // Render
   // ============================================================================
 
+  useNavbarConfig({
+    actionButtons:
+      isCommittee && isEditing
+        ? {
+            primary: {
+              label: 'Save',
+              onClick: saveGame,
+              loading: isSaving,
+              variant: 'primary' as const,
+            },
+            secondary: {
+              label: 'Cancel',
+              onClick: handleCancelEdit,
+              disabled: isSaving,
+              variant: 'secondary' as const,
+            },
+          }
+        : undefined,
+  });
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar userName={session?.user?.name ?? undefined} userRole={session?.user?.role ?? undefined} />
         <div className="container mx-auto px-4 py-8">
           <div className="text-center py-12">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
@@ -243,7 +262,6 @@ export default function InviteGameDetailPage({
   if (!current) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar userName={session?.user?.name ?? undefined} userRole={session?.user?.role ?? undefined} />
         <div className="container mx-auto px-4 py-8">
           <p className="text-center text-gray-600">Invite game not found</p>
         </div>
@@ -255,28 +273,6 @@ export default function InviteGameDetailPage({
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar
-        userName={session?.user?.name ?? undefined}
-        userRole={session?.user?.role ?? undefined}
-        actionButtons={
-          isCommittee && isEditing
-            ? {
-                primary: {
-                  label: 'Save',
-                  onClick: saveGame,
-                  loading: isSaving,
-                  variant: 'primary' as const,
-                },
-                secondary: {
-                  label: 'Cancel',
-                  onClick: handleCancelEdit,
-                  disabled: isSaving,
-                  variant: 'secondary' as const,
-                },
-              }
-            : undefined
-        }
-      />
 
       <div className="container mx-auto px-4 py-8 max-w-4xl">
         <Link href="/invite-games" className="mb-4 text-blue-600 hover:text-blue-800 inline-block">← Back to Invite Games</Link>

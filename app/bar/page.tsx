@@ -7,7 +7,6 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
-import { Navbar } from '@/components/Navbar';
 import { isCommitteeMember } from '@/lib/role-utils';
 import type { BarProduct, BarAccount, BarPerson, BarLedgerEntry, BarReport, BarSaleSummary } from '@/lib/bar-supabase';
 
@@ -190,7 +189,6 @@ export default function BarTillPage() {
   if (!allowed) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar userName={session?.user?.name ?? undefined} userRole={role} />
         <div className="max-w-md mx-auto mt-24 text-center text-gray-600">The bar till is for committee/bar accounts only.</div>
       </div>
     );
@@ -198,7 +196,6 @@ export default function BarTillPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar userName={session?.user?.name ?? undefined} userRole={role} />
       <div className="container mx-auto px-4 py-5 max-w-4xl">
 
         {/* Served by chip + nav */}

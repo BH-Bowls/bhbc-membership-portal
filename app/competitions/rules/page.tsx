@@ -13,7 +13,7 @@
 import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Navbar } from '@/components/Navbar';
+import { useNavbarConfig } from '@/lib/navbar-config';
 import { RichText } from '@/components/RichText';
 import type { CompType } from '@/types/competitions';
 
@@ -76,16 +76,10 @@ export default function CompetitionRulesPage() {
     ...competitions.map((c) => ({ id: c.compId, label: c.displayName })),
   ];
 
+  useNavbarConfig({ showLogoOnly: isGuest });
+
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Navbar is hidden in the printed copy — replaced by the club heading below */}
-      <div className="print:hidden">
-        <Navbar
-          userName={session?.user?.name ?? undefined}
-          userRole={session?.user?.role ?? undefined}
-          showLogoOnly={isGuest}
-        />
-      </div>
 
       <div className="container mx-auto px-4 py-8 max-w-3xl">
         {/* Print-only club heading (the nav is hidden when printing) */}
