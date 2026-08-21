@@ -27,11 +27,24 @@ export async function isMaintenanceModeOn(): Promise<boolean> {
     return cachedValue;
   }
 
-  const config = await getConfig();
-  // Case-insensitive: whoever last toggled this by hand in Supabase's Table Editor might
-  // have typed "TRUE"/"True" — don't rely on exact-case matching for a human-edited value.
-  const rawValue = config.maintenance_mode || '';
-  cachedValue = rawValue.trim().toLowerCase() === 'true';
-  cachedAt = now;
-  return cachedValue;
+  // Fail open, not closed. This check runs on every non-Admin request/login attempt
+  // with no caller expecting it to ever throw — a transient Supabase error (confirmed
+  // 2026-08-21: "JWT issued at future", a rare cold-start clock-sync lag on a fresh
+  // serverless instance, self-corrects on the next request) must never crash the whole
+  // request/login over a config lookup for a manual, deliberately-toggled flag. Worst
+  // case of failing open is one unlucky request slipping through during a real
+  // maintenance window; the alternative (failing closed, or not catching at all) is
+  // real users locked out or getting hard errors during completely normal operation.
+  try {
+    const config = await getConfig();
+    // Case-insensitive: whoever last toggled this by hand in Supabase's Table Editor might
+    // have typed "TRUE"/"True" — don't rely on exact-case matching for a human-edited value.
+    const rawValue = config.maintenance_mode || '';
+    cachedValue = rawValue.trim().toLowerCase() === 'true';
+    cachedAt = now;
+    return cachedValue;
+  } catch (err) {
+    console.error('[isMaintenanceModeOn] Failed to read config, failing open (treating as off):', err);
+    return false;
+  }
 }
