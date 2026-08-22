@@ -275,6 +275,7 @@ export async function GET(
         date: game.date,
         time: game.time,
         clubName: game.clubName,
+        description: game.description,
         homeAway: game.homeAway,
         format: game.format,
         status: game.status,

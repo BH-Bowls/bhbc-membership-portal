@@ -485,6 +485,16 @@ export default function FriendliesPage() {
   }
 
   /**
+   * Opponent display name — clubName is blank for fixtures with no real club
+   * opponent (representative sides, internal events); falls back to the free-text
+   * description field for those, matching /fixtures' own clubName-or-description
+   * pattern. Without this, those fixtures showed a blank opponent name.
+   */
+  function opponentName(game: { clubName: string; description?: string | null }): string {
+    return game.clubName || game.description || '';
+  }
+
+  /**
    * Parse the number of players required from a format string
    * e.g. "4 Triples" → 12, "3 Pairs" → 6, "5 Fours" → 20
    */
@@ -819,23 +829,31 @@ export default function FriendliesPage() {
                     <div className="flex justify-between items-start mb-3">
                       <div>
                         <h3 className="font-bold text-lg text-gray-900">
-                          <Link
-                            href={`/clubs/${encodeURIComponent(gameA.clubName)}?from=friendlies`}
-                            className="text-blue-600 hover:text-blue-800 hover:underline"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            {gameA.clubName}
-                          </Link>
-                          {gameA.clubName !== gameB.clubName && (
+                          {gameA.clubName ? (
+                            <Link
+                              href={`/clubs/${encodeURIComponent(gameA.clubName)}?from=friendlies`}
+                              className="text-blue-600 hover:text-blue-800 hover:underline"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {gameA.clubName}
+                            </Link>
+                          ) : (
+                            opponentName(gameA)
+                          )}
+                          {opponentName(gameA) !== opponentName(gameB) && (
                             <>
                               {' + '}
-                              <Link
-                                href={`/clubs/${encodeURIComponent(gameB.clubName)}?from=friendlies`}
-                                className="text-blue-600 hover:text-blue-800 hover:underline"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                {gameB.clubName}
-                              </Link>
+                              {gameB.clubName ? (
+                                <Link
+                                  href={`/clubs/${encodeURIComponent(gameB.clubName)}?from=friendlies`}
+                                  className="text-blue-600 hover:text-blue-800 hover:underline"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  {gameB.clubName}
+                                </Link>
+                              ) : (
+                                opponentName(gameB)
+                              )}
                             </>
                           )}
                         </h3>
@@ -865,7 +883,7 @@ export default function FriendliesPage() {
                         <span className="font-medium">Venue:</span>{' '}
                         {gameA.homeAway === gameB.homeAway
                           ? (gameA.homeAway === 'H' ? 'Home' : 'Away')
-                          : `${gameA.clubName}: ${gameA.homeAway === 'H' ? 'Home' : 'Away'} / ${gameB.clubName}: ${gameB.homeAway === 'H' ? 'Home' : 'Away'}`
+                          : `${opponentName(gameA)}: ${gameA.homeAway === 'H' ? 'Home' : 'Away'} / ${opponentName(gameB)}: ${gameB.homeAway === 'H' ? 'Home' : 'Away'}`
                         }
                       </p>
                       <p>
@@ -888,9 +906,9 @@ export default function FriendliesPage() {
                               onClick={() => {
                                 setSelectedGameForModal(gameA);
                                 setModalGameName(
-                                  gameA.clubName !== gameB.clubName
-                                    ? `${gameA.clubName} + ${gameB.clubName} - ${gameA.date}`
-                                    : `${gameA.clubName} - ${gameA.date}`
+                                  opponentName(gameA) !== opponentName(gameB)
+                                    ? `${opponentName(gameA)} + ${opponentName(gameB)} - ${gameA.date}`
+                                    : `${opponentName(gameA)} - ${gameA.date}`
                                 );
                                 setIsModalOpen(true);
                               }}
@@ -971,15 +989,21 @@ export default function FriendliesPage() {
                   {/* Game card header - club name, date, and status badge */}
                   <div className="flex justify-between items-start mb-3">
                     <div>
-                      {/* Opponent club name - links to club details */}
+                      {/* Opponent club name - links to club details (no link for
+                          fixtures with no real club opponent — falls back to the
+                          free-text description instead, e.g. representative sides) */}
                       <h3 className="font-bold text-lg text-gray-900">
-                        <Link
-                          href={`/clubs/${encodeURIComponent(game.clubName)}?from=friendlies`}
-                          className="text-blue-600 hover:text-blue-800 hover:underline"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          {game.clubName}
-                        </Link>
+                        {game.clubName ? (
+                          <Link
+                            href={`/clubs/${encodeURIComponent(game.clubName)}?from=friendlies`}
+                            className="text-blue-600 hover:text-blue-800 hover:underline"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {game.clubName}
+                          </Link>
+                        ) : (
+                          opponentName(game)
+                        )}
                       </h3>
 
                       {/* Game date and time formatted for display */}
@@ -1040,7 +1064,7 @@ export default function FriendliesPage() {
                             <button
                               onClick={() => {
                                 setSelectedGameForModal(game);
-                                setModalGameName(`${game.clubName} - ${game.date}`);
+                                setModalGameName(`${opponentName(game)} - ${game.date}`);
                                 setIsModalOpen(true);
                               }}
                               className={`mt-2 inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-white rounded ${badgeColor} hover:opacity-90 transition-opacity`}
@@ -1059,7 +1083,7 @@ export default function FriendliesPage() {
                     {/* For played/abandoned games, show final score */}
                     {(game.status === 'P' || game.status === 'A') && game.bhbcScore !== undefined && game.opponentScore !== undefined && (
                       <p className="text-lg font-bold">
-                        BH: <span className="text-blue-600">{game.bhbcScore}</span> - {game.clubName}: <span className="text-gray-700">{game.opponentScore}</span>
+                        BH: <span className="text-blue-600">{game.bhbcScore}</span> - {opponentName(game)}: <span className="text-gray-700">{game.opponentScore}</span>
                       </p>
                     )}
 
@@ -1183,7 +1207,7 @@ export default function FriendliesPage() {
             <ConfirmDialog
               isOpen={true}
               title="Enter this game"
-              message={`Enter ${g.clubName} on ${g.date}?`}
+              message={`Enter ${opponentName(g)} on ${g.date}?`}
               confirmLabel={entering ? 'Entering…' : 'Enter'}
               cancelLabel="Cancel"
               confirmVariant="primary"
@@ -1236,7 +1260,7 @@ export default function FriendliesPage() {
             <ConfirmDialog
               isOpen={true}
               title="Remove from this game"
-              message={`Remove yourself from ${g.clubName} on ${g.date}?`}
+              message={`Remove yourself from ${opponentName(g)} on ${g.date}?`}
               confirmLabel={entering ? 'Removing…' : 'Remove'}
               cancelLabel="Cancel"
               confirmVariant="danger"

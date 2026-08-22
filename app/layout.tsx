@@ -4,6 +4,7 @@
 import './globals.css';
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
+import { Analytics } from '@vercel/analytics/next';
 import { Providers } from './providers';
 import { OfflineBanner } from '@/components/OfflineBanner';
 import { ChunkErrorRecovery } from '@/components/ChunkErrorRecovery';
@@ -36,6 +37,7 @@ export default function RootLayout({
         <ChunkErrorRecovery />
         <OfflineBanner />
         <Providers>{children}</Providers>
+        <Analytics />
       </body>
     </html>
   );

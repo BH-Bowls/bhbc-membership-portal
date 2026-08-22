@@ -45,3 +45,22 @@ export function getSupabaseClient(): SupabaseClient {
   });
   return _supabaseClient;
 }
+
+/**
+ * Retry a Supabase operation once, after a short delay, if it fails with the
+ * specific "JWT issued at future" clock-skew error — a rare, self-resolving
+ * artifact seen on a freshly cold-started serverless instance (the service-role
+ * client's static JWT briefly looks newer than the Supabase node's own clock;
+ * settles within milliseconds). Any other error is thrown immediately, unretried
+ * — this is deliberately narrow, not a general-purpose retry-everything wrapper.
+ */
+export async function withJwtRetry<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!message.includes('JWT issued at future')) throw err;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    return fn();
+  }
+}

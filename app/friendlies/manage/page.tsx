@@ -345,6 +345,15 @@ export default function ManageGamesPage() {
   };
 
   /**
+   * Opponent display name — clubName is blank for fixtures with no real club
+   * opponent (representative sides, internal events); falls back to the free-text
+   * description field for those.
+   */
+  function opponentName(game: { clubName: string; description?: string | null }): string {
+    return game.clubName || game.description || '';
+  }
+
+  /**
    * Handle Open Game button click — shows instructions dialog first
    */
   function handleOpenGame(game: Game) {
@@ -358,7 +367,7 @@ export default function ManageGamesPage() {
     setConfirmDialog({
       isOpen: true,
       title: 'Open Paired Games',
-      message: `Open both ${gameA.clubName} and ${gameB.clubName} games for player entry?`,
+      message: `Open both ${opponentName(gameA)} and ${opponentName(gameB)} games for player entry?`,
       onConfirm: async () => {
         closeConfirmDialog();
         setActionLoading(`paired-${gameA.tabName}-${gameB.tabName}`);
@@ -408,7 +417,7 @@ export default function ManageGamesPage() {
     setConfirmDialog({
       isOpen: true,
       title: 'Close Games',
-      message: `Close entries for ${gameA.clubName} and ${gameB.clubName}? Everyone is entered into the first game — you can move players across to the second game during selection.`,
+      message: `Close entries for ${opponentName(gameA)} and ${opponentName(gameB)}? Everyone is entered into the first game — you can move players across to the second game during selection.`,
       onConfirm: async () => {
         closeConfirmDialog();
         const pairKey = `paired-${gameA.tabName}-${gameB.tabName}`;
@@ -1166,7 +1175,7 @@ export default function ManageGamesPage() {
                           <div className="text-gray-700">{gameA.time}</div>
                         </td>
                         <td className="px-6 py-4 text-sm font-medium text-gray-900">
-                          <div>{gameA.clubName}{gameA.clubName !== gameB.clubName ? ` + ${gameB.clubName}` : ''}</div>
+                          <div>{opponentName(gameA)}{opponentName(gameA) !== opponentName(gameB) ? ` + ${opponentName(gameB)}` : ''}</div>
                           <span className="inline-block mt-1 px-2 py-0.5 text-xs font-medium text-purple-700 bg-purple-100 rounded">
                             {gameA.ladiesMen} + {gameB.ladiesMen}
                           </span>
@@ -1240,7 +1249,7 @@ export default function ManageGamesPage() {
                       {/* Club name column */}
                       <td className="px-6 py-4 text-sm font-medium text-gray-900">
                         <div className="flex items-center gap-1.5">
-                          {game.clubName}
+                          {opponentName(game)}
                           {game.needsPlayers && <span title="Players needed">🟠</span>}
                         </div>
                         {ladiesMenBadge(game.ladiesMen)}
@@ -1332,7 +1341,7 @@ export default function ManageGamesPage() {
           game={{
             id: instructionsDialog.game.id,
             tabName: instructionsDialog.game.tabName,
-            clubName: instructionsDialog.game.clubName,
+            clubName: opponentName(instructionsDialog.game),
             date: instructionsDialog.game.date,
             time: instructionsDialog.game.time,
             format: instructionsDialog.game.format,
@@ -1361,7 +1370,7 @@ export default function ManageGamesPage() {
           return (
             <div className="bg-gray-50 rounded-lg px-4 py-3 mb-6 text-sm text-gray-700 space-y-1">
               <div className="flex flex-wrap gap-x-4 gap-y-1">
-                <span><span className="font-medium text-gray-900">Club:</span> {g.clubName}{g.clubSuffix ? ` ${g.clubSuffix}` : ''}</span>
+                <span><span className="font-medium text-gray-900">Club:</span> {opponentName(g)}{g.clubName && g.clubSuffix ? ` ${g.clubSuffix}` : ''}</span>
                 <span><span className="font-medium text-gray-900">Date:</span> {displayDate}</span>
                 <span><span className="font-medium text-gray-900">Time:</span> {g.time}</span>
                 <span><span className="font-medium text-gray-900">Venue:</span> {g.homeAway === 'H' ? 'Home' : 'Away'}</span>
@@ -1676,7 +1685,7 @@ export default function ManageGamesPage() {
           onClose={() => setAddPlayersModal({ isOpen: false, game: null })}
           gameId={addPlayersModal.game.tabName}
           gameType="friendlies"
-          gameName={`${addPlayersModal.game.clubName} — ${addPlayersModal.game.date}`}
+          gameName={`${opponentName(addPlayersModal.game)} — ${addPlayersModal.game.date}`}
           currentUserRole={session?.user.role}
           onPlayersChanged={fetchGames}
         />

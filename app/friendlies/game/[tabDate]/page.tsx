@@ -30,6 +30,7 @@ interface GameDetails {
     date: string;                 // Game date (DD/MM/YYYY)
     time: string;                 // Game time (HH:MM)
     clubName: string;             // Opponent club name
+    description?: string | null;  // Free-text label when there's no real club opponent
     homeAway: 'H' | 'A';          // Home or Away venue
     format: string;               // Game format (Triples, Pairs, etc.)
     status: string;               // Game status (O, X, S, P, C, A)
@@ -110,6 +111,15 @@ interface GameDetails {
   // Buddies (partners) of the current user who are selected in this game — the people
   // the user may confirm on behalf of (and, for withdraw, switch-user to).
   partners?: Array<{ userName: string; name: string; confirmed: boolean }>;
+}
+
+/**
+ * Opponent display name — clubName is blank for fixtures with no real club
+ * opponent (representative sides, internal events); falls back to the free-text
+ * description field for those.
+ */
+function opponentName(game: { clubName: string; description?: string | null }): string {
+  return game.clubName || game.description || '';
 }
 
 // ============================================================================
@@ -515,7 +525,7 @@ export default function GameDetailsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: messageText.trim(),
-          clubName: gameDetails?.game.clubName ?? '',
+          clubName: gameDetails ? opponentName(gameDetails.game) : '',
           gameDate: gameDetails?.game.date ?? '',
         }),
       });
@@ -826,14 +836,19 @@ export default function GameDetailsPage() {
             )}
           </div>
 
-          {/* Game title (opponent club name — links to club details) */}
+          {/* Game title (opponent club name — links to club details; no link for
+              fixtures with no real club opponent, e.g. representative sides) */}
           <h1 className="text-3xl font-bold">
-            <Link
-              href={{ pathname: `/clubs/${encodeURIComponent(game.clubName)}`, query: { from: 'game', tabDate: decodeURIComponent(tabDate) } }}
-              className="text-blue-600 hover:text-blue-800 hover:underline"
-            >
-              {game.clubName}
-            </Link>
+            {game.clubName ? (
+              <Link
+                href={{ pathname: `/clubs/${encodeURIComponent(game.clubName)}`, query: { from: 'game', tabDate: decodeURIComponent(tabDate) } }}
+                className="text-blue-600 hover:text-blue-800 hover:underline"
+              >
+                {game.clubName}
+              </Link>
+            ) : (
+              opponentName(game)
+            )}
           </h1>
 
           {/* Game date and time */}
@@ -1324,7 +1339,7 @@ export default function GameDetailsPage() {
         {/* Opposition Section - show if any opposition players recorded */}
         {opposition && opposition.length > 0 && (
           <div className="bg-white rounded-lg shadow border border-blue-200 p-6 mb-6">
-            <h2 className="text-2xl font-bold mb-4 text-blue-700">{game.clubName}</h2>
+            <h2 className="text-2xl font-bold mb-4 text-blue-700">{opponentName(game)}</h2>
             <div className="space-y-2">
               {opposition.map((player, idx) => (
                 <div key={idx} className="flex items-center p-2 rounded bg-blue-50">
@@ -1361,7 +1376,7 @@ export default function GameDetailsPage() {
             <h2 className="text-lg font-semibold text-gray-900 mb-1">Message Captains</h2>
             <p className="text-sm text-gray-700 mb-4">
               Your message, name, and email address will be sent to the captains regarding{' '}
-              <strong>{game.clubName}</strong> ({game.date}).
+              <strong>{opponentName(game)}</strong> ({game.date}).
             </p>
             {messageError && (
               <p className="text-sm text-red-600 mb-3">{messageError}</p>

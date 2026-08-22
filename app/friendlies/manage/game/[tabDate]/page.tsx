@@ -34,6 +34,7 @@ interface GameData {
     date: string;           // Game date (DD/MM/YYYY)
     time: string;           // Game time (HH:MM)
     clubName: string;       // Opponent club name
+    description?: string | null; // Free-text label when there's no real club opponent
     homeAway: 'H' | 'A';    // Home or Away venue
     format: string;         // Game format (Triples, Pairs, etc.)
     ladiesMen: string;      // Ladies/Men/Mixed
@@ -56,6 +57,15 @@ interface GameData {
   // Players who have 'E' in the Players sheet but are absent from the game sheet
   // (race-condition entries — captain can repair these with one click)
   orphanedEntries?: { userName: string; fullName: string }[];
+}
+
+/**
+ * Opponent display name — clubName is blank for fixtures with no real club
+ * opponent (representative sides, internal events); falls back to the free-text
+ * description field for those.
+ */
+function opponentName(game: { clubName: string; description?: string | null }): string {
+  return game.clubName || game.description || '';
 }
 
 // ============================================================================
@@ -495,7 +505,7 @@ export default function TeamSelectionPage() {
     // original game's format. The captain can change either before confirming.
     setReserveDialog({
       open: true,
-      teamName: `${g.clubName} BH Reserves`,
+      teamName: `${opponentName(g)} BH Reserves`,
       format: g.format || '',
       submitting: false,
       error: null,
@@ -1056,7 +1066,7 @@ export default function TeamSelectionPage() {
             </div>
           </div>
 
-          <h1 className="text-3xl font-bold text-gray-900">{game.clubName} - Team Selection</h1>
+          <h1 className="text-3xl font-bold text-gray-900">{opponentName(game)} - Team Selection</h1>
 
           <div className="text-gray-900 mt-2">
             {parseUKDate(game.date).toLocaleDateString('en-GB', {
@@ -1512,7 +1522,7 @@ export default function TeamSelectionPage() {
                 {previewData.opposition.length > 0 && (
                   <div className="border border-blue-300 rounded bg-white">
                     <div className="bg-blue-50 px-3 py-1 border-b border-blue-300">
-                      <span className="text-sm font-semibold text-blue-700">{gameData!.game.clubName}</span>
+                      <span className="text-sm font-semibold text-blue-700">{opponentName(gameData!.game)}</span>
                     </div>
                     <div className="px-3 py-1">
                       {previewData.opposition.map(p => (
@@ -1557,7 +1567,7 @@ export default function TeamSelectionPage() {
         onClose={() => setShowAddPlayersModal(false)}
         gameId={game.tabName}
         gameType="friendlies"
-        gameName={game.clubName}
+        gameName={opponentName(game)}
         gameStatus={game.status}
         ladiesMen={game.ladiesMen}
         currentUserRole={session?.user?.role}
@@ -1759,7 +1769,7 @@ export default function TeamSelectionPage() {
           game={{
             tabName: gameData.game.tabName,
             rowNumber: 0,
-            clubName: gameData.game.clubName,
+            clubName: opponentName(gameData.game),
             date: gameData.game.date,
             time: gameData.game.time,
             format: gameData.game.format,

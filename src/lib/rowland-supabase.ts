@@ -9,7 +9,7 @@
 // Rowland *contacts*/tokens (the team-entry feature) are a separate, deliberately
 // deferred piece — not part of this data layer.
 
-import { getSupabaseClient } from './supabase';
+import { getSupabaseClient, withJwtRetry } from './supabase';
 import {
   computeRowlandBracket,
   ROWLAND_ROUND_ORDER,
@@ -80,17 +80,21 @@ function sortMatches(matches: RowlandMatch[]): RowlandMatch[] {
 // ============================================================================
 
 export async function getAllRowlandComps(): Promise<RowlandComp[]> {
-  const supabase = getSupabaseClient();
-  const { data, error } = await supabase.from('rowland_comps').select('*');
-  if (error) throw new Error(`Failed to fetch Rowland comps: ${error.message}`);
-  return (data || []).map(mapCompRow);
+  return withJwtRetry(async () => {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase.from('rowland_comps').select('*');
+    if (error) throw new Error(`Failed to fetch Rowland comps: ${error.message}`);
+    return (data || []).map(mapCompRow);
+  });
 }
 
 export async function getRowlandComp(compId: RowlandCompId): Promise<RowlandComp | null> {
-  const supabase = getSupabaseClient();
-  const { data, error } = await supabase.from('rowland_comps').select('*').eq('comp_id', compId).maybeSingle();
-  if (error) throw new Error(`Failed to fetch Rowland comp: ${error.message}`);
-  return data ? mapCompRow(data) : null;
+  return withJwtRetry(async () => {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase.from('rowland_comps').select('*').eq('comp_id', compId).maybeSingle();
+    if (error) throw new Error(`Failed to fetch Rowland comp: ${error.message}`);
+    return data ? mapCompRow(data) : null;
+  });
 }
 
 export async function updateRowlandComp(
@@ -111,8 +115,10 @@ export async function updateRowlandComp(
 
   if (Object.keys(columnUpdates).length === 0) return;
 
-  const { error } = await supabase.from('rowland_comps').update(columnUpdates).eq('comp_id', compId);
-  if (error) throw new Error(`Failed to update Rowland comp ${compId}: ${error.message}`);
+  await withJwtRetry(async () => {
+    const { error } = await supabase.from('rowland_comps').update(columnUpdates).eq('comp_id', compId);
+    if (error) throw new Error(`Failed to update Rowland comp ${compId}: ${error.message}`);
+  });
 }
 
 // ============================================================================
@@ -120,10 +126,12 @@ export async function updateRowlandComp(
 // ============================================================================
 
 export async function getRowlandMatches(compId: RowlandCompId): Promise<RowlandMatch[]> {
-  const supabase = getSupabaseClient();
-  const { data, error } = await supabase.from('rowland_matches').select('*').eq('comp_id', compId);
-  if (error) throw new Error(`Failed to fetch Rowland matches: ${error.message}`);
-  return sortMatches((data || []).map(mapMatchRow));
+  return withJwtRetry(async () => {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase.from('rowland_matches').select('*').eq('comp_id', compId);
+    if (error) throw new Error(`Failed to fetch Rowland matches: ${error.message}`);
+    return sortMatches((data || []).map(mapMatchRow));
+  });
 }
 
 /** Update players, teams and/or result for a match. */
@@ -167,12 +175,14 @@ export async function updateRowlandMatch(
 
   if (Object.keys(columnUpdates).length === 0) return;
 
-  const { error } = await supabase
-    .from('rowland_matches')
-    .update(columnUpdates)
-    .eq('comp_id', compId)
-    .eq('match_id', matchId);
-  if (error) throw new Error(`Failed to update Rowland match ${matchId}: ${error.message}`);
+  await withJwtRetry(async () => {
+    const { error } = await supabase
+      .from('rowland_matches')
+      .update(columnUpdates)
+      .eq('comp_id', compId)
+      .eq('match_id', matchId);
+    if (error) throw new Error(`Failed to update Rowland match ${matchId}: ${error.message}`);
+  });
 }
 
 // ============================================================================
@@ -245,13 +255,15 @@ export async function setupRowlandBracket(
     }
   }
 
-  const supabase = getSupabaseClient();
-  const { error: deleteError } = await supabase.from('rowland_matches').delete().eq('comp_id', compId);
-  if (deleteError) throw new Error(`Failed to clear existing matches for ${compId}: ${deleteError.message}`);
+  await withJwtRetry(async () => {
+    const supabase = getSupabaseClient();
+    const { error: deleteError } = await supabase.from('rowland_matches').delete().eq('comp_id', compId);
+    if (deleteError) throw new Error(`Failed to clear existing matches for ${compId}: ${deleteError.message}`);
 
-  if (rows.length === 0) return;
-  const { error } = await supabase.from('rowland_matches').insert(rows);
-  if (error) throw new Error(`Failed to create bracket for ${compId}: ${error.message}`);
+    if (rows.length === 0) return;
+    const { error } = await supabase.from('rowland_matches').insert(rows);
+    if (error) throw new Error(`Failed to create bracket for ${compId}: ${error.message}`);
+  });
 }
 
 /**
@@ -290,13 +302,15 @@ export async function createEmptyBracket(
     }
   }
 
-  const supabase = getSupabaseClient();
-  const { error: deleteError } = await supabase.from('rowland_matches').delete().eq('comp_id', compId);
-  if (deleteError) throw new Error(`Failed to clear existing matches for ${compId}: ${deleteError.message}`);
+  await withJwtRetry(async () => {
+    const supabase = getSupabaseClient();
+    const { error: deleteError } = await supabase.from('rowland_matches').delete().eq('comp_id', compId);
+    if (deleteError) throw new Error(`Failed to clear existing matches for ${compId}: ${deleteError.message}`);
 
-  if (rows.length === 0) return;
-  const { error } = await supabase.from('rowland_matches').insert(rows);
-  if (error) throw new Error(`Failed to create empty bracket for ${compId}: ${error.message}`);
+    if (rows.length === 0) return;
+    const { error } = await supabase.from('rowland_matches').insert(rows);
+    if (error) throw new Error(`Failed to create empty bracket for ${compId}: ${error.message}`);
+  });
 }
 
 function winnerOf(match: RowlandMatch): RowlandTeamRef | null {
@@ -346,14 +360,18 @@ export async function propagateRowlandWinnerForMatch(
 // ============================================================================
 
 export async function getRowlandMessage(): Promise<string> {
-  const supabase = getSupabaseClient();
-  const { data, error } = await supabase.from('rowland_settings').select('value').eq('key', 'message').maybeSingle();
-  if (error) throw new Error(`Failed to fetch Rowland message: ${error.message}`);
-  return data?.value || '';
+  return withJwtRetry(async () => {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase.from('rowland_settings').select('value').eq('key', 'message').maybeSingle();
+    if (error) throw new Error(`Failed to fetch Rowland message: ${error.message}`);
+    return data?.value || '';
+  });
 }
 
 export async function setRowlandMessage(message: string): Promise<void> {
-  const supabase = getSupabaseClient();
-  const { error } = await supabase.from('rowland_settings').upsert({ key: 'message', value: message });
-  if (error) throw new Error(`Failed to save Rowland message: ${error.message}`);
+  await withJwtRetry(async () => {
+    const supabase = getSupabaseClient();
+    const { error } = await supabase.from('rowland_settings').upsert({ key: 'message', value: message });
+    if (error) throw new Error(`Failed to save Rowland message: ${error.message}`);
+  });
 }

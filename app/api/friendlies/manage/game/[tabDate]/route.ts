@@ -104,7 +104,7 @@ export async function GET(
       for (const g of seasonGames) {
         if (isLinked(g.paired) && g.date === game.date && g.tabName !== game.tabName) {
           pairedTabName = g.tabName;
-          pairedClubName = g.clubName;
+          pairedClubName = g.clubName || g.description || '';
           break;
         }
       }
@@ -117,6 +117,7 @@ export async function GET(
         date: game.date,
         time: game.time,
         clubName: game.clubName,
+        description: game.description,
         homeAway: game.homeAway,
         format: game.format,
         ladiesMen: game.ladiesMen,
