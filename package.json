@@ -19,9 +19,9 @@
     "start": "next start --port 3001",
     "lint": "next lint",
     "update-version": "node scripts/update-version.js",
-    "release:patch": "npm version patch && npm run update-version && git add src/config/version.ts && git commit --amend --no-edit && node scripts/git-push-release.js",
-    "release:minor": "npm version minor && npm run update-version && git add src/config/version.ts && git commit --amend --no-edit && node scripts/git-push-release.js",
-    "release:major": "npm version major && npm run update-version && git add src/config/version.ts && git commit --amend --no-edit && node scripts/git-push-release.js"
+    "release:patch": "node scripts/release.js patch",
+    "release:minor": "node scripts/release.js minor",
+    "release:major": "node scripts/release.js major"
   },
   "dependencies": {
     "@ducanh2912/next-pwa": "^10.2.9",
