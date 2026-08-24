@@ -22,6 +22,7 @@ import type { GameStatus, GameType, HomeAway } from './types/friendlies';
 
 export interface Fixture {
   id: string;
+  seasonId: string;
   date: string;                 // DD/MM/YYYY, matching the existing Game.date convention
   tabDate: string;               // always '' — vestigial, no live column ever populated it
   time: string;
@@ -95,6 +96,7 @@ function displayDateFromUK(ukDate: string): string {
 function mapFixtureRow(row: any): Fixture {
   return {
     id: row.id,
+    seasonId: row.season_id,
     date: isoToUKDate(row.date),
     tabDate: '',
     time: row.time || '',
@@ -199,6 +201,16 @@ export async function getFixtureByTabName(tabName: string): Promise<Fixture | nu
     .eq('season_id', seasonId)
     .eq('tab_name', tabName)
     .maybeSingle();
+  if (error) throw new Error(`Failed to fetch fixture: ${error.message}`);
+  return data ? mapFixtureRow(data) : null;
+}
+
+/** Looks up a fixture by id without assuming any particular season — needed
+ * wherever a caller only has an id and must resolve which season it actually
+ * belongs to (e.g. a Season Planning draft) before doing season-scoped work. */
+export async function getFixtureById(id: string): Promise<Fixture | null> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.from('fixtures').select('*').eq('id', id).maybeSingle();
   if (error) throw new Error(`Failed to fetch fixture: ${error.message}`);
   return data ? mapFixtureRow(data) : null;
 }

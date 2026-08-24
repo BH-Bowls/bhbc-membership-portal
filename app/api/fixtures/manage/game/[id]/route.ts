@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { updateFixture, deleteFixture, getFixtures } from '@/lib/fixtures-supabase';
+import { updateFixture, deleteFixture, getFixtures, getFixtureById } from '@/lib/fixtures-supabase';
 import { GameType } from '@/lib/types/friendlies';
 import { hasRole } from '@/lib/role-utils';
 
@@ -38,7 +38,13 @@ export async function PATCH(
     // the same date must be the same section (Ladies/Men — usually both Mixed). Pairing
     // a Mixed game with a Ladies game is almost always a mistake.
     if (paired === 'Y') {
-      const games = await getFixtures();
+      // Scope the conflict check to the fixture's own season — it may belong to a
+      // Season Planning draft year, not the currently-active season.
+      const thisFixture = await getFixtureById(id);
+      if (!thisFixture) {
+        return NextResponse.json({ error: 'Fixture not found' }, { status: 404 });
+      }
+      const games = await getFixtures(undefined, undefined, thisFixture.seasonId);
       const thisSection = (ladiesMen || '').trim().toLowerCase();
       // Look for another paired game on the same date (a closed link 'C' counts too)
       for (let i = 0; i < games.length; i++) {
