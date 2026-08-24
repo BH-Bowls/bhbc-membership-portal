@@ -231,9 +231,10 @@ export async function createFixture(data: {
   pickupInfo?: string;
   tabName?: string;
   status?: string;
+  seasonId?: string;
 }): Promise<void> {
   const supabase = getSupabaseClient();
-  const seasonId = await getActiveSeasonId();
+  const seasonId = data.seasonId || (await getActiveSeasonId());
 
   const isoDate = /^\d{4}-\d{2}-\d{2}$/.test(data.date)
     ? data.date

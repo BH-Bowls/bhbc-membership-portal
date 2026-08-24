@@ -398,6 +398,8 @@ export default function FixturesManagePage() {
   const [clubNames, setClubNames] = useState<string[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState<'All' | GameType>('All');
+  const [seasons, setSeasons] = useState<{ year: number; isActive: boolean }[]>([]);
+  const [selectedYear, setSelectedYear] = useState<number | null>(null);
 
   const userRole = (session?.user as any)?.role || '';
   const isAdmin = hasRole(userRole, 'Admin');
@@ -408,7 +410,15 @@ export default function FixturesManagePage() {
     if (session === null) { router.push('/'); return; }
     if (session && !canAccess) { router.push('/'); return; }
     if (session && canAccess) {
-      fetchGames();
+      fetch('/api/fixtures/seasons')
+        .then(r => r.ok ? r.json() : { seasons: [] })
+        .then(data => {
+          const list = data.seasons || [];
+          setSeasons(list);
+          const active = list.find((s: { isActive: boolean }) => s.isActive);
+          if (active) setSelectedYear(active.year);
+        })
+        .catch(() => setPageError('Failed to load seasons'));
       fetch('/api/clubs')
         .then(r => r.ok ? r.json() : { clubs: [] })
         .then(data => setClubNames((data.clubs || []).map((c: any) => c.clubName).filter(Boolean).sort()))
@@ -416,10 +426,14 @@ export default function FixturesManagePage() {
     }
   }, [session, canAccess]);
 
-  async function fetchGames() {
+  useEffect(() => {
+    if (selectedYear !== null) fetchGames(selectedYear);
+  }, [selectedYear]);
+
+  async function fetchGames(year: number) {
     setLoading(true);
     try {
-      const res = await fetch('/api/fixtures/manage/games');
+      const res = await fetch(`/api/fixtures/manage/games?year=${year}`);
       if (!res.ok) throw new Error('Failed to fetch');
       const data = await res.json();
       setGames(data.games || []);
@@ -462,7 +476,7 @@ export default function FixturesManagePage() {
         const res = await fetch('/api/fixtures/manage/games', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(form),
+          body: JSON.stringify({ ...form, year: selectedYear }),
         });
         if (!res.ok) {
           const data = await res.json();
@@ -471,7 +485,7 @@ export default function FixturesManagePage() {
       }
       setModalOpen(false);
       setEditGame(null);
-      await fetchGames();
+      if (selectedYear !== null) await fetchGames(selectedYear);
     } catch (err: any) {
       setModalError(err.message || 'Failed to save');
     } finally {
@@ -491,7 +505,7 @@ export default function FixturesManagePage() {
         throw new Error(data.error || 'Failed to delete');
       }
       setConfirmDelete(null);
-      await fetchGames();
+      if (selectedYear !== null) await fetchGames(selectedYear);
     } catch (err: any) {
       setPageError(err.message || 'Failed to delete fixture');
       setConfirmDelete(null);
@@ -526,12 +540,27 @@ export default function FixturesManagePage() {
             </Link>
             <h1 className="text-2xl font-bold text-gray-900">Manage Fixtures</h1>
           </div>
-          <button
-            onClick={openAdd}
-            className={getButtonClasses('primary', 'md')}
-          >
-            + Add Fixture
-          </button>
+          <div className="flex items-center gap-3">
+            {seasons.length > 1 && (
+              <select
+                value={selectedYear ?? ''}
+                onChange={(e) => setSelectedYear(parseInt(e.target.value, 10))}
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-700 bg-white"
+              >
+                {seasons.map((s) => (
+                  <option key={s.year} value={s.year}>
+                    {s.year}{!s.isActive ? ' (draft)' : ''}
+                  </option>
+                ))}
+              </select>
+            )}
+            <button
+              onClick={openAdd}
+              className={getButtonClasses('primary', 'md')}
+            >
+              + Add Fixture
+            </button>
+          </div>
         </div>
 
         {pageError && (

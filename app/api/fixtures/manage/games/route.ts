@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getFixtures, createFixture } from '@/lib/fixtures-supabase';
+import { getFixtures, createFixture, getAllSeasons } from '@/lib/fixtures-supabase';
 import { GameType } from '@/lib/types/friendlies';
 import { hasRole } from '@/lib/role-utils';
 import { parseNormalizedDate } from '@/lib/date-utils';
@@ -21,7 +21,21 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const games = await getFixtures();
+    // Optional ?year= to manage a season other than the active one (e.g. the
+    // Season Planning draft) — this page is already Captain/Admin-only, so no
+    // extra draft-visibility gate is needed here unlike /api/fixtures/games.
+    let seasonId: string | undefined;
+    const yearParam = request.nextUrl.searchParams.get('year');
+    if (yearParam) {
+      const allSeasons = await getAllSeasons();
+      const requested = allSeasons.find((s) => s.year === parseInt(yearParam, 10));
+      if (!requested) {
+        return NextResponse.json({ error: 'Unknown season year' }, { status: 400 });
+      }
+      seasonId = requested.id;
+    }
+
+    const games = await getFixtures(undefined, undefined, seasonId);
 
     // game.date is DD/MM/YYYY — must use parseNormalizedDate, not new Date()
     const sortedGames = games.sort((a, b) => {
@@ -56,6 +70,7 @@ export async function POST(request: NextRequest) {
     const {
       date, time, type, clubName, clubSuffix,
       homeAway, format, ladiesMen, dress, paired, maxPlayers, message, pickupInfo,
+      year,
     } = body;
 
     if (!date || !clubName) {
@@ -63,6 +78,18 @@ export async function POST(request: NextRequest) {
         { error: 'Date and club name are required' },
         { status: 400 }
       );
+    }
+
+    // Optional year — add the fixture into a season other than the active one
+    // (e.g. manually adding a Season Planning draft fixture).
+    let seasonId: string | undefined;
+    if (year) {
+      const allSeasons = await getAllSeasons();
+      const requested = allSeasons.find((s) => s.year === parseInt(year, 10));
+      if (!requested) {
+        return NextResponse.json({ error: 'Unknown season year' }, { status: 400 });
+      }
+      seasonId = requested.id;
     }
 
     // Auto-generate tabDate from date (e.g., "25 Apr 26")
@@ -96,6 +123,7 @@ export async function POST(request: NextRequest) {
       pickupInfo,
       tabName,
       status: '',
+      seasonId,
     });
 
     return NextResponse.json({ success: true, tabName });
