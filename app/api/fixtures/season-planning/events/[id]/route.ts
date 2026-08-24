@@ -29,10 +29,10 @@ export async function PATCH(
 
     const { id } = await params;
     const body = await request.json();
-    const { date, time, description, clubName, format, ladiesMen, dress, eventType, rinksRequired } = body;
+    const { date, time, description, clubName, format, ladiesMen, dress, homeAway } = body;
 
     await updatePlanningFixtureFields(id, {
-      date, time, description, clubName, format, ladiesMen, dress, eventType, rinksRequired,
+      date, time, description, clubName, format, ladiesMen, dress, homeAway,
     });
 
     return NextResponse.json({ success: true });

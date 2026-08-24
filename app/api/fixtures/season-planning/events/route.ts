@@ -47,14 +47,14 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { seasonId, date, time, description, clubName, format, ladiesMen, dress, eventType, rinksRequired } = body;
+    const { seasonId, date, time, description, clubName, format, ladiesMen, dress, homeAway } = body;
 
     if (!seasonId || !date || !description) {
       return NextResponse.json({ error: 'seasonId, date, and description are required' }, { status: 400 });
     }
 
     const event = await addManualFixture(seasonId, 'Event', {
-      date, time, description, clubName, format, ladiesMen, dress, eventType, rinksRequired,
+      date, time, description, clubName, format, ladiesMen, dress, homeAway,
     });
 
     return NextResponse.json({ event });

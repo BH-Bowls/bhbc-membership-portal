@@ -6,14 +6,18 @@
 // button jumps to that club's Info page (contacts, outreach, fixture
 // history) — see clubs/[clubName]/page.tsx. Two Friendlies-specific rules
 // this page carries: the Monday amber warning (Mondays are allowed, just
-// flagged), and same-day capacity warnings (rinks — Home fixtures only,
-// since an Away fixture uses the opponent's green, plus Events' Rinks
-// Required and standing Reservation occurrences — and a softer all-fixture
-// player-count guide, both against config/admin/config's General tab).
+// flagged), and same-day capacity warnings (rinks — Home fixtures/Events
+// only, since an Away one uses the opponent's green, plus standing
+// Reservation occurrences — and a softer all-fixture player-count guide,
+// both against config/admin/config's General tab).
 //
-// Requires the draft season to already exist — created from the Events tab,
-// since Events are planned first — this page fetches that season's Events
-// too, purely for their Rinks Required contribution to the capacity sum.
+// Full editing (Run Projection/Add/Edit/Confirm/Delete) only applies to the
+// draft season, created from the Events tab since Events are planned first —
+// but the year picker also lets Captains/Admins switch to the active season
+// or any archived past year to review that season's same-day clashes
+// read-only. Whichever season is being viewed, its Events are fetched too,
+// purely for their Format-derived rink/player contribution to the capacity
+// sum (parsed the same way as Friendlies' own Format field).
 
 'use client';
 
@@ -90,6 +94,8 @@ export default function SeasonPlanningFriendliesPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [draftSeason, setDraftSeason] = useState<Season | null>(null);
+  const [allSeasons, setAllSeasons] = useState<{ id: string; year: number; isActive: boolean }[]>([]);
+  const [viewSeasonId, setViewSeasonId] = useState<string | null>(null);
   const [friendlies, setFriendlies] = useState<PlanningFixture[]>([]);
   const [clubNames, setClubNames] = useState<string[]>([]);
   const [capacityEvents, setCapacityEvents] = useState<CapacityEvent[]>([]);
@@ -125,13 +131,25 @@ export default function SeasonPlanningFriendliesPage() {
       .then((data) => {
         if (data.error) throw new Error(data.error);
         setDraftSeason(data.draftSeason);
-        if (data.draftSeason) {
-          return Promise.all([loadFriendlies(data.draftSeason.id), loadCapacityEvents(data.draftSeason.id)]);
-        }
+        const seasons = data.allSeasons || [];
+        setAllSeasons(seasons);
+        // Default to the draft if one exists (the normal planning case), else
+        // the active season — either way, the year picker lets Captains/Admins
+        // switch to any archived past year to review its clashes read-only.
+        const initial = data.draftSeason || seasons.find((s: any) => s.isActive) || null;
+        setViewSeasonId(initial ? initial.id : null);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }
+
+  useEffect(() => {
+    if (viewSeasonId) {
+      loadFriendlies(viewSeasonId);
+      loadCapacityEvents(viewSeasonId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewSeasonId]);
 
   function loadFriendlies(seasonId: string) {
     return fetch(`/api/fixtures/season-planning/friendlies?seasonId=${seasonId}`)
@@ -143,16 +161,17 @@ export default function SeasonPlanningFriendliesPage() {
       .catch((err) => setError(err.message));
   }
 
-  // Only needed for their Rinks Required contribution to the capacity sum —
-  // everything else about Events is irrelevant to Friendlies planning.
+  // Only needed for their Format-derived rink/player contribution to the
+  // capacity sum — everything else about Events is irrelevant to Friendlies
+  // planning. computeDayCapacity itself skips any Event with a blank/
+  // unparseable Format, so no filtering is needed here.
   function loadCapacityEvents(seasonId: string) {
     return fetch(`/api/fixtures/season-planning/events?seasonId=${seasonId}`)
       .then((r) => r.json())
       .then((data) => {
         if (data.error) throw new Error(data.error);
         const events: CapacityEvent[] = (data.events || [])
-          .filter((e: PlanningFixture) => e.rinksRequired > 0)
-          .map((e: PlanningFixture) => ({ date: e.date, label: e.description || e.clubName || 'Event', rinksRequired: e.rinksRequired }));
+          .map((e: PlanningFixture) => ({ date: e.date, label: e.description || e.clubName || 'Event', homeAway: e.homeAway, format: e.format }));
         setCapacityEvents(events);
       })
       .catch(() => {});
@@ -302,15 +321,17 @@ export default function SeasonPlanningFriendliesPage() {
 
   if (!session || !canAccess) return null;
 
+  const viewSeason = allSeasons.find((s) => s.id === viewSeasonId) || null;
+  const isViewingDraft = !!(draftSeason && viewSeasonId === draftSeason.id);
   const hasCarriedForward = friendlies.some((f) => f.planningSource === 'Carried Forward');
   const sortedFriendlies = [...friendlies].sort((a, b) => {
     const da = a.date.split('/').reverse().join('-');
     const db = b.date.split('/').reverse().join('-');
     return da.localeCompare(db);
   });
-  const reservationOccurrences = draftSeason
+  const reservationOccurrences = viewSeason
     ? reservations.flatMap((res) =>
-        getReservationOccurrences(res, draftSeason.year, capacityConfig.reservationDefaultStart, capacityConfig.reservationDefaultEnd)
+        getReservationOccurrences(res, viewSeason.year, capacityConfig.reservationDefaultStart, capacityConfig.reservationDefaultEnd)
           .map((date) => ({ date, label: res.name, rinksReserved: res.rinksReserved }))
       )
     : [];
@@ -340,39 +361,61 @@ export default function SeasonPlanningFriendliesPage() {
 
         {loading && <div className="text-center py-12 text-gray-700">Loading…</div>}
 
-        {!loading && !draftSeason && (
+        {!loading && !viewSeasonId && (
           <div className="bg-white rounded-lg border border-gray-200 p-6">
-            <h2 className="font-semibold text-gray-900 mb-2">No draft season yet</h2>
-            <p className="text-sm text-gray-700 mb-4">
-              Events are planned first — create the draft season from the{' '}
-              <Link href="/fixtures/season-planning" className="text-blue-600 hover:text-blue-800 font-medium">Events tab</Link>, then come back here.
-            </p>
+            <h2 className="font-semibold text-gray-900 mb-2">No seasons found</h2>
           </div>
         )}
 
-        {!loading && draftSeason && (
+        {!loading && viewSeasonId && (
           <>
+            {!draftSeason && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4 text-sm text-amber-800">
+                No draft season yet — create one from the{' '}
+                <Link href="/fixtures/season-planning" className="text-blue-700 hover:text-blue-900 font-medium underline">Events tab</Link>{' '}
+                to start planning next year. You can still browse previous seasons below.
+              </div>
+            )}
+
             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-              <div className="text-sm text-gray-700">
-                Planning <span className="font-semibold text-gray-900">{draftSeason.year}</span> season
-                {' '}({draftSeason.startDate} – {draftSeason.endDate})
+              <div className="flex items-center gap-3">
+                <div className="text-sm text-gray-700">
+                  {isViewingDraft ? 'Planning' : 'Viewing'} <span className="font-semibold text-gray-900">{viewSeason?.year}</span> season
+                  {isViewingDraft && draftSeason && ` (${draftSeason.startDate} – ${draftSeason.endDate})`}
+                  {!isViewingDraft && <span className="ml-2 text-xs text-gray-500">(read-only)</span>}
+                </div>
+                {allSeasons.length > 1 && (
+                  <select
+                    className="border border-gray-300 rounded-md px-2 py-1 text-sm"
+                    value={viewSeasonId || ''}
+                    onChange={(e) => { setViewSeasonId(e.target.value); setEditingId(null); setAddingFriendly(false); }}
+                  >
+                    {allSeasons.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.year}{s.isActive ? ' (active)' : ''}{draftSeason && s.id === draftSeason.id ? ' (draft)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
               <div className="flex gap-2">
-                {!hasCarriedForward && (
+                {isViewingDraft && !hasCarriedForward && (
                   <button className={getButtonClasses('primary')} onClick={runProjection} disabled={projecting}>
                     {projecting ? 'Projecting…' : 'Run Projection'}
                   </button>
                 )}
-                <button className={getButtonClasses('secondary')} onClick={() => setAddingFriendly(true)}>
-                  Add Friendly
-                </button>
+                {isViewingDraft && (
+                  <button className={getButtonClasses('secondary')} onClick={() => setAddingFriendly(true)}>
+                    Add Friendly
+                  </button>
+                )}
                 <Link href="/fixtures/season-planning/friendlies/clubs" className={getButtonClasses('secondary')}>
                   Clubs
                 </Link>
               </div>
             </div>
 
-            {addingFriendly && (
+            {isViewingDraft && addingFriendly && (
               <div className="bg-white rounded-lg border border-gray-200 p-4 mb-4">
                 <h3 className="font-medium text-gray-900 mb-3 text-sm">New Friendly</h3>
                 <div className="flex flex-wrap items-end gap-3">
@@ -423,23 +466,35 @@ export default function SeasonPlanningFriendliesPage() {
             <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-100">
               {sortedFriendlies.length === 0 && (
                 <div className="text-center py-12 text-gray-700 text-sm">
-                  No friendlies yet. Run the projection or add one manually.
+                  {isViewingDraft ? 'No friendlies yet. Run the projection or add one manually.' : 'No friendlies found for this season.'}
                 </div>
               )}
               {dateGroups.map((date) => {
                 const day = capacityByDate[date];
                 const dayFixtures = sortedFriendlies.filter((f) => f.date === date);
+                // Events aren't rows on this page (that's the Events tab's job) — pulled
+                // in here purely so a same-day clash against a Friendly is visible,
+                // Home or Away, regardless of whether it affects the rinks total.
+                const dayEvents = capacityEvents.filter((e) => e.date === date);
+                const totalItems = dayFixtures.length + dayEvents.length;
                 const monday = isMonday(date);
-                const showHeader = dayFixtures.length > 1 || monday || !!(day && day.contributors.length > 0);
+                const showHeader = totalItems > 1 || monday || !!(day && day.contributors.length > 0);
 
                 return (
                   <div key={date} className="contents">
                     {showHeader && (
                       <div className="px-4 py-2 bg-slate-50 flex flex-wrap items-center gap-2">
                         <span className="text-sm font-semibold text-gray-900">{formatDisplayDate(date)}</span>
-                        {dayFixtures.length > 1 && (
-                          <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-gray-200 text-gray-800">
-                            Multiple Games ({dayFixtures.length})
+                        {(dayFixtures.length > 1 || dayEvents.length > 0) && (
+                          <span
+                            className="text-xs px-2 py-0.5 rounded-full font-medium bg-gray-200 text-gray-800"
+                            title={[
+                              ...dayFixtures.map((f) => `${displayClubName(f.clubName, f.clubSuffix) || f.description || 'Friendly'}${f.format ? ` (${f.format})` : ''} — ${f.homeAway === 'A' ? 'Away' : 'Home'}`),
+                              ...dayEvents.map((e) => `${e.label}${e.format ? ` (${e.format})` : ''}${e.homeAway === 'A' ? ' — Away' : e.homeAway === 'H' ? ' — Home' : ''}`),
+                            ].join('\n')}
+                          >
+                            {dayFixtures.length} Game{dayFixtures.length === 1 ? '' : 's'}
+                            {dayEvents.length > 0 ? ` + ${dayEvents.length} Event${dayEvents.length === 1 ? '' : 's'}` : ''}
                           </span>
                         )}
                         {monday && (
@@ -447,7 +502,7 @@ export default function SeasonPlanningFriendliesPage() {
                             ⚠ Monday
                           </span>
                         )}
-                        {day && day.homeRinks > 0 && (day.homeRinks >= capacityConfig.capacityWarningThreshold || dayFixtures.length > 1 || day.contributors.length > 0) && (
+                        {day && day.homeRinks > 0 && (day.homeRinks >= capacityConfig.capacityWarningThreshold || totalItems > 1 || day.contributors.length > 0) && (
                           <span
                             className={`text-xs px-2 py-0.5 rounded-full font-medium ${
                               day.homeRinks > capacityConfig.greenTotalRinks ? 'bg-red-100 text-red-800 border border-red-300' : 'bg-amber-100 text-amber-800'
@@ -457,7 +512,7 @@ export default function SeasonPlanningFriendliesPage() {
                             {day.homeRinks > capacityConfig.greenTotalRinks ? '⚠ ' : ''}{day.homeRinks}/{capacityConfig.greenTotalRinks} rinks (Home)
                           </span>
                         )}
-                        {day && dayFixtures.length > 1 && day.totalPlayers >= capacityConfig.maxPlayersPerDay && (
+                        {day && totalItems > 1 && day.totalPlayers >= capacityConfig.maxPlayersPerDay && (
                           <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-amber-100 text-amber-800">
                             {day.totalPlayers} players needed
                           </span>
@@ -466,7 +521,7 @@ export default function SeasonPlanningFriendliesPage() {
                     )}
                     {dayFixtures.map((friendly) => (
               <div key={friendly.id} className="px-4 py-3">
-                  {editingId === friendly.id ? (
+                  {isViewingDraft && editingId === friendly.id ? (
                     <div className="flex flex-wrap items-end gap-3">
                       <input type="date" className="border border-gray-300 rounded-md px-3 py-1.5 text-sm"
                         value={editDate} onChange={(e) => setEditDate(e.target.value)} />
@@ -522,8 +577,10 @@ export default function SeasonPlanningFriendliesPage() {
                         </span>
                       </div>
                       <div className="flex gap-2">
-                        <button className="text-xs text-blue-600 hover:text-blue-800" onClick={() => startEdit(friendly)}>Edit</button>
-                        {friendly.planningStatus !== 'Confirmed' && (
+                        {isViewingDraft && (
+                          <button className="text-xs text-blue-600 hover:text-blue-800" onClick={() => startEdit(friendly)}>Edit</button>
+                        )}
+                        {isViewingDraft && friendly.planningStatus !== 'Confirmed' && (
                           <button className="text-xs text-green-600 hover:text-green-800" onClick={() => confirmFriendly(friendly.id)}>Confirm</button>
                         )}
                         {friendly.clubName && (
@@ -534,7 +591,9 @@ export default function SeasonPlanningFriendliesPage() {
                             Contact
                           </Link>
                         )}
-                        <button className="text-xs text-red-600 hover:text-red-800" onClick={() => setDeleteId(friendly.id)}>Delete</button>
+                        {isViewingDraft && (
+                          <button className="text-xs text-red-600 hover:text-red-800" onClick={() => setDeleteId(friendly.id)}>Delete</button>
+                        )}
                       </div>
                     </div>
                   )}

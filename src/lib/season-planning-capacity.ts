@@ -6,16 +6,20 @@
 //
 // Two independent checks, not one:
 // - Rinks: everything that claims BHBC's own green the same day — Home
-//   Friendlies (an Away fixture uses the opponent's green, not ours),
-//   Events with Rinks Required set, and standing Reservation occurrences —
-//   summed against green_total_rinks. There's no separate "hard block"
-//   concept: an Event or Reservation that claims all of green_total_rinks
-//   behaves as one automatically, through this same sum.
-// - Players: every Friendly fixture that day needs a full team from the
-//   club, Home or Away — summed against max_players_per_day, a soft guide
-//   only, never enforced. A Home 6-rink game plus an Away 6-rink game the
-//   same day is invisible to the rinks check (0 clash) but very visible
-//   here. Events/Reservations don't have a player count to add here.
+//   fixtures/Events (an Away one uses the opponent's green, not ours; both
+//   use the identical "N Rinks/Triples/Pairs" Format string, parsed via
+//   parseFixtureFormat), and standing Reservation occurrences — summed
+//   against green_total_rinks. There's no separate "hard block" concept: an
+//   Event or Reservation that claims all of green_total_rinks behaves as one
+//   automatically, through this same sum. (Events used to carry a separate
+//   manually-entered Rinks Required number and an event_type classification
+//   — both dropped in favour of reusing Format + Home/Away, the same fields
+//   Friendlies already use, so Events need no separate data entry.)
+// - Players: every fixture/Event that day needs a full team from the club,
+//   Home or Away — summed against max_players_per_day, a soft guide only,
+//   never enforced. A Home 6-rink game plus an Away 6-rink game the same day
+//   is invisible to the rinks check (0 clash) but very visible here.
+//   Reservations don't have a player count to add here.
 
 export interface FormatBreakdown {
   rinks: number;
@@ -67,7 +71,8 @@ interface CapacityFixture {
 export interface CapacityEvent {
   date: string; // DD/MM/YYYY
   label: string;
-  rinksRequired: number;
+  homeAway: string; // 'H' | 'A' | ''
+  format: string;
 }
 
 export interface CapacityReservationOccurrence {
@@ -102,10 +107,14 @@ export function computeDayCapacity(
   }
 
   for (const e of events) {
-    if (e.rinksRequired <= 0) continue;
+    const breakdown = parseFixtureFormat(e.format);
+    if (!breakdown) continue;
     const day = ensureDay(e.date);
-    day.homeRinks += e.rinksRequired;
-    day.contributors.push({ label: e.label, rinks: e.rinksRequired });
+    if (e.homeAway === 'H') {
+      day.homeRinks += breakdown.rinks;
+      day.contributors.push({ label: e.label, rinks: breakdown.rinks });
+    }
+    day.totalPlayers += breakdown.players;
   }
 
   for (const r of reservationOccurrences) {

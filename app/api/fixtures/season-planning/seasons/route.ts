@@ -1,5 +1,7 @@
 // app/api/fixtures/season-planning/seasons/route.ts
-// GET: active season + draft (next, not-yet-active) season, if one exists.
+// GET: active season + draft (next, not-yet-active) season, if one exists,
+// plus the full season list (including archived past years) for the
+// planning pages' read-only "view another year's clashes" picker.
 // POST: create the draft season.
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -7,6 +9,7 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
 import { getActiveSeason, getDraftSeason, createDraftSeason } from '@/lib/season-planning-supabase';
+import { getAllSeasons } from '@/lib/fixtures-supabase';
 
 export async function GET(request: NextRequest) {
   try {
@@ -22,8 +25,11 @@ export async function GET(request: NextRequest) {
 
     const activeSeason = await getActiveSeason();
     const draftSeason = await getDraftSeason();
+    // Every season, including archived past years — lets the planning pages
+    // offer a read-only year picker for viewing past clashes, not just the draft.
+    const allSeasons = await getAllSeasons();
 
-    return NextResponse.json({ activeSeason, draftSeason });
+    return NextResponse.json({ activeSeason, draftSeason, allSeasons });
   } catch (error) {
     console.error('Error fetching seasons:', error);
     return NextResponse.json({ error: 'Failed to fetch seasons' }, { status: 500 });

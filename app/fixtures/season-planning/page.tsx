@@ -72,14 +72,14 @@ export default function SeasonPlanningEventsPage() {
 
   const [projecting, setProjecting] = useState(false);
   const [addingEvent, setAddingEvent] = useState(false);
-  const [newEvent, setNewEvent] = useState({ date: '', time: '', description: '', clubName: '', eventType: '', rinksRequired: 0 });
+  const [newEvent, setNewEvent] = useState({ date: '', time: '', description: '', clubName: '', homeAway: 'H' as 'H' | 'A', format: '' });
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDate, setEditDate] = useState('');
   const [editTime, setEditTime] = useState('');
   const [editDescription, setEditDescription] = useState('');
-  const [editEventType, setEditEventType] = useState('');
-  const [editRinksRequired, setEditRinksRequired] = useState(0);
+  const [editHomeAway, setEditHomeAway] = useState<'H' | 'A'>('H');
+  const [editFormat, setEditFormat] = useState('');
 
   const [deleteId, setDeleteId] = useState<string | null>(null);
 
@@ -185,7 +185,7 @@ export default function SeasonPlanningEventsPage() {
       .then((data) => {
         if (data.error) throw new Error(data.error);
         setAddingEvent(false);
-        setNewEvent({ date: '', time: '', description: '', clubName: '', eventType: '', rinksRequired: 0 });
+        setNewEvent({ date: '', time: '', description: '', clubName: '', homeAway: 'H', format: '' });
         return loadEvents(draftSeason.id);
       })
       .catch((err) => setError(err.message));
@@ -196,8 +196,8 @@ export default function SeasonPlanningEventsPage() {
     setEditDate(toDateInputValue(event.date));
     setEditTime(event.time);
     setEditDescription(event.description || event.clubName);
-    setEditEventType(event.eventType || '');
-    setEditRinksRequired(event.rinksRequired);
+    setEditHomeAway(event.homeAway === 'A' ? 'A' : 'H');
+    setEditFormat(event.format);
   }
 
   function submitEdit() {
@@ -206,7 +206,7 @@ export default function SeasonPlanningEventsPage() {
     fetch(`/api/fixtures/season-planning/events/${editingId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ date: editDate, time: editTime, description: editDescription, eventType: editEventType, rinksRequired: editRinksRequired }),
+      body: JSON.stringify({ date: editDate, time: editTime, description: editDescription, homeAway: editHomeAway, format: editFormat }),
     })
       .then((r) => r.json())
       .then((data) => {
@@ -369,19 +369,17 @@ export default function SeasonPlanningEventsPage() {
                       value={newEvent.description} onChange={(e) => setNewEvent({ ...newEvent, description: e.target.value })} />
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">Type</label>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">H/A</label>
                     <select className="border border-gray-300 rounded-md px-3 py-1.5 text-sm"
-                      value={newEvent.eventType} onChange={(e) => setNewEvent({ ...newEvent, eventType: e.target.value })}>
-                      <option value="">–</option>
-                      <option value="Social">Social</option>
-                      <option value="Fixture">Fixture</option>
-                      <option value="External">External</option>
+                      value={newEvent.homeAway} onChange={(e) => setNewEvent({ ...newEvent, homeAway: e.target.value as 'H' | 'A' })}>
+                      <option value="H">Home</option>
+                      <option value="A">Away</option>
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">Rinks Required</label>
-                    <input type="number" min={0} className="border border-gray-300 rounded-md px-3 py-1.5 text-sm w-24"
-                      value={newEvent.rinksRequired} onChange={(e) => setNewEvent({ ...newEvent, rinksRequired: parseInt(e.target.value, 10) || 0 })} />
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Format</label>
+                    <input type="text" placeholder="e.g. 6 Rinks" className="border border-gray-300 rounded-md px-3 py-1.5 text-sm w-28"
+                      value={newEvent.format} onChange={(e) => setNewEvent({ ...newEvent, format: e.target.value })} />
                   </div>
                   <button className={getButtonClasses('primary')} onClick={submitAddEvent}>Add</button>
                   <button className={getButtonClasses('secondary')} onClick={() => setAddingEvent(false)}>Cancel</button>
@@ -406,14 +404,12 @@ export default function SeasonPlanningEventsPage() {
                       <input type="text" className="border border-gray-300 rounded-md px-3 py-1.5 text-sm flex-1 min-w-[200px]"
                         value={editDescription} onChange={(e) => setEditDescription(e.target.value)} />
                       <select className="border border-gray-300 rounded-md px-3 py-1.5 text-sm"
-                        value={editEventType} onChange={(e) => setEditEventType(e.target.value)}>
-                        <option value="">–</option>
-                        <option value="Social">Social</option>
-                        <option value="Fixture">Fixture</option>
-                        <option value="External">External</option>
+                        value={editHomeAway} onChange={(e) => setEditHomeAway(e.target.value as 'H' | 'A')}>
+                        <option value="H">Home</option>
+                        <option value="A">Away</option>
                       </select>
-                      <input type="number" min={0} placeholder="Rinks" className="border border-gray-300 rounded-md px-3 py-1.5 text-sm w-20"
-                        value={editRinksRequired} onChange={(e) => setEditRinksRequired(parseInt(e.target.value, 10) || 0)} />
+                      <input type="text" placeholder="e.g. 6 Rinks" className="border border-gray-300 rounded-md px-3 py-1.5 text-sm w-28"
+                        value={editFormat} onChange={(e) => setEditFormat(e.target.value)} />
                       <button className={getButtonClasses('primary', 'sm')} onClick={submitEdit}>Save</button>
                       <button className={getButtonClasses('secondary', 'sm')} onClick={() => setEditingId(null)}>Cancel</button>
                       {event.planningStatus === 'Confirmed' && (
@@ -430,13 +426,13 @@ export default function SeasonPlanningEventsPage() {
                         <div className="text-sm text-gray-900 font-medium">
                           {event.description || event.clubName}
                         </div>
-                        {event.eventType && (
-                          <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-slate-100 text-slate-800">
-                            {event.eventType}
-                          </span>
-                        )}
-                        {event.rinksRequired > 0 && (
-                          <span className="text-xs text-gray-700">{event.rinksRequired} rink{event.rinksRequired === 1 ? '' : 's'}</span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                          event.homeAway === 'A' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'
+                        }`}>
+                          {event.homeAway === 'A' ? 'Away' : 'Home'}
+                        </span>
+                        {event.format && (
+                          <span className="text-xs text-gray-700">{event.format}</span>
                         )}
                         <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusBadgeClasses(event.planningStatus)}`}>
                           {event.planningStatus}

@@ -4,7 +4,8 @@
 // email override), Draft Email + Mark Sent/Unsent for this club's pending
 // draft-season fixtures, and multi-season fixture history with results
 // (wherever the underlying data actually has them — 2024/2025 currently
-// don't, 2026 does) and same-day clashes against other clubs.
+// don't, 2026 does) and same-day clashes (other clubs' Friendlies + Events)
+// against every season shown here, not just the draft.
 
 'use client';
 
@@ -58,7 +59,15 @@ function toDateInputValue(dateStr: string): string {
 
 function clashTooltip(clashes: ClubClash[]): string {
   return clashes
-    .map((c) => `${c.clubName} — ${c.homeAway === 'A' ? 'Away' : 'Home'}${c.ladiesMen && c.ladiesMen !== 'Mixed' ? `, ${c.ladiesMen}` : ''}${c.format ? `, ${c.format}` : ''}`)
+    .map((c) => {
+      const parts = [
+        c.isEvent ? 'Event' : null,
+        c.homeAway === 'A' ? 'Away' : c.homeAway === 'H' ? 'Home' : null,
+        c.ladiesMen && c.ladiesMen !== 'Mixed' ? c.ladiesMen : null,
+        c.format || null,
+      ].filter(Boolean);
+      return `${c.clubName}${parts.length ? ` — ${parts.join(', ')}` : ''}`;
+    })
     .join('\n');
 }
 
@@ -420,14 +429,20 @@ export default function ClubInfoPage({ params }: PageProps) {
                             {result.label}
                           </span>
                         )}
-                        {isDraftYear && clash && clash.length > 0 && (
-                          <span
-                            title={clashTooltip(clash)}
-                            className="text-xs px-2 py-0.5 rounded-full font-medium bg-red-100 text-red-800 border border-red-300 cursor-help"
-                          >
-                            ⚠ Clash
-                          </span>
-                        )}
+                        {clash && clash.length > 0 && (() => {
+                          const clashGames = clash.filter((c) => !c.isEvent);
+                          const clashEvents = clash.filter((c) => c.isEvent);
+                          return (
+                            <span
+                              title={clashTooltip(clash)}
+                              className="text-xs px-2 py-0.5 rounded-full font-medium bg-gray-200 text-gray-800 cursor-help"
+                            >
+                              {clashGames.length > 0 ? `${clashGames.length} Game${clashGames.length === 1 ? '' : 's'}` : ''}
+                              {clashGames.length > 0 && clashEvents.length > 0 ? ' + ' : ''}
+                              {clashEvents.length > 0 ? `${clashEvents.length} Event${clashEvents.length === 1 ? '' : 's'}` : ''}
+                            </span>
+                          );
+                        })()}
                       </div>
                       {isDraftYear && (
                         <div className="flex gap-2">

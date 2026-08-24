@@ -522,6 +522,7 @@ export interface ClubClash {
   homeAway: 'H' | 'A' | '';
   ladiesMen: string;
   format: string;
+  isEvent?: boolean;
 }
 
 export interface ClubInfo {
@@ -608,31 +609,50 @@ export async function getClubInfo(clubName: string): Promise<ClubInfo> {
     );
   }
 
-  // Same-day clashes: other clubs' draft-season Friendlies sharing a date with this club's draft fixtures.
+  // Same-day clashes: other clubs' Friendlies, and any Event, sharing a date
+  // with one of this club's fixtures — across every season shown on this
+  // page, not just the draft. A calendar date string (DD/MM/YYYY) already
+  // pins down a single real-world day, which belongs to exactly one season,
+  // so matching on date alone is season-safe without a season_id join.
   const sameDayClashes: Record<string, ClubClash[]> = {};
-  const draftSeason = await getDraftSeason();
-  if (draftSeason) {
-    const thisClubDraftDates = new Set((fixturesBySeasonYear[draftSeason.year] || []).map((f) => f.date));
-    if (thisClubDraftDates.size > 0) {
-      const { data: otherRows, error: otherError } = await supabase
-        .from('fixtures')
-        .select('date, club_name, home_away, ladies_men, format')
-        .eq('season_id', draftSeason.id)
-        .eq('fixture_type', 'Friendly')
-        .not('club_name', 'is', null)
-        .neq('club_name', clubName);
-      if (otherError) throw new Error(`Failed to check same-day clashes: ${otherError.message}`);
-      for (const row of otherRows || []) {
-        const ukDate = isoToUKDate(row.date);
-        if (thisClubDraftDates.has(ukDate)) {
-          if (!sameDayClashes[ukDate]) sameDayClashes[ukDate] = [];
-          sameDayClashes[ukDate].push({
-            clubName: row.club_name,
-            homeAway: (row.home_away === 'H' || row.home_away === 'A') ? row.home_away : '',
-            ladiesMen: row.ladies_men || '',
-            format: row.format || '',
-          });
-        }
+  const thisClubDates = new Set(Object.values(fixturesBySeasonYear).flat().map((f) => f.date));
+  if (thisClubDates.size > 0) {
+    const { data: otherRows, error: otherError } = await supabase
+      .from('fixtures')
+      .select('date, club_name, home_away, ladies_men, format')
+      .eq('fixture_type', 'Friendly')
+      .not('club_name', 'is', null)
+      .neq('club_name', clubName);
+    if (otherError) throw new Error(`Failed to check same-day clashes: ${otherError.message}`);
+    for (const row of otherRows || []) {
+      const ukDate = isoToUKDate(row.date);
+      if (thisClubDates.has(ukDate)) {
+        if (!sameDayClashes[ukDate]) sameDayClashes[ukDate] = [];
+        sameDayClashes[ukDate].push({
+          clubName: row.club_name,
+          homeAway: (row.home_away === 'H' || row.home_away === 'A') ? row.home_away : '',
+          ladiesMen: row.ladies_men || '',
+          format: row.format || '',
+        });
+      }
+    }
+
+    const { data: eventRows, error: eventsError } = await supabase
+      .from('fixtures')
+      .select('date, club_name, description, home_away, format')
+      .eq('fixture_type', 'Event');
+    if (eventsError) throw new Error(`Failed to check same-day event clashes: ${eventsError.message}`);
+    for (const row of eventRows || []) {
+      const ukDate = isoToUKDate(row.date);
+      if (thisClubDates.has(ukDate)) {
+        if (!sameDayClashes[ukDate]) sameDayClashes[ukDate] = [];
+        sameDayClashes[ukDate].push({
+          clubName: row.club_name || row.description || 'Event',
+          homeAway: (row.home_away === 'H' || row.home_away === 'A') ? row.home_away : '',
+          ladiesMen: '',
+          format: row.format || '',
+          isEvent: true,
+        });
       }
     }
   }
