@@ -5,9 +5,9 @@
 // fixture list is actually compiled; nth-weekday is a fallback), then work
 // each one through Projected -> Confirmed, editing date/time/description
 // freely at any point, deleting anything that isn't happening. "Clear All
-// Projected" wipes every still-Projected, Carried-Forward row across both
-// Events and Friendlies (not just this page's own Events), so a run using
-// the wrong method can be undone and re-run — see clearProjectedFixtures.
+// Projected Events" wipes every still-Projected, Carried-Forward Event row
+// (Friendlies has its own separate clear button, on its own tab), so a run
+// using the wrong method can be undone and re-run — see clearProjectedFixtures.
 
 'use client';
 
@@ -159,9 +159,9 @@ export default function SeasonPlanningEventsPage() {
       .finally(() => setProjecting(false));
   }
 
-  // Clears both Events AND Friendlies Carried-Forward/Projected rows at once
-  // (see clearProjectedFixtures) — lets a projection run with the wrong
-  // method be undone and re-run cleanly from either tab.
+  // Clears only this tab's (Events') Carried-Forward/Projected rows — lets a
+  // projection run with the wrong method be undone and re-run, without
+  // touching Friendlies (which has its own separate clear button).
   function clearAllProjected() {
     if (!draftSeason) return;
     setClearing(true);
@@ -169,7 +169,7 @@ export default function SeasonPlanningEventsPage() {
     fetch('/api/fixtures/season-planning/clear-projected', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ seasonId: draftSeason.id }),
+      body: JSON.stringify({ seasonId: draftSeason.id, fixtureType: 'Event' }),
     })
       .then((r) => r.json())
       .then((data) => {
@@ -389,7 +389,7 @@ export default function SeasonPlanningEventsPage() {
                   Add Event
                 </button>
                 <button className="text-xs text-red-600 hover:text-red-800 underline" onClick={() => setConfirmClear(true)} disabled={clearing}>
-                  Clear all projected (Events + Friendlies)
+                  Clear all projected Events
                 </button>
               </div>
             </div>
@@ -514,8 +514,8 @@ export default function SeasonPlanningEventsPage() {
 
       <ConfirmDialog
         isOpen={confirmClear}
-        title="Clear all projected fixtures?"
-        message="Deletes every still-Projected, carried-forward Event and Friendly in this draft season — from either tab. Anything already Confirmed or Manually Added is left untouched. Use this to re-run the projection with a different date method."
+        title="Clear all projected Events?"
+        message="Deletes every still-Projected, carried-forward Event in this draft season. Friendlies are untouched — clear those separately from the Friendlies tab if needed. Anything already Confirmed or Manually Added is left untouched. Use this to re-run the projection with a different date method."
         confirmLabel={clearing ? 'Clearing…' : 'Clear all'}
         confirmVariant="danger"
         onConfirm={clearAllProjected}

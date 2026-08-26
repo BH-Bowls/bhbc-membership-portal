@@ -1,7 +1,8 @@
 // app/api/fixtures/season-planning/clear-projected/route.ts
-// POST { seasonId }: delete every still-Projected, Carried-Forward fixture
-// (Events + Friendlies together) in the given season, so a projection run
-// using the wrong date method can be cleared and re-run. See
+// POST { seasonId, fixtureType: 'Event' | 'Friendly' }: delete every
+// still-Projected, Carried-Forward fixture of that type in the given season,
+// so a projection run using the wrong date method can be cleared and
+// re-run. Events and Friendlies are cleared independently — see
 // clearProjectedFixtures in season-planning-supabase.ts for exact scope.
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -9,6 +10,7 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
 import { clearProjectedFixtures } from '@/lib/season-planning-supabase';
+import type { PlanningFixtureType } from '@/lib/season-planning-supabase';
 
 export async function POST(request: NextRequest) {
   try {
@@ -23,13 +25,16 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { seasonId } = body;
+    const { seasonId, fixtureType } = body;
 
     if (!seasonId) {
       return NextResponse.json({ error: 'seasonId is required' }, { status: 400 });
     }
+    if (fixtureType !== 'Event' && fixtureType !== 'Friendly') {
+      return NextResponse.json({ error: "fixtureType must be 'Event' or 'Friendly'" }, { status: 400 });
+    }
 
-    const result = await clearProjectedFixtures(seasonId);
+    const result = await clearProjectedFixtures(seasonId, fixtureType as PlanningFixtureType);
 
     return NextResponse.json(result);
   } catch (error) {

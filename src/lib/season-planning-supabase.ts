@@ -231,20 +231,23 @@ export async function runFixtureProjection(
 }
 
 /**
- * Deletes every still-Projected, Carried-Forward fixture (Events + Friendlies
- * together — the only two fixture types that ever get planning_source =
- * 'Carried Forward') in the given season, so a projection run using the
- * wrong method can be cleared and re-run cleanly. Deliberately scoped to
- * planning_status = 'Projected' only — anything already Confirmed or Email
- * Sent has been reviewed, so it's left untouched rather than silently wiped.
- * Manually Added rows are never touched either way (planning_source filter).
+ * Deletes every still-Projected, Carried-Forward fixture of the given type in
+ * the given season, so a projection run using the wrong method can be
+ * cleared and re-run cleanly. Deliberately scoped to planning_status =
+ * 'Projected' only — anything already Confirmed or Email Sent has been
+ * reviewed, so it's left untouched rather than silently wiped. Manually
+ * Added rows are never touched either way (planning_source filter).
+ * fixtureType is required rather than optional so Events and Friendlies can
+ * always be cleared independently — clearing one should never surprise-wipe
+ * the other.
  */
-export async function clearProjectedFixtures(seasonId: string): Promise<{ deleted: number }> {
+export async function clearProjectedFixtures(seasonId: string, fixtureType: PlanningFixtureType): Promise<{ deleted: number }> {
   const supabase = getSupabaseClient();
   const { error, count } = await supabase
     .from('fixtures')
     .delete({ count: 'exact' })
     .eq('season_id', seasonId)
+    .eq('fixture_type', fixtureType)
     .eq('planning_status', 'Projected')
     .eq('planning_source', 'Carried Forward');
   if (error) throw new Error(`Failed to clear projected fixtures: ${error.message}`);

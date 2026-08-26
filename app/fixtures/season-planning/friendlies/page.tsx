@@ -1,9 +1,11 @@
 // app/fixtures/season-planning/friendlies/page.tsx
 // Season Planning Stage 2 (Friendlies) — pull last year's Friendly fixtures
 // forward via a chosen date-projection method (see season-planning-dates.ts
-// — same three methods and "Clear all projected" action as the Events tab,
-// since both fixture types share runFixtureProjection/clearProjectedFixtures),
-// then work each one through Projected -> Confirmed, editing date/time/club/H-A/
+// — same three methods and its own "Clear all projected Friendlies" action
+// as the Events tab has for Events, since both fixture types share
+// runFixtureProjection/clearProjectedFixtures — each clears only its own
+// fixture type, never the other), then work each one through Projected ->
+// Confirmed, editing date/time/club/H-A/
 // format freely, deleting anything that isn't happening. Each row's Contact
 // button jumps to that club's Info page (contacts, outreach, fixture
 // history) — see clubs/[clubName]/page.tsx. Two Friendlies-specific rules
@@ -237,9 +239,9 @@ export default function SeasonPlanningFriendliesPage() {
       .finally(() => setProjecting(false));
   }
 
-  // Clears both Friendlies AND Events Carried-Forward/Projected rows at once
-  // (see clearProjectedFixtures) — lets a projection run with the wrong
-  // method be undone and re-run cleanly from either tab.
+  // Clears only this tab's (Friendlies') Carried-Forward/Projected rows —
+  // lets a projection run with the wrong method be undone and re-run,
+  // without touching Events (which has its own separate clear button).
   function clearAllProjected() {
     if (!draftSeason) return;
     setClearing(true);
@@ -247,7 +249,7 @@ export default function SeasonPlanningFriendliesPage() {
     fetch('/api/fixtures/season-planning/clear-projected', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ seasonId: draftSeason.id }),
+      body: JSON.stringify({ seasonId: draftSeason.id, fixtureType: 'Friendly' }),
     })
       .then((r) => r.json())
       .then((data) => {
@@ -454,7 +456,7 @@ export default function SeasonPlanningFriendliesPage() {
                 </Link>
                 {isViewingDraft && (
                   <button className="text-xs text-red-600 hover:text-red-800 underline" onClick={() => setConfirmClear(true)} disabled={clearing}>
-                    Clear all projected (Events + Friendlies)
+                    Clear all projected Friendlies
                   </button>
                 )}
               </div>
@@ -670,8 +672,8 @@ export default function SeasonPlanningFriendliesPage() {
 
       <ConfirmDialog
         isOpen={confirmClear}
-        title="Clear all projected fixtures?"
-        message="Deletes every still-Projected, carried-forward Event and Friendly in this draft season — from either tab. Anything already Confirmed or Manually Added is left untouched. Use this to re-run the projection with a different date method."
+        title="Clear all projected Friendlies?"
+        message="Deletes every still-Projected, carried-forward Friendly in this draft season. Events are untouched — clear those separately from the Events tab if needed. Anything already Confirmed or Manually Added is left untouched. Use this to re-run the projection with a different date method."
         confirmLabel={clearing ? 'Clearing…' : 'Clear all'}
         confirmVariant="danger"
         onConfirm={clearAllProjected}
