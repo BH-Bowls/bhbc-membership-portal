@@ -1,12 +1,14 @@
 // app/api/fixtures/season-planning/friendlies/project/route.ts
-// POST { draftSeasonId }: run the Nth-weekday-of-month projection, carrying
-// forward the active season's Friendly-type fixtures into the draft season.
+// POST { draftSeasonId, method? }: carry the active season's Friendly-type
+// fixtures forward into the draft season, using the given date-projection
+// method (defaults to 'back-1-day' — see season-planning-dates.ts).
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
 import { runFixtureProjection } from '@/lib/season-planning-supabase';
+import type { ProjectionMethod } from '@/lib/season-planning-dates';
 
 export async function POST(request: NextRequest) {
   try {
@@ -21,13 +23,13 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { draftSeasonId } = body;
+    const { draftSeasonId, method } = body;
 
     if (!draftSeasonId) {
       return NextResponse.json({ error: 'draftSeasonId is required' }, { status: 400 });
     }
 
-    const result = await runFixtureProjection(draftSeasonId, 'Friendly');
+    const result = await runFixtureProjection(draftSeasonId, 'Friendly', method as ProjectionMethod | undefined);
 
     return NextResponse.json(result);
   } catch (error) {

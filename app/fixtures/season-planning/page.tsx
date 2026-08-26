@@ -1,9 +1,13 @@
 // app/fixtures/season-planning/page.tsx
 // Season Planning Stage 1 (Events) — pull last year's Event fixtures forward
-// onto next year's calendar via Nth-weekday-of-month projection, then work
+// onto next year's calendar via a chosen date-projection method (see
+// season-planning-dates.ts — back-1-day/forward-6-days are how BHBC's real
+// fixture list is actually compiled; nth-weekday is a fallback), then work
 // each one through Projected -> Confirmed, editing date/time/description
-// freely at any point, deleting anything that isn't happening.
-// Friendlies and Leagues (Stages 2/3) are not built yet.
+// freely at any point, deleting anything that isn't happening. "Clear All
+// Projected" wipes every still-Projected, Carried-Forward row across both
+// Events and Friendlies (not just this page's own Events), so a run using
+// the wrong method can be undone and re-run — see clearProjectedFixtures.
 
 'use client';
 
@@ -14,6 +18,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { SeasonPlanningTabs } from '@/components/SeasonPlanningTabs';
 import { hasRole } from '@/lib/role-utils';
 import { getButtonClasses } from '@/config/theme-helpers';
+import { PROJECTION_METHOD_LABELS, type ProjectionMethod } from '@/lib/season-planning-dates';
 import type { Season, PlanningFixture } from '@/lib/season-planning-supabase';
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -71,6 +76,9 @@ export default function SeasonPlanningEventsPage() {
   const [draftEnd, setDraftEnd] = useState('');
 
   const [projecting, setProjecting] = useState(false);
+  const [projectionMethod, setProjectionMethod] = useState<ProjectionMethod>('back-1-day');
+  const [clearing, setClearing] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
   const [addingEvent, setAddingEvent] = useState(false);
   const [newEvent, setNewEvent] = useState({ date: '', time: '', description: '', clubName: '', homeAway: 'H' as 'H' | 'A', format: '' });
 
@@ -140,7 +148,7 @@ export default function SeasonPlanningEventsPage() {
     return fetch('/api/fixtures/season-planning/events/project', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ draftSeasonId: seasonId }),
+      body: JSON.stringify({ draftSeasonId: seasonId, method: projectionMethod }),
     })
       .then((r) => r.json())
       .then((data) => {
@@ -149,6 +157,28 @@ export default function SeasonPlanningEventsPage() {
       })
       .catch((err) => setError(err.message))
       .finally(() => setProjecting(false));
+  }
+
+  // Clears both Events AND Friendlies Carried-Forward/Projected rows at once
+  // (see clearProjectedFixtures) — lets a projection run with the wrong
+  // method be undone and re-run cleanly from either tab.
+  function clearAllProjected() {
+    if (!draftSeason) return;
+    setClearing(true);
+    setError(null);
+    fetch('/api/fixtures/season-planning/clear-projected', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ seasonId: draftSeason.id }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.error) throw new Error(data.error);
+        setConfirmClear(false);
+        return loadEvents(draftSeason.id);
+      })
+      .catch((err) => setError(err.message))
+      .finally(() => setClearing(false));
   }
 
   function submitCreateDraft() {
@@ -337,14 +367,29 @@ export default function SeasonPlanningEventsPage() {
                 Planning <span className="font-semibold text-gray-900">{draftSeason.year}</span> season
                 {' '}({draftSeason.startDate} – {draftSeason.endDate})
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {!hasCarriedForward && (
-                  <button className={getButtonClasses('primary')} onClick={runProjection} disabled={projecting}>
-                    {projecting ? 'Projecting…' : 'Run Projection'}
-                  </button>
+                  <>
+                    <select
+                      className="border border-gray-300 rounded-md px-2 py-1.5 text-sm"
+                      value={projectionMethod}
+                      onChange={(e) => setProjectionMethod(e.target.value as ProjectionMethod)}
+                      title="How next season's dates are worked out from this season's"
+                    >
+                      {Object.entries(PROJECTION_METHOD_LABELS).map(([value, label]) => (
+                        <option key={value} value={value}>{label}</option>
+                      ))}
+                    </select>
+                    <button className={getButtonClasses('primary')} onClick={runProjection} disabled={projecting}>
+                      {projecting ? 'Projecting…' : 'Run Projection'}
+                    </button>
+                  </>
                 )}
                 <button className={getButtonClasses('secondary')} onClick={() => setAddingEvent(true)}>
                   Add Event
+                </button>
+                <button className="text-xs text-red-600 hover:text-red-800 underline" onClick={() => setConfirmClear(true)} disabled={clearing}>
+                  Clear all projected (Events + Friendlies)
                 </button>
               </div>
             </div>
@@ -465,6 +510,16 @@ export default function SeasonPlanningEventsPage() {
         confirmVariant="danger"
         onConfirm={submitDelete}
         onCancel={() => setDeleteId(null)}
+      />
+
+      <ConfirmDialog
+        isOpen={confirmClear}
+        title="Clear all projected fixtures?"
+        message="Deletes every still-Projected, carried-forward Event and Friendly in this draft season — from either tab. Anything already Confirmed or Manually Added is left untouched. Use this to re-run the projection with a different date method."
+        confirmLabel={clearing ? 'Clearing…' : 'Clear all'}
+        confirmVariant="danger"
+        onConfirm={clearAllProjected}
+        onCancel={() => setConfirmClear(false)}
       />
     </div>
   );

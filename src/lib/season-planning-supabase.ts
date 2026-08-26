@@ -23,7 +23,7 @@
 // LEAGUES section below rather than forcing it through the shared functions.
 
 import { getSupabaseClient } from './supabase';
-import { projectFixtureDate } from './season-planning-dates';
+import { projectFixtureDateByMethod, type ProjectionMethod } from './season-planning-dates';
 import { getReservationOccurrences } from './season-planning-capacity';
 import { LEAGUE_GAME_TYPES, type LeagueGameType } from './types/friendlies';
 
@@ -177,7 +177,11 @@ export function suggestDraftSeasonWindow(activeSeason: Season): { year: number; 
 // PROJECTION
 // ============================================================================
 
-export async function runFixtureProjection(draftSeasonId: string, fixtureType: PlanningFixtureType): Promise<{ inserted: number }> {
+export async function runFixtureProjection(
+  draftSeasonId: string,
+  fixtureType: PlanningFixtureType,
+  method: ProjectionMethod = 'back-1-day',
+): Promise<{ inserted: number }> {
   const supabase = getSupabaseClient();
 
   const activeSeason = await getActiveSeason();
@@ -206,7 +210,7 @@ export async function runFixtureProjection(draftSeasonId: string, fixtureType: P
     club_name: row.club_name,
     club_suffix: row.club_suffix,
     description: row.description,
-    date: projectFixtureDate(row.date, 1),
+    date: projectFixtureDateByMethod(row.date, method, 1),
     time: row.time,
     home_away: row.home_away,
     format: row.format,
@@ -224,6 +228,27 @@ export async function runFixtureProjection(draftSeasonId: string, fixtureType: P
   if (insertError) throw new Error(`Failed to insert projected fixtures: ${insertError.message}`);
 
   return { inserted: rowsToInsert.length };
+}
+
+/**
+ * Deletes every still-Projected, Carried-Forward fixture (Events + Friendlies
+ * together — the only two fixture types that ever get planning_source =
+ * 'Carried Forward') in the given season, so a projection run using the
+ * wrong method can be cleared and re-run cleanly. Deliberately scoped to
+ * planning_status = 'Projected' only — anything already Confirmed or Email
+ * Sent has been reviewed, so it's left untouched rather than silently wiped.
+ * Manually Added rows are never touched either way (planning_source filter).
+ */
+export async function clearProjectedFixtures(seasonId: string): Promise<{ deleted: number }> {
+  const supabase = getSupabaseClient();
+  const { error, count } = await supabase
+    .from('fixtures')
+    .delete({ count: 'exact' })
+    .eq('season_id', seasonId)
+    .eq('planning_status', 'Projected')
+    .eq('planning_source', 'Carried Forward');
+  if (error) throw new Error(`Failed to clear projected fixtures: ${error.message}`);
+  return { deleted: count ?? 0 };
 }
 
 // ============================================================================
