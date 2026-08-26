@@ -11,7 +11,7 @@ import { authOptions } from '@/lib/auth';
 import { getAppUrl } from '@/lib/app-url';
 import { getGameSheet, updateGameSheet, updatePlayerEntry, getActiveEnteredCount } from '@/lib/friendlies-sheets';
 import { getFixtures, updateFixture } from '@/lib/fixtures-supabase';
-import { clearDiaryCache } from '@/lib/home-cache';
+import { clearDiaryCache, clearSheetDataCacheByPrefix } from '@/lib/home-cache';
 import { sendRejoinEmail, sendRejoinNoticeEmail } from '@/lib/email/friendlies';
 import type { WithdrawRequest } from '@/lib/types/friendlies';
 import { getUserByUsername } from '@/lib/members-supabase';
@@ -157,6 +157,8 @@ export async function POST(request: NextRequest) {
 
     // Invalidate the diary cache so the home page reflects the re-join
     clearDiaryCache(target);
+    // Bust the shared Players-sheet cache too — see enter/route.ts for why.
+    clearSheetDataCacheByPrefix('friendlies-players:');
 
     return NextResponse.json({
       success: true,

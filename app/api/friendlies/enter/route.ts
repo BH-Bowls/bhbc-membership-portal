@@ -8,7 +8,7 @@ import { authOptions } from '@/lib/auth';
 import { getAppUrl } from '@/lib/app-url';
 import { updatePlayerEntry, addPlayerToGameSheet } from '@/lib/friendlies-sheets';
 import { getFixtures, updateFixture } from '@/lib/fixtures-supabase';
-import { clearDiaryCache } from '@/lib/home-cache';
+import { clearDiaryCache, clearSheetDataCacheByPrefix } from '@/lib/home-cache';
 import { EnterGamesRequest, EnterGamesResponse } from '@/lib/types/friendlies';
 import { canEnterGame } from '@/lib/game-management/capacity';
 import { getUserByUsername } from '@/lib/members-supabase';
@@ -223,10 +223,14 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Invalidate the diary cache so the home page reflects the new entry — for every entered user
+    // Invalidate the diary cache so the home page reflects the new entry — for every entered user.
+    // Also bust the shared Players-sheet cache diary-sheets.ts's fetchFriendliesItems reads from
+    // (24h TTL, otherwise never invalidated by writes — without this, the diary keeps computing
+    // fresh but off a stale pre-entry snapshot of who's in each game, for up to 24h).
     for (const who of new Set(successfulEntries.map(r => r.user_name ?? userName))) {
       clearDiaryCache(who);
     }
+    clearSheetDataCacheByPrefix('friendlies-players:');
 
     // Return success response with results for each game
     return NextResponse.json({ success: true, results });

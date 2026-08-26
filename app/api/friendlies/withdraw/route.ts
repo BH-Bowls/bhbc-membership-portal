@@ -9,7 +9,7 @@ import { authOptions } from '@/lib/auth';
 import { getAppUrl } from '@/lib/app-url';
 import { getGameSheet, updateGameSheet, updatePlayerEntry, removePlayerFromGameSheet, getActiveEnteredCount } from '@/lib/friendlies-sheets';
 import { getFixtures, updateFixture } from '@/lib/fixtures-supabase';
-import { clearDiaryCache } from '@/lib/home-cache';
+import { clearDiaryCache, clearSheetDataCacheByPrefix } from '@/lib/home-cache';
 import { sendWithdrawalEmail, sendWithdrawalNoticeEmail, sendLinkedWithdrawalNoticeEmail } from '@/lib/email/friendlies';
 import type { WithdrawRequest } from '@/lib/types/friendlies';
 import { getUserByUsername } from '@/lib/members-supabase';
@@ -142,6 +142,9 @@ export async function POST(request: NextRequest) {
         // Invalidate each removed user's diary cache so their home page updates
         clearDiaryCache(target);
       }
+      // Bust the shared Players-sheet cache too — otherwise the diary recomputes
+      // fresh but off a stale pre-withdrawal snapshot for up to 24h (see enter/route.ts).
+      clearSheetDataCacheByPrefix('friendlies-players:');
 
       // Return success for Open game removal
       return NextResponse.json({
@@ -231,6 +234,8 @@ export async function POST(request: NextRequest) {
 
       // Invalidate the diary cache so the home page reflects the withdrawal
       clearDiaryCache(userName);
+      // Bust the shared Players-sheet cache too — see the other withdrawal scenario above.
+      clearSheetDataCacheByPrefix('friendlies-players:');
 
       // Return success for closed game withdrawal
       return NextResponse.json({
