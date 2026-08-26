@@ -150,7 +150,7 @@ function mapTeaRotaRow(row: any): TeaRotaEntry {
   };
 }
 
-async function getActiveSeasonId(): Promise<string> {
+export async function getActiveSeasonId(): Promise<string> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase.from('seasons').select('id').eq('is_active', true).single();
   if (error || !data) throw new Error('No active season found');

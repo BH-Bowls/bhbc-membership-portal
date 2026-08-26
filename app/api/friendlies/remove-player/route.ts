@@ -11,6 +11,7 @@ import { getFixtures, updateFixture } from '@/lib/fixtures-supabase';
 import { hasRole } from '@/lib/role-utils';
 import { getUserByUsername } from '@/lib/members-supabase';
 import { sendWithdrawnByAdminNoticeEmail, sendRemovedNoticeEmail, sendLinkedWithdrawalNoticeEmail } from '@/lib/email/friendlies';
+import { clearDiaryCache, clearSheetDataCacheByPrefix } from '@/lib/home-cache';
 
 // POST handler - Removes a player from a game (Players column + game sheet row)
 export async function POST(request: NextRequest) {
@@ -105,6 +106,11 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      // Invalidate this player's diary cache and the shared Players-sheet cache
+      // their diary recomputes from (see add-players/route.ts for why both matter).
+      clearDiaryCache(playerUserName);
+      clearSheetDataCacheByPrefix('friendlies-players:');
+
       return NextResponse.json({ success: true, withdrawn: true });
     }
 
@@ -141,6 +147,10 @@ export async function POST(request: NextRequest) {
         console.error('[remove-player] Error sending removal notice email:', emailError);
       }
     }
+
+    // Invalidate this player's diary cache and the shared Players-sheet cache.
+    clearDiaryCache(playerUserName);
+    clearSheetDataCacheByPrefix('friendlies-players:');
 
     return NextResponse.json({ success: true });
   } catch (error) {

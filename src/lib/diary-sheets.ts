@@ -1,14 +1,16 @@
 // src/lib/diary-sheets.ts
 // Data layer for the home-page Diary Panel.
 // Aggregates upcoming duties and game entries for a single member across
-// CleaningRota, SweepingRota, Games (tea duty + friendlies), competition
-// match sheets, and Availability events.
+// CleaningRota, SweepingRota, Fixtures/Postgres (tea duty + friendlies) +
+// the still-Sheets-native Players roster, competition match sheets, and
+// Availability events.
 
 import {
   getGoogleSheetsClient,
   getColumnMap,
 } from './sheets';
 import { getFriendliesSpreadsheetId } from './friendlies-sheets';
+import { getActiveSeasonId } from './fixtures-supabase';
 import { getAllUsers } from './members-supabase';
 import { getCleaningRotaList } from './cleaning-rota-supabase';
 import { getSweepingRotaList } from './sweeping-rota-supabase';
@@ -205,21 +207,66 @@ async function fetchMembersRotaItems(userName: string, todayStr: string): Promis
   return { cleaningItems, sweepingItems };
 }
 
-// ─── Source 3 & 4: FRIENDLIES spreadsheet — Tea duty + Friendly entries ───────
+// ─── Source 3 & 4: Fixtures (Postgres) + Players spreadsheet — Tea duty + Friendly entries ───
 
 type FriendliesResult = {
   teaItems: DiaryItem[];
   friendlyItems: DiaryItem[];
 };
 
-// Fetch Games and Players sheet data (from the 24-hour shared cache when available)
-// then build tea-duty and friendly-entry diary items for this member.
+interface DiaryFixtureRow {
+  date: string; // ISO YYYY-MM-DD, direct from Postgres
+  tabName: string;
+  clubName: string;
+  clubSuffix: string;
+  homeAway: string;
+  status: string;
+  needsPlayers: boolean;
+  teaLead: string;
+  teaFirst: string;
+  teaSecond: string;
+}
+
+// Active-season Friendly fixtures, straight from Postgres — the live source of
+// truth for game status/tab_name since the Games/Fixtures Postgres cutover
+// (2026-08-19). The Games Google Sheet tab was frozen at that migration and
+// nothing writes to it anymore (see project memory: diary-sheets.ts was found
+// to be the sheet's only remaining reader, which is exactly why a member's
+// newly-opened/progressed games could go permanently invisible in their diary
+// — the sheet never caught up). Postgres reads are always fresh, no caching
+// needed here, unlike the Players sheet below (still genuinely Sheets-native).
+async function fetchDiaryFixtures(): Promise<DiaryFixtureRow[]> {
+  const supabase = getSupabaseClient();
+  const seasonId = await getActiveSeasonId();
+  const { data, error } = await supabase
+    .from('fixtures')
+    .select('date, tab_name, club_name, club_suffix, home_away, game_status, needs_players, tea_lead_username, tea_first_username, tea_second_username')
+    .eq('season_id', seasonId)
+    .eq('fixture_type', 'Friendly');
+  if (error) throw new Error(`Failed to fetch fixtures: ${error.message}`);
+  return (data ?? []).map((row: any) => ({
+    date: row.date || '',
+    tabName: row.tab_name || '',
+    clubName: row.club_name || '',
+    clubSuffix: row.club_suffix || '',
+    homeAway: row.home_away || '',
+    status: row.game_status || '',
+    needsPlayers: (row.needs_players || '').toString().toUpperCase() === 'Y',
+    teaLead: row.tea_lead_username || '',
+    teaFirst: row.tea_first_username || '',
+    teaSecond: row.tea_second_username || '',
+  }));
+}
+
+// Fetch this member's Players-sheet entry row (still genuinely Sheets-native —
+// unlike Games, nothing has moved this to Postgres) from the 24-hour shared
+// cache when available, then build tea-duty and friendly-entry diary items by
+// cross-referencing against the fixtures fetched from Postgres above.
 async function fetchFriendliesItems(userName: string, todayStr: string): Promise<FriendliesResult> {
   const spreadsheetId = getFriendliesSpreadsheetId();
 
-  // ── Step 1: Column maps (already cached by getColumnMap's own cache) ──
-  const [gamesColMap, playersColMap] = await Promise.all([
-    getColumnMap('Games', spreadsheetId),
+  const [fixtures, playersColMap] = await Promise.all([
+    fetchDiaryFixtures(),
     getColumnMap('Players', spreadsheetId),
   ]);
 
@@ -236,46 +283,22 @@ async function fetchFriendliesItems(userName: string, todayStr: string): Promise
     playersUserNameColIdx = 0;
   }
 
-  // ── Step 2: Fetch Games and full Players sheet, serving from shared cache ──
-  const gamesCacheKey   = `friendlies-games:${spreadsheetId}`;
   const playersCacheKey = `friendlies-players:${spreadsheetId}`;
-
-  let gamesRows   = getSheetDataCache(gamesCacheKey);
   let playersRows = getSheetDataCache(playersCacheKey);
-
-  if (!gamesRows || !playersRows) {
-    // Cache miss — fetch both sheets together in one batchGet then cache them
+  if (!playersRows) {
     const sheets = getGoogleSheetsClient();
-    const batchResponse = await sheets.spreadsheets.values.batchGet({
+    const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      ranges: [
-        'Games!A2:ZZ',   // all game rows (no header — positional via column map)
-        'Players!A:ZZ',  // full Players sheet including header row
-      ],
+      range: 'Players!A:ZZ',
     });
-
-    const valueRanges = batchResponse.data.valueRanges;
-    gamesRows   = (valueRanges && valueRanges[0] && valueRanges[0].values) ? valueRanges[0].values as string[][] : [];
-    playersRows = (valueRanges && valueRanges[1] && valueRanges[1].values) ? valueRanges[1].values as string[][] : [];
-
-    setSheetDataCache(gamesCacheKey,   gamesRows);
+    playersRows = (response.data.values ?? []) as string[][];
     setSheetDataCache(playersCacheKey, playersRows);
   }
 
   const teaItems: DiaryItem[] = [];
   const friendlyItems: DiaryItem[] = [];
 
-  // Helper to get a value from a Games row by column name
-  function getGameCol(row: string[], field: string): string {
-    const idx = gamesColMap[field];
-    if (idx === undefined) {
-      return '';
-    }
-    const val = row[idx];
-    return val !== undefined && val !== null ? String(val).trim() : '';
-  }
-
-  // ── Step 3: Find the member's row in the cached Players data ──
+  // ── Find the member's row in the cached Players data ──
   // playersRows[0] is the header row; data starts at index 1
   const playersHeaderRow: string[] = playersRows.length > 0 ? (playersRows[0] as string[]) : [];
   let memberPlayerRow: string[] = [];
@@ -300,104 +323,78 @@ async function fetchFriendliesItems(userName: string, todayStr: string): Promise
     }
   }
 
-  // ── Step 4: Process Games rows ──
-  for (let i = 0; i < gamesRows.length; i++) {
-    const row = gamesRows[i] as string[];
+  // ── Process fixtures ──
+  for (const fx of fixtures) {
+    // Only process active games
+    if (fx.status !== 'O' && fx.status !== 'X' && fx.status !== 'S') {
+      continue;
+    }
 
-      // Get the game status — only process active games
-      const status = getGameCol(row, 'status');
-      if (status !== 'O' && status !== 'X' && status !== 'S') {
-        continue;
-      }
+    // Skip past games — fx.date is already ISO from Postgres, no parsing needed
+    if (!fx.date || fx.date < todayStr) {
+      continue;
+    }
 
-      // Parse the game date and skip past games
-      const rawDate = getGameCol(row, 'date');
-      const isoDate = anyDateToIso(rawDate);
-      if (!isoDate || isoDate < todayStr) {
-        continue;
-      }
+    const tabName = fx.tabName;
+    const homeAway = fx.homeAway.trim().toUpperCase() === 'A' ? 'A' : 'H';
 
-      // Get the game's unique tab_name and club name for display
-      const tabName = getGameCol(row, 'tab_name');
-      const clubName = getGameCol(row, 'club_name');
-      const clubSuffix = getGameCol(row, 'club_suffix');
-      // The real Games sheet header is "H/A" — getColumnMap only lowercases and turns
-      // whitespace into underscores, it doesn't touch slashes, so the real column-map
-      // key is 'h/a', not 'home_away' or 'h_a' (confirmed against the live header row;
-      // both guesses always missed, which is why every fixture silently fell back to
-      // Home below regardless of its actual H/A value). A blank H/A cell still means
-      // Home (the sheet's implicit default), not "unknown" — that part of the fallback
-      // stays intended, only the wrong lookup key was the bug.
-      const homeAwayRaw = getGameCol(row, 'h/a') || 'H';
-      const homeAway = homeAwayRaw.trim().toUpperCase() === 'A' ? 'A' : 'H';
-      const needsPlayers = getGameCol(row, 'needs_players').toUpperCase() === 'Y';
+    // Build the display club name (append suffix if present)
+    let displayClub = fx.clubName;
+    if (fx.clubSuffix) {
+      displayClub = `${fx.clubName} ${fx.clubSuffix}`;
+    }
 
-      // Build the display club name (append suffix if present)
-      let displayClub = clubName;
-      if (clubSuffix) {
-        displayClub = `${clubName} ${clubSuffix}`;
-      }
+    const haLabel = homeAway === 'A' ? 'Away' : 'Home';
+    const gameLabel = `vs ${displayClub} (${haLabel})`;
 
-      const haLabel = homeAway === 'A' ? 'Away' : 'Home';
-      const gameLabel = `vs ${displayClub} (${haLabel})`;
+    // ── Tea duty check ──
+    if (fx.teaLead === userName || fx.teaFirst === userName || fx.teaSecond === userName) {
+      const teaRole = fx.teaLead === userName ? 'Tea Lead' : 'Tea (Helper)';
 
-      // ── Tea duty check ──
-      const teaLead = getGameCol(row, 'tea_lead');
-      const teaFirst = getGameCol(row, 'tea_first');
-      const teaSecond = getGameCol(row, 'tea_second');
+      teaItems.push({
+        type: 'tea',
+        date: fx.date,
+        displayDate: formatDiaryDate(fx.date),
+        label: gameLabel,
+        subLabel: teaRole,
+        linkUrl: '/friendlies',
+      });
+    }
 
-      if (teaLead === userName || teaFirst === userName || teaSecond === userName) {
-        let teaRole = 'Tea Duty';
-        if (teaLead === userName) {
-          teaRole = 'Tea Lead';
-        } else {
-          teaRole = 'Tea (Helper)';
-        }
-
-        teaItems.push({
-          type: 'tea',
-          date: isoDate,
-          displayDate: formatDiaryDate(isoDate),
-          label: gameLabel,
-          subLabel: teaRole,
-          linkUrl: '/friendlies',
-        });
-      }
-
-      // ── Friendly entry check ──
-      // Look up the member's entry status for this game in the player entry map
-      if (tabName) {
-        const entryStatus = playerEntryMap.get(tabName);
-        if (entryStatus) {
-          // Only include active entries — not withdrawn or absent
-          // E = entered, M = manually added, D = down, P = picked, R = reserve, T = reserve team
-          const isActiveEntry = (
-            entryStatus === 'E' || entryStatus === 'M' || entryStatus === 'D' ||
-            entryStatus === 'P' || entryStatus === 'R' || entryStatus === 'T'
-          );
-          if (isActiveEntry) {
-            friendlyItems.push({
-              type: 'friendly',
-              date: isoDate,
-              displayDate: formatDiaryDate(isoDate),
-              label: gameLabel,
-              subLabel: entryStatus === 'P' ? 'Selected' : entryStatus === 'R' || entryStatus === 'T' ? 'Reserve' : 'Entered',
-              linkUrl: '/friendlies',
-            });
-          }
-        } else if (needsPlayers && status === 'O') {
-          // Captain has flagged this game as needing players, and this member hasn't entered yet
+    // ── Friendly entry check ──
+    // Look up the member's entry status for this game in the player entry map
+    if (tabName) {
+      const entryStatus = playerEntryMap.get(tabName);
+      if (entryStatus) {
+        // Only include active entries — not withdrawn or absent
+        // E = entered, M = manually added, D = down, P = picked, R = reserve, T = reserve team
+        const isActiveEntry = (
+          entryStatus === 'E' || entryStatus === 'M' || entryStatus === 'D' ||
+          entryStatus === 'P' || entryStatus === 'R' || entryStatus === 'T'
+        );
+        if (isActiveEntry) {
           friendlyItems.push({
-            type: 'friendly-needs-players',
-            date: isoDate,
-            displayDate: formatDiaryDate(isoDate),
+            type: 'friendly',
+            date: fx.date,
+            displayDate: formatDiaryDate(fx.date),
             label: gameLabel,
-            subLabel: 'Players needed — please enter if you can!',
-            linkUrl: `/friendlies/game/${encodeURIComponent(tabName)}`,
+            subLabel: entryStatus === 'P' ? 'Selected' : entryStatus === 'R' || entryStatus === 'T' ? 'Reserve' : 'Entered',
+            linkUrl: '/friendlies',
           });
         }
+      } else if (fx.needsPlayers && fx.status === 'O') {
+        // Captain has flagged this game as needing players, and this member hasn't entered yet
+        friendlyItems.push({
+          type: 'friendly-needs-players',
+          date: fx.date,
+          displayDate: formatDiaryDate(fx.date),
+          label: gameLabel,
+          subLabel: 'Players needed — please enter if you can!',
+          linkUrl: `/friendlies/game/${encodeURIComponent(tabName)}`,
+        });
       }
     }
+  }
 
   return { teaItems, friendlyItems };
 }

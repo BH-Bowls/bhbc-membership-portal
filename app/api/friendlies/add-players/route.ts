@@ -12,6 +12,7 @@ import { canEnterGame } from '@/lib/game-management/capacity';
 import { hasRole } from '@/lib/role-utils';
 import { getAllUsers } from '@/lib/members-supabase';
 import { sendEntryConfirmedEmail, sendLinkedEntryConfirmedEmail } from '@/lib/email/friendlies';
+import { clearDiaryCache, clearSheetDataCacheByPrefix } from '@/lib/home-cache';
 
 // POST handler - Adds players with M (manually added) status
 export async function POST(request: NextRequest) {
@@ -108,6 +109,16 @@ export async function POST(request: NextRequest) {
       } catch (countError) {
         console.error('[Friendlies API] Error updating entered count:', countError);
       }
+
+      // Invalidate the diary cache for every added player, plus the shared
+      // Players-sheet cache their diaries recompute from (24h TTL, otherwise
+      // never invalidated by writes — see enter/route.ts for the full story).
+      // This route (reached via the Friendlies page's "View / Add" modal) had
+      // never invalidated either cache at all, unlike enter/withdraw/rejoin.
+      for (const r of results.filter(r => r.added)) {
+        clearDiaryCache(r.userName);
+      }
+      clearSheetDataCacheByPrefix('friendlies-players:');
     }
 
     // Send entry confirmation emails to each successfully added player (fire-and-forget)

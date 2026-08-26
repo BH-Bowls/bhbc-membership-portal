@@ -8,6 +8,7 @@ import { addPlayerToGameSheet, updatePlayerEntry } from '@/lib/friendlies-sheets
 import { getFixtureByTabName } from '@/lib/fixtures-supabase';
 import { AddPlayerRequest } from '@/lib/types/friendlies';
 import { hasRole } from '@/lib/role-utils';
+import { clearDiaryCache, clearSheetDataCacheByPrefix } from '@/lib/home-cache';
 
 // POST handler - Adds an offline player to a game sheet
 export async function POST(request: NextRequest) {
@@ -61,6 +62,11 @@ export async function POST(request: NextRequest) {
     // Add 'M' (manually added) to Players column for this player
     // updatePlayerEntry skips if they already have a status in that column
     await updatePlayerEntry(user_name, game.tabName, 'M');
+
+    // Invalidate this player's diary cache and the shared Players-sheet cache
+    // their diary recomputes from (see friendlies/enter/route.ts for why both matter).
+    clearDiaryCache(user_name);
+    clearSheetDataCacheByPrefix('friendlies-players:');
 
     // Return success response
     return NextResponse.json({
