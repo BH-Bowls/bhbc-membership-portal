@@ -29,11 +29,15 @@ export async function POST(req: NextRequest) {
     if (body.setActive !== undefined && body.id) {
       await setProductActive(body.id, !!body.setActive);
     } else {
-      if (!body.name || !body.category || typeof body.pricePence !== 'number') {
-        return NextResponse.json({ error: 'name, category and pricePence are required' }, { status: 400 });
+      if (!body.name || !body.category || typeof body.pricePence !== 'number' || typeof body.nonMemberPricePence !== 'number') {
+        return NextResponse.json({ error: 'name, category, pricePence and nonMemberPricePence are required' }, { status: 400 });
       }
       await saveProduct(
-        { id: body.id, name: body.name, category: body.category, pricePence: Math.round(body.pricePence), sortOrder: body.sortOrder, active: body.active },
+        {
+          id: body.id, name: body.name, category: body.category,
+          pricePence: Math.round(body.pricePence), nonMemberPricePence: Math.round(body.nonMemberPricePence),
+          sortOrder: body.sortOrder, active: body.active,
+        },
         session.user.userName,
       );
     }

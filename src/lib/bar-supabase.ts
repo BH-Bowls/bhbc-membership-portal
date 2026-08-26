@@ -14,7 +14,8 @@ export interface BarProduct {
   id: string;
   name: string;
   category: BarCategory;
-  pricePence: number;
+  pricePence: number;           // member price — charged on wallet purchases
+  nonMemberPricePence: number;  // visitor price — charged on card/cash sales
   active: boolean;
   sortOrder: number;
 }
@@ -77,12 +78,13 @@ export async function getProducts(includeInactive = false): Promise<BarProduct[]
   if (error) throw new Error(`Failed to load bar products: ${error.message}`);
   return (data ?? []).map((r: any) => ({
     id: r.id, name: r.name, category: r.category, pricePence: r.price_pence,
+    nonMemberPricePence: r.non_member_price_pence,
     active: r.active, sortOrder: r.sort_order,
   }));
 }
 
 export async function saveProduct(
-  input: { id?: string; name: string; category: BarCategory; pricePence: number; sortOrder?: number; active?: boolean },
+  input: { id?: string; name: string; category: BarCategory; pricePence: number; nonMemberPricePence: number; sortOrder?: number; active?: boolean },
   editedBy: string,
 ): Promise<void> {
   const supabase = getSupabaseClient();
@@ -90,6 +92,7 @@ export async function saveProduct(
     name: input.name.trim(),
     category: input.category,
     price_pence: input.pricePence,
+    non_member_price_pence: input.nonMemberPricePence,
     sort_order: input.sortOrder ?? 0,
     active: input.active ?? true,
     updated_by: editedBy,
@@ -123,7 +126,9 @@ export async function getCashAccounts(): Promise<BarAccount[]> {
       fullName: names.get(r.user_name.toLowerCase()) || r.user_name,
       balancePence: r.balance_pence,
     }))
-    .sort((a, b) => a.fullName.localeCompare(b.fullName));
+    // Lowest balance first — surfaces members who need a top-up reminder before
+    // members who are well-funded. Name is the tiebreaker (mostly £0 accounts).
+    .sort((a, b) => a.balancePence - b.balancePence || a.fullName.localeCompare(b.fullName));
 }
 
 /** Make a member a cash member (creates a zero-balance account; no-op if one exists). */

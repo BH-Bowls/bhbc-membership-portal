@@ -1,7 +1,23 @@
 // app/bar/page.tsx
 // The bar till (iPad, kiosk-style). Committee-gated device; per-sale attribution via
-// the "Served by" chip (bar-duty members). Handles cash-member top-ups, wallet
+// the Bar Volunteer step (bar-duty members). Handles cash-member top-ups, wallet
 // purchases, and visitor card/cash sales, plus an anytime report and product admin.
+//
+// Flow: pick a Bar Volunteer (buttons, persisted in localStorage and pre-highlighted
+// across sessions, but always shown on entry rather than auto-skipped — an explicit
+// tap is required even to reconfirm the same one, so the till never silently starts
+// attributing sales to whoever last used it) -> pick who's buying, from every club
+// member (not just existing cash-account holders) via a search box that filters the
+// full list live, plus a "Non Member" option -> the product/basket screen, priced
+// and actioned differently depending on who's buying:
+//   - Member: Top Up / Pay by Account / History buttons. Selecting a member with no
+//     bar_accounts row yet doesn't create one — bar_topup creates it silently on
+//     their first top-up (see 0025_bar.sql); a Pay-by-Account attempt before that
+//     correctly fails (no funds to charge against), same as an existing member with
+//     an empty wallet.
+//   - Non Member: Pay by Cash / Pay by Card buttons, priced at nonMemberPricePence.
+// After any completed transaction, returns to the person picker for the next
+// customer — the volunteer stays selected throughout a shift.
 
 'use client';
 
@@ -18,30 +34,32 @@ const CATEGORIES: { key: string; label: string }[] = [
   { key: 'soft',    label: 'Soft Drinks / Splashes' },
   { key: 'snack',   label: 'Snacks' },
 ];
-const CAT_LABEL: Record<string, string> = Object.fromEntries(CATEGORIES.map((c) => [c.key, c.label]));
 
 const fmt = (pence: number) => `£${(pence / 100).toFixed(2)}`;
 
-type View = 'home' | 'member' | 'topup' | 'sale' | 'report' | 'products' | 'sales';
-type SaleMode = 'wallet' | 'card' | 'cash';
+type View = 'volunteer' | 'person' | 'sale' | 'topup' | 'report' | 'sales' | 'products';
 interface BasketLine { product: BarProduct; qty: number }
+interface MemberOption { userName: string; fullName: string }
 
 export default function BarTillPage() {
   const { data: session, status } = useSession();
   const role = session?.user?.role ?? '';
   const allowed = isCommitteeMember(role);
 
-  const [view, setView] = useState<View>('home');
+  // Always starts on the volunteer picker, even if one is already stored from a
+  // previous session — see the header comment for why.
+  const [view, setView] = useState<View>('volunteer');
   const [products, setProducts] = useState<BarProduct[]>([]);
   const [accounts, setAccounts] = useState<BarAccount[]>([]);
+  const [allMembers, setAllMembers] = useState<MemberOption[]>([]);
   const [barPersons, setBarPersons] = useState<BarPerson[]>([]);
-  const [servedBy, setServedBy] = useState<string>('');   // username
+  const [volunteer, setVolunteer] = useState<string>('');   // username of the bar person serving
+  const [personSearch, setPersonSearch] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
   // selection / flow state
-  const [member, setMember] = useState<BarAccount | null>(null);
-  const [saleMode, setSaleMode] = useState<SaleMode>('wallet');
+  const [member, setMember] = useState<BarAccount | null>(null); // null + view 'sale' means non-member
   const [basket, setBasket] = useState<BasketLine[]>([]);
   const [activeCat, setActiveCat] = useState<string>('beer');
   const [history, setHistory] = useState<BarLedgerEntry[] | null>(null);
@@ -50,30 +68,43 @@ export default function BarTillPage() {
   const [showRefund, setShowRefund] = useState(false);
   const [refundAmt, setRefundAmt] = useState('');
 
-  const servedByName = barPersons.find((b) => b.userName === servedBy)?.fullName ?? '';
+  const volunteerName = barPersons.find((b) => b.userName === volunteer)?.fullName ?? '';
 
   const load = useCallback(async () => {
     try {
-      const [p, a, b] = await Promise.all([
+      const [p, a, b, m] = await Promise.all([
         fetch('/api/bar/products?all=1').then((r) => r.json()),
         fetch('/api/bar/accounts').then((r) => r.json()),
         fetch('/api/bar/bar-persons').then((r) => r.json()),
+        fetch('/api/members/lookup').then((r) => r.json()),
       ]);
       if (p.products) setProducts(p.products);
       if (a.accounts) setAccounts(a.accounts);
       if (b.barPersons) setBarPersons(b.barPersons);
+      if (m.members) setAllMembers(m.members);
     } catch { setError('Failed to load bar data'); }
   }, []);
 
   useEffect(() => { if (allowed) load(); }, [allowed, load]);
+  useEffect(() => { window.scrollTo(0, 0); }, [view]);
   useEffect(() => {
+    // Pre-fills who to highlight on the volunteer picker — doesn't skip the picker itself.
     const s = localStorage.getItem('bar_served_by');
-    if (s) setServedBy(s);
+    if (s) setVolunteer(s);
   }, []);
-  function chooseServedBy(u: string) { setServedBy(u); localStorage.setItem('bar_served_by', u); }
+  function chooseVolunteer(u: string) { setVolunteer(u); localStorage.setItem('bar_served_by', u); setView('person'); }
 
-  // ── basket helpers ──────────────────────────────────────────────────────────
-  const basketTotal = basket.reduce((s, l) => s + l.product.pricePence * l.qty, 0);
+  // Returns to the till (person picker) for the next customer — the volunteer stays
+  // selected. Use changeVolunteer() below, not this, to actually switch who's serving.
+  function backToPersonPicker() {
+    setView('person'); setMember(null); setBasket([]); setPersonSearch('');
+    setHistory(null); setShowRefund(false); setRefundAmt('');
+  }
+  function changeVolunteer() { setView('volunteer'); }
+
+  // ── basket / pricing helpers ─────────────────────────────────────────────────
+  const unitPrice = (p: BarProduct) => (member ? p.pricePence : p.nonMemberPricePence);
+  const basketTotal = basket.reduce((s, l) => s + unitPrice(l.product) * l.qty, 0);
   function addToBasket(p: BarProduct) {
     setBasket((prev) => {
       const found = prev.find((l) => l.product.id === p.id);
@@ -88,57 +119,61 @@ export default function BarTillPage() {
   }
 
   // ── actions ─────────────────────────────────────────────────────────────────
-  function requireServer(): boolean {
-    if (!servedBy) { setError('Select who is serving first (top of screen).'); return false; }
+  function requireVolunteer(): boolean {
+    if (!volunteer) { setError('Select the bar volunteer first.'); return false; }
     setError(''); return true;
   }
 
-  function startSale(mode: SaleMode, m: BarAccount | null) {
-    if (!requireServer()) return;
-    setSaleMode(mode); setMember(m); setBasket([]); setActiveCat('beer'); setView('sale');
+  function selectMember(m: BarAccount) {
+    if (!requireVolunteer()) return;
+    setMember(m); setBasket([]); setActiveCat('beer'); setHistory(null); setShowRefund(false); setView('sale');
+  }
+  function selectNonMember() {
+    if (!requireVolunteer()) return;
+    setMember(null); setBasket([]); setActiveCat('beer'); setView('sale');
   }
 
-  async function completeSale() {
-    if (basket.length === 0 || !requireServer()) return;
+  async function completeSale(mode: 'wallet' | 'card' | 'cash') {
+    if (basket.length === 0 || !requireVolunteer()) return;
     setBusy(true); setError('');
     const items = basket.map((l) => ({ productId: l.product.id, qty: l.qty }));
     try {
       let res;
-      if (saleMode === 'wallet') {
+      if (mode === 'wallet') {
+        if (!member) return;
         res = await fetch('/api/bar/purchase', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userName: member!.userName, items, staff: servedBy }) });
+          body: JSON.stringify({ userName: member.userName, items, staff: volunteer }) });
       } else {
         res = await fetch('/api/bar/sale', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ method: saleMode, items, staff: servedBy }) });
+          body: JSON.stringify({ method: mode, items, staff: volunteer }) });
       }
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Sale failed');
-      setBasket([]);
       await load();
-      if (saleMode === 'wallet') {
-        setMember((m) => (m ? { ...m, balancePence: data.balancePence } : m));
-        setView('member');
-      } else { setView('home'); }
+      backToPersonPicker();
     } catch (err: any) { setError(err.message); } finally { setBusy(false); }
   }
 
   async function doTopUp(amountPence: number) {
-    if (!member || !requireServer()) return;
+    if (!member || !requireVolunteer()) return;
     setBusy(true); setError('');
     try {
       const res = await fetch('/api/bar/topup', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userName: member.userName, amountPence, staff: servedBy }) });
+        body: JSON.stringify({ userName: member.userName, amountPence, staff: volunteer }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Top-up failed');
-      setMember({ ...member, balancePence: data.balancePence });
+      // Back to the product list (not the person picker) with the fresh balance —
+      // topping up is usually followed straight by a purchase for the same member,
+      // and the basket (if anything was already tapped) stays intact.
+      setMember((m) => (m ? { ...m, balancePence: data.balancePence } : m));
       await load();
-      setView('member');
+      setView('sale');
     } catch (err: any) { setError(err.message); } finally { setBusy(false); }
   }
 
-  async function openMember(m: BarAccount) { setMember(m); setHistory(null); setView('member'); }
   async function loadHistory() {
     if (!member) return;
+    if (history) { setHistory(null); return; } // toggle closed
     const data = await fetch(`/api/bar/account?userName=${encodeURIComponent(member.userName)}`).then((r) => r.json());
     setHistory(data.account?.history ?? []);
   }
@@ -152,12 +187,12 @@ export default function BarTillPage() {
     setSales(data.sales ?? []);
   }
   async function doVoid(saleId: string) {
-    if (!requireServer()) return;
+    if (!requireVolunteer()) return;
     if (!confirm('Void this sale? If it was charged to an account, the balance is refunded.')) return;
     setBusy(true); setError('');
     try {
       const res = await fetch('/api/bar/void', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ saleId, staff: servedBy }) });
+        body: JSON.stringify({ saleId, staff: volunteer }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Void failed');
       const s = await fetch('/api/bar/sales?limit=40').then((r) => r.json());
@@ -166,7 +201,7 @@ export default function BarTillPage() {
     } catch (err: any) { setError(err.message); } finally { setBusy(false); }
   }
   async function doRefund() {
-    if (!member || !requireServer()) return;
+    if (!member || !requireVolunteer()) return;
     const pence = Math.round(parseFloat(refundAmt || '0') * 100);
     if (!Number.isFinite(pence) || pence <= 0 || pence > member.balancePence) {
       setError('Enter a refund amount up to the balance.'); return;
@@ -175,7 +210,7 @@ export default function BarTillPage() {
     setBusy(true); setError('');
     try {
       const res = await fetch('/api/bar/refund', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userName: member.userName, amountPence: pence, staff: servedBy }) });
+        body: JSON.stringify({ userName: member.userName, amountPence: pence, staff: volunteer }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Refund failed');
       setMember({ ...member, balancePence: data.balancePence });
@@ -183,6 +218,24 @@ export default function BarTillPage() {
       await load();
     } catch (err: any) { setError(err.message); } finally { setBusy(false); }
   }
+
+  // Every club member, merged with their real balance where one exists (0/no
+  // account otherwise), filtered by the search box, and sorted so existing
+  // cash members (lowest balance first, then name — a top-up reminder) come
+  // before the much larger block of members who've never opened one (A-Z).
+  const balanceByUser = new Map(accounts.map((a) => [a.userName.toLowerCase(), a.balancePence]));
+  const q = personSearch.trim().toLowerCase();
+  const sortedPeople = allMembers
+    .filter((m) => !q || m.fullName.toLowerCase().includes(q))
+    .map((m) => {
+      const bal = balanceByUser.get(m.userName.toLowerCase());
+      return { userName: m.userName, fullName: m.fullName, balancePence: bal ?? 0, hasAccount: bal !== undefined };
+    })
+    .sort((a, b) => {
+      if (a.hasAccount !== b.hasAccount) return a.hasAccount ? -1 : 1;
+      if (a.hasAccount) return a.balancePence - b.balancePence || a.fullName.localeCompare(b.fullName);
+      return a.fullName.localeCompare(b.fullName);
+    });
 
   // ── guards ──────────────────────────────────────────────────────────────────
   if (status === 'loading') return null;
@@ -198,23 +251,23 @@ export default function BarTillPage() {
     <div className="min-h-screen bg-gray-50">
       <div className="container mx-auto px-4 py-5 max-w-4xl">
 
-        {/* Served by chip + nav */}
+        {/* Header: volunteer chip + nav */}
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-gray-600">Served by:</span>
-            <select
-              value={servedBy}
-              onChange={(e) => chooseServedBy(e.target.value)}
-              className="border border-gray-300 rounded-md px-3 py-2 text-sm font-medium bg-white"
-            >
-              <option value="">— select —</option>
-              {barPersons.map((b) => <option key={b.userName} value={b.userName}>{b.fullName}</option>)}
-            </select>
+          <div className="flex items-center gap-2 text-sm">
+            {volunteer ? (
+              <>
+                <span className="text-gray-600">Serving:</span>
+                <span className="font-semibold text-gray-900">{volunteerName}</span>
+                <button onClick={changeVolunteer} className="text-blue-600 hover:text-blue-800">Change</button>
+              </>
+            ) : (
+              <span className="text-gray-500">Select the bar volunteer to begin</span>
+            )}
           </div>
           <div className="flex gap-2">
-            {view !== 'home' && (
-              <button onClick={() => { setView('home'); setMember(null); setBasket([]); }}
-                className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">← Home</button>
+            {view !== 'volunteer' && view !== 'person' && (
+              <button onClick={backToPersonPicker}
+                className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">← Till</button>
             )}
             <button onClick={loadSales} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Sales</button>
             <button onClick={loadReport} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Report</button>
@@ -224,78 +277,55 @@ export default function BarTillPage() {
 
         {error && <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded">{error}</div>}
 
-        {/* ── HOME ─────────────────────────────────────────────────────────── */}
-        {view === 'home' && (
-          <>
-            <div className="flex gap-3 mb-5">
-              <button onClick={() => startSale('card', null)} className="flex-1 py-4 rounded-xl bg-blue-600 text-white font-semibold text-lg hover:bg-blue-700">Card sale</button>
-              <button onClick={() => startSale('cash', null)} className="flex-1 py-4 rounded-xl bg-amber-600 text-white font-semibold text-lg hover:bg-amber-700">Cash sale</button>
-            </div>
-            <div className="flex items-center justify-between mb-2">
-              <h2 className="text-sm font-semibold text-gray-700">Cash members</h2>
-              <AddCashMember existing={accounts} onAdded={load} />
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              {accounts.map((a) => (
-                <button key={a.userName} onClick={() => openMember(a)}
-                  className="p-4 rounded-xl border border-gray-200 bg-white text-left hover:border-green-400 hover:shadow">
-                  <div className="font-semibold text-gray-900 truncate">{a.fullName}</div>
-                  <div className={`text-lg font-bold ${a.balancePence <= 200 ? 'text-red-600' : 'text-green-700'}`}>{fmt(a.balancePence)}</div>
+        {/* ── VOLUNTEER: always shown on entry, current one highlighted ──────── */}
+        {view === 'volunteer' && (
+          <div className="max-w-lg mx-auto">
+            <h2 className="text-sm font-semibold text-gray-700 mb-3 text-center">Who's on the bar?</h2>
+            <div className="grid grid-cols-2 gap-3">
+              {barPersons.map((b) => (
+                <button key={b.userName} onClick={() => chooseVolunteer(b.userName)}
+                  className={`py-5 rounded-xl border-2 bg-white font-semibold text-gray-900 hover:border-blue-400 hover:shadow ${
+                    b.userName === volunteer ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200'
+                  }`}>
+                  {b.fullName}
                 </button>
               ))}
-              {accounts.length === 0 && <p className="text-gray-400 text-sm col-span-full py-6 text-center">No cash members yet — add one above.</p>}
+              {barPersons.length === 0 && <p className="text-gray-400 text-sm col-span-full text-center py-6">No bar volunteers set up yet.</p>}
+            </div>
+          </div>
+        )}
+
+        {/* ── PERSON: full member list, search-filterable, + Non Member ──────── */}
+        {view === 'person' && (
+          <>
+            <h2 className="text-sm font-semibold text-gray-700 mb-2">Who's buying?</h2>
+            <input
+              value={personSearch}
+              onChange={(e) => setPersonSearch(e.target.value)}
+              placeholder="Search members…"
+              className="w-full border border-gray-300 rounded-lg px-4 py-3 text-base mb-3"
+            />
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              <button onClick={selectNonMember}
+                className="p-4 rounded-xl border-2 border-dashed border-gray-300 bg-white text-left hover:border-amber-400 hover:shadow">
+                <div className="font-semibold text-gray-900">Non Member</div>
+                <div className="text-sm text-gray-500">Cash or card</div>
+              </button>
+              {sortedPeople.map((m) => (
+                <button key={m.userName} onClick={() => selectMember(m)}
+                  className="p-4 rounded-xl border border-gray-200 bg-white text-left hover:border-green-400 hover:shadow">
+                  <div className="font-semibold text-gray-900 truncate">{m.fullName}</div>
+                  <div className={`text-lg font-bold ${!m.hasAccount ? 'text-gray-400' : m.balancePence <= 200 ? 'text-red-600' : 'text-green-700'}`}>
+                    {m.hasAccount ? fmt(m.balancePence) : 'No account yet'}
+                  </div>
+                </button>
+              ))}
+              {sortedPeople.length === 0 && <p className="text-gray-400 text-sm col-span-full py-6 text-center">No members match "{personSearch}".</p>}
             </div>
           </>
         )}
 
-        {/* ── MEMBER ───────────────────────────────────────────────────────── */}
-        {view === 'member' && member && (
-          <div className="bg-white border border-gray-200 rounded-xl p-5">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <div className="text-xl font-bold text-gray-900">{member.fullName}</div>
-                <div className={`text-2xl font-bold ${member.balancePence <= 200 ? 'text-red-600' : 'text-green-700'}`}>{fmt(member.balancePence)}</div>
-              </div>
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              <button onClick={() => setView('topup')} className="py-4 rounded-lg bg-green-600 text-white font-semibold hover:bg-green-700">Top up</button>
-              <button onClick={() => startSale('wallet', member)} className="py-4 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700">Purchase</button>
-              <button onClick={loadHistory} className="py-4 rounded-lg border border-gray-300 font-semibold text-gray-700 hover:bg-gray-50">History</button>
-            </div>
-
-            {/* Refund cash from the wallet (committee) */}
-            <div className="mt-3">
-              {!showRefund ? (
-                <button onClick={() => { setShowRefund(true); setRefundAmt(''); setError(''); }} className="text-sm text-red-600 font-medium">Refund cash…</button>
-              ) : (
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm text-gray-600">£</span>
-                  <input value={refundAmt} onChange={(e) => setRefundAmt(e.target.value)} inputMode="decimal" placeholder="0.00"
-                    className="border border-gray-300 rounded px-2 py-1.5 text-sm w-24" />
-                  <button onClick={doRefund} disabled={busy} className="px-3 py-1.5 bg-red-600 text-white rounded text-sm font-medium disabled:opacity-50">
-                    {busy ? 'Refunding…' : 'Refund cash'}
-                  </button>
-                  <button onClick={() => setShowRefund(false)} className="text-sm text-gray-500">Cancel</button>
-                </div>
-              )}
-            </div>
-            {history && (
-              <div className="mt-5 border-t pt-4 max-h-72 overflow-y-auto">
-                {history.length === 0 ? <p className="text-gray-400 text-sm">No history.</p> : history.map((h) => (
-                  <div key={h.id} className="flex justify-between text-sm py-1 border-b border-gray-100">
-                    <span className="text-gray-700">{new Date(h.createdAt).toLocaleDateString('en-GB')} · {h.type}</span>
-                    <span className={h.amountPence < 0 ? 'text-gray-700' : 'text-green-700'}>{h.amountPence < 0 ? '−' : '+'}{fmt(Math.abs(h.amountPence))}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ── TOP UP ───────────────────────────────────────────────────────── */}
-        {view === 'topup' && member && <TopUp member={member} busy={busy} onConfirm={doTopUp} />}
-
-        {/* ── SALE (product grid + basket) ─────────────────────────────────── */}
+        {/* ── SALE (product grid + basket, priced/actioned per buyer) ─────────── */}
         {view === 'sale' && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="md:col-span-2">
@@ -310,14 +340,14 @@ export default function BarTillPage() {
                   <button key={p.id} onClick={() => addToBasket(p)}
                     className="p-3 rounded-lg border border-gray-200 bg-white text-left hover:border-blue-400">
                     <div className="font-medium text-gray-900 text-sm leading-tight">{p.name}</div>
-                    <div className="text-gray-600 text-sm">{fmt(p.pricePence)}</div>
+                    <div className="text-gray-600 text-sm">{fmt(unitPrice(p))}</div>
                   </button>
                 ))}
               </div>
             </div>
             <div className="bg-white border border-gray-200 rounded-xl p-4 h-fit">
               <div className="text-sm font-semibold text-gray-700 mb-2">
-                {saleMode === 'wallet' ? `Charge to ${member?.fullName}` : saleMode === 'card' ? 'Card sale' : 'Cash sale'}
+                {member ? `Charge to ${member.fullName}` : 'Non-member sale'}
               </div>
               {basket.length === 0 ? <p className="text-gray-400 text-sm py-4">Tap items to add.</p> : (
                 <div className="space-y-2">
@@ -328,7 +358,7 @@ export default function BarTillPage() {
                         <button onClick={() => changeQty(l.product.id, -1)} className="w-6 h-6 rounded bg-gray-100">−</button>
                         <span className="w-5 text-center">{l.qty}</span>
                         <button onClick={() => changeQty(l.product.id, 1)} className="w-6 h-6 rounded bg-gray-100">+</button>
-                        <span className="w-14 text-right">{fmt(l.product.pricePence * l.qty)}</span>
+                        <span className="w-14 text-right">{fmt(unitPrice(l.product) * l.qty)}</span>
                       </div>
                     </div>
                   ))}
@@ -337,18 +367,67 @@ export default function BarTillPage() {
               <div className="flex justify-between font-bold text-lg mt-3 pt-3 border-t">
                 <span>Total</span><span>{fmt(basketTotal)}</span>
               </div>
-              {saleMode === 'wallet' && member && (
+              {member && (
                 <div className={`text-sm mt-1 ${member.balancePence < basketTotal ? 'text-red-600 font-medium' : 'text-gray-600'}`}>
                   Balance {fmt(member.balancePence)}{member.balancePence < basketTotal ? ' — insufficient, top up first' : ''}
                 </div>
               )}
-              <button onClick={completeSale} disabled={busy || basket.length === 0 || (saleMode === 'wallet' && !!member && member.balancePence < basketTotal)}
-                className="w-full mt-3 py-3 rounded-lg bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-50">
-                {busy ? 'Saving…' : saleMode === 'wallet' ? `Charge ${fmt(basketTotal)}` : `Take ${fmt(basketTotal)} — ${saleMode}`}
-              </button>
+
+              {/* Action buttons — differ for a member vs a non-member */}
+              {member ? (
+                <div className="grid grid-cols-2 gap-2 mt-3">
+                  <button onClick={() => setView('topup')} disabled={busy}
+                    className="py-3 rounded-lg bg-amber-600 text-white font-semibold hover:bg-amber-700 disabled:opacity-50">Top Up</button>
+                  <button onClick={() => completeSale('wallet')} disabled={busy || basket.length === 0 || member.balancePence < basketTotal}
+                    className="py-3 rounded-lg bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-50">
+                    {busy ? 'Saving…' : `Pay by Account`}
+                  </button>
+                  <button onClick={loadHistory} className="py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                    {history ? 'Hide History' : 'History'}
+                  </button>
+                  {!showRefund ? (
+                    <button onClick={() => { setShowRefund(true); setRefundAmt(''); setError(''); }} className="py-2 text-sm text-red-600 font-medium">Refund cash…</button>
+                  ) : (
+                    <div className="col-span-2 flex items-center gap-2 flex-wrap pt-1">
+                      <span className="text-sm text-gray-600">£</span>
+                      <input value={refundAmt} onChange={(e) => setRefundAmt(e.target.value)} inputMode="decimal" placeholder="0.00"
+                        className="border border-gray-300 rounded px-2 py-1.5 text-sm w-24" />
+                      <button onClick={doRefund} disabled={busy} className="px-3 py-1.5 bg-red-600 text-white rounded text-sm font-medium disabled:opacity-50">
+                        {busy ? 'Refunding…' : 'Refund cash'}
+                      </button>
+                      <button onClick={() => setShowRefund(false)} className="text-sm text-gray-500">Cancel</button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-2 mt-3">
+                  <button onClick={() => completeSale('cash')} disabled={busy || basket.length === 0}
+                    className="py-3 rounded-lg bg-amber-600 text-white font-semibold hover:bg-amber-700 disabled:opacity-50">
+                    {busy ? 'Saving…' : `Pay by Cash`}
+                  </button>
+                  <button onClick={() => completeSale('card')} disabled={busy || basket.length === 0}
+                    className="py-3 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700 disabled:opacity-50">
+                    {busy ? 'Saving…' : `Pay by Card`}
+                  </button>
+                </div>
+              )}
+
+              {member && history && (
+                <div className="mt-4 border-t pt-3 max-h-72 overflow-y-auto">
+                  {history.length === 0 ? <p className="text-gray-400 text-sm">No history.</p> : history.map((h) => (
+                    <div key={h.id} className="flex justify-between text-sm py-1 border-b border-gray-100">
+                      <span className="text-gray-700">{new Date(h.createdAt).toLocaleDateString('en-GB')} · {h.type}</span>
+                      <span className={h.amountPence < 0 ? 'text-gray-700' : 'text-green-700'}>{h.amountPence < 0 ? '−' : '+'}{fmt(Math.abs(h.amountPence))}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
+
+        {/* ── TOP UP ───────────────────────────────────────────────────────── */}
+        {view === 'topup' && member && <TopUp member={member} busy={busy} onConfirm={doTopUp} />}
 
         {/* ── REPORT ───────────────────────────────────────────────────────── */}
         {view === 'report' && report && <ReportView report={report} />}
@@ -395,43 +474,6 @@ export default function BarTillPage() {
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
-
-function AddCashMember({ existing, onAdded }: { existing: BarAccount[]; onAdded: () => void }) {
-  const [open, setOpen] = useState(false);
-  const [members, setMembers] = useState<{ userName: string; fullName: string }[]>([]);
-  const [q, setQ] = useState('');
-  const existingSet = new Set(existing.map((a) => a.userName.toLowerCase()));
-
-  useEffect(() => {
-    if (open && members.length === 0) {
-      fetch('/api/members/lookup').then((r) => r.json()).then((d) => setMembers(d.members ?? []));
-    }
-  }, [open, members.length]);
-
-  const matches = q.trim().length < 2 ? [] : members
-    .filter((m) => !existingSet.has(m.userName.toLowerCase()) && m.fullName.toLowerCase().includes(q.toLowerCase()))
-    .slice(0, 8);
-
-  async function add(userName: string) {
-    await fetch('/api/bar/accounts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userName }) });
-    setQ(''); setOpen(false); onAdded();
-  }
-
-  if (!open) return <button onClick={() => setOpen(true)} className="text-sm text-blue-600 font-medium">+ Add cash member</button>;
-  return (
-    <div className="relative">
-      <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} onBlur={() => setTimeout(() => setOpen(false), 200)}
-        placeholder="Search member…" className="border border-gray-300 rounded-md px-3 py-1.5 text-sm w-56" />
-      {matches.length > 0 && (
-        <div className="absolute right-0 mt-1 w-56 bg-white border border-gray-200 rounded-md shadow z-10">
-          {matches.map((m) => (
-            <button key={m.userName} onMouseDown={() => add(m.userName)} className="block w-full text-left px-3 py-2 text-sm hover:bg-gray-50">{m.fullName}</button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function TopUp({ member, busy, onConfirm }: { member: BarAccount; busy: boolean; onConfirm: (pence: number) => void }) {
   const [amount, setAmount] = useState('');       // pounds as typed
@@ -500,12 +542,21 @@ function ProductsAdmin({ products, onChanged }: { products: BarProduct[]; onChan
   const [name, setName] = useState('');
   const [category, setCategory] = useState('beer');
   const [price, setPrice] = useState('');
+  const [nonMemberPrice, setNonMemberPrice] = useState('');
+  // Keep the non-member price 10p above whatever's typed in the member price,
+  // until the admin edits it directly — a starting suggestion, not enforced.
+  function onPriceChange(v: string) {
+    setPrice(v);
+    const p = parseFloat(v);
+    if (Number.isFinite(p)) setNonMemberPrice((p + 0.10).toFixed(2));
+  }
   async function add() {
     const pricePence = Math.round(parseFloat(price || '0') * 100);
-    if (!name.trim() || pricePence <= 0) return;
+    const nonMemberPricePence = Math.round(parseFloat(nonMemberPrice || '0') * 100);
+    if (!name.trim() || pricePence <= 0 || nonMemberPricePence <= 0) return;
     await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, category, pricePence }) });
-    setName(''); setPrice(''); onChanged();
+      body: JSON.stringify({ name, category, pricePence, nonMemberPricePence }) });
+    setName(''); setPrice(''); setNonMemberPrice(''); onChanged();
   }
   async function toggle(p: BarProduct) {
     await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -513,19 +564,22 @@ function ProductsAdmin({ products, onChanged }: { products: BarProduct[]; onChan
     onChanged();
   }
 
-  // Inline edit of an existing product (name / category / price)
+  // Inline edit of an existing product (name / category / prices)
   const [editId, setEditId] = useState<string | null>(null);
   const [eName, setEName] = useState('');
   const [eCat, setECat] = useState('beer');
   const [ePrice, setEPrice] = useState('');
+  const [eNonMemberPrice, setENonMemberPrice] = useState('');
   function startEdit(p: BarProduct) {
-    setEditId(p.id); setEName(p.name); setECat(p.category); setEPrice((p.pricePence / 100).toFixed(2));
+    setEditId(p.id); setEName(p.name); setECat(p.category);
+    setEPrice((p.pricePence / 100).toFixed(2)); setENonMemberPrice((p.nonMemberPricePence / 100).toFixed(2));
   }
   async function saveEdit(p: BarProduct) {
     const pricePence = Math.round(parseFloat(ePrice || '0') * 100);
-    if (!eName.trim() || pricePence <= 0) return;
+    const nonMemberPricePence = Math.round(parseFloat(eNonMemberPrice || '0') * 100);
+    if (!eName.trim() || pricePence <= 0 || nonMemberPricePence <= 0) return;
     await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: p.id, name: eName.trim(), category: eCat, pricePence }) });
+      body: JSON.stringify({ id: p.id, name: eName.trim(), category: eCat, pricePence, nonMemberPricePence }) });
     setEditId(null); onChanged();
   }
   return (
@@ -536,7 +590,14 @@ function ProductsAdmin({ products, onChanged }: { products: BarProduct[]; onChan
         <select value={category} onChange={(e) => setCategory(e.target.value)} className="border rounded px-2 py-1.5 text-sm">
           {CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
         </select>
-        <input value={price} onChange={(e) => setPrice(e.target.value)} placeholder="£" inputMode="decimal" className="border rounded px-2 py-1.5 text-sm w-20" />
+        <div>
+          <label className="block text-[10px] text-gray-500">Member £</label>
+          <input value={price} onChange={(e) => onPriceChange(e.target.value)} placeholder="£" inputMode="decimal" className="border rounded px-2 py-1.5 text-sm w-20" />
+        </div>
+        <div>
+          <label className="block text-[10px] text-gray-500">Non-member £</label>
+          <input value={nonMemberPrice} onChange={(e) => setNonMemberPrice(e.target.value)} placeholder="£" inputMode="decimal" className="border rounded px-2 py-1.5 text-sm w-20" />
+        </div>
         <button onClick={add} className="px-3 py-1.5 bg-green-600 text-white rounded text-sm font-medium">Add</button>
       </div>
       {CATEGORIES.map((c) => {
@@ -552,13 +613,14 @@ function ProductsAdmin({ products, onChanged }: { products: BarProduct[]; onChan
                   <select value={eCat} onChange={(e) => setECat(e.target.value)} className="border rounded px-2 py-1 text-sm">
                     {CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
                   </select>
-                  <input value={ePrice} onChange={(e) => setEPrice(e.target.value)} placeholder="£" inputMode="decimal" className="border rounded px-2 py-1 text-sm w-20" />
+                  <input value={ePrice} onChange={(e) => setEPrice(e.target.value)} placeholder="Member £" inputMode="decimal" className="border rounded px-2 py-1 text-sm w-20" />
+                  <input value={eNonMemberPrice} onChange={(e) => setENonMemberPrice(e.target.value)} placeholder="Non-member £" inputMode="decimal" className="border rounded px-2 py-1 text-sm w-20" />
                   <button onClick={() => saveEdit(p)} className="px-3 py-1 bg-green-600 text-white rounded text-sm font-medium">Save</button>
                   <button onClick={() => setEditId(null)} className="text-sm text-gray-500">Cancel</button>
                 </div>
               ) : (
                 <div key={p.id} className={`flex justify-between items-center text-sm py-1 ${p.active ? '' : 'opacity-40'}`}>
-                  <span>{p.name} — {fmt(p.pricePence)}</span>
+                  <span>{p.name} — {fmt(p.pricePence)} <span className="text-gray-400">/ {fmt(p.nonMemberPricePence)} non-member</span></span>
                   <span className="flex gap-3">
                     <button onClick={() => startEdit(p)} className="text-xs text-blue-600">Edit</button>
                     <button onClick={() => toggle(p)} className="text-xs text-gray-500">{p.active ? 'Deactivate' : 'Activate'}</button>
