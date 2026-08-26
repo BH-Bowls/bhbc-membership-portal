@@ -24,7 +24,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import { isCommitteeMember } from '@/lib/role-utils';
-import type { BarProduct, BarAccount, BarPerson, BarLedgerEntry, BarReport, BarSaleSummary } from '@/lib/bar-supabase';
+import type { BarProduct, BarAccount, BarPerson, BarLedgerEntry, BarReport, BarSaleSummary, BarSaleItem } from '@/lib/bar-supabase';
 
 const CATEGORIES: { key: string; label: string }[] = [
   { key: 'beer',    label: 'Beers / Lagers' },
@@ -63,8 +63,11 @@ export default function BarTillPage() {
   const [basket, setBasket] = useState<BasketLine[]>([]);
   const [activeCat, setActiveCat] = useState<string>('beer');
   const [history, setHistory] = useState<BarLedgerEntry[] | null>(null);
+  const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null);
+  const [historyItemsBySale, setHistoryItemsBySale] = useState<Record<string, BarSaleItem[]>>({});
   const [report, setReport] = useState<BarReport | null>(null);
   const [sales, setSales] = useState<BarSaleSummary[] | null>(null);
+  const [expandedSaleId, setExpandedSaleId] = useState<string | null>(null);
   const [showRefund, setShowRefund] = useState(false);
   const [refundAmt, setRefundAmt] = useState('');
 
@@ -98,7 +101,7 @@ export default function BarTillPage() {
   // selected. Use changeVolunteer() below, not this, to actually switch who's serving.
   function backToPersonPicker() {
     setView('person'); setMember(null); setBasket([]); setPersonSearch('');
-    setHistory(null); setShowRefund(false); setRefundAmt('');
+    setHistory(null); setExpandedHistoryId(null); setShowRefund(false); setRefundAmt('');
   }
   function changeVolunteer() { setView('volunteer'); }
 
@@ -126,7 +129,7 @@ export default function BarTillPage() {
 
   function selectMember(m: BarAccount) {
     if (!requireVolunteer()) return;
-    setMember(m); setBasket([]); setActiveCat('beer'); setHistory(null); setShowRefund(false); setView('sale');
+    setMember(m); setBasket([]); setActiveCat('beer'); setHistory(null); setExpandedHistoryId(null); setShowRefund(false); setView('sale');
   }
   function selectNonMember() {
     if (!requireVolunteer()) return;
@@ -173,16 +176,28 @@ export default function BarTillPage() {
 
   async function loadHistory() {
     if (!member) return;
-    if (history) { setHistory(null); return; } // toggle closed
+    if (history) { setHistory(null); setExpandedHistoryId(null); return; } // toggle closed
     const data = await fetch(`/api/bar/account?userName=${encodeURIComponent(member.userName)}`).then((r) => r.json());
     setHistory(data.account?.history ?? []);
+  }
+
+  // Expand a purchase entry to show its line items, fetching once per sale (cached
+  // in historyItemsBySale) — top-ups/refunds/adjustments have no items to show.
+  async function toggleHistoryItem(h: BarLedgerEntry) {
+    if (!h.saleId) return;
+    if (expandedHistoryId === h.id) { setExpandedHistoryId(null); return; }
+    setExpandedHistoryId(h.id);
+    if (!historyItemsBySale[h.saleId]) {
+      const data = await fetch(`/api/bar/sale/${h.saleId}/items`).then((r) => r.json());
+      setHistoryItemsBySale((prev) => ({ ...prev, [h.saleId as string]: data.items ?? [] }));
+    }
   }
   async function loadReport() {
     const data = await fetch('/api/bar/report').then((r) => r.json());
     setReport(data.report ?? null); setView('report');
   }
   async function loadSales() {
-    setView('sales'); setSales(null);
+    setView('sales'); setSales(null); setExpandedSaleId(null);
     const data = await fetch('/api/bar/sales?limit=40').then((r) => r.json());
     setSales(data.sales ?? []);
   }
@@ -414,12 +429,38 @@ export default function BarTillPage() {
 
               {member && history && (
                 <div className="mt-4 border-t pt-3 max-h-72 overflow-y-auto">
-                  {history.length === 0 ? <p className="text-gray-400 text-sm">No history.</p> : history.map((h) => (
-                    <div key={h.id} className="flex justify-between text-sm py-1 border-b border-gray-100">
-                      <span className="text-gray-700">{new Date(h.createdAt).toLocaleDateString('en-GB')} · {h.type}</span>
-                      <span className={h.amountPence < 0 ? 'text-gray-700' : 'text-green-700'}>{h.amountPence < 0 ? '−' : '+'}{fmt(Math.abs(h.amountPence))}</span>
-                    </div>
-                  ))}
+                  {history.length === 0 ? <p className="text-gray-400 text-sm">No history.</p> : history.map((h) => {
+                    const expandable = h.type === 'purchase' && !!h.saleId;
+                    const items = h.saleId ? historyItemsBySale[h.saleId] : undefined;
+                    return (
+                      <div key={h.id} className="border-b border-gray-100">
+                        <div
+                          className={`flex justify-between text-sm py-1 ${expandable ? 'cursor-pointer hover:bg-gray-50' : ''}`}
+                          onClick={expandable ? () => toggleHistoryItem(h) : undefined}
+                        >
+                          <span className="text-gray-700">
+                            {expandable && <span className="text-gray-400 mr-1">{expandedHistoryId === h.id ? '▾' : '▸'}</span>}
+                            {new Date(h.createdAt).toLocaleDateString('en-GB')} · {h.type}
+                          </span>
+                          <span className={h.amountPence < 0 ? 'text-gray-700' : 'text-green-700'}>{h.amountPence < 0 ? '−' : '+'}{fmt(Math.abs(h.amountPence))}</span>
+                        </div>
+                        {expandable && expandedHistoryId === h.id && (
+                          <div className="pl-4 pb-2 space-y-0.5">
+                            {items === undefined ? (
+                              <p className="text-xs text-gray-400">Loading…</p>
+                            ) : items.length === 0 ? (
+                              <p className="text-xs text-gray-400">No items recorded.</p>
+                            ) : items.map((it, idx) => (
+                              <div key={idx} className="flex justify-between text-xs text-gray-600">
+                                <span>{it.qty}× {it.name}</span>
+                                <span>{fmt(it.unitPricePence * it.qty)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -442,25 +483,43 @@ export default function BarTillPage() {
               <p className="text-gray-400 text-sm py-2">No sales yet.</p>
             ) : (
               <div className="divide-y divide-gray-100">
-                {sales.map((s) => (
-                  <div key={s.id} className={`flex items-center justify-between gap-3 py-2 ${s.voided ? 'opacity-40' : ''}`}>
-                    <div className="min-w-0">
-                      <div className="text-sm text-gray-900">
-                        <span className="font-semibold">{fmt(s.totalPence)}</span> · {s.paymentMethod}{s.memberName ? ` · ${s.memberName}` : ' · visitor'}
+                {sales.map((s) => {
+                  const expanded = expandedSaleId === s.id;
+                  return (
+                    <div key={s.id} className={s.voided ? 'opacity-40' : ''}>
+                      <div className="flex items-center justify-between gap-3 py-2">
+                        <div className="min-w-0 cursor-pointer" onClick={() => setExpandedSaleId(expanded ? null : s.id)}>
+                          <div className="text-sm text-gray-900">
+                            <span className="text-gray-400 mr-1">{expanded ? '▾' : '▸'}</span>
+                            <span className="font-semibold">{fmt(s.totalPence)}</span> · {s.paymentMethod}{s.memberName ? ` · ${s.memberName}` : ' · visitor'}
+                            <span className="text-gray-400"> · {s.items.length} item{s.items.length === 1 ? '' : 's'}</span>
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {new Date(s.createdAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                          </div>
+                        </div>
+                        {s.voided ? (
+                          <span className="text-xs text-red-600 font-medium shrink-0">Voided</span>
+                        ) : (
+                          <button onClick={() => doVoid(s.id)} disabled={busy}
+                            className="shrink-0 px-3 py-1.5 text-sm text-red-600 border border-red-200 rounded hover:bg-red-50 disabled:opacity-50">Void</button>
+                        )}
                       </div>
-                      <div className="text-xs text-gray-500 truncate">
-                        {new Date(s.createdAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                        {' · '}{s.items.map((i) => `${i.qty}× ${i.name}`).join(', ')}
-                      </div>
+                      {expanded && (
+                        <div className="pl-4 pb-2 space-y-0.5">
+                          {s.items.length === 0 ? (
+                            <p className="text-xs text-gray-400">No items recorded.</p>
+                          ) : s.items.map((it, idx) => (
+                            <div key={idx} className="flex justify-between text-xs text-gray-600">
+                              <span>{it.qty}× {it.name} @ {fmt(it.unitPricePence)}</span>
+                              <span>{fmt(it.unitPricePence * it.qty)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    {s.voided ? (
-                      <span className="text-xs text-red-600 font-medium shrink-0">Voided</span>
-                    ) : (
-                      <button onClick={() => doVoid(s.id)} disabled={busy}
-                        className="shrink-0 px-3 py-1.5 text-sm text-red-600 border border-red-200 rounded hover:bg-red-50 disabled:opacity-50">Void</button>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

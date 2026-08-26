@@ -279,6 +279,12 @@ export async function getReport(fromIso: string, toIso: string): Promise<BarRepo
 
 // ── Recent sales (for the void screen) ───────────────────────────────────────
 
+export interface BarSaleItem {
+  name: string;
+  qty: number;
+  unitPricePence: number;
+}
+
 export interface BarSaleSummary {
   id: string;
   createdAt: string;
@@ -287,14 +293,14 @@ export interface BarSaleSummary {
   memberName: string | null;   // null for visitor sales
   totalPence: number;
   voided: boolean;
-  items: { name: string; qty: number }[];
+  items: BarSaleItem[];
 }
 
 export async function getRecentSales(limit = 40): Promise<BarSaleSummary[]> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
     .from('bar_sales')
-    .select('id, created_at, payment_method, user_name, total_pence, voided, bar_sale_items ( qty, bar_products ( name ) )')
+    .select('id, created_at, payment_method, user_name, total_pence, voided, bar_sale_items ( qty, unit_price_pence, bar_products ( name ) )')
     .order('created_at', { ascending: false })
     .limit(limit);
   if (error) throw new Error(`Failed to load sales: ${error.message}`);
@@ -307,6 +313,19 @@ export async function getRecentSales(limit = 40): Promise<BarSaleSummary[]> {
     memberName: s.user_name ? (names.get(s.user_name.toLowerCase()) || s.user_name) : null,
     totalPence: s.total_pence,
     voided: s.voided,
-    items: (s.bar_sale_items ?? []).map((i: any) => ({ name: i.bar_products?.name ?? 'Item', qty: i.qty })),
+    items: (s.bar_sale_items ?? []).map((i: any) => ({ name: i.bar_products?.name ?? 'Item', qty: i.qty, unitPricePence: i.unit_price_pence })),
   }));
+}
+
+/** Line items for a single sale — used by the member History panel, where
+ * unlike getRecentSales the item breakdown isn't preloaded (fetched on demand
+ * only when a ledger entry is expanded). */
+export async function getSaleItems(saleId: string): Promise<BarSaleItem[]> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('bar_sale_items')
+    .select('qty, unit_price_pence, bar_products ( name )')
+    .eq('sale_id', saleId);
+  if (error) throw new Error(`Failed to load sale items: ${error.message}`);
+  return (data ?? []).map((i: any) => ({ name: i.bar_products?.name ?? 'Item', qty: i.qty, unitPricePence: i.unit_price_pence }));
 }
