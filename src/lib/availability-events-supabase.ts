@@ -367,7 +367,18 @@ export async function getResponsesForEvent(eventId: string): Promise<Availabilit
   return (data || []).map(mapResponseRow);
 }
 
-/** Upsert a member's response for a slot. Matches on (event_id, slot_id, username). */
+/**
+ * Upsert a member's response for a slot. Matches on (event_id, slot_id, username).
+ *
+ * NOTE: availability_responses has two PARTIAL unique indexes (one for
+ * respondent_type = 'member', one for 'visitor') rather than one composite constraint —
+ * see 0030_availability_planning.sql. Postgres can only use a partial index as an
+ * ON CONFLICT target if the WHERE predicate is repeated in the ON CONFLICT clause
+ * itself, which the Supabase JS client has no way to express via `onConflict: '...'`.
+ * So this checks for an existing row and does an explicit insert or update instead of
+ * relying on .upsert() — avoids "no unique or exclusion constraint matching the ON
+ * CONFLICT specification".
+ */
 export async function upsertMemberResponse(
   eventId: string,
   slotId: string,
@@ -376,8 +387,28 @@ export async function upsertMemberResponse(
 ): Promise<void> {
   const supabase = getSupabaseClient();
   const now = new Date().toISOString();
-  const { error } = await supabase.from('availability_responses').upsert(
-    {
+
+  // Look for this member's existing response to this event+slot
+  const { data: existing, error: selectError } = await supabase
+    .from('availability_responses')
+    .select('id')
+    .eq('event_id', eventId)
+    .eq('slot_id', slotId)
+    .eq('respondent_type', 'member')
+    .eq('username', userName)
+    .maybeSingle();
+  if (selectError) throw new Error(`Failed to check existing response: ${selectError.message}`);
+
+  if (existing) {
+    // Row already exists — update the response in place
+    const { error } = await supabase
+      .from('availability_responses')
+      .update({ response, updated_at: now })
+      .eq('id', existing.id);
+    if (error) throw new Error(`Failed to save response: ${error.message}`);
+  } else {
+    // No existing row for this member+slot — insert a new one
+    const { error } = await supabase.from('availability_responses').insert({
       event_id: eventId,
       slot_id: slotId,
       respondent_type: 'member',
@@ -385,10 +416,9 @@ export async function upsertMemberResponse(
       response,
       responded_at: now,
       updated_at: now,
-    },
-    { onConflict: 'event_id,slot_id,username' }
-  );
-  if (error) throw new Error(`Failed to save response: ${error.message}`);
+    });
+    if (error) throw new Error(`Failed to save response: ${error.message}`);
+  }
 }
 
 /** Delete a member's response for a slot (clears a previously-saved choice). No-op if not found. */
@@ -417,7 +447,13 @@ export async function deleteVisitorResponse(eventId: string, slotId: string, vis
   if (error) throw new Error(`Failed to delete visitor response: ${error.message}`);
 }
 
-/** Upsert a visitor's response. Matches on (event_id, slot_id, visitor_email). */
+/**
+ * Upsert a visitor's response. Matches on (event_id, slot_id, visitor_email).
+ *
+ * Same partial-unique-index limitation as upsertMemberResponse above — .upsert() can't
+ * target availability_responses_visitor_unique via the JS client, so this does an
+ * explicit select-then-insert/update instead.
+ */
 export async function upsertVisitorResponse(
   eventId: string,
   slotId: string,
@@ -427,8 +463,28 @@ export async function upsertVisitorResponse(
 ): Promise<void> {
   const supabase = getSupabaseClient();
   const now = new Date().toISOString();
-  const { error } = await supabase.from('availability_responses').upsert(
-    {
+
+  // Look for this visitor's existing response to this event+slot
+  const { data: existing, error: selectError } = await supabase
+    .from('availability_responses')
+    .select('id')
+    .eq('event_id', eventId)
+    .eq('slot_id', slotId)
+    .eq('respondent_type', 'visitor')
+    .eq('visitor_email', visitorEmail)
+    .maybeSingle();
+  if (selectError) throw new Error(`Failed to check existing visitor response: ${selectError.message}`);
+
+  if (existing) {
+    // Row already exists — update the response in place (name may have changed too)
+    const { error } = await supabase
+      .from('availability_responses')
+      .update({ visitor_name: visitorName, response, updated_at: now })
+      .eq('id', existing.id);
+    if (error) throw new Error(`Failed to save visitor response: ${error.message}`);
+  } else {
+    // No existing row for this visitor+slot — insert a new one
+    const { error } = await supabase.from('availability_responses').insert({
       event_id: eventId,
       slot_id: slotId,
       respondent_type: 'visitor',
@@ -437,10 +493,9 @@ export async function upsertVisitorResponse(
       response,
       responded_at: now,
       updated_at: now,
-    },
-    { onConflict: 'event_id,slot_id,visitor_email' }
-  );
-  if (error) throw new Error(`Failed to save visitor response: ${error.message}`);
+    });
+    if (error) throw new Error(`Failed to save visitor response: ${error.message}`);
+  }
 }
 
 // ─── Roster + Token Functions ────────────────────────────────────────────────────
