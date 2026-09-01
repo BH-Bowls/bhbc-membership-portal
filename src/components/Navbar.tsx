@@ -197,7 +197,7 @@ export function Navbar() {
     // ── System (Admin only — technical/dev-facing) ──
     if (isAdmin) {
       system.push({ name: 'Config', href: '/admin/config' });
-      system.push({ name: 'Cache View', href: '/admin/cache' });
+      system.push({ name: 'Cache View', href: '/admin/bar' });
       system.push({ name: 'Logs', href: '/admin/logs' });
     }
 
