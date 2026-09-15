@@ -9,6 +9,8 @@ const SECTIONS: { name: string; href: string; description: string }[] = [
   { name: 'Announcements', href: '/admin/website/announcements', description: 'Home page announcement banners/cards' },
   { name: 'Internal Honours', href: '/admin/website/honours-internal', description: "One record per season — the club's own competition winners" },
   { name: 'External Honours', href: '/admin/website/honours-external', description: 'County/national/other external competition results' },
+  { name: 'Rowland Cup Winners', href: '/admin/website/rowland-winners', description: 'Winning club per year, shown on /rowland' },
+  { name: 'Documents', href: '/admin/website/documents', description: 'Upload PDFs shown on /documents' },
 ];
 
 export default function WebsiteAdminPage() {

@@ -66,7 +66,9 @@ function getCategoryFolderName(entityId: string): string {
   return 'Member Suggestions';
 }
 
-async function getOrCreateFolder(drive: any, name: string, parentId: string): Promise<string> {
+// Exported so other Drive trees (e.g. website-documents-drive.ts) can resolve/create
+// their own folders without duplicating this search-then-create logic.
+export async function getOrCreateFolder(drive: any, name: string, parentId: string): Promise<string> {
   const search = await drive.files.list({
     q: `name='${name}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`,
     fields: 'files(id)',
