@@ -145,6 +145,7 @@ export function Navbar() {
     const members: SubMenuItem[] = [];
     const games: SubMenuItem[] = [];
     const club: SubMenuItem[] = [];
+    const website: SubMenuItem[] = [];
     const system: SubMenuItem[] = [];
 
     // ── Members ──
@@ -194,10 +195,15 @@ export function Navbar() {
       club.push({ name: 'Announcements', href: '/admin/announcements' });
     }
 
+    // ── Website (public bhbc-website site content) ──
+    if (isAdmin || isCaptain || isGMC) {
+      website.push({ name: 'Website Admin', href: '/admin/website' });
+    }
+
     // ── System (Admin only — technical/dev-facing) ──
     if (isAdmin) {
       system.push({ name: 'Config', href: '/admin/config' });
-      system.push({ name: 'Cache View', href: '/bar' });
+      system.push({ name: 'Cache View', href: '/admin/cache' });
       system.push({ name: 'Logs', href: '/admin/logs' });
     }
 
@@ -205,6 +211,7 @@ export function Navbar() {
       { label: 'Members', items: members },
       { label: 'Games', items: games },
       { label: 'Club', items: club },
+      { label: 'Website', items: website },
       { label: 'System', items: system },
     ];
     return groups.filter((g) => g.items.length > 0);
