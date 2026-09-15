@@ -13,6 +13,7 @@
 import { useEffect, useState } from 'react';
 import { getButtonClasses, getAlertClasses, getInputClasses } from '@/config/theme-helpers';
 import type { WebsiteHonoursInternal } from '@/lib/website-honours-internal-supabase';
+import HonoursPhotoManager from './HonoursPhotoManager';
 
 // Field key, display label — grouped into sections for the form and the expanded list view
 const SECTIONS: { heading: string; fields: { key: keyof Omit<WebsiteHonoursInternal, 'year'>; label: string }[] }[] = [
@@ -207,7 +208,8 @@ export default function ManageHonoursInternalPage() {
           <p className="text-sm text-gray-700 mb-4">
             One record per season year — the club&apos;s own competition winners.
             Leave any field blank if that competition wasn&apos;t held, or the winner
-            isn&apos;t known yet.
+            isn&apos;t known yet. Each season can also have one or more champions
+            photos (drag and drop below its record).
           </p>
 
           {loadError ? <div className={getAlertClasses('danger') + ' mb-4'}>{loadError}</div> : null}
@@ -278,6 +280,8 @@ export default function ManageHonoursInternalPage() {
                   <p className="text-sm text-gray-700">
                     {row.mens_championship ? `Men's Championship: ${row.mens_championship}` : 'Men’s Championship not recorded'}
                   </p>
+
+                  <HonoursPhotoManager year={row.year} />
 
                   <div className="mt-3">
                     {confirmDeleteYear === row.year ? (

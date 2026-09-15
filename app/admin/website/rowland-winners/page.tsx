@@ -2,8 +2,8 @@
 // Admin page for creating, editing, and deleting each season's Rowland Cup
 // winners shown on the public site's /rowland page. One row per year — year
 // is the primary key, so it can't be changed once created (delete + recreate).
-// Photos for these years live in Drive, edited on the Documents admin page or
-// directly in Drive — this page only manages the winning club names.
+// Each row also manages its Edward/Gladys winner photos via RowlandPhotoManager
+// (drag-and-drop straight to Drive) — see src/lib/website-photos-drive.ts.
 // Access: Admin, Captain, GMC (enforced by the API routes).
 
 'use client';
@@ -11,6 +11,7 @@
 import { useEffect, useState } from 'react';
 import { getButtonClasses, getAlertClasses, getInputClasses } from '@/config/theme-helpers';
 import type { WebsiteRowlandWinners } from '@/lib/website-rowland-winners-supabase';
+import RowlandPhotoManager from './RowlandPhotoManager';
 
 type FormState = { year: string; edward_winner: string; gladys_winner: string };
 
@@ -173,9 +174,8 @@ export default function ManageRowlandWinnersPage() {
           </div>
 
           <p className="text-sm text-gray-700 mb-4">
-            One record per season — the winning club for each draw. Winner
-            photos live in Google Drive, not here — see the Documents admin
-            page or upload directly to Drive under Rowland/&lt;year&gt;/.
+            One record per season — the winning club for each draw, plus the
+            winner photo for each (drag and drop below).
           </p>
 
           {loadError ? <div className={getAlertClasses('danger') + ' mb-4'}>{loadError}</div> : null}
@@ -248,6 +248,8 @@ export default function ManageRowlandWinnersPage() {
                   <p className="font-semibold text-gray-900 mb-1">{row.year}</p>
                   <p className="text-sm text-gray-700">Edward Rowland Cup: {row.edward_winner || '—'}</p>
                   <p className="text-sm text-gray-700">Gladys Rowland Cup: {row.gladys_winner || '—'}</p>
+
+                  <RowlandPhotoManager year={row.year} />
 
                   <div className="mt-3">
                     {confirmDeleteYear === row.year ? (
