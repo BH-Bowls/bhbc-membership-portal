@@ -69,14 +69,18 @@ export default function BarTillPage() {
   const role = session?.user?.role ?? '';
   const allowed = isCommitteeMember(role);
 
-  // Always starts on the volunteer picker, even if one is already stored from a
-  // previous session — see the header comment for why.
-  const [view, setView] = useState<View>('volunteer');
+  // Starts straight on the person picker — "who's serving" is no longer a
+  // mandatory front gate, only asked for contextually (see chooseVolunteer).
+  const [view, setView] = useState<View>('person');
   const [products, setProducts] = useState<BarProduct[]>([]);
   const [accounts, setAccounts] = useState<BarAccount[]>([]);
   const [allMembers, setAllMembers] = useState<MemberOption[]>([]);
   const [barPersons, setBarPersons] = useState<BarPerson[]>([]);
   const [volunteer, setVolunteer] = useState<string>('');   // username of the bar person serving
+  // What to do once a name is tapped on the volunteer picker — set when it's opened
+  // to identify a Cash/Card tab or to attribute a Top Up, rather than just to change
+  // who's marked as serving (the plain 'Change' link leaves this null).
+  const [pendingAction, setPendingAction] = useState<'cashcard' | 'topup' | null>(null);
   const [personSearch, setPersonSearch] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -84,6 +88,10 @@ export default function BarTillPage() {
   // selection / flow state
   const [member, setMember] = useState<BarAccount | null>(null); // null + view 'sale' means non-member
   const [basket, setBasket] = useState<BasketLine[]>([]);
+  // Orders parked mid-basket so a bar person can serve someone else and come back —
+  // keyed by `member:<userName>` for a member's basket, or `staff:<userName>` for a
+  // non-member (Cash/Card) tab, since a non-member sale has no member to key off.
+  const [heldOrders, setHeldOrders] = useState<Map<string, BasketLine[]>>(new Map());
   const [activeCat, setActiveCat] = useState<string>('beer');
   const [history, setHistory] = useState<BarLedgerEntry[] | null>(null);
   const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null);
@@ -118,15 +126,52 @@ export default function BarTillPage() {
     const s = localStorage.getItem('bar_served_by');
     if (s) setVolunteer(s);
   }, []);
-  function chooseVolunteer(u: string) { setVolunteer(u); localStorage.setItem('bar_served_by', u); setView('person'); }
+  // Key for parking/resuming the basket currently on screen — null if there's
+  // nothing to park it under (no member and no one marked as serving yet).
+  function currentOrderKey(): string | null {
+    if (member) return `member:${member.userName}`;
+    if (volunteer) return `staff:${volunteer}`;
+    return null;
+  }
+  function holdCurrentOrder() {
+    if (basket.length === 0) return;
+    const key = currentOrderKey();
+    if (!key) return;
+    setHeldOrders((prev) => { const next = new Map(prev); next.set(key, basket); return next; });
+  }
+  function clearHeldOrder(key: string | null) {
+    if (!key) return;
+    setHeldOrders((prev) => { if (!prev.has(key)) return prev; const next = new Map(prev); next.delete(key); return next; });
+  }
 
-  // Returns to the till (person picker) for the next customer — the volunteer stays
-  // selected. Use changeVolunteer() below, not this, to actually switch who's serving.
-  function backToPersonPicker() {
+  // Tapping a name always sets who's serving, then either resumes/starts whatever
+  // it was opened for (a Cash/Card tab or a Top Up) or, from the plain 'Change'
+  // link (no pendingAction), just returns to the till.
+  function chooseVolunteer(u: string) {
+    setVolunteer(u); localStorage.setItem('bar_served_by', u);
+    if (pendingAction === 'cashcard') {
+      setPendingAction(null);
+      setMember(null); setBasket(heldOrders.get(`staff:${u}`) ?? []); setActiveCat('beer'); setView('sale');
+    } else if (pendingAction === 'topup') {
+      setPendingAction(null);
+      setView('topup');
+    } else {
+      setView('person');
+    }
+  }
+
+  // Returns to the till (person picker) for the next customer, parking whatever
+  // basket is on screen so it can be resumed later. The volunteer stays selected —
+  // use changeVolunteer() below, not this, to actually switch who's serving.
+  // skipHold is set by completeSale, which has already cleared/emptied the basket
+  // itself after a successful sale — without it, this would re-park the very
+  // basket that was just paid for (a stale closure would still see it as full).
+  function backToPersonPicker(skipHold = false) {
+    if (!skipHold) holdCurrentOrder();
     setView('person'); setMember(null); setBasket([]); setPersonSearch('');
     setHistory(null); setExpandedHistoryId(null); setShowRefund(false); setRefundAmt('');
   }
-  function changeVolunteer() { setView('volunteer'); }
+  function changeVolunteer() { setPendingAction(null); setView('volunteer'); }
 
   // ── basket / pricing helpers ─────────────────────────────────────────────────
   const unitPrice = (p: BarProduct) => (member ? p.pricePence : p.nonMemberPricePence);
@@ -145,22 +190,27 @@ export default function BarTillPage() {
   }
 
   // ── actions ─────────────────────────────────────────────────────────────────
+  // Still used by doVoid/doRefund below — those reversal actions keep the hard
+  // requirement. Ordinary sales no longer do (see selectMember/openCashCardTab).
   function requireVolunteer(): boolean {
     if (!volunteer) { setError('Select the bar volunteer first.'); return false; }
     setError(''); return true;
   }
 
+  // No staff prompt for a wallet sale — resumes that member's held order if any.
   function selectMember(m: BarAccount) {
-    if (!requireVolunteer()) return;
-    setMember(m); setBasket([]); setActiveCat('beer'); setHistory(null); setExpandedHistoryId(null); setShowRefund(false); setView('sale');
+    setMember(m); setBasket(heldOrders.get(`member:${m.userName}`) ?? []); setActiveCat('beer');
+    setHistory(null); setExpandedHistoryId(null); setShowRefund(false); setView('sale');
   }
-  function selectNonMember() {
-    if (!requireVolunteer()) return;
-    setMember(null); setBasket([]); setActiveCat('beer'); setView('sale');
+  // Cash/Card always asks who's serving — that's also the key for which held tab
+  // to resume (see chooseVolunteer's 'cashcard' branch).
+  function openCashCardTab() {
+    setPendingAction('cashcard');
+    setView('volunteer');
   }
 
   async function completeSale(mode: 'wallet' | 'card' | 'cash') {
-    if (basket.length === 0 || !requireVolunteer()) return;
+    if (basket.length === 0) return;
     setBusy(true); setError('');
     const items = basket.map((l) => ({ productId: l.product.id, qty: l.qty }));
     try {
@@ -177,9 +227,18 @@ export default function BarTillPage() {
       }
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Sale failed');
+      clearHeldOrder(currentOrderKey());
+      setBasket([]);
       await load();
-      backToPersonPicker();
+      backToPersonPicker(true);
     } catch (err: any) { setError(err.message); } finally { setBusy(false); }
+  }
+
+  // Opens Top Up for the current member, asking who's serving first if no one's
+  // marked yet (an already-known volunteer is reused without re-asking).
+  function openTopUp() {
+    if (!volunteer) { setPendingAction('topup'); setView('volunteer'); return; }
+    setView('topup');
   }
 
   async function doTopUp(amountPence: number, paymentMethod: 'cash' | 'card') {
@@ -301,12 +360,12 @@ export default function BarTillPage() {
                 <button onClick={changeVolunteer} className="text-blue-600 hover:text-blue-800">Change</button>
               </>
             ) : (
-              <span className="text-gray-500">Select the bar volunteer to begin</span>
+              <button onClick={changeVolunteer} className="text-gray-500 hover:text-gray-700">No one marked as serving</button>
             )}
           </div>
           <div className="flex gap-2">
             {view !== 'volunteer' && view !== 'person' && (
-              <button onClick={backToPersonPicker}
+              <button onClick={() => backToPersonPicker()}
                 className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">← Till</button>
             )}
             <button onClick={loadSales} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Sales</button>
@@ -317,16 +376,19 @@ export default function BarTillPage() {
 
         {error && <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded">{error}</div>}
 
-        {/* ── VOLUNTEER: always shown on entry, current one highlighted ──────── */}
+        {/* ── VOLUNTEER: opened via 'Change', a Cash/Card tab, or Top Up ──────── */}
         {view === 'volunteer' && (
           <div className="max-w-5xl mx-auto">
-            <h2 className="text-base font-semibold text-gray-700 mb-4 text-center">Who's on the bar?</h2>
+            <h2 className="text-base font-semibold text-gray-700 mb-4 text-center">Who's serving?</h2>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
               {barPersons.map((b, i) => (
                 <button key={b.userName} onClick={() => chooseVolunteer(b.userName)}
-                  className={`py-8 rounded-xl border-2 bg-white font-semibold text-lg text-gray-900 hover:shadow-md transition-colors ${
+                  className={`relative py-8 rounded-xl border-2 bg-white font-semibold text-lg text-gray-900 hover:shadow-md transition-colors ${
                     b.userName === volunteer ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : ACCENT_BORDERS[i % ACCENT_BORDERS.length]
                   }`}>
+                  {pendingAction === 'cashcard' && heldOrders.has(`staff:${b.userName}`) && (
+                    <span title="Tab waiting" className="absolute top-2 right-2 h-2.5 w-2.5 rounded-full bg-amber-400" />
+                  )}
                   {b.fullName}
                 </button>
               ))}
@@ -346,16 +408,19 @@ export default function BarTillPage() {
               className="w-full border border-gray-300 rounded-lg px-4 py-3 text-base mb-3"
             />
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-              <button onClick={selectNonMember}
+              <button onClick={openCashCardTab}
                 className="p-4 rounded-xl border-2 border-amber-300 bg-amber-50 text-left hover:border-amber-500 hover:shadow-md transition-colors">
                 <div className="font-semibold text-amber-900">Cash / Card</div>
                 <div className="text-sm text-amber-700">No member account</div>
               </button>
               {sortedPeople.map((m) => (
                 <button key={m.userName} onClick={() => selectMember(m)}
-                  className={`p-4 rounded-xl border border-gray-200 ${
+                  className={`relative p-4 rounded-xl border border-gray-200 ${
                     !m.hasAccount ? 'border-l-4 border-l-gray-300' : m.balancePence <= 200 ? 'border-l-4 border-l-red-400' : 'border-l-4 border-l-green-400'
                   } bg-white text-left hover:border-green-400 hover:shadow-md transition-colors`}>
+                  {heldOrders.has(`member:${m.userName}`) && (
+                    <span title="Order waiting" className="absolute top-2 right-2 h-2.5 w-2.5 rounded-full bg-amber-400" />
+                  )}
                   <div className="font-semibold text-gray-900 truncate">{m.fullName}</div>
                   <div className={`text-lg font-bold ${!m.hasAccount ? 'text-gray-400' : m.balancePence <= 200 ? 'text-red-600' : 'text-green-700'}`}>
                     {m.hasAccount ? fmt(m.balancePence) : 'No account yet'}
@@ -420,7 +485,7 @@ export default function BarTillPage() {
               {/* Action buttons — differ for a member vs a non-member */}
               {member ? (
                 <div className="grid grid-cols-3 gap-2 mt-3">
-                  <button onClick={() => setView('topup')} disabled={busy}
+                  <button onClick={openTopUp} disabled={busy}
                     className="py-3 rounded-lg bg-amber-600 text-white font-semibold hover:bg-amber-700 disabled:opacity-50 text-sm">Top Up</button>
                   <button onClick={() => completeSale('wallet')} disabled={busy || basket.length === 0 || member.balancePence < basketTotal}
                     className="py-3 rounded-lg bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-50 text-sm">
