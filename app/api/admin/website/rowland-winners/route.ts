@@ -8,6 +8,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
 import { getAllRowlandWinners, createRowlandWinners } from '@/lib/website-rowland-winners-supabase';
+import { revalidateWebsitePath } from '@/lib/revalidate-website';
 
 function cleanWinner(value: unknown): string | null {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
@@ -59,6 +60,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: message }, { status: 409 });
     }
 
+    await revalidateWebsitePath('/rowland');
     return NextResponse.json({ success: true, row });
   } catch (error) {
     console.error('[POST /api/admin/website/rowland-winners] Error:', error);

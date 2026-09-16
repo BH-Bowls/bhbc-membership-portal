@@ -8,6 +8,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
 import { getAllHonoursInternal, createHonoursInternal } from '@/lib/website-honours-internal-supabase';
+import { revalidateWebsitePath } from '@/lib/revalidate-website';
 
 // Every column except year — free-text winner names, all optional
 const TEXT_FIELDS = [
@@ -69,6 +70,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: message }, { status: 409 });
     }
 
+    await revalidateWebsitePath('/honours');
     return NextResponse.json({ success: true, row });
   } catch (error) {
     console.error('[POST /api/admin/website/honours-internal] Error:', error);

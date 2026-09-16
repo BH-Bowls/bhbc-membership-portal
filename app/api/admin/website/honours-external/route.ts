@@ -8,6 +8,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
 import { getAllHonoursExternal, createHonoursExternal } from '@/lib/website-honours-external-supabase';
+import { revalidateWebsitePath } from '@/lib/revalidate-website';
 
 export async function GET() {
   try {
@@ -54,6 +55,7 @@ export async function POST(request: NextRequest) {
       detail: typeof detail === 'string' && detail.trim() !== '' ? detail.trim() : null,
     });
 
+    await revalidateWebsitePath('/honours');
     return NextResponse.json({ success: true, row });
   } catch (error) {
     console.error('[POST /api/admin/website/honours-external] Error:', error);

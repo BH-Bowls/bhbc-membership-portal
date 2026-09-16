@@ -8,6 +8,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
 import { deleteHonoursPhoto } from '@/lib/website-photos-drive';
+import { revalidateWebsitePath } from '@/lib/revalidate-website';
 
 export async function DELETE(
   request: NextRequest,
@@ -31,6 +32,7 @@ export async function DELETE(
       return NextResponse.json({ error: message }, { status: 500 });
     }
 
+    await revalidateWebsitePath('/honours');
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[DELETE /api/admin/website/honours-photos/[year]/[fileId]] Error:', error);

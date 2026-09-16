@@ -8,6 +8,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
 import { updateHonoursExternal, deleteHonoursExternal } from '@/lib/website-honours-external-supabase';
+import { revalidateWebsitePath } from '@/lib/revalidate-website';
 
 export async function PATCH(
   request: NextRequest,
@@ -44,6 +45,7 @@ export async function PATCH(
       return NextResponse.json({ error: 'Row not found' }, { status: 404 });
     }
 
+    await revalidateWebsitePath('/honours');
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[PATCH /api/admin/website/honours-external/[id]] Error:', error);
@@ -72,6 +74,7 @@ export async function DELETE(
       return NextResponse.json({ error: 'Row not found' }, { status: 404 });
     }
 
+    await revalidateWebsitePath('/honours');
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[DELETE /api/admin/website/honours-external/[id]] Error:', error);
