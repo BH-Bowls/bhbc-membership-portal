@@ -14,10 +14,15 @@ export interface BarProduct {
   id: string;
   name: string;
   category: BarCategory;
-  pricePence: number;           // member price — charged on wallet purchases
-  nonMemberPricePence: number;  // visitor price — charged on card/cash sales
+  basePricePence: number;          // full/visitor price — charged on visitor card/cash sales
+  memberDiscountPercent: number;   // 0-100, applied to basePricePence for members (wallet, or a member's "Pay by Card")
   active: boolean;
   sortOrder: number;
+}
+
+/** The price a member actually pays — basePricePence discounted by memberDiscountPercent. */
+export function memberPricePence(p: Pick<BarProduct, 'basePricePence' | 'memberDiscountPercent'>): number {
+  return Math.round(p.basePricePence * (100 - p.memberDiscountPercent) / 100);
 }
 
 export interface BarAccount {
@@ -79,22 +84,22 @@ export async function getProducts(includeInactive = false): Promise<BarProduct[]
   const { data, error } = await query;
   if (error) throw new Error(`Failed to load bar products: ${error.message}`);
   return (data ?? []).map((r: any) => ({
-    id: r.id, name: r.name, category: r.category, pricePence: r.price_pence,
-    nonMemberPricePence: r.non_member_price_pence,
+    id: r.id, name: r.name, category: r.category, basePricePence: r.base_price_pence,
+    memberDiscountPercent: r.member_discount_percent,
     active: r.active, sortOrder: r.sort_order,
   }));
 }
 
 export async function saveProduct(
-  input: { id?: string; name: string; category: BarCategory; pricePence: number; nonMemberPricePence: number; sortOrder?: number; active?: boolean },
+  input: { id?: string; name: string; category: BarCategory; basePricePence: number; memberDiscountPercent: number; sortOrder?: number; active?: boolean },
   editedBy: string,
 ): Promise<void> {
   const supabase = getSupabaseClient();
   const row = {
     name: input.name.trim(),
     category: input.category,
-    price_pence: input.pricePence,
-    non_member_price_pence: input.nonMemberPricePence,
+    base_price_pence: input.basePricePence,
+    member_discount_percent: input.memberDiscountPercent,
     sort_order: input.sortOrder ?? 0,
     active: input.active ?? true,
     updated_by: editedBy,

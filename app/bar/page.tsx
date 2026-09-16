@@ -1,30 +1,28 @@
 // app/bar/page.tsx
 // The bar till (iPad, kiosk-style). Committee-gated device; per-sale attribution via
-// the Bar Volunteer step (bar-duty members). Handles cash-member top-ups, wallet
-// purchases, and visitor card/cash sales, plus an anytime report and product admin.
+// whoever's marked as serving. Handles cash-member top-ups, wallet purchases, and
+// visitor card/cash sales, plus an anytime report and product admin.
 //
-// Flow: pick a Bar Volunteer (buttons, persisted in localStorage and pre-highlighted
-// across sessions, but always shown on entry rather than auto-skipped — an explicit
-// tap is required even to reconfirm the same one, so the till never silently starts
-// attributing sales to whoever last used it) -> pick who's buying, from every club
-// member (not just existing cash-account holders) via a search box that filters the
-// full list live, plus a "Non Member" option -> the product/basket screen, priced
-// and actioned differently depending on who's buying:
-//   - Member: Top Up / Pay by Account / History buttons. Selecting a member with no
-//     bar_accounts row yet doesn't create one — bar_topup creates it silently on
-//     their first top-up (see 0025_bar.sql); a Pay-by-Account attempt before that
-//     correctly fails (no funds to charge against), same as an existing member with
-//     an empty wallet.
-//   - Non Member: Pay by Cash / Pay by Card buttons, priced at nonMemberPricePence.
-// After any completed transaction, returns to the person picker for the next
-// customer — the volunteer stays selected throughout a shift.
+// Flow: person picker (every club member, not just existing cash-account holders,
+// via a live-filtering search box, plus a Cash/Card option for non-members) -> the
+// product/basket screen, priced and actioned differently depending on who's buying:
+//   - Member: Top Up / Pay by Account / Pay by Card / History buttons. Selecting a
+//     member with no bar_accounts row yet doesn't create one — bar_topup creates it
+//     silently on their first top-up (see 0025_bar.sql); a Pay-by-Account attempt
+//     before that correctly fails (no funds to charge against), same as an existing
+//     member with an empty wallet.
+//   - Cash/Card (non-member): Pay by Cash / Pay by Card, priced at basePricePence.
+// "Who's serving" is no longer a blocking gate — it's only asked for when opening a
+// Cash/Card tab or a Top Up (see chooseVolunteer/pendingAction), since a Cash/Card
+// tab is held/resumed by staff name rather than by a member. A basket left via
+// "← Till" is parked in heldOrders and resumed if that same member/tab is reopened.
 
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import { isCommitteeMember } from '@/lib/role-utils';
-import type { BarProduct, BarAccount, BarPerson, BarLedgerEntry, BarReport, BarSaleSummary, BarSaleItem } from '@/lib/bar-supabase';
+import { memberPricePence, type BarProduct, type BarAccount, type BarPerson, type BarLedgerEntry, type BarReport, type BarSaleSummary, type BarSaleItem } from '@/lib/bar-supabase';
 
 const CATEGORIES: { key: string; label: string }[] = [
   { key: 'beer',    label: 'Beers / Lagers' },
@@ -174,7 +172,7 @@ export default function BarTillPage() {
   function changeVolunteer() { setPendingAction(null); setView('volunteer'); }
 
   // ── basket / pricing helpers ─────────────────────────────────────────────────
-  const unitPrice = (p: BarProduct) => (member ? p.pricePence : p.nonMemberPricePence);
+  const unitPrice = (p: BarProduct) => (member ? memberPricePence(p) : p.basePricePence);
   const basketTotal = basket.reduce((s, l) => s + unitPrice(l.product) * l.qty, 0);
   function addToBasket(p: BarProduct) {
     setBasket((prev) => {
@@ -706,22 +704,15 @@ function ReportView({ report }: { report: BarReport }) {
 function ProductsAdmin({ products, onChanged }: { products: BarProduct[]; onChanged: () => void }) {
   const [name, setName] = useState('');
   const [category, setCategory] = useState('beer');
-  const [price, setPrice] = useState('');
-  const [nonMemberPrice, setNonMemberPrice] = useState('');
-  // Keep the non-member price 10p above whatever's typed in the member price,
-  // until the admin edits it directly — a starting suggestion, not enforced.
-  function onPriceChange(v: string) {
-    setPrice(v);
-    const p = parseFloat(v);
-    if (Number.isFinite(p)) setNonMemberPrice((p + 0.10).toFixed(2));
-  }
+  const [basePrice, setBasePrice] = useState('');
+  const [discount, setDiscount] = useState('10');
   async function add() {
-    const pricePence = Math.round(parseFloat(price || '0') * 100);
-    const nonMemberPricePence = Math.round(parseFloat(nonMemberPrice || '0') * 100);
-    if (!name.trim() || pricePence <= 0 || nonMemberPricePence <= 0) return;
+    const basePricePence = Math.round(parseFloat(basePrice || '0') * 100);
+    const memberDiscountPercent = Math.round(parseFloat(discount || '0'));
+    if (!name.trim() || basePricePence <= 0 || memberDiscountPercent < 0 || memberDiscountPercent > 100) return;
     await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, category, pricePence, nonMemberPricePence }) });
-    setName(''); setPrice(''); setNonMemberPrice(''); onChanged();
+      body: JSON.stringify({ name, category, basePricePence, memberDiscountPercent }) });
+    setName(''); setBasePrice(''); setDiscount('10'); onChanged();
   }
   async function toggle(p: BarProduct) {
     await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -729,22 +720,22 @@ function ProductsAdmin({ products, onChanged }: { products: BarProduct[]; onChan
     onChanged();
   }
 
-  // Inline edit of an existing product (name / category / prices)
+  // Inline edit of an existing product (name / category / price / discount)
   const [editId, setEditId] = useState<string | null>(null);
   const [eName, setEName] = useState('');
   const [eCat, setECat] = useState('beer');
-  const [ePrice, setEPrice] = useState('');
-  const [eNonMemberPrice, setENonMemberPrice] = useState('');
+  const [eBasePrice, setEBasePrice] = useState('');
+  const [eDiscount, setEDiscount] = useState('');
   function startEdit(p: BarProduct) {
     setEditId(p.id); setEName(p.name); setECat(p.category);
-    setEPrice((p.pricePence / 100).toFixed(2)); setENonMemberPrice((p.nonMemberPricePence / 100).toFixed(2));
+    setEBasePrice((p.basePricePence / 100).toFixed(2)); setEDiscount(String(p.memberDiscountPercent));
   }
   async function saveEdit(p: BarProduct) {
-    const pricePence = Math.round(parseFloat(ePrice || '0') * 100);
-    const nonMemberPricePence = Math.round(parseFloat(eNonMemberPrice || '0') * 100);
-    if (!eName.trim() || pricePence <= 0 || nonMemberPricePence <= 0) return;
+    const basePricePence = Math.round(parseFloat(eBasePrice || '0') * 100);
+    const memberDiscountPercent = Math.round(parseFloat(eDiscount || '0'));
+    if (!eName.trim() || basePricePence <= 0 || memberDiscountPercent < 0 || memberDiscountPercent > 100) return;
     await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: p.id, name: eName.trim(), category: eCat, pricePence, nonMemberPricePence }) });
+      body: JSON.stringify({ id: p.id, name: eName.trim(), category: eCat, basePricePence, memberDiscountPercent }) });
     setEditId(null); onChanged();
   }
   return (
@@ -756,12 +747,12 @@ function ProductsAdmin({ products, onChanged }: { products: BarProduct[]; onChan
           {CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
         </select>
         <div>
-          <label className="block text-[10px] text-gray-500">Member £</label>
-          <input value={price} onChange={(e) => onPriceChange(e.target.value)} placeholder="£" inputMode="decimal" className="border rounded px-2 py-1.5 text-sm w-20" />
+          <label className="block text-[10px] text-gray-500">Price £</label>
+          <input value={basePrice} onChange={(e) => setBasePrice(e.target.value)} placeholder="£" inputMode="decimal" className="border rounded px-2 py-1.5 text-sm w-20" />
         </div>
         <div>
-          <label className="block text-[10px] text-gray-500">Non-member £</label>
-          <input value={nonMemberPrice} onChange={(e) => setNonMemberPrice(e.target.value)} placeholder="£" inputMode="decimal" className="border rounded px-2 py-1.5 text-sm w-20" />
+          <label className="block text-[10px] text-gray-500">Member discount %</label>
+          <input value={discount} onChange={(e) => setDiscount(e.target.value)} placeholder="%" inputMode="decimal" className="border rounded px-2 py-1.5 text-sm w-24" />
         </div>
         <button onClick={add} className="px-3 py-1.5 bg-green-600 text-white rounded text-sm font-medium">Add</button>
       </div>
@@ -778,14 +769,14 @@ function ProductsAdmin({ products, onChanged }: { products: BarProduct[]; onChan
                   <select value={eCat} onChange={(e) => setECat(e.target.value)} className="border rounded px-2 py-1 text-sm">
                     {CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
                   </select>
-                  <input value={ePrice} onChange={(e) => setEPrice(e.target.value)} placeholder="Member £" inputMode="decimal" className="border rounded px-2 py-1 text-sm w-20" />
-                  <input value={eNonMemberPrice} onChange={(e) => setENonMemberPrice(e.target.value)} placeholder="Non-member £" inputMode="decimal" className="border rounded px-2 py-1 text-sm w-20" />
+                  <input value={eBasePrice} onChange={(e) => setEBasePrice(e.target.value)} placeholder="Price £" inputMode="decimal" className="border rounded px-2 py-1 text-sm w-20" />
+                  <input value={eDiscount} onChange={(e) => setEDiscount(e.target.value)} placeholder="Discount %" inputMode="decimal" className="border rounded px-2 py-1 text-sm w-24" />
                   <button onClick={() => saveEdit(p)} className="px-3 py-1 bg-green-600 text-white rounded text-sm font-medium">Save</button>
                   <button onClick={() => setEditId(null)} className="text-sm text-gray-500">Cancel</button>
                 </div>
               ) : (
                 <div key={p.id} className={`flex justify-between items-center text-sm py-1 ${p.active ? '' : 'opacity-40'}`}>
-                  <span>{p.name} — {fmt(p.pricePence)} <span className="text-gray-400">/ {fmt(p.nonMemberPricePence)} non-member</span></span>
+                  <span>{p.name} — {fmt(p.basePricePence)} <span className="text-gray-400">/ {fmt(memberPricePence(p))} member ({p.memberDiscountPercent}% off)</span></span>
                   <span className="flex gap-3">
                     <button onClick={() => startEdit(p)} className="text-xs text-blue-600">Edit</button>
                     <button onClick={() => toggle(p)} className="text-xs text-gray-500">{p.active ? 'Deactivate' : 'Activate'}</button>
