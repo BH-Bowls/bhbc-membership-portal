@@ -1,5 +1,6 @@
 // app/api/bar/topup/route.ts
-// POST — add cash credit to a member's wallet. { userName, amountPence, staff, note? }
+// POST — add credit to a member's wallet. { userName, amountPence, staff, note?, paymentMethod? }
+// paymentMethod is 'cash' or 'card' (defaults to 'cash').
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
@@ -17,8 +18,9 @@ export async function POST(req: NextRequest) {
   if (!body.userName || !Number.isFinite(amountPence) || amountPence <= 0) {
     return NextResponse.json({ error: 'userName and a positive amount are required' }, { status: 400 });
   }
+  const paymentMethod = body.paymentMethod === 'card' ? 'card' : 'cash';
   try {
-    const balancePence = await topUp(body.userName, amountPence, body.staff || '', body.note);
+    const balancePence = await topUp(body.userName, amountPence, body.staff || '', body.note, paymentMethod);
     return NextResponse.json({ ok: true, balancePence });
   } catch (err: any) {
     return NextResponse.json({ error: err.message || 'Top-up failed' }, { status: 400 });

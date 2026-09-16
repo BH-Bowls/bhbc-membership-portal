@@ -39,6 +39,7 @@ export interface BarLedgerEntry {
   note: string | null;
   saleId: string | null;
   staff: string | null;
+  paymentMethod: 'cash' | 'card' | null;  // only meaningful for type 'topup'
   createdAt: string;
 }
 
@@ -54,7 +55,8 @@ export interface BarReport {
   byMethodPence: { wallet: number; card: number; cash: number };
   byCategoryPence: Record<string, number>;
   byProduct: { name: string; qty: number; totalPence: number }[];
-  topupsPence: number;   // cash taken as top-ups in range
+  topupsPence: number;      // cash taken as top-ups in range (card top-ups excluded — see cardTopupsPence)
+  cardTopupsPence: number;  // top-ups taken by card in range — informational, not cash in the box
   refundsPence: number;  // cash paid back out in range
   cashSalesPence: number; // = byMethodPence.cash (visitor/emergency cash)
   outstandingPence: number; // current total float owed to members (not range-bound)
@@ -167,17 +169,17 @@ export async function getMemberAccount(userName: string): Promise<{ balancePence
     balancePence: acct?.balance_pence ?? 0,
     history: (ledger ?? []).map((r: any) => ({
       id: r.id, type: r.type, amountPence: r.amount_pence, balanceAfterPence: r.balance_after_pence,
-      note: r.note, saleId: r.sale_id, staff: r.staff, createdAt: r.created_at,
+      note: r.note, saleId: r.sale_id, staff: r.staff, paymentMethod: r.payment_method ?? null, createdAt: r.created_at,
     })),
   };
 }
 
 // ── Money operations (atomic RPCs) ───────────────────────────────────────────
 
-export async function topUp(userName: string, amountPence: number, staff: string, note?: string): Promise<number> {
+export async function topUp(userName: string, amountPence: number, staff: string, note?: string, paymentMethod: 'cash' | 'card' = 'cash'): Promise<number> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase.rpc('bar_topup', {
-    p_user_name: userName, p_amount_pence: amountPence, p_staff: staff, p_note: note ?? null,
+    p_user_name: userName, p_amount_pence: amountPence, p_staff: staff, p_note: note ?? null, p_payment_method: paymentMethod,
   });
   if (error) throw new Error(error.message);
   return data as number;
@@ -194,12 +196,16 @@ export async function walletPurchase(userName: string, items: BasketItem[], staf
   return { saleId: data.sale_id, balancePence: data.balance_pence, totalPence: data.total_pence };
 }
 
-export async function visitorSale(method: 'card' | 'cash', items: BasketItem[], staff: string): Promise<{ saleId: string; totalPence: number }> {
+/** userName attributes a card/cash sale to a known member (e.g. "Pay by Card") without
+ * touching their wallet — priced at the member rate. Omitted, it's a plain visitor sale
+ * priced at the non-member rate, exactly as before. */
+export async function visitorSale(method: 'card' | 'cash', items: BasketItem[], staff: string, userName?: string): Promise<{ saleId: string; totalPence: number }> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase.rpc('bar_visitor_sale', {
     p_payment_method: method,
     p_items: items.map((i) => ({ product_id: i.productId, qty: i.qty })),
     p_staff: staff,
+    p_user_name: userName ?? null,
   });
   if (error) throw new Error(error.message);
   return { saleId: data.sale_id, totalPence: data.total_pence };
@@ -250,14 +256,17 @@ export async function getReport(fromIso: string, toIso: string): Promise<BarRepo
     }
   }
 
-  // Top-ups / refunds in range (cash in / cash out)
+  // Top-ups / refunds in range (cash in / cash out). Card top-ups are tracked
+  // separately — they're not cash landing in the till.
   const { data: ledger, error: ledErr } = await supabase
-    .from('bar_ledger').select('type, amount_pence').gte('created_at', fromIso).lte('created_at', toIso).in('type', ['topup', 'refund']);
+    .from('bar_ledger').select('type, amount_pence, payment_method').gte('created_at', fromIso).lte('created_at', toIso).in('type', ['topup', 'refund']);
   if (ledErr) throw new Error(`Failed to load ledger: ${ledErr.message}`);
-  let topupsPence = 0, refundsPence = 0;
+  let topupsPence = 0, cardTopupsPence = 0, refundsPence = 0;
   for (const l of ledger ?? []) {
-    if (l.type === 'topup') topupsPence += l.amount_pence;       // positive
-    else if (l.type === 'refund') refundsPence += -l.amount_pence; // stored negative → make positive
+    if (l.type === 'topup') {
+      if (l.payment_method === 'card') cardTopupsPence += l.amount_pence;
+      else topupsPence += l.amount_pence; // 'cash' or null (legacy rows, all cash)
+    } else if (l.type === 'refund') refundsPence += -l.amount_pence; // stored negative → make positive
   }
 
   // Current outstanding float (not range-bound)
@@ -272,7 +281,7 @@ export async function getReport(fromIso: string, toIso: string): Promise<BarRepo
     salesCount: (sales ?? []).length,
     byMethodPence, byCategoryPence,
     byProduct: [...byProductMap.values()].sort((a, b) => b.totalPence - a.totalPence),
-    topupsPence, refundsPence, cashSalesPence, outstandingPence,
+    topupsPence, cardTopupsPence, refundsPence, cashSalesPence, outstandingPence,
     expectedCashPence: topupsPence + cashSalesPence - refundsPence,
   };
 }

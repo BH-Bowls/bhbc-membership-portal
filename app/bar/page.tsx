@@ -170,8 +170,10 @@ export default function BarTillPage() {
         res = await fetch('/api/bar/purchase', { method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ userName: member.userName, items, staff: volunteer }) });
       } else {
+        // member is only ever set here for "Pay by Card" — attributes the sale to
+        // them (member pricing, history) without touching their wallet.
         res = await fetch('/api/bar/sale', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ method: mode, items, staff: volunteer }) });
+          body: JSON.stringify({ method: mode, items, staff: volunteer, userName: member?.userName }) });
       }
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Sale failed');
@@ -180,12 +182,12 @@ export default function BarTillPage() {
     } catch (err: any) { setError(err.message); } finally { setBusy(false); }
   }
 
-  async function doTopUp(amountPence: number) {
+  async function doTopUp(amountPence: number, paymentMethod: 'cash' | 'card') {
     if (!member || !requireVolunteer()) return;
     setBusy(true); setError('');
     try {
       const res = await fetch('/api/bar/topup', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userName: member.userName, amountPence, staff: volunteer }) });
+        body: JSON.stringify({ userName: member.userName, amountPence, staff: volunteer, paymentMethod }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Top-up failed');
       // Back to the product list (not the person picker) with the fresh balance —
@@ -417,20 +419,24 @@ export default function BarTillPage() {
 
               {/* Action buttons — differ for a member vs a non-member */}
               {member ? (
-                <div className="grid grid-cols-2 gap-2 mt-3">
+                <div className="grid grid-cols-3 gap-2 mt-3">
                   <button onClick={() => setView('topup')} disabled={busy}
-                    className="py-3 rounded-lg bg-amber-600 text-white font-semibold hover:bg-amber-700 disabled:opacity-50">Top Up</button>
+                    className="py-3 rounded-lg bg-amber-600 text-white font-semibold hover:bg-amber-700 disabled:opacity-50 text-sm">Top Up</button>
                   <button onClick={() => completeSale('wallet')} disabled={busy || basket.length === 0 || member.balancePence < basketTotal}
-                    className="py-3 rounded-lg bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-50">
+                    className="py-3 rounded-lg bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-50 text-sm">
                     {busy ? 'Saving…' : `Pay by Account`}
+                  </button>
+                  <button onClick={() => completeSale('card')} disabled={busy || basket.length === 0}
+                    className="py-3 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700 disabled:opacity-50 text-sm">
+                    {busy ? 'Saving…' : `Pay by Card`}
                   </button>
                   <button onClick={loadHistory} className="py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50">
                     {history ? 'Hide History' : 'History'}
                   </button>
                   {!showRefund ? (
-                    <button onClick={() => { setShowRefund(true); setRefundAmt(''); setError(''); }} className="py-2 text-sm text-red-600 font-medium">Refund cash…</button>
+                    <button onClick={() => { setShowRefund(true); setRefundAmt(''); setError(''); }} className="col-span-2 py-2 text-sm text-red-600 font-medium">Refund cash…</button>
                   ) : (
-                    <div className="col-span-2 flex items-center gap-2 flex-wrap pt-1">
+                    <div className="col-span-3 flex items-center gap-2 flex-wrap pt-1">
                       <span className="text-sm text-gray-600">£</span>
                       <input value={refundAmt} onChange={(e) => setRefundAmt(e.target.value)} inputMode="decimal" placeholder="0.00"
                         className="border border-gray-300 rounded px-2 py-1.5 text-sm w-24" />
@@ -561,8 +567,9 @@ export default function BarTillPage() {
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
-function TopUp({ member, busy, onConfirm }: { member: BarAccount; busy: boolean; onConfirm: (pence: number) => void }) {
+function TopUp({ member, busy, onConfirm }: { member: BarAccount; busy: boolean; onConfirm: (pence: number, paymentMethod: 'cash' | 'card') => void }) {
   const [amount, setAmount] = useState('');       // pounds as typed
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card'>('cash');
   const pence = Math.round(parseFloat(amount || '0') * 100);
   const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫'];
   function press(k: string) {
@@ -575,14 +582,20 @@ function TopUp({ member, busy, onConfirm }: { member: BarAccount; busy: boolean;
       <div className="text-center mb-1 text-gray-700">Top up <strong>{member.fullName}</strong></div>
       <div className="text-center text-4xl font-bold mb-4">£{amount || '0'}</div>
       <div className="flex gap-2 mb-3">
+        <button onClick={() => setPaymentMethod('cash')}
+          className={`flex-1 py-2 rounded-lg font-medium ${paymentMethod === 'cash' ? 'bg-amber-600 text-white' : 'bg-gray-100 text-gray-700'}`}>Cash</button>
+        <button onClick={() => setPaymentMethod('card')}
+          className={`flex-1 py-2 rounded-lg font-medium ${paymentMethod === 'card' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'}`}>Card</button>
+      </div>
+      <div className="flex gap-2 mb-3">
         {[10, 20].map((v) => <button key={v} onClick={() => setAmount(String(v))} className="flex-1 py-2 rounded-lg bg-gray-100 font-medium">£{v}</button>)}
       </div>
       <div className="grid grid-cols-3 gap-2 mb-4">
         {keys.map((k) => <button key={k} onClick={() => press(k)} className="py-4 rounded-lg bg-gray-100 text-xl font-medium">{k}</button>)}
       </div>
-      <button onClick={() => onConfirm(pence)} disabled={busy || pence <= 0}
+      <button onClick={() => onConfirm(pence, paymentMethod)} disabled={busy || pence <= 0}
         className="w-full py-3 rounded-lg bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-50">
-        {busy ? 'Saving…' : `Add £${(pence / 100).toFixed(2)} (cash taken)`}
+        {busy ? 'Saving…' : `Add £${(pence / 100).toFixed(2)} (${paymentMethod === 'cash' ? 'cash taken' : 'by card'})`}
       </button>
     </div>
   );
@@ -604,6 +617,7 @@ function ReportView({ report }: { report: BarReport }) {
       {row('Total sales', report.byMethodPence.wallet + report.byMethodPence.card + report.byMethodPence.cash, true)}
       <div className="mt-4">
         {row('Top-ups taken (cash in)', report.topupsPence)}
+        {row('Top-ups taken (by card)', report.cardTopupsPence)}
         {row('Refunds paid (cash out)', report.refundsPence)}
         {row('Expected cash in box', report.expectedCashPence, true)}
       </div>

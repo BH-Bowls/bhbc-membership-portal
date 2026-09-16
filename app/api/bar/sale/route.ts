@@ -1,6 +1,8 @@
 // app/api/bar/sale/route.ts
 // POST — record a visitor / direct card or cash sale (no wallet).
-// { method: 'card'|'cash', items:[{productId,qty}], staff }
+// { method: 'card'|'cash', items:[{productId,qty}], staff, userName? }
+// userName attributes the sale to a known member (e.g. "Pay by Card") without
+// charging their wallet — priced at the member rate instead of the visitor rate.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
@@ -19,7 +21,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'method (card|cash) and a non-empty basket are required' }, { status: 400 });
   }
   try {
-    const result = await visitorSale(body.method, items, body.staff || '');
+    const result = await visitorSale(body.method, items, body.staff || '', body.userName || undefined);
     return NextResponse.json({ ok: true, ...result });
   } catch (err: any) {
     return NextResponse.json({ error: err.message || 'Sale failed' }, { status: 400 });
