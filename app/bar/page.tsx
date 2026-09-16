@@ -19,8 +19,9 @@
 
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
+import jsQR from 'jsqr';
 import { isCommitteeMember } from '@/lib/role-utils';
 import { memberPricePence, type BarProduct, type BarAccount, type BarPerson, type BarLedgerEntry, type BarReport, type BarSaleSummary, type BarSaleItem } from '@/lib/bar-supabase';
 
@@ -80,6 +81,7 @@ export default function BarTillPage() {
   // who's marked as serving (the plain 'Change' link leaves this null).
   const [pendingAction, setPendingAction] = useState<'cashcard' | 'topup' | null>(null);
   const [personSearch, setPersonSearch] = useState('');
+  const [showScanner, setShowScanner] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -334,6 +336,16 @@ export default function BarTillPage() {
       return a.fullName.localeCompare(b.fullName);
     });
 
+  // A scanned QR just carries the member's userName (same trust level as picking
+  // them from the list — selecting a member here has never required proof of
+  // identity, so this introduces no new risk).
+  function handleScan(value: string) {
+    setShowScanner(false);
+    const found = sortedPeople.find((m) => m.userName === value.trim());
+    if (found) selectMember(found);
+    else setError('QR code did not match a member.');
+  }
+
   // ── guards ──────────────────────────────────────────────────────────────────
   if (status === 'loading') return null;
   if (!allowed) {
@@ -399,12 +411,19 @@ export default function BarTillPage() {
         {view === 'person' && (
           <>
             <h2 className="text-sm font-semibold text-gray-700 mb-2">Who's buying?</h2>
-            <input
-              value={personSearch}
-              onChange={(e) => setPersonSearch(e.target.value)}
-              placeholder="Search members…"
-              className="w-full border border-gray-300 rounded-lg px-4 py-3 text-base mb-3"
-            />
+            <div className="flex gap-2 mb-3">
+              <input
+                value={personSearch}
+                onChange={(e) => setPersonSearch(e.target.value)}
+                placeholder="Search members…"
+                className="flex-1 border border-gray-300 rounded-lg px-4 py-3 text-base"
+              />
+              <button onClick={() => setShowScanner(true)}
+                className="px-4 py-3 rounded-lg border-2 border-blue-300 bg-blue-50 text-blue-800 font-medium hover:bg-blue-100">
+                Scan
+              </button>
+            </div>
+            {showScanner && <QrScanModal onScan={handleScan} onClose={() => setShowScanner(false)} />}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
               <button onClick={openCashCardTab}
                 className="p-4 rounded-xl border-2 border-amber-300 bg-amber-50 text-left hover:border-amber-500 hover:shadow-md transition-colors">
@@ -629,6 +648,74 @@ export default function BarTillPage() {
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
+
+// Camera modal for scanning a member's QR (their userName, shown to them on
+// /profile). Decodes with jsQR against captured video frames rather than the
+// native BarcodeDetector API, which isn't available on iPad Safari.
+function QrScanModal({ onScan, onClose }: { onScan: (value: string) => void; onClose: () => void }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [scanError, setScanError] = useState('');
+
+  useEffect(() => {
+    let stream: MediaStream | null = null;
+    let rafId = 0;
+    let stopped = false;
+
+    function tick() {
+      if (stopped) return;
+      const video = videoRef.current, canvas = canvasRef.current;
+      if (video && canvas && video.readyState === video.HAVE_ENOUGH_DATA) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const code = jsQR(imageData.data, imageData.width, imageData.height);
+          if (code?.data) { onScan(code.data); return; }
+        }
+      }
+      rafId = requestAnimationFrame(tick);
+    }
+
+    (async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        if (stopped) { stream.getTracks().forEach((t) => t.stop()); return; }
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play();
+        }
+        tick();
+      } catch {
+        setScanError('Camera unavailable — check permissions.');
+      }
+    })();
+
+    return () => {
+      stopped = true;
+      cancelAnimationFrame(rafId);
+      stream?.getTracks().forEach((t) => t.stop());
+    };
+  }, [onScan]);
+
+  return (
+    <div className="fixed inset-0 bg-black/70 z-[100] flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl p-4 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+        <div className="flex justify-between items-center mb-2">
+          <h3 className="font-semibold text-gray-900">Scan member QR</h3>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-700 text-xl leading-none">✕</button>
+        </div>
+        <div className="relative aspect-square rounded-lg overflow-hidden bg-black">
+          <video ref={videoRef} className="w-full h-full object-cover" muted playsInline />
+        </div>
+        <canvas ref={canvasRef} className="hidden" />
+        {scanError && <p className="text-sm text-red-600 mt-2">{scanError}</p>}
+      </div>
+    </div>
+  );
+}
 
 function TopUp({ member, busy, onConfirm }: { member: BarAccount; busy: boolean; onConfirm: (pence: number, paymentMethod: 'cash' | 'card') => void }) {
   const [amount, setAmount] = useState('');       // pounds as typed
