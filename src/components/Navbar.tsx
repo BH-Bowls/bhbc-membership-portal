@@ -205,6 +205,7 @@ export function Navbar() {
       system.push({ name: 'Config', href: '/admin/config' });
       system.push({ name: 'Cache View', href: '/admin/cache' });
       system.push({ name: 'Logs', href: '/admin/logs' });
+      system.push({ name: 'Bar Till', href: '/bar' });
     }
 
     const groups: SubMenuGroup[] = [
