@@ -35,6 +35,29 @@ const CATEGORIES: { key: string; label: string }[] = [
   { key: 'snack',   label: 'Snacks' },
 ];
 
+// Per-category colour so the product grid and category pills read at a glance
+// instead of every tile being the same white/grey box.
+const CATEGORY_COLORS: Record<string, { active: string; inactive: string; tile: string }> = {
+  beer:    { active: 'bg-amber-500 text-white',    inactive: 'bg-amber-50 text-amber-800 hover:bg-amber-100',     tile: 'border-l-4 border-l-amber-400' },
+  wine:    { active: 'bg-rose-500 text-white',     inactive: 'bg-rose-50 text-rose-800 hover:bg-rose-100',        tile: 'border-l-4 border-l-rose-400' },
+  spirit:  { active: 'bg-purple-500 text-white',   inactive: 'bg-purple-50 text-purple-800 hover:bg-purple-100',  tile: 'border-l-4 border-l-purple-400' },
+  zero_gf: { active: 'bg-teal-500 text-white',     inactive: 'bg-teal-50 text-teal-800 hover:bg-teal-100',        tile: 'border-l-4 border-l-teal-400' },
+  soft:    { active: 'bg-sky-500 text-white',      inactive: 'bg-sky-50 text-sky-800 hover:bg-sky-100',           tile: 'border-l-4 border-l-sky-400' },
+  snack:   { active: 'bg-orange-500 text-white',   inactive: 'bg-orange-50 text-orange-800 hover:bg-orange-100',  tile: 'border-l-4 border-l-orange-400' },
+};
+
+// Rotating border colours for the volunteer picker — just visual variety, no meaning per colour.
+const ACCENT_BORDERS = [
+  'border-blue-300 hover:border-blue-500',
+  'border-emerald-300 hover:border-emerald-500',
+  'border-amber-300 hover:border-amber-500',
+  'border-pink-300 hover:border-pink-500',
+  'border-purple-300 hover:border-purple-500',
+  'border-cyan-300 hover:border-cyan-500',
+  'border-rose-300 hover:border-rose-500',
+  'border-lime-400 hover:border-lime-600',
+];
+
 const fmt = (pence: number) => `£${(pence / 100).toFixed(2)}`;
 
 type View = 'volunteer' | 'person' | 'sale' | 'topup' | 'report' | 'sales' | 'products';
@@ -264,7 +287,7 @@ export default function BarTillPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="container mx-auto px-4 py-5 max-w-4xl">
+      <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-5 max-w-7xl">
 
         {/* Header: volunteer chip + nav */}
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -294,13 +317,13 @@ export default function BarTillPage() {
 
         {/* ── VOLUNTEER: always shown on entry, current one highlighted ──────── */}
         {view === 'volunteer' && (
-          <div className="max-w-lg mx-auto">
-            <h2 className="text-sm font-semibold text-gray-700 mb-3 text-center">Who's on the bar?</h2>
-            <div className="grid grid-cols-2 gap-3">
-              {barPersons.map((b) => (
+          <div className="max-w-5xl mx-auto">
+            <h2 className="text-base font-semibold text-gray-700 mb-4 text-center">Who's on the bar?</h2>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+              {barPersons.map((b, i) => (
                 <button key={b.userName} onClick={() => chooseVolunteer(b.userName)}
-                  className={`py-5 rounded-xl border-2 bg-white font-semibold text-gray-900 hover:border-blue-400 hover:shadow ${
-                    b.userName === volunteer ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200'
+                  className={`py-8 rounded-xl border-2 bg-white font-semibold text-lg text-gray-900 hover:shadow-md transition-colors ${
+                    b.userName === volunteer ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : ACCENT_BORDERS[i % ACCENT_BORDERS.length]
                   }`}>
                   {b.fullName}
                 </button>
@@ -320,15 +343,17 @@ export default function BarTillPage() {
               placeholder="Search members…"
               className="w-full border border-gray-300 rounded-lg px-4 py-3 text-base mb-3"
             />
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
               <button onClick={selectNonMember}
-                className="p-4 rounded-xl border-2 border-dashed border-gray-300 bg-white text-left hover:border-amber-400 hover:shadow">
-                <div className="font-semibold text-gray-900">Non Member</div>
-                <div className="text-sm text-gray-500">Cash or card</div>
+                className="p-4 rounded-xl border-2 border-amber-300 bg-amber-50 text-left hover:border-amber-500 hover:shadow-md transition-colors">
+                <div className="font-semibold text-amber-900">Cash / Card</div>
+                <div className="text-sm text-amber-700">No member account</div>
               </button>
               {sortedPeople.map((m) => (
                 <button key={m.userName} onClick={() => selectMember(m)}
-                  className="p-4 rounded-xl border border-gray-200 bg-white text-left hover:border-green-400 hover:shadow">
+                  className={`p-4 rounded-xl border border-gray-200 ${
+                    !m.hasAccount ? 'border-l-4 border-l-gray-300' : m.balancePence <= 200 ? 'border-l-4 border-l-red-400' : 'border-l-4 border-l-green-400'
+                  } bg-white text-left hover:border-green-400 hover:shadow-md transition-colors`}>
                   <div className="font-semibold text-gray-900 truncate">{m.fullName}</div>
                   <div className={`text-lg font-bold ${!m.hasAccount ? 'text-gray-400' : m.balancePence <= 200 ? 'text-red-600' : 'text-green-700'}`}>
                     {m.hasAccount ? fmt(m.balancePence) : 'No account yet'}
@@ -347,13 +372,15 @@ export default function BarTillPage() {
               <div className="flex flex-wrap gap-2 mb-3">
                 {CATEGORIES.map((c) => (
                   <button key={c.key} onClick={() => setActiveCat(c.key)}
-                    className={`px-3 py-1.5 rounded-full text-sm font-medium ${activeCat === c.key ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'}`}>{c.label}</button>
+                    className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                      activeCat === c.key ? CATEGORY_COLORS[c.key].active : CATEGORY_COLORS[c.key].inactive
+                    }`}>{c.label}</button>
                 ))}
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
                 {products.filter((p) => p.active && p.category === activeCat).map((p) => (
                   <button key={p.id} onClick={() => addToBasket(p)}
-                    className="p-3 rounded-lg border border-gray-200 bg-white text-left hover:border-blue-400">
+                    className={`p-3 rounded-lg border border-gray-200 ${CATEGORY_COLORS[p.category]?.tile ?? ''} bg-white text-left hover:border-blue-400 hover:shadow-sm transition-colors`}>
                     <div className="font-medium text-gray-900 text-sm leading-tight">{p.name}</div>
                     <div className="text-gray-600 text-sm">{fmt(unitPrice(p))}</div>
                   </button>
