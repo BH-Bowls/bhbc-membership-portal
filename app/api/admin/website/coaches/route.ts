@@ -8,6 +8,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
 import { getAllCoaches, createCoach } from '@/lib/website-coaches-supabase';
+import { revalidateWebsitePath } from '@/lib/revalidate-website';
 
 export async function GET() {
   try {
@@ -54,6 +55,7 @@ export async function POST(request: NextRequest) {
       active: active !== false,
     });
 
+    await revalidateWebsitePath('/coaching');
     return NextResponse.json({ success: true, coach });
   } catch (error) {
     console.error('[POST /api/admin/website/coaches] Error:', error);

@@ -8,6 +8,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
 import { updateWebsiteAnnouncement, deleteWebsiteAnnouncement, type WebsiteAnnouncementType } from '@/lib/website-announcements-supabase';
+import { revalidateWebsitePath } from '@/lib/revalidate-website';
 
 const ALLOWED_TYPES: WebsiteAnnouncementType[] = ['open-day', 'visiting-side', 'event', 'notice'];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -63,6 +64,7 @@ export async function PATCH(
       return NextResponse.json({ error: 'Announcement not found' }, { status: 404 });
     }
 
+    await revalidateWebsitePath('/');
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[PATCH /api/admin/website/announcements/[id]] Error:', error);
@@ -91,6 +93,7 @@ export async function DELETE(
       return NextResponse.json({ error: 'Announcement not found' }, { status: 404 });
     }
 
+    await revalidateWebsitePath('/');
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[DELETE /api/admin/website/announcements/[id]] Error:', error);

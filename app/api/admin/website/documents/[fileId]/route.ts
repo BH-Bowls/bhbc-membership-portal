@@ -7,6 +7,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
 import { deleteWebsiteDocument } from '@/lib/website-documents-drive';
+import { revalidateWebsitePath } from '@/lib/revalidate-website';
 
 export async function DELETE(
   request: NextRequest,
@@ -30,6 +31,7 @@ export async function DELETE(
       return NextResponse.json({ error: message }, { status: 500 });
     }
 
+    await revalidateWebsitePath('/documents');
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[DELETE /api/admin/website/documents/[fileId]] Error:', error);

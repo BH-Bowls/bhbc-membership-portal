@@ -9,6 +9,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
 import { updateHonoursInternal, deleteHonoursInternal } from '@/lib/website-honours-internal-supabase';
+import { revalidateWebsitePath } from '@/lib/revalidate-website';
 
 const TEXT_FIELDS = [
   'president', 'mens_captain', 'ladies_captain', 'mens_championship', 'mixed_handicap',
@@ -52,6 +53,7 @@ export async function PATCH(
       return NextResponse.json({ error: 'Season not found' }, { status: 404 });
     }
 
+    await revalidateWebsitePath('/honours');
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[PATCH /api/admin/website/honours-internal/[year]] Error:', error);
@@ -84,6 +86,7 @@ export async function DELETE(
       return NextResponse.json({ error: 'Season not found' }, { status: 404 });
     }
 
+    await revalidateWebsitePath('/honours');
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[DELETE /api/admin/website/honours-internal/[year]] Error:', error);

@@ -8,6 +8,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
 import { getAllCommitteeMembers, createCommitteeMember } from '@/lib/website-committee-supabase';
+import { revalidateWebsitePath } from '@/lib/revalidate-website';
 
 export async function GET() {
   try {
@@ -58,6 +59,7 @@ export async function POST(request: NextRequest) {
       active: active !== false,
     });
 
+    await revalidateWebsitePath('/about');
     return NextResponse.json({ success: true, member });
   } catch (error) {
     console.error('[POST /api/admin/website/committee] Error:', error);

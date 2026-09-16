@@ -115,6 +115,11 @@ export default function ManageWebsiteDocumentsPage() {
         throw new Error(`Drive upload failed: ${driveRes.status} ${text}`);
       }
 
+      // Tell the server the upload completed — it never otherwise learns this,
+      // since the bytes went straight from the browser to Drive. This is what
+      // triggers the website's cache to flush.
+      await fetch('/api/admin/website/documents', { method: 'POST' }).catch(() => {});
+
       setFile(null);
       setNewCategoryName('');
       if (fileInputRef.current) fileInputRef.current.value = '';

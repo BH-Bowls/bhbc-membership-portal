@@ -8,6 +8,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
 import { updateRowlandWinners, deleteRowlandWinners } from '@/lib/website-rowland-winners-supabase';
+import { revalidateWebsitePath } from '@/lib/revalidate-website';
 
 function cleanWinner(value: unknown): string | null {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
@@ -43,6 +44,7 @@ export async function PATCH(
       return NextResponse.json({ error: 'Season not found' }, { status: 404 });
     }
 
+    await revalidateWebsitePath('/rowland');
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[PATCH /api/admin/website/rowland-winners/[year]] Error:', error);
@@ -75,6 +77,7 @@ export async function DELETE(
       return NextResponse.json({ error: 'Season not found' }, { status: 404 });
     }
 
+    await revalidateWebsitePath('/rowland');
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[DELETE /api/admin/website/rowland-winners/[year]] Error:', error);

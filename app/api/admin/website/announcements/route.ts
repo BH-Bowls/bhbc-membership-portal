@@ -10,6 +10,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
 import { getAllWebsiteAnnouncements, createWebsiteAnnouncement, type WebsiteAnnouncementType } from '@/lib/website-announcements-supabase';
+import { revalidateWebsitePath } from '@/lib/revalidate-website';
 
 const ALLOWED_TYPES: WebsiteAnnouncementType[] = ['open-day', 'visiting-side', 'event', 'notice'];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -75,6 +76,7 @@ export async function POST(request: NextRequest) {
       active: active !== false,
     });
 
+    await revalidateWebsitePath('/');
     return NextResponse.json({ success: true, announcement });
   } catch (error) {
     console.error('[POST /api/admin/website/announcements] Error:', error);

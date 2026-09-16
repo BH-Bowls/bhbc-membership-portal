@@ -8,6 +8,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
 import { updateCommitteeMember, deleteCommitteeMember } from '@/lib/website-committee-supabase';
+import { revalidateWebsitePath } from '@/lib/revalidate-website';
 
 export async function PATCH(
   request: NextRequest,
@@ -48,6 +49,7 @@ export async function PATCH(
       return NextResponse.json({ error: 'Committee member not found' }, { status: 404 });
     }
 
+    await revalidateWebsitePath('/about');
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[PATCH /api/admin/website/committee/[id]] Error:', error);
@@ -76,6 +78,7 @@ export async function DELETE(
       return NextResponse.json({ error: 'Committee member not found' }, { status: 404 });
     }
 
+    await revalidateWebsitePath('/about');
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[DELETE /api/admin/website/committee/[id]] Error:', error);
