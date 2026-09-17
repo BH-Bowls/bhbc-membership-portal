@@ -23,7 +23,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import jsQR from 'jsqr';
 import { isCommitteeMember } from '@/lib/role-utils';
-import { memberPricePence, type BarProduct, type BarAccount, type BarPerson, type BarLedgerEntry, type BarReport, type BarSaleSummary, type BarSaleItem } from '@/lib/bar-supabase';
+import { priceItem, type BarPricingConfig, type BarProduct, type BarAccount, type BarPerson, type BarLedgerEntry, type BarReport, type BarSaleSummary, type BarSaleItem } from '@/lib/bar-supabase';
 
 const CATEGORIES: { key: string; label: string }[] = [
   { key: 'beer',    label: 'Beers / Lagers' },
@@ -72,6 +72,7 @@ export default function BarTillPage() {
   // mandatory front gate, only asked for contextually (see chooseVolunteer).
   const [view, setView] = useState<View>('person');
   const [products, setProducts] = useState<BarProduct[]>([]);
+  const [pricingConfig, setPricingConfig] = useState<BarPricingConfig>({ mode: 'member_product_discount', memberDiscountPercent: 0 });
   const [accounts, setAccounts] = useState<BarAccount[]>([]);
   const [allMembers, setAllMembers] = useState<MemberOption[]>([]);
   const [barPersons, setBarPersons] = useState<BarPerson[]>([]);
@@ -106,16 +107,18 @@ export default function BarTillPage() {
 
   const load = useCallback(async () => {
     try {
-      const [p, a, b, m] = await Promise.all([
+      const [p, a, b, m, c] = await Promise.all([
         fetch('/api/bar/products?all=1').then((r) => r.json()),
         fetch('/api/bar/accounts').then((r) => r.json()),
         fetch('/api/bar/bar-persons').then((r) => r.json()),
         fetch('/api/members/lookup').then((r) => r.json()),
+        fetch('/api/bar/pricing-config').then((r) => r.json()),
       ]);
       if (p.products) setProducts(p.products);
       if (a.accounts) setAccounts(a.accounts);
       if (b.barPersons) setBarPersons(b.barPersons);
       if (m.members) setAllMembers(m.members);
+      if (c.pricingConfig) setPricingConfig(c.pricingConfig);
     } catch { setError('Failed to load bar data'); }
   }, []);
 
@@ -174,8 +177,14 @@ export default function BarTillPage() {
   function changeVolunteer() { setPendingAction(null); setView('volunteer'); }
 
   // ── basket / pricing helpers ─────────────────────────────────────────────────
-  const unitPrice = (p: BarProduct) => (member ? memberPricePence(p) : p.basePricePence);
+  // unitPrice is what's actually charged (net); unitGrossPrice is what a visitor/
+  // list price would be under the active mode — the difference is the member's
+  // discount, shown on the basket and carried into the sale record.
+  const unitPrice = (p: BarProduct) => priceItem(p, pricingConfig, !!member).netPence;
+  const unitGrossPrice = (p: BarProduct) => priceItem(p, pricingConfig, !!member).grossPence;
   const basketTotal = basket.reduce((s, l) => s + unitPrice(l.product) * l.qty, 0);
+  const basketGross = basket.reduce((s, l) => s + unitGrossPrice(l.product) * l.qty, 0);
+  const basketDiscount = basketGross - basketTotal;
   function addToBasket(p: BarProduct) {
     setBasket((prev) => {
       const found = prev.find((l) => l.product.id === p.id);
@@ -490,8 +499,24 @@ export default function BarTillPage() {
                   ))}
                 </div>
               )}
-              <div className="flex justify-between font-bold text-lg mt-3 pt-3 border-t">
-                <span>Total</span><span>{fmt(basketTotal)}</span>
+              <div className="mt-3 pt-3 border-t">
+                {basketDiscount > 0 ? (
+                  <>
+                    <div className="flex justify-between text-sm text-gray-600">
+                      <span>Total</span><span>{fmt(basketGross)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm text-green-700">
+                      <span>Member Discount</span><span>−{fmt(basketDiscount)}</span>
+                    </div>
+                    <div className="flex justify-between font-bold text-lg mt-1">
+                      <span>Payable</span><span>{fmt(basketTotal)}</span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex justify-between font-bold text-lg">
+                    <span>Total</span><span>{fmt(basketTotal)}</span>
+                  </div>
+                )}
               </div>
               {member && (
                 <div className={`text-sm mt-1 ${member.balancePence < basketTotal ? 'text-red-600 font-medium' : 'text-gray-600'}`}>
@@ -571,6 +596,12 @@ export default function BarTillPage() {
                                 <span>{fmt(it.unitPricePence * it.qty)}</span>
                               </div>
                             ))}
+                            {!!h.discountPence && (
+                              <div className="flex justify-between text-xs text-green-700 pt-0.5 border-t border-gray-100 mt-1">
+                                <span>Member Discount</span>
+                                <span>−{fmt(h.discountPence)}</span>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -630,6 +661,12 @@ export default function BarTillPage() {
                               <span>{fmt(it.unitPricePence * it.qty)}</span>
                             </div>
                           ))}
+                          {s.discountPence > 0 && (
+                            <div className="flex justify-between text-xs text-green-700 pt-0.5 border-t border-gray-100 mt-1">
+                              <span>Total {fmt(s.grossTotalPence)} − Member Discount {fmt(s.discountPence)}</span>
+                              <span>{fmt(s.totalPence)}</span>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -641,7 +678,7 @@ export default function BarTillPage() {
         )}
 
         {/* ── PRODUCTS ─────────────────────────────────────────────────────── */}
-        {view === 'products' && <ProductsAdmin products={products} onChanged={load} />}
+        {view === 'products' && <ProductsAdmin products={products} pricingConfig={pricingConfig} onChanged={load} />}
       </div>
     </div>
   );
@@ -772,6 +809,7 @@ function ReportView({ report }: { report: BarReport }) {
         {row('Expected cash in box', report.expectedCashPence, true)}
       </div>
       <div className="mt-4 pt-3 border-t">
+        {row('Member discounts given', report.discountsGivenPence)}
         {row('Outstanding member balances (float owed)', report.outstandingPence)}
       </div>
       {report.byProduct.length > 0 && (
@@ -788,18 +826,34 @@ function ReportView({ report }: { report: BarReport }) {
   );
 }
 
-function ProductsAdmin({ products, onChanged }: { products: BarProduct[]; onChanged: () => void }) {
+// Product form fields shown depend on the active pricing mode: Split needs two
+// independent prices; the other three modes need one price, and Member Product
+// Discount additionally takes an optional per-product override (blank = inherit
+// the global default from /admin/config's Bar tab).
+function ProductsAdmin({ products, pricingConfig, onChanged }: { products: BarProduct[]; pricingConfig: BarPricingConfig; onChanged: () => void }) {
+  const isSplit = pricingConfig.mode === 'split';
+  const showOverride = pricingConfig.mode === 'member_product_discount';
+
   const [name, setName] = useState('');
   const [category, setCategory] = useState('beer');
-  const [basePrice, setBasePrice] = useState('');
-  const [discount, setDiscount] = useState('10');
+  const [price, setPrice] = useState('');           // base/single price, or split member price
+  const [visitorPrice, setVisitorPrice] = useState(''); // split mode only
+  const [override, setOverride] = useState('');      // member_product_discount mode only
   async function add() {
-    const basePricePence = Math.round(parseFloat(basePrice || '0') * 100);
-    const memberDiscountPercent = Math.round(parseFloat(discount || '0'));
-    if (!name.trim() || basePricePence <= 0 || memberDiscountPercent < 0 || memberDiscountPercent > 100) return;
-    await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, category, basePricePence, memberDiscountPercent }) });
-    setName(''); setBasePrice(''); setDiscount('10'); onChanged();
+    const pricePence = Math.round(parseFloat(price || '0') * 100);
+    if (!name.trim() || pricePence <= 0) return;
+    if (isSplit) {
+      const nonMemberPricePence = Math.round(parseFloat(visitorPrice || '0') * 100);
+      if (nonMemberPricePence <= 0) return;
+      await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, category, pricePence, nonMemberPricePence }) });
+    } else {
+      const overridePercent = override.trim() === '' ? undefined : Math.round(parseFloat(override));
+      if (overridePercent !== undefined && (overridePercent < 0 || overridePercent > 100)) return;
+      await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, category, basePricePence: pricePence, memberDiscountOverridePercent: showOverride ? overridePercent : undefined }) });
+    }
+    setName(''); setPrice(''); setVisitorPrice(''); setOverride(''); onChanged();
   }
   async function toggle(p: BarProduct) {
     await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -807,24 +861,54 @@ function ProductsAdmin({ products, onChanged }: { products: BarProduct[]; onChan
     onChanged();
   }
 
-  // Inline edit of an existing product (name / category / price / discount)
+  // Inline edit of an existing product
   const [editId, setEditId] = useState<string | null>(null);
   const [eName, setEName] = useState('');
   const [eCat, setECat] = useState('beer');
-  const [eBasePrice, setEBasePrice] = useState('');
-  const [eDiscount, setEDiscount] = useState('');
+  const [ePrice, setEPrice] = useState('');
+  const [eVisitorPrice, setEVisitorPrice] = useState('');
+  const [eOverride, setEOverride] = useState('');
   function startEdit(p: BarProduct) {
     setEditId(p.id); setEName(p.name); setECat(p.category);
-    setEBasePrice((p.basePricePence / 100).toFixed(2)); setEDiscount(String(p.memberDiscountPercent));
+    setEPrice(((isSplit ? p.pricePence : p.basePricePence) / 100).toFixed(2));
+    setEVisitorPrice((p.nonMemberPricePence / 100).toFixed(2));
+    setEOverride(p.memberDiscountOverridePercent === null ? '' : String(p.memberDiscountOverridePercent));
   }
   async function saveEdit(p: BarProduct) {
-    const basePricePence = Math.round(parseFloat(eBasePrice || '0') * 100);
-    const memberDiscountPercent = Math.round(parseFloat(eDiscount || '0'));
-    if (!eName.trim() || basePricePence <= 0 || memberDiscountPercent < 0 || memberDiscountPercent > 100) return;
-    await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: p.id, name: eName.trim(), category: eCat, basePricePence, memberDiscountPercent }) });
+    const pricePence = Math.round(parseFloat(ePrice || '0') * 100);
+    if (!eName.trim() || pricePence <= 0) return;
+    if (isSplit) {
+      const nonMemberPricePence = Math.round(parseFloat(eVisitorPrice || '0') * 100);
+      if (nonMemberPricePence <= 0) return;
+      await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: p.id, name: eName.trim(), category: eCat, pricePence, nonMemberPricePence }) });
+    } else {
+      const overridePercent = eOverride.trim() === '' ? null : Math.round(parseFloat(eOverride));
+      if (overridePercent !== null && (overridePercent < 0 || overridePercent > 100)) return;
+      await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: p.id, name: eName.trim(), category: eCat, basePricePence: pricePence, memberDiscountOverridePercent: showOverride ? overridePercent : undefined }) });
+    }
     setEditId(null); onChanged();
   }
+
+  // How a product's pricing reads on the list line, per mode.
+  function priceLabel(p: BarProduct): string {
+    switch (pricingConfig.mode) {
+      case 'split':
+        return `${fmt(p.pricePence)} member / ${fmt(p.nonMemberPricePence)} visitor`;
+      case 'member_discount':
+        return `${fmt(p.basePricePence)} (${pricingConfig.memberDiscountPercent}% off whole bill for members)`;
+      case 'member_product_discount': {
+        const rate = p.memberDiscountOverridePercent ?? pricingConfig.memberDiscountPercent;
+        const isOverride = p.memberDiscountOverridePercent !== null;
+        return `${fmt(p.basePricePence)} (${rate}% member discount${isOverride ? '' : ', default'})`;
+      }
+      case 'single':
+      default:
+        return fmt(p.basePricePence);
+    }
+  }
+
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-5 max-w-2xl">
       <h2 className="font-bold text-gray-900 mb-3">Products</h2>
@@ -834,13 +918,21 @@ function ProductsAdmin({ products, onChanged }: { products: BarProduct[]; onChan
           {CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
         </select>
         <div>
-          <label className="block text-[10px] text-gray-500">Price £</label>
-          <input value={basePrice} onChange={(e) => setBasePrice(e.target.value)} placeholder="£" inputMode="decimal" className="border rounded px-2 py-1.5 text-sm w-20" />
+          <label className="block text-[10px] text-gray-500">{isSplit ? 'Member £' : 'Price £'}</label>
+          <input value={price} onChange={(e) => setPrice(e.target.value)} placeholder="£" inputMode="decimal" className="border rounded px-2 py-1.5 text-sm w-20" />
         </div>
-        <div>
-          <label className="block text-[10px] text-gray-500">Member discount %</label>
-          <input value={discount} onChange={(e) => setDiscount(e.target.value)} placeholder="%" inputMode="decimal" className="border rounded px-2 py-1.5 text-sm w-24" />
-        </div>
+        {isSplit && (
+          <div>
+            <label className="block text-[10px] text-gray-500">Visitor £</label>
+            <input value={visitorPrice} onChange={(e) => setVisitorPrice(e.target.value)} placeholder="£" inputMode="decimal" className="border rounded px-2 py-1.5 text-sm w-20" />
+          </div>
+        )}
+        {showOverride && (
+          <div>
+            <label className="block text-[10px] text-gray-500">Override % (blank = {pricingConfig.memberDiscountPercent}%)</label>
+            <input value={override} onChange={(e) => setOverride(e.target.value)} placeholder="%" inputMode="decimal" className="border rounded px-2 py-1.5 text-sm w-32" />
+          </div>
+        )}
         <button onClick={add} className="px-3 py-1.5 bg-green-600 text-white rounded text-sm font-medium">Add</button>
       </div>
       {CATEGORIES.map((c) => {
@@ -856,14 +948,19 @@ function ProductsAdmin({ products, onChanged }: { products: BarProduct[]; onChan
                   <select value={eCat} onChange={(e) => setECat(e.target.value)} className="border rounded px-2 py-1 text-sm">
                     {CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
                   </select>
-                  <input value={eBasePrice} onChange={(e) => setEBasePrice(e.target.value)} placeholder="Price £" inputMode="decimal" className="border rounded px-2 py-1 text-sm w-20" />
-                  <input value={eDiscount} onChange={(e) => setEDiscount(e.target.value)} placeholder="Discount %" inputMode="decimal" className="border rounded px-2 py-1 text-sm w-24" />
+                  <input value={ePrice} onChange={(e) => setEPrice(e.target.value)} placeholder={isSplit ? 'Member £' : 'Price £'} inputMode="decimal" className="border rounded px-2 py-1 text-sm w-20" />
+                  {isSplit && (
+                    <input value={eVisitorPrice} onChange={(e) => setEVisitorPrice(e.target.value)} placeholder="Visitor £" inputMode="decimal" className="border rounded px-2 py-1 text-sm w-20" />
+                  )}
+                  {showOverride && (
+                    <input value={eOverride} onChange={(e) => setEOverride(e.target.value)} placeholder={`Override % (blank = ${pricingConfig.memberDiscountPercent}%)`} inputMode="decimal" className="border rounded px-2 py-1 text-sm w-40" />
+                  )}
                   <button onClick={() => saveEdit(p)} className="px-3 py-1 bg-green-600 text-white rounded text-sm font-medium">Save</button>
                   <button onClick={() => setEditId(null)} className="text-sm text-gray-500">Cancel</button>
                 </div>
               ) : (
                 <div key={p.id} className={`flex justify-between items-center text-sm py-1 ${p.active ? '' : 'opacity-40'}`}>
-                  <span>{p.name} — {fmt(p.basePricePence)} <span className="text-gray-400">/ {fmt(memberPricePence(p))} member ({p.memberDiscountPercent}% off)</span></span>
+                  <span>{p.name} — <span className="text-gray-500">{priceLabel(p)}</span></span>
                   <span className="flex gap-3">
                     <button onClick={() => startEdit(p)} className="text-xs text-blue-600">Edit</button>
                     <button onClick={() => toggle(p)} className="text-xs text-gray-500">{p.active ? 'Deactivate' : 'Activate'}</button>

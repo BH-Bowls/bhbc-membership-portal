@@ -29,16 +29,26 @@ export async function POST(req: NextRequest) {
     if (body.setActive !== undefined && body.id) {
       await setProductActive(body.id, !!body.setActive);
     } else {
-      if (!body.name || !body.category || typeof body.basePricePence !== 'number' || typeof body.memberDiscountPercent !== 'number') {
-        return NextResponse.json({ error: 'name, category, basePricePence and memberDiscountPercent are required' }, { status: 400 });
+      if (!body.name || !body.category) {
+        return NextResponse.json({ error: 'name and category are required' }, { status: 400 });
       }
-      if (body.memberDiscountPercent < 0 || body.memberDiscountPercent > 100) {
-        return NextResponse.json({ error: 'memberDiscountPercent must be between 0 and 100' }, { status: 400 });
+      const hasBase = typeof body.basePricePence === 'number';
+      const hasSplit = typeof body.pricePence === 'number' && typeof body.nonMemberPricePence === 'number';
+      if (!body.id && !hasBase && !hasSplit) {
+        return NextResponse.json({ error: 'A price is required' }, { status: 400 });
+      }
+      if (body.memberDiscountOverridePercent !== undefined && body.memberDiscountOverridePercent !== null) {
+        if (typeof body.memberDiscountOverridePercent !== 'number' || body.memberDiscountOverridePercent < 0 || body.memberDiscountOverridePercent > 100) {
+          return NextResponse.json({ error: 'memberDiscountOverridePercent must be between 0 and 100' }, { status: 400 });
+        }
       }
       await saveProduct(
         {
           id: body.id, name: body.name, category: body.category,
-          basePricePence: Math.round(body.basePricePence), memberDiscountPercent: Math.round(body.memberDiscountPercent),
+          basePricePence: hasBase ? Math.round(body.basePricePence) : undefined,
+          pricePence: typeof body.pricePence === 'number' ? Math.round(body.pricePence) : undefined,
+          nonMemberPricePence: typeof body.nonMemberPricePence === 'number' ? Math.round(body.nonMemberPricePence) : undefined,
+          memberDiscountOverridePercent: body.memberDiscountOverridePercent === undefined ? undefined : body.memberDiscountOverridePercent,
           sortOrder: body.sortOrder, active: body.active,
         },
         session.user.userName,

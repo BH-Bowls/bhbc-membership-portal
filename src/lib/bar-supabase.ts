@@ -5,24 +5,63 @@
 
 import { getSupabaseClient } from './supabase';
 import { getAllUsers } from './members-supabase';
+import { getConfig } from './config-supabase';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export type BarCategory = 'beer' | 'wine' | 'spirit' | 'zero_gf' | 'soft' | 'snack';
 
+// Club-wide, one active at a time (see BarPricingConfig) — see 0060_bar_pricing_modes.sql
+// for the authoritative server-side pricing (bar_price_item), which priceItem() below mirrors
+// for client-side display only.
+export type BarPricingMode = 'single' | 'split' | 'member_discount' | 'member_product_discount';
+
+export interface BarPricingConfig {
+  mode: BarPricingMode;
+  memberDiscountPercent: number;  // global default (member_product_discount) / whole-bill rate (member_discount)
+}
+
+export async function getPricingConfig(): Promise<BarPricingConfig> {
+  const config = await getConfig();
+  const mode = (config.bar_pricing_mode as BarPricingMode) || 'member_product_discount';
+  const memberDiscountPercent = parseInt(config.bar_member_discount_percent ?? '0', 10) || 0;
+  return { mode, memberDiscountPercent };
+}
+
 export interface BarProduct {
   id: string;
   name: string;
   category: BarCategory;
-  basePricePence: number;          // full/visitor price — charged on visitor card/cash sales
-  memberDiscountPercent: number;   // 0-100, applied to basePricePence for members (wallet, or a member's "Pay by Card")
+  basePricePence: number;                        // "the" price — single/member_discount/member_product_discount modes
+  pricePence: number;                             // split mode: member price
+  nonMemberPricePence: number;                    // split mode: visitor price
+  memberDiscountOverridePercent: number | null;   // member_product_discount mode: null = inherit the global default
   active: boolean;
   sortOrder: number;
 }
 
-/** The price a member actually pays — basePricePence discounted by memberDiscountPercent. */
-export function memberPricePence(p: Pick<BarProduct, 'basePricePence' | 'memberDiscountPercent'>): number {
-  return Math.round(p.basePricePence * (100 - p.memberDiscountPercent) / 100);
+/** basePricePence discounted by a given percentage — mirrors bar_member_price() in SQL. */
+function discountedPence(basePricePence: number, percent: number): number {
+  return Math.round(basePricePence * (100 - percent) / 100);
+}
+
+/** What a product actually costs under the active pricing mode — mirrors bar_price_item()
+ * in 0060_bar_pricing_modes.sql exactly, for client-side display before a sale is submitted.
+ * The server remains the source of truth: this is never trusted for the actual charge. */
+export function priceItem(p: BarProduct, config: BarPricingConfig, isMember: boolean): { grossPence: number; netPence: number } {
+  switch (config.mode) {
+    case 'single':
+      return { grossPence: p.basePricePence, netPence: p.basePricePence };
+    case 'split':
+      return { grossPence: p.nonMemberPricePence, netPence: isMember ? p.pricePence : p.nonMemberPricePence };
+    case 'member_discount':
+      return { grossPence: p.basePricePence, netPence: isMember ? discountedPence(p.basePricePence, config.memberDiscountPercent) : p.basePricePence };
+    case 'member_product_discount':
+    default: {
+      const rate = p.memberDiscountOverridePercent ?? config.memberDiscountPercent;
+      return { grossPence: p.basePricePence, netPence: isMember ? discountedPence(p.basePricePence, rate) : p.basePricePence };
+    }
+  }
 }
 
 export interface BarAccount {
@@ -45,6 +84,8 @@ export interface BarLedgerEntry {
   saleId: string | null;
   staff: string | null;
   paymentMethod: 'cash' | 'card' | null;  // only meaningful for type 'topup'
+  grossTotalPence: number | null;         // only present for type 'purchase' (joined via saleId)
+  discountPence: number | null;           // only present for type 'purchase'
   createdAt: string;
 }
 
@@ -66,6 +107,7 @@ export interface BarReport {
   cashSalesPence: number; // = byMethodPence.cash (visitor/emergency cash)
   outstandingPence: number; // current total float owed to members (not range-bound)
   expectedCashPence: number; // top-ups + cash sales − refunds in range (a bank-time guide)
+  discountsGivenPence: number; // sum of member discounts given in range — informational, ready for Xero
 }
 
 // ── Name lookup helper ───────────────────────────────────────────────────────
@@ -84,27 +126,52 @@ export async function getProducts(includeInactive = false): Promise<BarProduct[]
   const { data, error } = await query;
   if (error) throw new Error(`Failed to load bar products: ${error.message}`);
   return (data ?? []).map((r: any) => ({
-    id: r.id, name: r.name, category: r.category, basePricePence: r.base_price_pence,
-    memberDiscountPercent: r.member_discount_percent,
+    id: r.id, name: r.name, category: r.category,
+    basePricePence: r.base_price_pence,
+    pricePence: r.price_pence,
+    nonMemberPricePence: r.non_member_price_pence,
+    memberDiscountOverridePercent: r.member_discount_override_percent,
     active: r.active, sortOrder: r.sort_order,
   }));
 }
 
 export async function saveProduct(
-  input: { id?: string; name: string; category: BarCategory; basePricePence: number; memberDiscountPercent: number; sortOrder?: number; active?: boolean },
+  input: {
+    id?: string; name: string; category: BarCategory;
+    basePricePence?: number; pricePence?: number; nonMemberPricePence?: number;
+    memberDiscountOverridePercent?: number | null;
+    sortOrder?: number; active?: boolean;
+  },
   editedBy: string,
 ): Promise<void> {
   const supabase = getSupabaseClient();
-  const row = {
+
+  let { basePricePence, pricePence, nonMemberPricePence } = input;
+  // On creation only: base_price_pence/price_pence/non_member_price_pence are all
+  // NOT NULL, but the form only ever fills in whichever "price shape" the active
+  // pricing mode needs — mirror across so the columns other modes use still get a
+  // sane starting point instead of failing the insert. An existing product's
+  // untouched columns are left alone on update (nothing added to `row` below), so
+  // switching modes and back doesn't lose previously-entered split/base prices.
+  if (!input.id) {
+    if (basePricePence === undefined && nonMemberPricePence !== undefined) basePricePence = nonMemberPricePence;
+    if (pricePence === undefined && basePricePence !== undefined) pricePence = basePricePence;
+    if (nonMemberPricePence === undefined && basePricePence !== undefined) nonMemberPricePence = basePricePence;
+  }
+
+  const row: Record<string, unknown> = {
     name: input.name.trim(),
     category: input.category,
-    base_price_pence: input.basePricePence,
-    member_discount_percent: input.memberDiscountPercent,
     sort_order: input.sortOrder ?? 0,
     active: input.active ?? true,
     updated_by: editedBy,
     updated_at: new Date().toISOString(),
   };
+  if (basePricePence !== undefined) row.base_price_pence = basePricePence;
+  if (pricePence !== undefined) row.price_pence = pricePence;
+  if (nonMemberPricePence !== undefined) row.non_member_price_pence = nonMemberPricePence;
+  if (input.memberDiscountOverridePercent !== undefined) row.member_discount_override_percent = input.memberDiscountOverridePercent;
+
   if (input.id) {
     const { error } = await supabase.from('bar_products').update(row).eq('id', input.id);
     if (error) throw new Error(`Failed to update product: ${error.message}`);
@@ -166,7 +233,7 @@ export async function getMemberAccount(userName: string): Promise<{ balancePence
   if (acctErr) throw new Error(`Failed to load account: ${acctErr.message}`);
 
   const { data: ledger, error: ledErr } = await supabase
-    .from('bar_ledger').select('*').eq('user_name', userName).order('created_at', { ascending: false }).limit(100);
+    .from('bar_ledger').select('*, bar_sales ( gross_total_pence, discount_pence )').eq('user_name', userName).order('created_at', { ascending: false }).limit(100);
   if (ledErr) throw new Error(`Failed to load history: ${ledErr.message}`);
 
   return {
@@ -174,7 +241,9 @@ export async function getMemberAccount(userName: string): Promise<{ balancePence
     balancePence: acct?.balance_pence ?? 0,
     history: (ledger ?? []).map((r: any) => ({
       id: r.id, type: r.type, amountPence: r.amount_pence, balanceAfterPence: r.balance_after_pence,
-      note: r.note, saleId: r.sale_id, staff: r.staff, paymentMethod: r.payment_method ?? null, createdAt: r.created_at,
+      note: r.note, saleId: r.sale_id, staff: r.staff, paymentMethod: r.payment_method ?? null,
+      grossTotalPence: r.bar_sales?.gross_total_pence ?? null, discountPence: r.bar_sales?.discount_pence ?? null,
+      createdAt: r.created_at,
     })),
   };
 }
@@ -190,7 +259,7 @@ export async function topUp(userName: string, amountPence: number, staff: string
   return data as number;
 }
 
-export async function walletPurchase(userName: string, items: BasketItem[], staff: string): Promise<{ saleId: string; balancePence: number; totalPence: number }> {
+export async function walletPurchase(userName: string, items: BasketItem[], staff: string): Promise<{ saleId: string; balancePence: number; totalPence: number; grossTotalPence: number; discountPence: number }> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase.rpc('bar_wallet_purchase', {
     p_user_name: userName,
@@ -198,13 +267,13 @@ export async function walletPurchase(userName: string, items: BasketItem[], staf
     p_staff: staff,
   });
   if (error) throw new Error(error.message);
-  return { saleId: data.sale_id, balancePence: data.balance_pence, totalPence: data.total_pence };
+  return { saleId: data.sale_id, balancePence: data.balance_pence, totalPence: data.total_pence, grossTotalPence: data.gross_total_pence, discountPence: data.discount_pence };
 }
 
 /** userName attributes a card/cash sale to a known member (e.g. "Pay by Card") without
  * touching their wallet — priced at the member rate. Omitted, it's a plain visitor sale
  * priced at the non-member rate, exactly as before. */
-export async function visitorSale(method: 'card' | 'cash', items: BasketItem[], staff: string, userName?: string): Promise<{ saleId: string; totalPence: number }> {
+export async function visitorSale(method: 'card' | 'cash', items: BasketItem[], staff: string, userName?: string): Promise<{ saleId: string; totalPence: number; grossTotalPence: number; discountPence: number }> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase.rpc('bar_visitor_sale', {
     p_payment_method: method,
@@ -213,7 +282,7 @@ export async function visitorSale(method: 'card' | 'cash', items: BasketItem[], 
     p_user_name: userName ?? null,
   });
   if (error) throw new Error(error.message);
-  return { saleId: data.sale_id, totalPence: data.total_pence };
+  return { saleId: data.sale_id, totalPence: data.total_pence, grossTotalPence: data.gross_total_pence, discountPence: data.discount_pence };
 }
 
 export async function voidSale(saleId: string, staff: string): Promise<void> {
@@ -239,17 +308,19 @@ export async function getReport(fromIso: string, toIso: string): Promise<BarRepo
   // Non-voided sales in range, with line items + product info
   const { data: sales, error: salesErr } = await supabase
     .from('bar_sales')
-    .select('id, payment_method, total_pence, voided, created_at, bar_sale_items ( qty, unit_price_pence, bar_products ( name, category ) )')
+    .select('id, payment_method, total_pence, discount_pence, voided, created_at, bar_sale_items ( qty, unit_price_pence, bar_products ( name, category ) )')
     .gte('created_at', fromIso).lte('created_at', toIso).eq('voided', false);
   if (salesErr) throw new Error(`Failed to load sales: ${salesErr.message}`);
 
   const byMethodPence = { wallet: 0, card: 0, cash: 0 };
   const byCategoryPence: Record<string, number> = {};
   const byProductMap = new Map<string, { name: string; qty: number; totalPence: number }>();
+  let discountsGivenPence = 0;
 
   for (const s of sales ?? []) {
     const method = s.payment_method as 'wallet' | 'card' | 'cash';
     byMethodPence[method] = (byMethodPence[method] ?? 0) + s.total_pence;
+    discountsGivenPence += s.discount_pence ?? 0;
     for (const item of (s.bar_sale_items ?? []) as any[]) {
       const line = item.qty * item.unit_price_pence;
       const cat = item.bar_products?.category ?? 'other';
@@ -288,6 +359,7 @@ export async function getReport(fromIso: string, toIso: string): Promise<BarRepo
     byProduct: [...byProductMap.values()].sort((a, b) => b.totalPence - a.totalPence),
     topupsPence, cardTopupsPence, refundsPence, cashSalesPence, outstandingPence,
     expectedCashPence: topupsPence + cashSalesPence - refundsPence,
+    discountsGivenPence,
   };
 }
 
@@ -306,6 +378,8 @@ export interface BarSaleSummary {
   userName: string | null;
   memberName: string | null;   // null for visitor sales
   totalPence: number;
+  grossTotalPence: number;
+  discountPence: number;
   voided: boolean;
   items: BarSaleItem[];
 }
@@ -314,7 +388,7 @@ export async function getRecentSales(limit = 40): Promise<BarSaleSummary[]> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
     .from('bar_sales')
-    .select('id, created_at, payment_method, user_name, total_pence, voided, bar_sale_items ( qty, unit_price_pence, bar_products ( name ) )')
+    .select('id, created_at, payment_method, user_name, total_pence, gross_total_pence, discount_pence, voided, bar_sale_items ( qty, unit_price_pence, bar_products ( name ) )')
     .order('created_at', { ascending: false })
     .limit(limit);
   if (error) throw new Error(`Failed to load sales: ${error.message}`);
@@ -326,6 +400,8 @@ export async function getRecentSales(limit = 40): Promise<BarSaleSummary[]> {
     userName: s.user_name,
     memberName: s.user_name ? (names.get(s.user_name.toLowerCase()) || s.user_name) : null,
     totalPence: s.total_pence,
+    grossTotalPence: s.gross_total_pence,
+    discountPence: s.discount_pence,
     voided: s.voided,
     items: (s.bar_sale_items ?? []).map((i: any) => ({ name: i.bar_products?.name ?? 'Item', qty: i.qty, unitPricePence: i.unit_price_pence })),
   }));

@@ -10,7 +10,15 @@ import { useRouter } from 'next/navigation';
 import { hasRole } from '@/lib/role-utils';
 import { getInputClasses, getCardClasses, getAlertClasses } from '@/config/theme-helpers';
 
-type Tab = 'general' | 'labels' | 'rowland';
+type Tab = 'general' | 'labels' | 'rowland' | 'bar';
+
+const BAR_PRICING_MODES: [string, string, string][] = [
+  // value, label, hint
+  ['single', 'Single price', 'One price per product — everyone pays the same.'],
+  ['split', 'Split pricing', 'A member price and a visitor price set independently per product.'],
+  ['member_discount', 'Member discount (whole bill)', 'One price per product; a member’s whole basket gets the discount rate below off at checkout.'],
+  ['member_product_discount', 'Member product discount', 'One price per product; the discount rate below applies by default, but any product can override it (including to 0%) in Products.'],
+];
 
 const ROWLAND_FIELDS: [string, string, string][] = [
   // key, label, hint
@@ -55,6 +63,11 @@ export default function AdminConfigPage() {
   const [isEditingRowland, setIsEditingRowland] = useState(false);
   const [savingRowland, setSavingRowland] = useState(false);
 
+  const [editBar, setEditBar] = useState<Record<string, string>>({});
+  const [isEditingBar, setIsEditingBar] = useState(false);
+  const [savingBar, setSavingBar] = useState(false);
+  const [barError, setBarError] = useState<string | null>(null);
+
   // Auth guard
   useEffect(() => {
     if (status === 'loading') return;
@@ -73,6 +86,7 @@ export default function AdminConfigPage() {
           setEditGeneral(data.config);
           setEditLabels(data.config);
           setEditRowland(data.config);
+          setEditBar(data.config);
         } else {
           setError(data.error || 'Failed to load config');
         }
@@ -155,6 +169,34 @@ export default function AdminConfigPage() {
     }
   }
 
+  async function saveBar() {
+    setBarError(null);
+    const rate = parseInt(editBar.bar_member_discount_percent ?? '', 10);
+    if (!Number.isFinite(rate) || rate < 0 || rate > 100) {
+      setBarError('Member discount rate must be between 0 and 100');
+      return;
+    }
+    setSavingBar(true);
+    try {
+      const updates = {
+        bar_pricing_mode: editBar.bar_pricing_mode ?? 'member_product_discount',
+        bar_member_discount_percent: String(rate),
+      };
+      const res = await fetch('/api/admin/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+      });
+      if (!res.ok) throw new Error();
+      setConfig((prev) => ({ ...prev, ...updates }));
+      setIsEditingBar(false);
+    } catch {
+      setBarError('Failed to save bar pricing settings');
+    } finally {
+      setSavingBar(false);
+    }
+  }
+
   if (status === 'loading' || loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -182,7 +224,7 @@ export default function AdminConfigPage() {
 
         {/* Tabs */}
         <div className="border-b border-gray-200 flex gap-6">
-          {(['general', 'labels', 'rowland'] as Tab[]).map((t) => (
+          {(['general', 'labels', 'rowland', 'bar'] as Tab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -190,7 +232,7 @@ export default function AdminConfigPage() {
                 tab === t ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
               }`}
             >
-              {t === 'general' ? 'General' : t === 'labels' ? 'Labels' : 'Rowland'}
+              {t === 'general' ? 'General' : t === 'labels' ? 'Labels' : t === 'rowland' ? 'Rowland' : 'Bar'}
             </button>
           ))}
         </div>
@@ -410,6 +452,75 @@ export default function AdminConfigPage() {
                   <p className="text-xs text-gray-700 mt-1">{hint}</p>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Bar tab ── */}
+        {tab === 'bar' && (
+          <div className={`${getCardClasses('md')} space-y-4`}>
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-medium text-gray-700">Bar pricing</h2>
+              {!isEditingBar ? (
+                <button onClick={() => { setEditBar(config); setIsEditingBar(true); }} className="text-sm text-blue-600 hover:text-blue-800">
+                  Edit
+                </button>
+              ) : (
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => { setEditBar(config); setIsEditingBar(false); setBarError(null); }}
+                    className="text-sm text-gray-500 hover:text-gray-700"
+                  >
+                    Cancel
+                  </button>
+                  <button onClick={saveBar} disabled={savingBar} className="text-sm text-blue-600 hover:text-blue-800 disabled:opacity-50">
+                    {savingBar ? 'Saving...' : 'Save'}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {barError && <div className={getAlertClasses('danger')}>{barError}</div>}
+
+            <p className="text-xs text-gray-700">Club-wide — controls how every product on the bar till (/bar) is priced.</p>
+
+            <div className="space-y-4 text-sm">
+              <div>
+                <label className="block text-gray-900 mb-1">Pricing mode</label>
+                {isEditingBar ? (
+                  <select
+                    value={editBar.bar_pricing_mode ?? 'member_product_discount'}
+                    onChange={(e) => setEditBar((prev) => ({ ...prev, bar_pricing_mode: e.target.value }))}
+                    className={`${getInputClasses()} max-w-sm`}
+                  >
+                    {BAR_PRICING_MODES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                  </select>
+                ) : (
+                  <span className="text-gray-900">{BAR_PRICING_MODES.find(([v]) => v === config.bar_pricing_mode)?.[1] || '—'}</span>
+                )}
+                <p className="text-xs text-gray-700 mt-1">
+                  {BAR_PRICING_MODES.find(([v]) => v === (isEditingBar ? editBar.bar_pricing_mode : config.bar_pricing_mode))?.[2]}
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-gray-900 mb-1">Member discount rate (%)</label>
+                {isEditingBar ? (
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={editBar.bar_member_discount_percent ?? ''}
+                    onChange={(e) => setEditBar((prev) => ({ ...prev, bar_member_discount_percent: e.target.value }))}
+                    className={`${getInputClasses()} max-w-[10rem]`}
+                  />
+                ) : (
+                  <span className="text-gray-900">{config.bar_member_discount_percent ? `${config.bar_member_discount_percent}%` : '—'}</span>
+                )}
+                <p className="text-xs text-gray-700 mt-1">
+                  Used as the whole-bill discount in Member discount mode, and as the default rate any product can override in Member product discount mode. Not used in Single price or Split pricing modes.
+                </p>
+              </div>
             </div>
           </div>
         )}
