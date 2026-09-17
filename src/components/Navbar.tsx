@@ -662,6 +662,14 @@ export function Navbar() {
     </button>
   );
 
+  // The dedicated bar-till login never sees a navbar — it only ever visits /bar,
+  // and the till hides all portal navigation there. Admin/Committee visiting /bar
+  // through their own login still see the normal navbar (this only fires for the
+  // 'Bar' role itself). Placed after every hook above runs, never before —
+  // conditionally skipping hooks based on a role that can change between renders
+  // (e.g. via impersonation) would break React's rules of hooks.
+  if (roles.includes('Bar')) return null;
+
   return (
     <nav className="sticky top-0 z-50 bg-white shadow-sm print:hidden">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">

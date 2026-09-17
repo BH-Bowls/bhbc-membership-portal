@@ -15,6 +15,8 @@
     "db-dump": "dotenv -e .env.prod.local -- tsx scripts/db-dump.ts",
     "db-restore-dev": "dotenv -e .env.local -- tsx scripts/db-restore.ts",
     "db-restore-production": "dotenv -e .env.prod.local -- tsx scripts/db-restore.ts",
+    "create-shared-account-dev": "dotenv -e .env.local -- tsx scripts/create-shared-account.ts",
+    "create-shared-account-production": "dotenv -e .env.prod.local -- tsx scripts/create-shared-account.ts",
     "build": "next build --webpack",
     "start": "next start --port 3001",
     "lint": "next lint",

@@ -47,6 +47,10 @@ declare module 'next-auth/jwt' {
     loginTime: number;
     mustChangePassword?: boolean; // true when admin set a temporary password
 
+    // Bar till (role 'Bar') idle tracking — see jwt()/session() in src/lib/auth.ts
+    barLastActivityAt?: number;
+    barIdleExpired?: boolean;
+
     // Impersonation fields
     isImpersonating?: boolean;
     originalAdmin?: {

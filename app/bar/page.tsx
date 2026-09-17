@@ -20,9 +20,9 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { useSession } from 'next-auth/react';
+import { useSession, signIn } from 'next-auth/react';
 import jsQR from 'jsqr';
-import { isCommitteeMember } from '@/lib/role-utils';
+import { canUseBarTill } from '@/lib/role-utils';
 import { priceItem, type BarPricingConfig, type BarProduct, type BarAccount, type BarPerson, type BarLedgerEntry, type BarReport, type BarSaleSummary, type BarSaleItem } from '@/lib/bar-supabase';
 
 const CATEGORIES: { key: string; label: string }[] = [
@@ -66,7 +66,7 @@ interface MemberOption { userName: string; fullName: string }
 export default function BarTillPage() {
   const { data: session, status } = useSession();
   const role = session?.user?.role ?? '';
-  const allowed = isCommitteeMember(role);
+  const allowed = canUseBarTill(role);
 
   // Starts straight on the person picker — "who's serving" is no longer a
   // mandatory front gate, only asked for contextually (see chooseVolunteer).
@@ -357,6 +357,7 @@ export default function BarTillPage() {
 
   // ── guards ──────────────────────────────────────────────────────────────────
   if (status === 'loading') return null;
+  if (status === 'unauthenticated') return <BarPinLogin />;
   if (!allowed) {
     return (
       <div className="min-h-screen bg-gray-50">
@@ -685,6 +686,71 @@ export default function BarTillPage() {
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
+
+// /bar's own login — a PIN pad like /kiosk's, but for the dedicated 'bar' till
+// account rather than 'clubhouse'. No special PIN mechanism: whatever's typed is
+// sent straight through as the password to the same credentials flow every login
+// uses (see app/kiosk/page.tsx for the identical pattern). /bar is a public route
+// (proxy.ts) so an unauthenticated visit lands here instead of bouncing to /login.
+function BarPinLogin() {
+  const [pin, setPin] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  function handlePinChange(value: string) {
+    setPin(value.replace(/\D/g, ''));
+    setError('');
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!pin) return;
+    setLoading(true); setError('');
+    try {
+      const result = await signIn('credentials', { identifier: 'bar', password: pin, redirect: false });
+      if (result?.error) { setError('Invalid PIN'); setPin(''); }
+      // On success, useSession() picks up the new session and BarTillPage re-renders.
+    } catch {
+      setError('An error occurred. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-blue-600 flex flex-col items-center justify-center p-4">
+      <div className="text-center mb-8">
+        <h1 className="text-4xl font-bold text-white mb-2">Burgess Hill Bowls Club</h1>
+        <p className="text-blue-100 text-xl">Bar Till</p>
+      </div>
+      <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
+        <h2 className="text-2xl font-semibold text-gray-900 text-center mb-6">Enter PIN to Continue</h2>
+        <form onSubmit={handleSubmit}>
+          <input
+            type="password"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            value={pin}
+            onChange={(e) => handlePinChange(e.target.value)}
+            placeholder="••••••"
+            maxLength={8}
+            autoFocus
+            disabled={loading}
+            className="w-full text-center text-4xl tracking-[0.5em] py-4 px-6 border-2 border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-50"
+          />
+          {error && <p className="mt-4 text-center text-red-600 font-medium">{error}</p>}
+          <button
+            type="submit"
+            disabled={loading || !pin}
+            className="w-full mt-6 py-4 px-6 text-xl font-semibold text-white bg-blue-600 rounded-xl hover:bg-blue-700 focus:outline-none focus:ring-4 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {loading ? 'Signing in…' : 'Enter'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
 
 // Camera modal for scanning a member's QR (their userName, shown to them on
 // /profile). Decodes with jsQR against captured video frames rather than the

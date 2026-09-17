@@ -6,13 +6,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { isCommitteeMember } from '@/lib/role-utils';
+import { canUseBarTill } from '@/lib/role-utils';
 import { getCashAccounts, addCashAccount } from '@/lib/bar-supabase';
 
 export async function GET() {
   const session = await getServerSession(authOptions);
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (!isCommitteeMember(session.user.role)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  if (!canUseBarTill(session.user.role)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   try {
     return NextResponse.json({ accounts: await getCashAccounts() });
   } catch (err: any) {
@@ -23,7 +23,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (!isCommitteeMember(session.user.role)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  if (!canUseBarTill(session.user.role)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   const body = await req.json();
   if (!body.userName) return NextResponse.json({ error: 'userName required' }, { status: 400 });
   try {

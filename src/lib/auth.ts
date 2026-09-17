@@ -10,7 +10,7 @@ import { NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import { authenticateUser } from './auth-supabase';
 import { clearColumnMapCache } from './sheets';
-import { parseRoles } from './role-utils';
+import { parseRoles, hasRole } from './role-utils';
 
 /**
  * NextAuth configuration object
@@ -110,6 +110,9 @@ export const authOptions: NextAuthOptions = {
         // Store login time for absolute expiration check
         // Used to enforce 90-day maximum session duration
         token.loginTime = Date.now();
+        // Bar till (role 'Bar'): tracks idle time separately from loginTime — see the
+        // refresh block below and the 4h/24h check in session().
+        if (hasRole(user.role, 'Bar')) token.barLastActivityAt = Date.now();
 
         // Initialize impersonation fields (not impersonating at login)
         token.isImpersonating = false;
@@ -174,6 +177,19 @@ export const authOptions: NextAuthOptions = {
         }
       }
 
+      // Bar till idle tracking (not on initial sign-in — barLastActivityAt is already
+      // fresh there). Compares against the PREVIOUS value before refreshing it, so
+      // session() — which runs right after this, in the same request cycle — can
+      // still see whether this request arrived after the idle window had elapsed.
+      // Refreshing first would make the idle check always pass, since it would be
+      // comparing "now" against a timestamp of "now".
+      if (!user && hasRole(token.role as string, 'Bar')) {
+        const fourHoursInMs = 4 * 60 * 60 * 1000;
+        const previous = token.barLastActivityAt as number | undefined;
+        token.barIdleExpired = !!previous && Date.now() - previous > fourHoursInMs;
+        token.barLastActivityAt = Date.now();
+      }
+
       return token;
     },
 
@@ -193,8 +209,6 @@ export const authOptions: NextAuthOptions = {
         throw new Error('Invalid session token');
       }
 
-      // Calculate absolute expiration time (90 days from login)
-      const threeMonthsInMs = 90 * 24 * 60 * 60 * 1000; // 90 days in milliseconds
       const loginTime = token.loginTime as number;
 
       // Invalidate kiosk sessions created before 2026-05-18 (unauthorised access via removed guest link)
@@ -202,15 +216,28 @@ export const authOptions: NextAuthOptions = {
         throw new Error('Session expired');
       }
 
-      // Check if session has exceeded absolute expiration
-      if (loginTime) {
-        const currentTime = Date.now();
-        const timeSinceLogin = currentTime - loginTime;
-
-        if (timeSinceLogin > threeMonthsInMs) {
-          // Session has exceeded 3 months - force logout
-          // This prevents indefinite sessions even with continued activity
+      if (hasRole(token.role as string, 'Bar')) {
+        // Bar till: much tighter than the general policy below — a lost/stolen
+        // tablet's session self-expires fast. 24h absolute regardless of activity,
+        // or 4h since the last request (see the jwt() callback for how
+        // barIdleExpired is computed against the pre-refresh timestamp).
+        const twentyFourHoursInMs = 24 * 60 * 60 * 1000;
+        if (loginTime && Date.now() - loginTime > twentyFourHoursInMs) {
           throw new Error('Session expired');
+        }
+        if (token.barIdleExpired) {
+          throw new Error('Session expired');
+        }
+      } else {
+        // Check if session has exceeded absolute expiration (90 days)
+        const threeMonthsInMs = 90 * 24 * 60 * 60 * 1000; // 90 days in milliseconds
+        if (loginTime) {
+          const timeSinceLogin = Date.now() - loginTime;
+          if (timeSinceLogin > threeMonthsInMs) {
+            // Session has exceeded 3 months - force logout
+            // This prevents indefinite sessions even with continued activity
+            throw new Error('Session expired');
+          }
         }
       }
 
@@ -245,6 +272,12 @@ export const authOptions: NextAuthOptions = {
   session: {
     strategy: 'jwt',  // Use JWT tokens (stored client-side) instead of database sessions
     maxAge: 45 * 24 * 60 * 60,  // Session cookie expires after 45 days of inactivity; 90-day absolute ceiling enforced above
+    // Default (24h) is too coarse for the Bar till's 4h idle check above: NextAuth only
+    // re-issues the JWT cookie at most once per updateAge even under continuous use, so
+    // without this, barLastActivityAt read back on a later request could be up to a day
+    // stale — session() would then see "idle" during genuinely continuous use. 5 minutes
+    // is granular enough for a 4h window and has no visible effect on any other role.
+    updateAge: 5 * 60,
   },
 
   // Secret key for signing JWT tokens (MUST be set in environment variables)

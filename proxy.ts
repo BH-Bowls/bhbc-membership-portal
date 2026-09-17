@@ -26,6 +26,7 @@ function isPublicRoute(pathname: string): boolean {
   const exactPages = [
     '/fixtures', '/members', '/friendlies', '/competitions',
     '/tea-rota', '/cleaning-rota', '/sweeping-rota', '/rowland', '/leagues',
+    '/bar', // the till has its own PIN login (BarPinLogin, app/bar/page.tsx) instead of /login
   ];
   if (exactPages.includes(pathname)) return true;
 
@@ -113,6 +114,9 @@ function isPublicRoute(pathname: string): boolean {
  * matcher, so it never reaches the gate.
  */
 function isPinExempt(pathname: string): boolean {
+  // The till has its own PIN login (a member-area PIN gate in front of that would be
+  // a confusing second, unrelated PIN prompt).
+  if (pathname === '/bar') return true;
   if (pathname === '/rowland' || pathname.startsWith('/rowland/')) return true;
   if (pathname.startsWith('/api/rowland')) return true;
   // Competition rules — a public page linked from the club website, plus the single
