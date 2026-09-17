@@ -687,15 +687,39 @@ export default function BarTillPage() {
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
+const BAR_DEVICE_ID_KEY = 'bar_device_id';
+const BAR_PAIRING_CODE_KEY = 'bar_pairing_code';
+
 // /bar's own login — a PIN pad like /kiosk's, but for the dedicated 'bar' till
 // account rather than 'clubhouse'. No special PIN mechanism: whatever's typed is
 // sent straight through as the password to the same credentials flow every login
 // uses (see app/kiosk/page.tsx for the identical pattern). /bar is a public route
 // (proxy.ts) so an unauthenticated visit lands here instead of bouncing to /login.
+//
+// Also generates and registers this device's id/pairing code on first run (kept in
+// localStorage across reloads) and sends the id along with every login attempt —
+// authorize() (src/lib/auth.ts) rejects a 'Bar' login from an unapproved device. See
+// /admin/bar-devices for the approval side.
 function BarPinLogin() {
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [deviceId, setDeviceId] = useState('');
+  const [pairingCode, setPairingCode] = useState('');
+
+  useEffect(() => {
+    let id = localStorage.getItem(BAR_DEVICE_ID_KEY);
+    let code = localStorage.getItem(BAR_PAIRING_CODE_KEY);
+    if (!id || !code) {
+      id = crypto.randomUUID();
+      code = String(Math.floor(100000 + Math.random() * 900000));
+      localStorage.setItem(BAR_DEVICE_ID_KEY, id);
+      localStorage.setItem(BAR_PAIRING_CODE_KEY, code);
+    }
+    setDeviceId(id); setPairingCode(code);
+    fetch('/api/bar/devices', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceId: id, pairingCode: code }) }).catch(() => {});
+  }, []);
 
   function handlePinChange(value: string) {
     setPin(value.replace(/\D/g, ''));
@@ -704,11 +728,11 @@ function BarPinLogin() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!pin) return;
+    if (!pin || !deviceId) return;
     setLoading(true); setError('');
     try {
-      const result = await signIn('credentials', { identifier: 'bar', password: pin, redirect: false });
-      if (result?.error) { setError('Invalid PIN'); setPin(''); }
+      const result = await signIn('credentials', { identifier: 'bar', password: pin, deviceId, redirect: false });
+      if (result?.error) { setError(result.error); setPin(''); }
       // On success, useSession() picks up the new session and BarTillPage re-renders.
     } catch {
       setError('An error occurred. Please try again.');
@@ -748,6 +772,12 @@ function BarPinLogin() {
           </button>
         </form>
       </div>
+      {pairingCode && (
+        <p className="mt-8 text-blue-100 text-sm text-center max-w-xs">
+          New device pairing code: <span className="font-mono font-semibold text-white">{pairingCode}</span>
+          <br />An admin needs to approve this device on Bar Till Devices before it can log in.
+        </p>
+      )}
     </div>
   );
 }

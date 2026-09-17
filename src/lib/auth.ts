@@ -11,6 +11,7 @@ import CredentialsProvider from 'next-auth/providers/credentials';
 import { authenticateUser } from './auth-supabase';
 import { clearColumnMapCache } from './sheets';
 import { parseRoles, hasRole } from './role-utils';
+import { isDeviceTrusted } from './bar-devices-supabase';
 
 /**
  * NextAuth configuration object
@@ -28,6 +29,9 @@ export const authOptions: NextAuthOptions = {
       credentials: {
         identifier: { label: 'Username or Email', type: 'text' },
         password: { label: 'Password', type: 'password' },
+        // Only ever sent by the bar till's own PIN login (BarPinLogin, app/bar/page.tsx)
+        // — checked below only when the authenticated account's role is 'Bar'.
+        deviceId: { label: 'Device ID', type: 'text' },
       },
 
       /**
@@ -74,6 +78,15 @@ export const authOptions: NextAuthOptions = {
 
         // Check if member authentication succeeded
         if (result.success && result.user) {
+          // Bar till: the password alone isn't enough — the physical device also has
+          // to be on the admin-approved allowlist (see /admin/bar-devices). Checked
+          // here, only for this role, rather than widening it to every login.
+          if (hasRole(result.user.role, 'Bar')) {
+            const deviceId = credentials.deviceId;
+            if (!deviceId || !(await isDeviceTrusted(deviceId))) {
+              throw new Error('This device has not been approved. Ask an admin to approve it on Bar Till Devices.');
+            }
+          }
           return result.user;
         }
 
