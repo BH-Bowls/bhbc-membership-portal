@@ -369,8 +369,11 @@ export async function createReserveFixture(
   const insertRow = {
     season_id: original.season_id,
     fixture_type: original.fixture_type,
-    club_name: hasTeamName ? options!.teamName!.trim() : original.club_name,
+    // club_name has a FK to club_profiles, so a custom reserve-team name (not a real club)
+    // goes in description instead — same convention used elsewhere for no-real-club fixtures.
+    club_name: hasTeamName ? null : original.club_name,
     club_suffix: hasTeamName ? '' : '2',
+    description: hasTeamName ? options!.teamName!.trim() : null,
     date: original.date,
     time: original.time,
     home_away: original.home_away,
