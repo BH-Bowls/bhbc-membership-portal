@@ -84,6 +84,7 @@ interface FixtureFormData {
   type: GameType;
   clubName: string;
   clubSuffix: string;
+  description: string;
   homeAway: 'H' | 'A';
   format: string;
   ladiesMen: string;
@@ -100,6 +101,7 @@ const defaultFormData: FixtureFormData = {
   type: 'Friendly',
   clubName: '',
   clubSuffix: '',
+  description: '',
   homeAway: 'H',
   format: '',
   ladiesMen: '',
@@ -136,6 +138,7 @@ function FixtureModal({ isOpen, editGame, onClose, onSave, saving, error, gameTy
         type: editGame.gameType || 'Friendly',
         clubName: editGame.clubName || '',
         clubSuffix: editGame.clubSuffix || '',
+        description: editGame.description || '',
         homeAway: editGame.homeAway || 'H',
         format: editGame.format || '',
         ladiesMen: editGame.ladiesMen || '',
@@ -204,9 +207,12 @@ function FixtureModal({ isOpen, editGame, onClose, onSave, saving, error, gameTy
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            {/* Club Name — datalist for known clubs + freeform for ad-hoc opponents */}
+            {/* Club Name — datalist for known clubs + freeform for ad-hoc opponents.
+                Leave blank for an internal event with no opponent (e.g. a drive) and
+                use Description instead — club_name has a DB foreign key to real clubs,
+                so free text here would fail to save. */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Club Name *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Club Name</label>
               <input
                 type="text"
                 list="club-names-list"
@@ -234,6 +240,22 @@ function FixtureModal({ isOpen, editGame, onClose, onSave, saving, error, gameTy
               />
             </div>
           </div>
+
+          {/* Description — required in place of Club Name for an internal event with
+              no opposing club (e.g. "End of Season Drive") */}
+          {!form.clubName.trim() && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Description *</label>
+              <input
+                type="text"
+                value={form.description}
+                onChange={set('description')}
+                placeholder="e.g. End of Season Drive"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+              />
+              <p className="text-xs text-gray-500 mt-1">No opponent club — describes the internal event instead.</p>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-4">
             {/* H/A */}
@@ -367,7 +389,7 @@ function FixtureModal({ isOpen, editGame, onClose, onSave, saving, error, gameTy
           </button>
           <button
             onClick={() => onSave(form)}
-            disabled={saving || !form.date || !form.clubName}
+            disabled={saving || !form.date || (!form.clubName.trim() && !form.description.trim())}
             className={getButtonClasses('primary', 'md')}
           >
             {saving ? 'Saving…' : editGame ? 'Save Changes' : 'Add Fixture'}
