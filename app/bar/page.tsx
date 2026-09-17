@@ -475,7 +475,7 @@ export default function BarTillPage() {
                   <button key={p.id} onClick={() => addToBasket(p)}
                     className={`p-3 rounded-lg border border-gray-200 ${CATEGORY_COLORS[p.category]?.tile ?? ''} bg-white text-left hover:border-blue-400 hover:shadow-sm transition-colors`}>
                     <div className="font-medium text-gray-900 text-sm leading-tight">{p.name}</div>
-                    <div className="text-gray-600 text-sm">{fmt(unitPrice(p))}</div>
+                    <div className="text-gray-600 text-sm">{fmt(unitGrossPrice(p))}</div>
                   </button>
                 ))}
               </div>
@@ -493,7 +493,7 @@ export default function BarTillPage() {
                         <button onClick={() => changeQty(l.product.id, -1)} className="w-6 h-6 rounded bg-gray-100">−</button>
                         <span className="w-5 text-center">{l.qty}</span>
                         <button onClick={() => changeQty(l.product.id, 1)} className="w-6 h-6 rounded bg-gray-100">+</button>
-                        <span className="w-14 text-right">{fmt(unitPrice(l.product) * l.qty)}</span>
+                        <span className="w-14 text-right">{fmt(unitGrossPrice(l.product) * l.qty)}</span>
                       </div>
                     </div>
                   ))}
