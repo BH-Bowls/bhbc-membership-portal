@@ -935,7 +935,7 @@ export function Navbar() {
                           </div>
                         )}
 
-                        {/* Profile & Renewals */}
+                        {/* Profile, My Account & Renewals */}
                         <Link
                           href="/profile"
                           onClick={(e) => {
@@ -945,6 +945,16 @@ export function Navbar() {
                           className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
                         >
                           My Profile
+                        </Link>
+                        <Link
+                          href="/account"
+                          onClick={(e) => {
+                            handleNavigation(e, '/account');
+                            setProfileMenuOpen(false);
+                          }}
+                          className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                        >
+                          My Account
                         </Link>
                         <Link
                           href="/renewals"
@@ -1240,7 +1250,7 @@ export function Navbar() {
                     </div>
                   )}
                   <div className="px-2 space-y-1">
-                    {/* Profile & Renewals */}
+                    {/* Profile, My Account & Renewals */}
                     <Link
                       href="/profile"
                       onClick={(e) => {
@@ -1250,6 +1260,16 @@ export function Navbar() {
                       className="block px-3 py-2 text-base font-medium text-gray-700 hover:bg-gray-100 rounded-md"
                     >
                       My Profile
+                    </Link>
+                    <Link
+                      href="/account"
+                      onClick={(e) => {
+                        handleNavigation(e, '/account');
+                        setMobileMenuOpen(false);
+                      }}
+                      className="block px-3 py-2 text-base font-medium text-gray-700 hover:bg-gray-100 rounded-md"
+                    >
+                      My Account
                     </Link>
                     <Link
                       href="/renewals"

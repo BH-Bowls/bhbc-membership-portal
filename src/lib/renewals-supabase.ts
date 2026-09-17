@@ -92,6 +92,29 @@ export function getCurrentSeasonYear(): number {
   return new Date().getFullYear();
 }
 
+/**
+ * The most recent season_year this member has confirmed renewing_membership = true for,
+ * or null if they never have. Used by the My Account membership card to derive a
+ * "valid until" date (see app/api/account/membership-card/route.ts) -- interim, since
+ * renewals has no stored expiry date yet.
+ */
+export async function getLatestRenewedSeason(userName: string): Promise<number | null> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('renewals')
+    .select('season_year')
+    .ilike('username', userName)
+    .eq('renewing_membership', true)
+    .order('season_year', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(`Failed to fetch latest renewed season for ${userName}: ${error.message}`);
+  if (!data) {
+    return null;
+  }
+  return data.season_year;
+}
+
 function mapRow(row: any): Renewal {
   return {
     userName: row.username,

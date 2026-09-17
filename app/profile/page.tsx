@@ -3,9 +3,8 @@
 
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
-import QRCode from 'qrcode';
 import { useRouter } from 'next/navigation';
 import { useNavbarConfig } from '@/lib/navbar-config';
 import { SearchableSelect } from '@/components/SearchableSelect';
@@ -69,18 +68,6 @@ export default function ProfilePage() {
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [editedProfile, setEditedProfile] = useState<Partial<ProfileData>>({});
-
-  // "Show my bar QR" — a scannable version of the username, so bar staff can find
-  // a member on the till instantly (see app/bar/page.tsx's QrScanModal) instead of
-  // typing their name. No new auth risk: selecting a member at the till has never
-  // required proof of identity.
-  const [showQr, setShowQr] = useState(false);
-  const qrCanvasRef = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    if (showQr && qrCanvasRef.current && session?.user?.userName) {
-      QRCode.toCanvas(qrCanvasRef.current, session.user.userName, { width: 200 }).catch(() => {});
-    }
-  }, [showQr, session?.user?.userName]);
 
   // Load profile on mount and when session changes (uses session.user.userName automatically)
   useEffect(() => {
@@ -303,23 +290,11 @@ export default function ProfilePage() {
             {!isEditing && (
               <div className="flex justify-end space-x-3 mb-6">
                 <button
-                  onClick={() => setShowQr((v) => !v)}
-                  className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors cursor-pointer"
-                >
-                  {showQr ? 'Hide' : 'Show'} my bar QR
-                </button>
-                <button
                   onClick={handleEdit}
                   className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors cursor-pointer"
                 >
                   Edit Profile
                 </button>
-              </div>
-            )}
-            {!isEditing && showQr && (
-              <div className="mb-6 flex flex-col items-center">
-                <canvas ref={qrCanvasRef} />
-                <p className="text-xs text-gray-500 mt-2">Show this to bar staff to be found on the till instantly.</p>
               </div>
             )}
 
