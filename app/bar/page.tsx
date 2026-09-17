@@ -24,6 +24,10 @@ import { useSession, signIn } from 'next-auth/react';
 import jsQR from 'jsqr';
 import { canUseBarTill } from '@/lib/role-utils';
 import { priceItem, type BarPricingConfig, type BarProduct, type BarAccount, type BarPerson, type BarLedgerEntry, type BarReport, type BarSaleSummary, type BarSaleItem } from '@/lib/bar-supabase';
+import { useOnlineStatus } from '@/hooks/useOnlineStatus';
+import { enqueue, listQueued, dequeue, newQueueId, type QueuedEntry } from '@/lib/bar-offline-queue';
+
+const OFFLINE_WALLET_DELTAS_KEY = 'bar_offline_wallet_deltas';
 
 const CATEGORIES: { key: string; label: string }[] = [
   { key: 'beer',    label: 'Beers / Lagers' },
@@ -103,6 +107,34 @@ export default function BarTillPage() {
   const [showRefund, setShowRefund] = useState(false);
   const [refundAmt, setRefundAmt] = useState('');
 
+  // ── offline (see src/hooks/useOnlineStatus.ts, src/lib/bar-offline-queue.ts) ────
+  const { offline, retry: retryOnline } = useOnlineStatus();
+  const [queuedCount, setQueuedCount] = useState(0);
+  const [syncing, setSyncing] = useState(false);
+  // A member's spendable balance *while offline*, starting at zero regardless of
+  // their last-cached real balance — never trust a stale balance for spending
+  // decisions. Only what's topped up during this offline window is spendable
+  // offline; replayed as real ledger deltas against the server's true balance on
+  // reconnect (see syncQueue). Persisted so it survives a reload while offline.
+  const [offlineWalletDeltas, setOfflineWalletDeltas] = useState<Record<string, number>>({});
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(OFFLINE_WALLET_DELTAS_KEY);
+      if (raw) setOfflineWalletDeltas(JSON.parse(raw));
+    } catch { /* ignore corrupt/missing data */ }
+    refreshQueuedCount();
+  }, []);
+  function refreshQueuedCount() {
+    listQueued().then((q) => setQueuedCount(q.length)).catch(() => {});
+  }
+  function addOfflineWalletDelta(userName: string, deltaPence: number) {
+    setOfflineWalletDeltas((prev) => {
+      const next = { ...prev, [userName]: (prev[userName] ?? 0) + deltaPence };
+      try { localStorage.setItem(OFFLINE_WALLET_DELTAS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  }
+
   const volunteerName = barPersons.find((b) => b.userName === volunteer)?.fullName ?? '';
 
   const load = useCallback(async () => {
@@ -121,6 +153,58 @@ export default function BarTillPage() {
       if (c.pricingConfig) setPricingConfig(c.pricingConfig);
     } catch { setError('Failed to load bar data'); }
   }, []);
+
+  // Drains the offline queue in order on reconnect — re-verifies the session/device
+  // is still valid first (a revoked device or expired session must not silently sync),
+  // and stops at the first failure rather than risking reordering the rest.
+  const syncQueue = useCallback(async () => {
+    if (syncing) return;
+    setSyncing(true); setError('');
+    try {
+      const check = await fetch('/api/bar/pricing-config');
+      if (!check.ok) {
+        if (check.status === 401 || check.status === 403) {
+          setError('Session no longer valid — log in again before syncing queued sales.');
+        }
+        return;
+      }
+      const queue = await listQueued();
+      for (const entry of queue) {
+        let res: Response;
+        if (entry.kind === 'sale') {
+          res = await fetch('/api/bar/sale', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ method: entry.method, items: entry.items, staff: entry.staff, userName: entry.userName }) });
+        } else if (entry.kind === 'topup') {
+          res = await fetch('/api/bar/topup', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userName: entry.userName, amountPence: entry.amountPence, staff: entry.staff, paymentMethod: entry.paymentMethod }) });
+        } else {
+          res = await fetch('/api/bar/purchase', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userName: entry.userName, items: entry.items, staff: entry.staff }) });
+        }
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}) as any);
+          setError(`Sync stopped: ${data.error || 'a queued item failed'} — will retry the rest later.`);
+          break;
+        }
+        await dequeue(entry.id);
+      }
+      const remaining = await listQueued();
+      setQueuedCount(remaining.length);
+      if (remaining.length === 0) {
+        setOfflineWalletDeltas({});
+        try { localStorage.removeItem(OFFLINE_WALLET_DELTAS_KEY); } catch { /* ignore */ }
+      }
+      await load();
+    } finally {
+      setSyncing(false);
+    }
+  }, [syncing, load]);
+
+  // Auto-sync the moment connectivity comes back, if anything's queued.
+  useEffect(() => {
+    if (!offline && queuedCount > 0) syncQueue();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [offline]);
 
   useEffect(() => { if (allowed) load(); }, [allowed, load]);
   useEffect(() => { window.scrollTo(0, 0); }, [view]);
@@ -185,6 +269,10 @@ export default function BarTillPage() {
   const basketTotal = basket.reduce((s, l) => s + unitPrice(l.product) * l.qty, 0);
   const basketGross = basket.reduce((s, l) => s + unitGrossPrice(l.product) * l.qty, 0);
   const basketDiscount = basketGross - basketTotal;
+  // What the member can actually spend right now — the real (possibly stale) balance
+  // when online, or only what's been topped up this offline session when not (see
+  // offlineWalletDeltas above; never the stale cached balance while offline).
+  const availableBalancePence = member ? (offline ? (offlineWalletDeltas[member.userName] ?? 0) : member.balancePence) : 0;
   function addToBasket(p: BarProduct) {
     setBasket((prev) => {
       const found = prev.find((l) => l.product.id === p.id);
@@ -223,6 +311,30 @@ export default function BarTillPage() {
     setBusy(true); setError('');
     const items = basket.map((l) => ({ productId: l.product.id, qty: l.qty }));
     try {
+      if (offline) {
+        if (mode === 'wallet') {
+          if (!member) return;
+          // Never against the stale cached balance — only what's been topped up
+          // during this offline window (see offlineWalletDeltas above).
+          const available = offlineWalletDeltas[member.userName] ?? 0;
+          if (available < basketTotal) {
+            setError('Insufficient offline balance — only top-ups made this session can be spent while offline.');
+            return;
+          }
+          await enqueue({ id: newQueueId(), createdAt: Date.now(), kind: 'purchase', userName: member.userName, staff: volunteer, amountPence: -basketTotal, items });
+          addOfflineWalletDelta(member.userName, -basketTotal);
+        } else {
+          // Cash/card never touches a balance, so it's always safe to queue offline
+          // regardless of who's buying.
+          await enqueue({ id: newQueueId(), createdAt: Date.now(), kind: 'sale', method: mode, items, staff: volunteer, userName: member?.userName, grossPence: basketGross, netPence: basketTotal, discountPence: basketDiscount });
+        }
+        refreshQueuedCount();
+        clearHeldOrder(currentOrderKey());
+        setBasket([]);
+        backToPersonPicker(true);
+        return;
+      }
+
       let res;
       if (mode === 'wallet') {
         if (!member) return;
@@ -254,6 +366,13 @@ export default function BarTillPage() {
     if (!member || !requireVolunteer()) return;
     setBusy(true); setError('');
     try {
+      if (offline) {
+        await enqueue({ id: newQueueId(), createdAt: Date.now(), kind: 'topup', userName: member.userName, staff: volunteer, amountPence, paymentMethod });
+        addOfflineWalletDelta(member.userName, amountPence);
+        refreshQueuedCount();
+        setView('sale');
+        return;
+      }
       const res = await fetch('/api/bar/topup', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userName: member.userName, amountPence, staff: volunteer, paymentMethod }) });
       const data = await res.json();
@@ -295,6 +414,7 @@ export default function BarTillPage() {
     setSales(data.sales ?? []);
   }
   async function doVoid(saleId: string) {
+    if (offline) { setError('Voiding needs a live connection.'); return; }
     if (!requireVolunteer()) return;
     if (!confirm('Void this sale? If it was charged to an account, the balance is refunded.')) return;
     setBusy(true); setError('');
@@ -309,6 +429,7 @@ export default function BarTillPage() {
     } catch (err: any) { setError(err.message); } finally { setBusy(false); }
   }
   async function doRefund() {
+    if (offline) { setError('Refunds need a live connection.'); return; }
     if (!member || !requireVolunteer()) return;
     const pence = Math.round(parseFloat(refundAmt || '0') * 100);
     if (!Number.isFinite(pence) || pence <= 0 || pence > member.balancePence) {
@@ -369,6 +490,26 @@ export default function BarTillPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-5 max-w-7xl">
+
+        {/* Offline / queued-sales banner — separate from the site-wide OfflineBanner,
+            since this one also shows the queue and offers a manual sync. */}
+        {(offline || queuedCount > 0) && (
+          <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900">
+            <span>
+              {offline ? 'Running offline — cash/card sales are queued locally.' : 'Back online.'}
+              {queuedCount > 0 && ` ${queuedCount} sale${queuedCount === 1 ? '' : 's'} waiting to sync.`}
+            </span>
+            {!offline && queuedCount > 0 && (
+              <button onClick={syncQueue} disabled={syncing}
+                className="px-2 py-1 text-xs font-medium bg-amber-600 text-white rounded hover:bg-amber-700 disabled:opacity-50">
+                {syncing ? 'Syncing…' : 'Sync now'}
+              </button>
+            )}
+            {offline && (
+              <button onClick={retryOnline} className="px-2 py-1 text-xs font-medium border border-amber-400 rounded hover:bg-amber-100">Retry connection</button>
+            )}
+          </div>
+        )}
 
         {/* Header: volunteer chip + nav */}
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -520,8 +661,12 @@ export default function BarTillPage() {
                 )}
               </div>
               {member && (
-                <div className={`text-sm mt-1 ${member.balancePence < basketTotal ? 'text-red-600 font-medium' : 'text-gray-600'}`}>
-                  Balance {fmt(member.balancePence)}{member.balancePence < basketTotal ? ' — insufficient, top up first' : ''}
+                <div className={`text-sm mt-1 ${availableBalancePence < basketTotal ? 'text-red-600 font-medium' : 'text-gray-600'}`}>
+                  {offline ? (
+                    <>Offline balance {fmt(availableBalancePence)} (top-ups made this session only){availableBalancePence < basketTotal ? ' — insufficient' : ''}</>
+                  ) : (
+                    <>Balance {fmt(availableBalancePence)}{availableBalancePence < basketTotal ? ' — insufficient, top up first' : ''}</>
+                  )}
                 </div>
               )}
 
@@ -530,7 +675,7 @@ export default function BarTillPage() {
                 <div className="grid grid-cols-3 gap-2 mt-3">
                   <button onClick={openTopUp} disabled={busy}
                     className="py-3 rounded-lg bg-amber-600 text-white font-semibold hover:bg-amber-700 disabled:opacity-50 text-sm">Top Up</button>
-                  <button onClick={() => completeSale('wallet')} disabled={busy || basket.length === 0 || member.balancePence < basketTotal}
+                  <button onClick={() => completeSale('wallet')} disabled={busy || basket.length === 0 || availableBalancePence < basketTotal}
                     className="py-3 rounded-lg bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-50 text-sm">
                     {busy ? 'Saving…' : `Pay by Account`}
                   </button>
@@ -538,11 +683,13 @@ export default function BarTillPage() {
                     className="py-3 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700 disabled:opacity-50 text-sm">
                     {busy ? 'Saving…' : `Pay by Card`}
                   </button>
-                  <button onClick={loadHistory} className="py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                  <button onClick={loadHistory} disabled={offline}
+                    className="py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">
                     {history ? 'Hide History' : 'History'}
                   </button>
                   {!showRefund ? (
-                    <button onClick={() => { setShowRefund(true); setRefundAmt(''); setError(''); }} className="col-span-2 py-2 text-sm text-red-600 font-medium">Refund cash…</button>
+                    <button onClick={() => { setShowRefund(true); setRefundAmt(''); setError(''); }} disabled={offline}
+                      className="col-span-2 py-2 text-sm text-red-600 font-medium disabled:opacity-50" title={offline ? 'Refunds need a live connection' : undefined}>Refund cash…</button>
                   ) : (
                     <div className="col-span-3 flex items-center gap-2 flex-wrap pt-1">
                       <span className="text-sm text-gray-600">£</span>
@@ -648,7 +795,7 @@ export default function BarTillPage() {
                         {s.voided ? (
                           <span className="text-xs text-red-600 font-medium shrink-0">Voided</span>
                         ) : (
-                          <button onClick={() => doVoid(s.id)} disabled={busy}
+                          <button onClick={() => doVoid(s.id)} disabled={busy || offline}
                             className="shrink-0 px-3 py-1.5 text-sm text-red-600 border border-red-200 rounded hover:bg-red-50 disabled:opacity-50">Void</button>
                         )}
                       </div>
