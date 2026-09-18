@@ -810,6 +810,7 @@ function BarPinLogin() {
   const [loading, setLoading] = useState(false);
   const [deviceId, setDeviceId] = useState('');
   const [pairingCode, setPairingCode] = useState('');
+  const [registerError, setRegisterError] = useState('');
 
   useEffect(() => {
     let id = localStorage.getItem(BAR_DEVICE_ID_KEY);
@@ -822,7 +823,16 @@ function BarPinLogin() {
     }
     setDeviceId(id); setPairingCode(code);
     fetch('/api/bar/devices', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ deviceId: id, pairingCode: code }) }).catch(() => {});
+      body: JSON.stringify({ deviceId: id, pairingCode: code }) })
+      .then(async (res) => {
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}) as any);
+          setRegisterError(data.error || 'Failed to register this device — an admin won’t see it on Bar Till Devices yet.');
+        }
+      })
+      .catch(() => {
+        setRegisterError('Could not reach the server to register this device — check the connection and reload.');
+      });
   }, []);
 
   function handlePinChange(value: string) {
@@ -881,6 +891,9 @@ function BarPinLogin() {
           New device pairing code: <span className="font-mono font-semibold text-white">{pairingCode}</span>
           <br />An admin needs to approve this device on Bar Till Devices before it can log in.
         </p>
+      )}
+      {registerError && (
+        <p className="mt-3 text-amber-200 text-sm text-center max-w-xs font-medium">{registerError}</p>
       )}
     </div>
   );
