@@ -67,6 +67,16 @@ type View = 'volunteer' | 'person' | 'sale' | 'topup' | 'report' | 'sales' | 'pr
 interface BasketLine { product: BarProduct; qty: number }
 interface MemberOption { userName: string; fullName: string }
 
+const SCREEN_TITLES: Record<View, string> = {
+  person: 'Home',
+  sale: 'Basket',
+  volunteer: "Who's Serving",
+  topup: 'Topup',
+  sales: 'Sales',
+  report: 'Report',
+  products: 'Products',
+};
+
 export default function BarTillPage() {
   const { data: session, status } = useSession();
   const role = session?.user?.role ?? '';
@@ -302,6 +312,26 @@ export default function BarTillPage() {
     setView('volunteer');
   }
 
+  // The single "← Back" button's destination depends on how the current screen was
+  // reached, not just which screen it is:
+  //  - Who's Serving opened for a Cash/Card tab -> Home (cancels starting the tab)
+  //  - Who's Serving opened for a Top Up, or the Top Up screen itself -> Basket
+  //    (cancels just the top-up, keeps the member/basket you were already on)
+  //  - everything else (Basket, Sales, Report, Products) -> Home
+  function handleBack() {
+    if (view === 'volunteer' && pendingAction === 'topup') {
+      setPendingAction(null);
+      setView('sale');
+      return;
+    }
+    if (view === 'topup') {
+      setView('sale');
+      return;
+    }
+    setPendingAction(null);
+    backToPersonPicker();
+  }
+
   async function completeSale(mode: 'wallet' | 'card' | 'cash') {
     if (basket.length === 0) return;
     setBusy(true); setError('');
@@ -513,24 +543,30 @@ export default function BarTillPage() {
           </div>
         )}
 
-        {/* Header: nav — no "who's serving" display; that's asked for contextually
-            (Top Up, Cash/Card) instead of shown persistently, see openTopUp/openCashCardTab. */}
-        <div className="flex flex-wrap items-center justify-end gap-2 mb-4">
-          {view !== 'volunteer' && view !== 'person' && (
-            <button onClick={() => backToPersonPicker()}
-              className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">← Till</button>
-          )}
-          <button onClick={loadSales} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Sales</button>
-          <button onClick={loadReport} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Report</button>
-          <button onClick={() => setView('products')} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Products</button>
+        {/* Header: screen title + nav. Back's destination depends on how the screen
+            was reached (see handleBack); Sales/Report/Products only launch from Home. */}
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+          <h1 className="text-lg font-bold text-gray-900">{SCREEN_TITLES[view]}</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            {view !== 'person' && (
+              <button onClick={handleBack}
+                className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">← Back</button>
+            )}
+            {view === 'person' && (
+              <>
+                <button onClick={loadSales} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Sales</button>
+                <button onClick={loadReport} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Report</button>
+                <button onClick={() => setView('products')} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Products</button>
+              </>
+            )}
+          </div>
         </div>
 
         {error && <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded">{error}</div>}
 
-        {/* ── VOLUNTEER: opened via 'Change', a Cash/Card tab, or Top Up ──────── */}
+        {/* ── VOLUNTEER: opened for a Cash/Card tab, or a Top Up ──────────────── */}
         {view === 'volunteer' && (
           <div className="max-w-5xl mx-auto">
-            <h2 className="text-base font-semibold text-gray-700 mb-4 text-center">Who's serving?</h2>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
               {barPersons.map((b, i) => (
                 <button key={b.userName} onClick={() => chooseVolunteer(b.userName)}
@@ -551,7 +587,6 @@ export default function BarTillPage() {
         {/* ── PERSON: full member list, search-filterable, + Non Member ──────── */}
         {view === 'person' && (
           <>
-            <h2 className="text-sm font-semibold text-gray-700 mb-2">Who's buying?</h2>
             <div className="flex gap-2 mb-3">
               <input
                 value={personSearch}
@@ -760,7 +795,6 @@ export default function BarTillPage() {
         {/* ── SALES (void) ─────────────────────────────────────────────────── */}
         {view === 'sales' && (
           <div className="bg-white border border-gray-200 rounded-xl p-4 max-w-2xl">
-            <h2 className="font-bold text-gray-900 mb-3">Recent sales</h2>
             {sales === null ? (
               <p className="text-gray-400 text-sm py-2">Loading…</p>
             ) : sales.length === 0 ? (
@@ -1029,8 +1063,7 @@ function ReportView({ report }: { report: BarReport }) {
   );
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-5 max-w-lg">
-      <h2 className="font-bold text-gray-900 mb-1">Today so far</h2>
-      <p className="text-xs text-gray-500 mb-4">{report.salesCount} sales</p>
+      <p className="text-xs text-gray-500 mb-4">Today so far — {report.salesCount} sales</p>
       {row('Wallet sales', report.byMethodPence.wallet)}
       {row('Card sales', report.byMethodPence.card)}
       {row('Cash sales (visitors)', report.byMethodPence.cash)}
@@ -1144,7 +1177,6 @@ function ProductsAdmin({ products, pricingConfig, onChanged }: { products: BarPr
 
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-5 max-w-2xl">
-      <h2 className="font-bold text-gray-900 mb-3">Products</h2>
       <div className="flex flex-wrap gap-2 mb-4 items-end">
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Item name" className="border rounded px-2 py-1.5 text-sm flex-1 min-w-[140px]" />
         <select value={category} onChange={(e) => setCategory(e.target.value)} className="border rounded px-2 py-1.5 text-sm">
