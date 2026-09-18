@@ -71,6 +71,15 @@ function isPublicRoute(pathname: string): boolean {
   ];
   if (exactApis.includes(pathname)) return true;
 
+  // POST /api/bar/devices — deliberately public despite being a write endpoint: the
+  // till calls it before it's logged in, to register its pairing code (see
+  // app/bar/page.tsx's BarPinLogin and app/api/bar/devices/route.ts). It only ever
+  // creates an unapproved, powerless pending row — nothing works until an admin
+  // approves it on /admin/bar-devices. Without this, the request 307-redirects to
+  // /login, which the browser's fetch() follows and reports as a misleading 200 OK
+  // against the login page — the registration silently never happens (found 2026-09-18).
+  if (pathname === '/api/bar/devices') return true;
+
   // /api/leagues/[leagueId] and sub-paths — public
   if (pathname.startsWith('/api/leagues/')) return true;
 
@@ -117,6 +126,7 @@ function isPinExempt(pathname: string): boolean {
   // The till has its own PIN login (a member-area PIN gate in front of that would be
   // a confusing second, unrelated PIN prompt).
   if (pathname === '/bar') return true;
+  if (pathname === '/api/bar/devices') return true;
   if (pathname === '/rowland' || pathname.startsWith('/rowland/')) return true;
   if (pathname.startsWith('/api/rowland')) return true;
   // Competition rules — a public page linked from the club website, plus the single
