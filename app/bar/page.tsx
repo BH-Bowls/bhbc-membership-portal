@@ -994,8 +994,13 @@ function TopUp({ member, busy, onConfirm }: { member: BarAccount; busy: boolean;
         <button onClick={() => setPaymentMethod('card')}
           className={`flex-1 py-2 rounded-lg font-medium ${paymentMethod === 'card' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'}`}>Card</button>
       </div>
-      <div className="flex gap-2 mb-3">
-        {[10, 20].map((v) => <button key={v} onClick={() => setAmount(String(v))} className="flex-1 py-2 rounded-lg bg-gray-100 font-medium">£{v}</button>)}
+      <div className="grid grid-cols-3 gap-2 mb-3">
+        {[10, 20, 50].map((v) => (
+          <button key={v} onClick={() => {
+            const currentPence = Math.round(parseFloat(amount || '0') * 100);
+            setAmount(String((currentPence + v * 100) / 100));
+          }} className="py-2 rounded-lg bg-gray-100 font-medium">+£{v}</button>
+        ))}
       </div>
       <div className="grid grid-cols-3 gap-2 mb-4">
         {keys.map((k) => <button key={k} onClick={() => press(k)} className="py-4 rounded-lg bg-gray-100 text-xl font-medium">{k}</button>)}
