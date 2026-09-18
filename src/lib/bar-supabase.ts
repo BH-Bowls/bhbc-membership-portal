@@ -406,16 +406,3 @@ export async function getRecentSales(limit = 40): Promise<BarSaleSummary[]> {
     items: (s.bar_sale_items ?? []).map((i: any) => ({ name: i.bar_products?.name ?? 'Item', qty: i.qty, unitPricePence: i.unit_price_pence })),
   }));
 }
-
-/** Line items for a single sale — used by the member History panel, where
- * unlike getRecentSales the item breakdown isn't preloaded (fetched on demand
- * only when a ledger entry is expanded). */
-export async function getSaleItems(saleId: string): Promise<BarSaleItem[]> {
-  const supabase = getSupabaseClient();
-  const { data, error } = await supabase
-    .from('bar_sale_items')
-    .select('qty, unit_price_pence, bar_products ( name )')
-    .eq('sale_id', saleId);
-  if (error) throw new Error(`Failed to load sale items: ${error.message}`);
-  return (data ?? []).map((i: any) => ({ name: i.bar_products?.name ?? 'Item', qty: i.qty, unitPricePence: i.unit_price_pence }));
-}

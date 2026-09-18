@@ -6,16 +6,17 @@
 // Flow: person picker (every club member, not just existing cash-account holders,
 // via a live-filtering search box, plus a Cash/Card option for non-members) -> the
 // product/basket screen, priced and actioned differently depending on who's buying:
-//   - Member: Top Up / Pay by Account / Pay by Card / History buttons. Selecting a
-//     member with no bar_accounts row yet doesn't create one — bar_topup creates it
-//     silently on their first top-up (see 0025_bar.sql); a Pay-by-Account attempt
-//     before that correctly fails (no funds to charge against), same as an existing
-//     member with an empty wallet.
+//   - Member: Top Up / Pay by Account / Pay by Card. Selecting a member with no
+//     bar_accounts row yet doesn't create one — bar_topup creates it silently on
+//     their first top-up (see 0025_bar.sql); a Pay-by-Account attempt before that
+//     correctly fails (no funds to charge against), same as an existing member with
+//     an empty wallet. Their transaction history lives on My Account
+//     (app/account/page.tsx), not here.
 //   - Cash/Card (non-member): Pay by Cash / Pay by Card, priced at basePricePence.
 // "Who's serving" is no longer a blocking gate — it's only asked for when opening a
-// Cash/Card tab or a Top Up (see chooseVolunteer/pendingAction), since a Cash/Card
-// tab is held/resumed by staff name rather than by a member. A basket left via
-// "← Till" is parked in heldOrders and resumed if that same member/tab is reopened.
+// Cash/Card tab or a Top Up (see openCashCardTab/openTopUp/pendingAction), since a
+// Cash/Card tab is held/resumed by staff name rather than by a member. A basket left
+// via "← Back" is parked in heldOrders and resumed if that same member/tab is reopened.
 
 'use client';
 
@@ -23,7 +24,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useSession, signIn } from 'next-auth/react';
 import jsQR from 'jsqr';
 import { canUseBarTill } from '@/lib/role-utils';
-import { priceItem, type BarPricingConfig, type BarProduct, type BarAccount, type BarPerson, type BarLedgerEntry, type BarReport, type BarSaleSummary, type BarSaleItem } from '@/lib/bar-supabase';
+import { priceItem, type BarPricingConfig, type BarProduct, type BarAccount, type BarPerson, type BarReport, type BarSaleSummary } from '@/lib/bar-supabase';
 import { useOnlineStatus } from '@/hooks/useOnlineStatus';
 import { enqueue, listQueued, dequeue, newQueueId, type QueuedEntry } from '@/lib/bar-offline-queue';
 
@@ -108,9 +109,6 @@ export default function BarTillPage() {
   // non-member (Cash/Card) tab, since a non-member sale has no member to key off.
   const [heldOrders, setHeldOrders] = useState<Map<string, BasketLine[]>>(new Map());
   const [activeCat, setActiveCat] = useState<string>('beer');
-  const [history, setHistory] = useState<BarLedgerEntry[] | null>(null);
-  const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null);
-  const [historyItemsBySale, setHistoryItemsBySale] = useState<Record<string, BarSaleItem[]>>({});
   const [report, setReport] = useState<BarReport | null>(null);
   const [sales, setSales] = useState<BarSaleSummary[] | null>(null);
   const [expandedSaleId, setExpandedSaleId] = useState<string | null>(null);
@@ -263,7 +261,7 @@ export default function BarTillPage() {
   function backToPersonPicker(skipHold = false) {
     if (!skipHold) holdCurrentOrder();
     setView('person'); setMember(null); setBasket([]); setPersonSearch('');
-    setHistory(null); setExpandedHistoryId(null); setShowRefund(false); setRefundAmt('');
+    setShowRefund(false); setRefundAmt('');
   }
 
   // ── basket / pricing helpers ─────────────────────────────────────────────────
@@ -303,7 +301,7 @@ export default function BarTillPage() {
   // No staff prompt for a wallet sale — resumes that member's held order if any.
   function selectMember(m: BarAccount) {
     setMember(m); setBasket(heldOrders.get(`member:${m.userName}`) ?? []); setActiveCat('beer');
-    setHistory(null); setExpandedHistoryId(null); setShowRefund(false); setView('sale');
+    setShowRefund(false); setView('sale');
   }
   // Cash/Card always asks who's serving — that's also the key for which held tab
   // to resume (see chooseVolunteer's 'cashcard' branch).
@@ -418,24 +416,6 @@ export default function BarTillPage() {
     } catch (err: any) { setError(err.message); } finally { setBusy(false); }
   }
 
-  async function loadHistory() {
-    if (!member) return;
-    if (history) { setHistory(null); setExpandedHistoryId(null); return; } // toggle closed
-    const data = await fetch(`/api/bar/account?userName=${encodeURIComponent(member.userName)}`).then((r) => r.json());
-    setHistory(data.account?.history ?? []);
-  }
-
-  // Expand a purchase entry to show its line items, fetching once per sale (cached
-  // in historyItemsBySale) — top-ups/refunds/adjustments have no items to show.
-  async function toggleHistoryItem(h: BarLedgerEntry) {
-    if (!h.saleId) return;
-    if (expandedHistoryId === h.id) { setExpandedHistoryId(null); return; }
-    setExpandedHistoryId(h.id);
-    if (!historyItemsBySale[h.saleId]) {
-      const data = await fetch(`/api/bar/sale/${h.saleId}/items`).then((r) => r.json());
-      setHistoryItemsBySale((prev) => ({ ...prev, [h.saleId as string]: data.items ?? [] }));
-    }
-  }
   async function loadReport() {
     const data = await fetch('/api/bar/report').then((r) => r.json());
     setReport(data.report ?? null); setView('report');
@@ -708,13 +688,9 @@ export default function BarTillPage() {
                     className="py-3 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700 disabled:opacity-50 text-sm">
                     {busy ? 'Saving…' : `Pay by Card`}
                   </button>
-                  <button onClick={loadHistory} disabled={offline}
-                    className="py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">
-                    {history ? 'Hide History' : 'History'}
-                  </button>
                   {!showRefund ? (
                     <button onClick={() => { setShowRefund(true); setRefundAmt(''); setError(''); }} disabled={offline}
-                      className="col-span-2 py-2 text-sm text-red-600 font-medium disabled:opacity-50" title={offline ? 'Refunds need a live connection' : undefined}>Refund cash…</button>
+                      className="col-span-3 py-2 text-sm text-red-600 font-medium disabled:opacity-50" title={offline ? 'Refunds need a live connection' : undefined}>Refund cash…</button>
                   ) : (
                     <div className="col-span-3 flex items-center gap-2 flex-wrap pt-1">
                       <span className="text-sm text-gray-600">£</span>
@@ -737,49 +713,6 @@ export default function BarTillPage() {
                     className="py-3 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700 disabled:opacity-50">
                     {busy ? 'Saving…' : `Pay by Card`}
                   </button>
-                </div>
-              )}
-
-              {member && history && (
-                <div className="mt-4 border-t pt-3 max-h-72 overflow-y-auto">
-                  {history.length === 0 ? <p className="text-gray-400 text-sm">No history.</p> : history.map((h) => {
-                    const expandable = h.type === 'purchase' && !!h.saleId;
-                    const items = h.saleId ? historyItemsBySale[h.saleId] : undefined;
-                    return (
-                      <div key={h.id} className="border-b border-gray-100">
-                        <div
-                          className={`flex justify-between text-sm py-1 ${expandable ? 'cursor-pointer hover:bg-gray-50' : ''}`}
-                          onClick={expandable ? () => toggleHistoryItem(h) : undefined}
-                        >
-                          <span className="text-gray-700">
-                            {expandable && <span className="text-gray-400 mr-1">{expandedHistoryId === h.id ? '▾' : '▸'}</span>}
-                            {new Date(h.createdAt).toLocaleDateString('en-GB')} · {h.type}
-                          </span>
-                          <span className={h.amountPence < 0 ? 'text-gray-700' : 'text-green-700'}>{h.amountPence < 0 ? '−' : '+'}{fmt(Math.abs(h.amountPence))}</span>
-                        </div>
-                        {expandable && expandedHistoryId === h.id && (
-                          <div className="pl-4 pb-2 space-y-0.5">
-                            {items === undefined ? (
-                              <p className="text-xs text-gray-400">Loading…</p>
-                            ) : items.length === 0 ? (
-                              <p className="text-xs text-gray-400">No items recorded.</p>
-                            ) : items.map((it, idx) => (
-                              <div key={idx} className="flex justify-between text-xs text-gray-600">
-                                <span>{it.qty}× {it.name}</span>
-                                <span>{fmt(it.unitPricePence * it.qty)}</span>
-                              </div>
-                            ))}
-                            {!!h.discountPence && (
-                              <div className="flex justify-between text-xs text-green-700 pt-0.5 border-t border-gray-100 mt-1">
-                                <span>Member Discount</span>
-                                <span>−{fmt(h.discountPence)}</span>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
                 </div>
               )}
             </div>
