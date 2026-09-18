@@ -47,7 +47,7 @@ type Tab = 'transactions' | 'card';
 
 export default function MyAccountPage() {
   const { data: session, status } = useSession();
-  const [tab, setTab] = useState<Tab>('transactions');
+  const [tab, setTab] = useState<Tab>('card');
 
   const [history, setHistory] = useState<BarLedgerEntry[] | null>(null);
   const [hasAccount, setHasAccount] = useState(false);
@@ -107,7 +107,7 @@ export default function MyAccountPage() {
         <h1 className="text-2xl font-bold text-gray-900">My Account</h1>
 
         <div className="border-b border-gray-200 flex gap-6">
-          {(['transactions', 'card'] as Tab[]).map((t) => (
+          {(['card', 'transactions'] as Tab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
