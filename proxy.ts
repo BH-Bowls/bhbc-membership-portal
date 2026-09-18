@@ -174,6 +174,15 @@ export default withAuth(
       }
     }
 
+    // The bar till has no navbar (Navbar.tsx hides itself for role 'Bar') and should
+    // never show anything except /bar — if it somehow reaches any other page (e.g. a
+    // stale bookmark to "/"), send it straight back rather than leaving it stranded
+    // on a normal member page with no way to navigate anywhere. API routes are left
+    // alone — the till's own page makes many of those.
+    if (token && hasRole(token.role as string, 'Bar') && pathname !== '/bar' && !pathname.startsWith('/api/') && pathname !== '/maintenance') {
+      return NextResponse.redirect(new URL('/bar', req.url));
+    }
+
     // Public-access PIN gate. When PUBLIC_ACCESS_PIN is configured, the public
     // (no-login) pages require either a logged-in session or a valid PIN cookie.
     // Logged-in members bypass it; the /rowland section and visitor token links

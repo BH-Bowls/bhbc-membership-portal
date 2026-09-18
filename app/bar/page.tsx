@@ -21,7 +21,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { useSession, signIn } from 'next-auth/react';
+import { useSession, signIn, signOut } from 'next-auth/react';
 import jsQR from 'jsqr';
 import { canUseBarTill } from '@/lib/role-utils';
 import { priceItem, type BarPricingConfig, type BarProduct, type BarAccount, type BarPerson, type BarReport, type BarSaleSummary } from '@/lib/bar-supabase';
@@ -82,6 +82,9 @@ export default function BarTillPage() {
   const { data: session, status } = useSession();
   const role = session?.user?.role ?? '';
   const allowed = canUseBarTill(role);
+  // The dedicated till login has no navbar (Navbar.tsx hides itself for this role),
+  // so it needs its own way to sign out — see the Logout button on the Home screen.
+  const isBarTillLogin = role === 'Bar';
 
   // Starts straight on the person picker — "who's serving" is no longer a
   // mandatory front gate, only asked for contextually (see chooseVolunteer).
@@ -537,6 +540,10 @@ export default function BarTillPage() {
                 <button onClick={loadSales} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Sales</button>
                 <button onClick={loadReport} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Report</button>
                 <button onClick={() => setView('products')} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Products</button>
+                {isBarTillLogin && (
+                  <button onClick={() => signOut({ callbackUrl: '/bar' })}
+                    className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 text-red-600">Logout</button>
+                )}
               </>
             )}
           </div>
