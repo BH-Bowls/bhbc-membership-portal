@@ -55,6 +55,7 @@ export interface Fixture {
   lockedAt: string;
   needsPlayers: boolean;
   description: string | null;
+  isReserve: boolean;
 }
 
 export interface TeaRotaEntry {
@@ -129,6 +130,7 @@ function mapFixtureRow(row: any): Fixture {
     lockedAt: row.locked_at || '',
     needsPlayers: (row.needs_players || '').trim().toUpperCase() === 'Y',
     description: row.description,
+    isReserve: !!row.is_reserve,
   };
 }
 
@@ -390,6 +392,7 @@ export async function createReserveFixture(
     tab_name: newTabName,
     paired: 'C',
     game_status: 'X',
+    is_reserve: true,
     entered: 0,
     selected: 0,
     reserves: 0,
