@@ -135,8 +135,6 @@ export default function BarTillPage() {
     });
   }
 
-  const volunteerName = barPersons.find((b) => b.userName === volunteer)?.fullName ?? '';
-
   const load = useCallback(async () => {
     try {
       const [p, a, b, m, c] = await Promise.all([
@@ -248,8 +246,7 @@ export default function BarTillPage() {
   }
 
   // Returns to the till (person picker) for the next customer, parking whatever
-  // basket is on screen so it can be resumed later. The volunteer stays selected —
-  // use changeVolunteer() below, not this, to actually switch who's serving.
+  // basket is on screen so it can be resumed later.
   // skipHold is set by completeSale, which has already cleared/emptied the basket
   // itself after a successful sale — without it, this would re-park the very
   // basket that was just paid for (a stale closure would still see it as full).
@@ -258,7 +255,6 @@ export default function BarTillPage() {
     setView('person'); setMember(null); setBasket([]); setPersonSearch('');
     setHistory(null); setExpandedHistoryId(null); setShowRefund(false); setRefundAmt('');
   }
-  function changeVolunteer() { setPendingAction(null); setView('volunteer'); }
 
   // ── basket / pricing helpers ─────────────────────────────────────────────────
   // unitPrice is what's actually charged (net); unitGrossPrice is what a visitor/
@@ -310,6 +306,11 @@ export default function BarTillPage() {
     if (basket.length === 0) return;
     setBusy(true); setError('');
     const items = basket.map((l) => ({ productId: l.product.id, qty: l.qty }));
+    // A member account sale (wallet, or "Pay by Card" for a known member) doesn't
+    // need a staff id stored against it. Only a genuine no-member-account sale does
+    // — that's the one case we ask who's serving for (see openCashCardTab), so it's
+    // always available here to store for audit.
+    const staffForSale = member ? '' : volunteer;
     try {
       if (offline) {
         if (mode === 'wallet') {
@@ -321,12 +322,12 @@ export default function BarTillPage() {
             setError('Insufficient offline balance — only top-ups made this session can be spent while offline.');
             return;
           }
-          await enqueue({ id: newQueueId(), createdAt: Date.now(), kind: 'purchase', userName: member.userName, staff: volunteer, amountPence: -basketTotal, items });
+          await enqueue({ id: newQueueId(), createdAt: Date.now(), kind: 'purchase', userName: member.userName, staff: staffForSale, amountPence: -basketTotal, items });
           addOfflineWalletDelta(member.userName, -basketTotal);
         } else {
           // Cash/card never touches a balance, so it's always safe to queue offline
           // regardless of who's buying.
-          await enqueue({ id: newQueueId(), createdAt: Date.now(), kind: 'sale', method: mode, items, staff: volunteer, userName: member?.userName, grossPence: basketGross, netPence: basketTotal, discountPence: basketDiscount });
+          await enqueue({ id: newQueueId(), createdAt: Date.now(), kind: 'sale', method: mode, items, staff: staffForSale, userName: member?.userName, grossPence: basketGross, netPence: basketTotal, discountPence: basketDiscount });
         }
         refreshQueuedCount();
         clearHeldOrder(currentOrderKey());
@@ -339,12 +340,12 @@ export default function BarTillPage() {
       if (mode === 'wallet') {
         if (!member) return;
         res = await fetch('/api/bar/purchase', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userName: member.userName, items, staff: volunteer }) });
+          body: JSON.stringify({ userName: member.userName, items, staff: staffForSale }) });
       } else {
         // member is only ever set here for "Pay by Card" — attributes the sale to
         // them (member pricing, history) without touching their wallet.
         res = await fetch('/api/bar/sale', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ method: mode, items, staff: volunteer, userName: member?.userName }) });
+          body: JSON.stringify({ method: mode, items, staff: staffForSale, userName: member?.userName }) });
       }
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Sale failed');
@@ -355,11 +356,12 @@ export default function BarTillPage() {
     } catch (err: any) { setError(err.message); } finally { setBusy(false); }
   }
 
-  // Opens Top Up for the current member, asking who's serving first if no one's
-  // marked yet (an already-known volunteer is reused without re-asking).
+  // Always asks who's serving, every time — a top-up is stored against that staff
+  // id for audit (see doTopUp), so it's confirmed fresh rather than silently reused
+  // from an earlier selection.
   function openTopUp() {
-    if (!volunteer) { setPendingAction('topup'); setView('volunteer'); return; }
-    setView('topup');
+    setPendingAction('topup');
+    setView('volunteer');
   }
 
   async function doTopUp(amountPence: number, paymentMethod: 'cash' | 'card') {
@@ -511,28 +513,16 @@ export default function BarTillPage() {
           </div>
         )}
 
-        {/* Header: volunteer chip + nav */}
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <div className="flex items-center gap-2 text-sm">
-            {volunteer ? (
-              <>
-                <span className="text-gray-600">Serving:</span>
-                <span className="font-semibold text-gray-900">{volunteerName}</span>
-                <button onClick={changeVolunteer} className="text-blue-600 hover:text-blue-800">Change</button>
-              </>
-            ) : (
-              <button onClick={changeVolunteer} className="text-gray-500 hover:text-gray-700">No one marked as serving</button>
-            )}
-          </div>
-          <div className="flex gap-2">
-            {view !== 'volunteer' && view !== 'person' && (
-              <button onClick={() => backToPersonPicker()}
-                className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">← Till</button>
-            )}
-            <button onClick={loadSales} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Sales</button>
-            <button onClick={loadReport} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Report</button>
-            <button onClick={() => setView('products')} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Products</button>
-          </div>
+        {/* Header: nav — no "who's serving" display; that's asked for contextually
+            (Top Up, Cash/Card) instead of shown persistently, see openTopUp/openCashCardTab. */}
+        <div className="flex flex-wrap items-center justify-end gap-2 mb-4">
+          {view !== 'volunteer' && view !== 'person' && (
+            <button onClick={() => backToPersonPicker()}
+              className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">← Till</button>
+          )}
+          <button onClick={loadSales} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Sales</button>
+          <button onClick={loadReport} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Report</button>
+          <button onClick={() => setView('products')} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Products</button>
         </div>
 
         {error && <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded">{error}</div>}
