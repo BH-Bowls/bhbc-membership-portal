@@ -49,6 +49,7 @@ export async function POST(req: NextRequest) {
           pricePence: typeof body.pricePence === 'number' ? Math.round(body.pricePence) : undefined,
           nonMemberPricePence: typeof body.nonMemberPricePence === 'number' ? Math.round(body.nonMemberPricePence) : undefined,
           memberDiscountOverridePercent: body.memberDiscountOverridePercent === undefined ? undefined : body.memberDiscountOverridePercent,
+          nominalCode: body.nominalCode === undefined ? undefined : body.nominalCode,
           sortOrder: body.sortOrder, active: body.active,
         },
         session.user.userName,

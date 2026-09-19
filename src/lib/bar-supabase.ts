@@ -9,7 +9,9 @@ import { getConfig } from './config-supabase';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-export type BarCategory = 'beer' | 'wine' | 'spirit' | 'zero_gf' | 'soft' | 'snack';
+// Categories are admin-managed data (bar_categories table, 0063_bar_day_ends.sql),
+// not a fixed set — this is just a readability alias for the key stored on a product.
+export type BarCategory = string;
 
 // Club-wide, one active at a time (see BarPricingConfig) — see 0060_bar_pricing_modes.sql
 // for the authoritative server-side pricing (bar_price_item), which priceItem() below mirrors
@@ -36,8 +38,18 @@ export interface BarProduct {
   pricePence: number;                             // split mode: member price
   nonMemberPricePence: number;                    // split mode: visitor price
   memberDiscountOverridePercent: number | null;   // member_product_discount mode: null = inherit the global default
+  nominalCode: string | null;                     // Xero nominal code override; null = inherit the category's code
   active: boolean;
   sortOrder: number;
+}
+
+export interface BarCategoryRow {
+  key: string;
+  label: string;
+  colorKey: string;
+  nominalCode: string | null;   // null = inherit the club-wide default sales code
+  sortOrder: number;
+  active: boolean;
 }
 
 /** basePricePence discounted by a given percentage — mirrors bar_member_price() in SQL. */
@@ -95,8 +107,6 @@ export interface BasketItem {
 }
 
 export interface BarReport {
-  fromIso: string;
-  toIso: string;
   salesCount: number;
   byMethodPence: { wallet: number; card: number; cash: number };
   byCategoryPence: Record<string, number>;
@@ -131,6 +141,7 @@ export async function getProducts(includeInactive = false): Promise<BarProduct[]
     pricePence: r.price_pence,
     nonMemberPricePence: r.non_member_price_pence,
     memberDiscountOverridePercent: r.member_discount_override_percent,
+    nominalCode: r.nominal_code,
     active: r.active, sortOrder: r.sort_order,
   }));
 }
@@ -140,6 +151,7 @@ export async function saveProduct(
     id?: string; name: string; category: BarCategory;
     basePricePence?: number; pricePence?: number; nonMemberPricePence?: number;
     memberDiscountOverridePercent?: number | null;
+    nominalCode?: string | null;
     sortOrder?: number; active?: boolean;
   },
   editedBy: string,
@@ -171,6 +183,7 @@ export async function saveProduct(
   if (pricePence !== undefined) row.price_pence = pricePence;
   if (nonMemberPricePence !== undefined) row.non_member_price_pence = nonMemberPricePence;
   if (input.memberDiscountOverridePercent !== undefined) row.member_discount_override_percent = input.memberDiscountOverridePercent;
+  if (input.nominalCode !== undefined) row.nominal_code = input.nominalCode;
 
   if (input.id) {
     const { error } = await supabase.from('bar_products').update(row).eq('id', input.id);
@@ -185,6 +198,47 @@ export async function setProductActive(id: string, active: boolean): Promise<voi
   const supabase = getSupabaseClient();
   const { error } = await supabase.from('bar_products').update({ active, updated_at: new Date().toISOString() }).eq('id', id);
   if (error) throw new Error(`Failed to update product: ${error.message}`);
+}
+
+// ── Categories (admin-manageable — see 0063_bar_day_ends.sql) ────────────────
+
+export async function getCategories(includeInactive = false): Promise<BarCategoryRow[]> {
+  const supabase = getSupabaseClient();
+  let query = supabase.from('bar_categories').select('*').order('sort_order').order('label');
+  if (!includeInactive) query = query.eq('active', true);
+  const { data, error } = await query;
+  if (error) throw new Error(`Failed to load bar categories: ${error.message}`);
+  return (data ?? []).map((r: any) => ({
+    key: r.key, label: r.label, colorKey: r.color_key, nominalCode: r.nominal_code,
+    sortOrder: r.sort_order, active: r.active,
+  }));
+}
+
+export async function saveCategory(
+  input: { key: string; label: string; colorKey: string; nominalCode?: string | null; sortOrder?: number; active?: boolean; isNew: boolean },
+): Promise<void> {
+  const supabase = getSupabaseClient();
+  const row: Record<string, unknown> = {
+    label: input.label.trim(),
+    color_key: input.colorKey,
+    sort_order: input.sortOrder ?? 0,
+    active: input.active ?? true,
+  };
+  if (input.nominalCode !== undefined) row.nominal_code = input.nominalCode;
+
+  if (input.isNew) {
+    const { error } = await supabase.from('bar_categories').insert({ key: input.key, ...row });
+    if (error) throw new Error(`Failed to create category: ${error.message}`);
+  } else {
+    const { error } = await supabase.from('bar_categories').update(row).eq('key', input.key);
+    if (error) throw new Error(`Failed to update category: ${error.message}`);
+  }
+}
+
+export async function setCategoryActive(key: string, active: boolean): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase.from('bar_categories').update({ active }).eq('key', key);
+  if (error) throw new Error(`Failed to update category: ${error.message}`);
 }
 
 // ── Cash accounts (opt-in members) ───────────────────────────────────────────
@@ -302,14 +356,18 @@ export async function refund(userName: string, amountPence: number, staff: strin
 
 // ── Reporting ────────────────────────────────────────────────────────────────
 
-export async function getReport(fromIso: string, toIso: string): Promise<BarReport> {
+/** Everything not yet linked to a Day End (bar_day_ends, 0063_bar_day_ends.sql) --
+ * "since the last cash-up", not a calendar day, since a day end isn't guaranteed
+ * to align with midnight. Once bar_create_day_end() links every current row,
+ * this naturally goes back to reporting nothing until fresh activity happens. */
+export async function getReport(): Promise<BarReport> {
   const supabase = getSupabaseClient();
 
-  // Non-voided sales in range, with line items + product info
+  // Non-voided, not-yet-linked sales, with line items + product info
   const { data: sales, error: salesErr } = await supabase
     .from('bar_sales')
     .select('id, payment_method, total_pence, discount_pence, voided, created_at, bar_sale_items ( qty, unit_price_pence, bar_products ( name, category ) )')
-    .gte('created_at', fromIso).lte('created_at', toIso).eq('voided', false);
+    .is('day_end_id', null).eq('voided', false);
   if (salesErr) throw new Error(`Failed to load sales: ${salesErr.message}`);
 
   const byMethodPence = { wallet: 0, card: 0, cash: 0 };
@@ -332,10 +390,10 @@ export async function getReport(fromIso: string, toIso: string): Promise<BarRepo
     }
   }
 
-  // Top-ups / refunds in range (cash in / cash out). Card top-ups are tracked
-  // separately — they're not cash landing in the till.
+  // Top-ups / refunds not yet linked (cash in / cash out). Card top-ups are
+  // tracked separately — they're not cash landing in the till.
   const { data: ledger, error: ledErr } = await supabase
-    .from('bar_ledger').select('type, amount_pence, payment_method').gte('created_at', fromIso).lte('created_at', toIso).in('type', ['topup', 'refund']);
+    .from('bar_ledger').select('type, amount_pence, payment_method').is('day_end_id', null).in('type', ['topup', 'refund']);
   if (ledErr) throw new Error(`Failed to load ledger: ${ledErr.message}`);
   let topupsPence = 0, cardTopupsPence = 0, refundsPence = 0;
   for (const l of ledger ?? []) {
@@ -353,7 +411,6 @@ export async function getReport(fromIso: string, toIso: string): Promise<BarRepo
   const cashSalesPence = byMethodPence.cash;
 
   return {
-    fromIso, toIso,
     salesCount: (sales ?? []).length,
     byMethodPence, byCategoryPence,
     byProduct: [...byProductMap.values()].sort((a, b) => b.totalPence - a.totalPence),
@@ -361,6 +418,71 @@ export async function getReport(fromIso: string, toIso: string): Promise<BarRepo
     expectedCashPence: topupsPence + cashSalesPence - refundsPence,
     discountsGivenPence,
   };
+}
+
+// ── Day End (cash-up) ─────────────────────────────────────────────────────────
+
+export interface BarDayEnd {
+  id: string;
+  staff: string;
+  createdAt: string;
+  floatPence: number;
+  cashTopupsPence: number;
+  cashSalesPence: number;
+  refundsPence: number;
+  cashExpectedPence: number;
+  cashRemovedPence: number;
+  differenceReason: string | null;
+  walletSalesPence: number;
+  cardSalesPence: number;
+  cardTopupsPence: number;
+  discountsGivenPence: number;
+  outstandingBalancePence: number;
+  xeroExportedAt: string | null;
+  xeroExportedBy: string | null;
+}
+
+function mapDayEndRow(r: any): BarDayEnd {
+  return {
+    id: r.id, staff: r.staff, createdAt: r.created_at, floatPence: r.float_pence,
+    cashTopupsPence: r.cash_topups_pence, cashSalesPence: r.cash_sales_pence, refundsPence: r.refunds_pence,
+    cashExpectedPence: r.cash_expected_pence, cashRemovedPence: r.cash_removed_pence,
+    differenceReason: r.difference_reason, walletSalesPence: r.wallet_sales_pence,
+    cardSalesPence: r.card_sales_pence, cardTopupsPence: r.card_topups_pence,
+    discountsGivenPence: r.discounts_given_pence, outstandingBalancePence: r.outstanding_balance_pence,
+    xeroExportedAt: r.xero_exported_at, xeroExportedBy: r.xero_exported_by,
+  };
+}
+
+/** Aggregates every bar_ledger/bar_sales row not yet linked to a day end into one
+ * durable record, then links them all to it (see bar_create_day_end() in
+ * 0063_bar_day_ends.sql) -- the whole "run it again, nothing to report" mechanic
+ * lives in that one atomic function, not here. */
+export async function createDayEnd(staff: string, cashRemovedPence: number, reason?: string): Promise<BarDayEnd> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.rpc('bar_create_day_end', {
+    p_staff: staff, p_cash_removed_pence: cashRemovedPence, p_reason: reason ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return mapDayEndRow(data);
+}
+
+export async function getDayEnds(includeExported = false): Promise<BarDayEnd[]> {
+  const supabase = getSupabaseClient();
+  let query = supabase.from('bar_day_ends').select('*').order('created_at', { ascending: false });
+  if (!includeExported) query = query.is('xero_exported_at', null);
+  const { data, error } = await query;
+  if (error) throw new Error(`Failed to load day ends: ${error.message}`);
+  return (data ?? []).map(mapDayEndRow);
+}
+
+export async function markDayEndsExported(dayEndIds: string[], exportedBy: string): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase
+    .from('bar_day_ends')
+    .update({ xero_exported_at: new Date().toISOString(), xero_exported_by: exportedBy })
+    .in('id', dayEndIds);
+  if (error) throw new Error(`Failed to mark day ends exported: ${error.message}`);
 }
 
 // ── Recent sales (for the void screen) ───────────────────────────────────────

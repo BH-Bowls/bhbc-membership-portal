@@ -24,31 +24,39 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import jsQR from 'jsqr';
 import { canUseBarTill } from '@/lib/role-utils';
-import { priceItem, type BarPricingConfig, type BarProduct, type BarAccount, type BarPerson, type BarReport, type BarSaleSummary } from '@/lib/bar-supabase';
+import { priceItem, type BarPricingConfig, type BarProduct, type BarCategoryRow, type BarAccount, type BarPerson, type BarReport, type BarSaleSummary, type BarDayEnd } from '@/lib/bar-supabase';
 import { useOnlineStatus } from '@/hooks/useOnlineStatus';
 import { enqueue, listQueued, dequeue, newQueueId, type QueuedEntry } from '@/lib/bar-offline-queue';
 
 const OFFLINE_WALLET_DELTAS_KEY = 'bar_offline_wallet_deltas';
 
-const CATEGORIES: { key: string; label: string }[] = [
-  { key: 'beer',    label: 'Beers / Lagers' },
-  { key: 'wine',    label: 'Wines' },
-  { key: 'spirit',  label: 'Spirits' },
-  { key: 'zero_gf', label: '0% & Gluten Free' },
-  { key: 'soft',    label: 'Soft Drinks / Splashes' },
-  { key: 'snack',   label: 'Snacks' },
-];
-
-// Per-category colour so the product grid and category pills read at a glance
-// instead of every tile being the same white/grey box.
-const CATEGORY_COLORS: Record<string, { active: string; inactive: string; tile: string }> = {
-  beer:    { active: 'bg-amber-500 text-white',    inactive: 'bg-amber-50 text-amber-800 hover:bg-amber-100',     tile: 'border-l-4 border-l-amber-400' },
-  wine:    { active: 'bg-rose-500 text-white',     inactive: 'bg-rose-50 text-rose-800 hover:bg-rose-100',        tile: 'border-l-4 border-l-rose-400' },
-  spirit:  { active: 'bg-purple-500 text-white',   inactive: 'bg-purple-50 text-purple-800 hover:bg-purple-100',  tile: 'border-l-4 border-l-purple-400' },
-  zero_gf: { active: 'bg-teal-500 text-white',     inactive: 'bg-teal-50 text-teal-800 hover:bg-teal-100',        tile: 'border-l-4 border-l-teal-400' },
-  soft:    { active: 'bg-sky-500 text-white',      inactive: 'bg-sky-50 text-sky-800 hover:bg-sky-100',           tile: 'border-l-4 border-l-sky-400' },
-  snack:   { active: 'bg-orange-500 text-white',   inactive: 'bg-orange-50 text-orange-800 hover:bg-orange-100',  tile: 'border-l-4 border-l-orange-400' },
+// Categories are admin-managed data (bar_categories table), not a hardcoded list —
+// see the "Manage Categories" section in ProductsAdmin below. Tailwind's JIT
+// compiler only bundles a colour class it finds as a literal string in source, so
+// an admin adding a new category can't get an arbitrary new colour at request
+// time — each category instead picks one of this fixed palette by colorKey.
+const CATEGORY_COLOR_PALETTE: Record<string, { active: string; inactive: string; tile: string }> = {
+  amber:   { active: 'bg-amber-500 text-white',    inactive: 'bg-amber-50 text-amber-800 hover:bg-amber-100',     tile: 'border-l-4 border-l-amber-400' },
+  rose:    { active: 'bg-rose-500 text-white',     inactive: 'bg-rose-50 text-rose-800 hover:bg-rose-100',        tile: 'border-l-4 border-l-rose-400' },
+  purple:  { active: 'bg-purple-500 text-white',   inactive: 'bg-purple-50 text-purple-800 hover:bg-purple-100',  tile: 'border-l-4 border-l-purple-400' },
+  teal:    { active: 'bg-teal-500 text-white',     inactive: 'bg-teal-50 text-teal-800 hover:bg-teal-100',        tile: 'border-l-4 border-l-teal-400' },
+  sky:     { active: 'bg-sky-500 text-white',      inactive: 'bg-sky-50 text-sky-800 hover:bg-sky-100',           tile: 'border-l-4 border-l-sky-400' },
+  orange:  { active: 'bg-orange-500 text-white',   inactive: 'bg-orange-50 text-orange-800 hover:bg-orange-100',  tile: 'border-l-4 border-l-orange-400' },
+  emerald: { active: 'bg-emerald-500 text-white',  inactive: 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100', tile: 'border-l-4 border-l-emerald-400' },
+  indigo:  { active: 'bg-indigo-500 text-white',   inactive: 'bg-indigo-50 text-indigo-800 hover:bg-indigo-100',  tile: 'border-l-4 border-l-indigo-400' },
+  pink:    { active: 'bg-pink-500 text-white',     inactive: 'bg-pink-50 text-pink-800 hover:bg-pink-100',        tile: 'border-l-4 border-l-pink-400' },
+  lime:    { active: 'bg-lime-500 text-white',     inactive: 'bg-lime-50 text-lime-800 hover:bg-lime-100',        tile: 'border-l-4 border-l-lime-400' },
 };
+const CATEGORY_COLOR_KEYS = Object.keys(CATEGORY_COLOR_PALETTE);
+function categoryColorClasses(colorKey: string): { active: string; inactive: string; tile: string } {
+  return CATEGORY_COLOR_PALETTE[colorKey] ?? CATEGORY_COLOR_PALETTE[CATEGORY_COLOR_KEYS[0]];
+}
+/** A product's tile border colour, looked up via its category's colorKey. */
+function categoryColorFor(categoryKey: string, categories: BarCategoryRow[]): string {
+  const found = categories.find((c) => c.key === categoryKey);
+  if (!found) return '';
+  return categoryColorClasses(found.colorKey).tile;
+}
 
 // Rotating border colours for the volunteer picker — just visual variety, no meaning per colour.
 const ACCENT_BORDERS = [
@@ -90,6 +98,7 @@ export default function BarTillPage() {
   // mandatory front gate, only asked for contextually (see chooseVolunteer).
   const [view, setView] = useState<View>('person');
   const [products, setProducts] = useState<BarProduct[]>([]);
+  const [categories, setCategories] = useState<BarCategoryRow[]>([]);
   const [pricingConfig, setPricingConfig] = useState<BarPricingConfig>({ mode: 'member_product_discount', memberDiscountPercent: 0 });
   const [accounts, setAccounts] = useState<BarAccount[]>([]);
   const [allMembers, setAllMembers] = useState<MemberOption[]>([]);
@@ -98,7 +107,7 @@ export default function BarTillPage() {
   // What to do once a name is tapped on the volunteer picker — set when it's opened
   // to identify a Cash/Card tab or to attribute a Top Up, rather than just to change
   // who's marked as serving (the plain 'Change' link leaves this null).
-  const [pendingAction, setPendingAction] = useState<'cashcard' | 'topup' | null>(null);
+  const [pendingAction, setPendingAction] = useState<'cashcard' | 'topup' | 'endofday' | null>(null);
   const [personSearch, setPersonSearch] = useState('');
   const [showScanner, setShowScanner] = useState(false);
   const [error, setError] = useState('');
@@ -113,6 +122,8 @@ export default function BarTillPage() {
   const [heldOrders, setHeldOrders] = useState<Map<string, BasketLine[]>>(new Map());
   const [activeCat, setActiveCat] = useState<string>('beer');
   const [report, setReport] = useState<BarReport | null>(null);
+  const [dayEndSubmitting, setDayEndSubmitting] = useState(false);
+  const [dayEndSuccess, setDayEndSuccess] = useState<BarDayEnd | null>(null);
   const [sales, setSales] = useState<BarSaleSummary[] | null>(null);
   const [expandedSaleId, setExpandedSaleId] = useState<string | null>(null);
   const [showRefund, setShowRefund] = useState(false);
@@ -148,18 +159,20 @@ export default function BarTillPage() {
 
   const load = useCallback(async () => {
     try {
-      const [p, a, b, m, c] = await Promise.all([
+      const [p, a, b, m, c, cat] = await Promise.all([
         fetch('/api/bar/products?all=1').then((r) => r.json()),
         fetch('/api/bar/accounts').then((r) => r.json()),
         fetch('/api/bar/bar-persons').then((r) => r.json()),
         fetch('/api/members/lookup').then((r) => r.json()),
         fetch('/api/bar/pricing-config').then((r) => r.json()),
+        fetch('/api/bar/categories?all=1').then((r) => r.json()),
       ]);
       if (p.products) setProducts(p.products);
       if (a.accounts) setAccounts(a.accounts);
       if (b.barPersons) setBarPersons(b.barPersons);
       if (m.members) setAllMembers(m.members);
       if (c.pricingConfig) setPricingConfig(c.pricingConfig);
+      if (cat.categories) setCategories(cat.categories);
     } catch { setError('Failed to load bar data'); }
   }, []);
 
@@ -251,6 +264,10 @@ export default function BarTillPage() {
     } else if (pendingAction === 'topup') {
       setPendingAction(null);
       setView('topup');
+    } else if (pendingAction === 'endofday') {
+      setPendingAction(null);
+      setDayEndSuccess(null);
+      loadReport();
     } else {
       setView('person');
     }
@@ -423,6 +440,23 @@ export default function BarTillPage() {
     const data = await fetch('/api/bar/report').then((r) => r.json());
     setReport(data.report ?? null); setView('report');
   }
+  // End of Day always asks who's serving — the cash-up is done by, and stored
+  // against, that person (see bar_create_day_end() in 0063_bar_day_ends.sql).
+  function openEndOfDay() {
+    setPendingAction('endofday');
+    setView('volunteer');
+  }
+  async function submitDayEnd(cashRemovedPence: number, reason: string) {
+    setDayEndSubmitting(true); setError('');
+    try {
+      const res = await fetch('/api/bar/day-end', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ staff: volunteer, cashRemovedPence, reason: reason || undefined }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to record day end');
+      setDayEndSuccess(data.dayEnd);
+      await loadReport();
+    } catch (err: any) { setError(err.message); } finally { setDayEndSubmitting(false); }
+  }
   async function loadSales() {
     setView('sales'); setSales(null); setExpandedSaleId(null);
     const data = await fetch('/api/bar/sales?limit=40').then((r) => r.json());
@@ -538,7 +572,7 @@ export default function BarTillPage() {
             {view === 'person' && (
               <>
                 <button onClick={loadSales} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Sales</button>
-                <button onClick={loadReport} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Report</button>
+                <button onClick={openEndOfDay} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Report</button>
                 <button onClick={() => setView('products')} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Products</button>
                 {isBarTillLogin && (
                   <button onClick={() => signOut({ callbackUrl: '/bar' })}
@@ -617,17 +651,17 @@ export default function BarTillPage() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="md:col-span-2">
               <div className="flex flex-wrap gap-2 mb-3">
-                {CATEGORIES.map((c) => (
+                {categories.filter((c) => c.active).map((c) => (
                   <button key={c.key} onClick={() => setActiveCat(c.key)}
                     className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                      activeCat === c.key ? CATEGORY_COLORS[c.key].active : CATEGORY_COLORS[c.key].inactive
+                      activeCat === c.key ? categoryColorClasses(c.colorKey).active : categoryColorClasses(c.colorKey).inactive
                     }`}>{c.label}</button>
                 ))}
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
                 {products.filter((p) => p.active && p.category === activeCat).map((p) => (
                   <button key={p.id} onClick={() => addToBasket(p)}
-                    className={`p-3 rounded-lg border border-gray-200 ${CATEGORY_COLORS[p.category]?.tile ?? ''} bg-white text-left hover:border-blue-400 hover:shadow-sm transition-colors`}>
+                    className={`p-3 rounded-lg border border-gray-200 ${categoryColorFor(p.category, categories)} bg-white text-left hover:border-blue-400 hover:shadow-sm transition-colors`}>
                     <div className="font-medium text-gray-900 text-sm leading-tight">{p.name}</div>
                     <div className="text-gray-600 text-sm">{fmt(unitGrossPrice(p))}</div>
                   </button>
@@ -730,7 +764,9 @@ export default function BarTillPage() {
         {view === 'topup' && member && <TopUp member={member} busy={busy} onConfirm={doTopUp} />}
 
         {/* ── REPORT ───────────────────────────────────────────────────────── */}
-        {view === 'report' && report && <ReportView report={report} />}
+        {view === 'report' && report && (
+          <ReportView report={report} submitting={dayEndSubmitting} success={dayEndSuccess} onSubmit={submitDayEnd} />
+        )}
 
         {/* ── SALES (void) ─────────────────────────────────────────────────── */}
         {view === 'sales' && (
@@ -790,7 +826,7 @@ export default function BarTillPage() {
         )}
 
         {/* ── PRODUCTS ─────────────────────────────────────────────────────── */}
-        {view === 'products' && <ProductsAdmin products={products} pricingConfig={pricingConfig} onChanged={load} />}
+        {view === 'products' && <ProductsAdmin products={products} categories={categories} pricingConfig={pricingConfig} onChanged={load} />}
       </div>
     </div>
   );
@@ -1013,15 +1049,39 @@ function TopUp({ member, busy, onConfirm }: { member: BarAccount; busy: boolean;
   );
 }
 
-function ReportView({ report }: { report: BarReport }) {
+function ReportView({ report, submitting, success, onSubmit }: { report: BarReport; submitting: boolean; success: BarDayEnd | null; onSubmit: (cashRemovedPence: number, reason: string) => void }) {
   const row = (label: string, pence: number, strong = false) => (
     <div className={`flex justify-between py-1 ${strong ? 'font-bold text-lg border-t mt-1 pt-2' : 'text-sm'}`}>
       <span>{label}</span><span>{fmt(pence)}</span>
     </div>
   );
+  const [cashRemoved, setCashRemoved] = useState(() => (report.expectedCashPence / 100).toFixed(2));
+  const [reason, setReason] = useState('');
+  const [touched, setTouched] = useState(false);
+  // Re-sync the default when the report changes underneath us (e.g. a fresh
+  // sale lands) as long as the bar person hasn't started editing it, and
+  // reset back to untouched once a day end has just been recorded — done
+  // during render (not an effect) per React's "adjusting state" pattern.
+  const [prevExpected, setPrevExpected] = useState(report.expectedCashPence);
+  if (!touched && report.expectedCashPence !== prevExpected) {
+    setPrevExpected(report.expectedCashPence);
+    setCashRemoved((report.expectedCashPence / 100).toFixed(2));
+  }
+  const [prevSuccess, setPrevSuccess] = useState(success);
+  if (success !== prevSuccess) {
+    setPrevSuccess(success);
+    if (success) { setTouched(false); setReason(''); }
+  }
+  const cashRemovedPence = Math.round(parseFloat(cashRemoved || '0') * 100);
+  const differs = cashRemovedPence !== report.expectedCashPence;
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-5 max-w-lg">
-      <p className="text-xs text-gray-500 mb-4">Today so far — {report.salesCount} sales</p>
+      {success && (
+        <div className="mb-4 p-3 bg-green-50 border border-green-200 text-green-800 rounded text-sm">
+          Day end recorded — {fmt(success.cashRemovedPence)} removed, float {fmt(success.floatPence)} left in the till.
+        </div>
+      )}
+      <p className="text-xs text-gray-500 mb-4">Since the last cash-up — {report.salesCount} sales</p>
       {row('Wallet sales', report.byMethodPence.wallet)}
       {row('Card sales', report.byMethodPence.card)}
       {row('Cash sales (visitors)', report.byMethodPence.cash)}
@@ -1030,7 +1090,7 @@ function ReportView({ report }: { report: BarReport }) {
         {row('Top-ups taken (cash in)', report.topupsPence)}
         {row('Top-ups taken (by card)', report.cardTopupsPence)}
         {row('Refunds paid (cash out)', report.refundsPence)}
-        {row('Expected cash in box', report.expectedCashPence, true)}
+        {row('Expected cash in till', report.expectedCashPence, true)}
       </div>
       <div className="mt-4 pt-3 border-t">
         {row('Member discounts given', report.discountsGivenPence)}
@@ -1046,6 +1106,38 @@ function ReportView({ report }: { report: BarReport }) {
           ))}
         </div>
       )}
+      <div className="mt-5 pt-4 border-t space-y-3">
+        <div>
+          <label className="block text-sm text-gray-700 mb-1">Cash removed from till</label>
+          <div className="flex items-center gap-2">
+            <span className="text-gray-600">£</span>
+            <input
+              value={cashRemoved}
+              onChange={(e) => { setCashRemoved(e.target.value); setTouched(true); }}
+              inputMode="decimal"
+              className="border border-gray-300 rounded px-2 py-1.5 text-sm w-28"
+            />
+          </div>
+        </div>
+        {differs && (
+          <div>
+            <label className="block text-sm text-gray-700 mb-1">Reason for difference</label>
+            <input
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="e.g. till float short at start of shift"
+              className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
+            />
+          </div>
+        )}
+        <button
+          onClick={() => onSubmit(cashRemovedPence, reason)}
+          disabled={submitting || cashRemovedPence < 0}
+          className="w-full py-3 rounded-lg bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-50"
+        >
+          {submitting ? 'Saving…' : 'Update'}
+        </button>
+      </div>
     </div>
   );
 }
@@ -1054,15 +1146,18 @@ function ReportView({ report }: { report: BarReport }) {
 // independent prices; the other three modes need one price, and Member Product
 // Discount additionally takes an optional per-product override (blank = inherit
 // the global default from /admin/config's Bar tab).
-function ProductsAdmin({ products, pricingConfig, onChanged }: { products: BarProduct[]; pricingConfig: BarPricingConfig; onChanged: () => void }) {
+function ProductsAdmin({ products, categories, pricingConfig, onChanged }: { products: BarProduct[]; categories: BarCategoryRow[]; pricingConfig: BarPricingConfig; onChanged: () => void }) {
   const isSplit = pricingConfig.mode === 'split';
   const showOverride = pricingConfig.mode === 'member_product_discount';
+  const activeCategories = categories.filter((c) => c.active);
+  const firstCategoryKey = activeCategories.length > 0 ? activeCategories[0].key : '';
 
   const [name, setName] = useState('');
-  const [category, setCategory] = useState('beer');
+  const [category, setCategory] = useState(firstCategoryKey);
   const [price, setPrice] = useState('');           // base/single price, or split member price
   const [visitorPrice, setVisitorPrice] = useState(''); // split mode only
   const [override, setOverride] = useState('');      // member_product_discount mode only
+  const [nominalCode, setNominalCode] = useState('');
   async function add() {
     const pricePence = Math.round(parseFloat(price || '0') * 100);
     if (!name.trim() || pricePence <= 0) return;
@@ -1070,14 +1165,14 @@ function ProductsAdmin({ products, pricingConfig, onChanged }: { products: BarPr
       const nonMemberPricePence = Math.round(parseFloat(visitorPrice || '0') * 100);
       if (nonMemberPricePence <= 0) return;
       await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, category, pricePence, nonMemberPricePence }) });
+        body: JSON.stringify({ name, category, pricePence, nonMemberPricePence, nominalCode: nominalCode || undefined }) });
     } else {
       const overridePercent = override.trim() === '' ? undefined : Math.round(parseFloat(override));
       if (overridePercent !== undefined && (overridePercent < 0 || overridePercent > 100)) return;
       await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, category, basePricePence: pricePence, memberDiscountOverridePercent: showOverride ? overridePercent : undefined }) });
+        body: JSON.stringify({ name, category, basePricePence: pricePence, memberDiscountOverridePercent: showOverride ? overridePercent : undefined, nominalCode: nominalCode || undefined }) });
     }
-    setName(''); setPrice(''); setVisitorPrice(''); setOverride(''); onChanged();
+    setName(''); setPrice(''); setVisitorPrice(''); setOverride(''); setNominalCode(''); onChanged();
   }
   async function toggle(p: BarProduct) {
     await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1088,15 +1183,17 @@ function ProductsAdmin({ products, pricingConfig, onChanged }: { products: BarPr
   // Inline edit of an existing product
   const [editId, setEditId] = useState<string | null>(null);
   const [eName, setEName] = useState('');
-  const [eCat, setECat] = useState('beer');
+  const [eCat, setECat] = useState('');
   const [ePrice, setEPrice] = useState('');
   const [eVisitorPrice, setEVisitorPrice] = useState('');
   const [eOverride, setEOverride] = useState('');
+  const [eNominalCode, setENominalCode] = useState('');
   function startEdit(p: BarProduct) {
     setEditId(p.id); setEName(p.name); setECat(p.category);
     setEPrice(((isSplit ? p.pricePence : p.basePricePence) / 100).toFixed(2));
     setEVisitorPrice((p.nonMemberPricePence / 100).toFixed(2));
     setEOverride(p.memberDiscountOverridePercent === null ? '' : String(p.memberDiscountOverridePercent));
+    setENominalCode(p.nominalCode ?? '');
   }
   async function saveEdit(p: BarProduct) {
     const pricePence = Math.round(parseFloat(ePrice || '0') * 100);
@@ -1105,14 +1202,45 @@ function ProductsAdmin({ products, pricingConfig, onChanged }: { products: BarPr
       const nonMemberPricePence = Math.round(parseFloat(eVisitorPrice || '0') * 100);
       if (nonMemberPricePence <= 0) return;
       await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: p.id, name: eName.trim(), category: eCat, pricePence, nonMemberPricePence }) });
+        body: JSON.stringify({ id: p.id, name: eName.trim(), category: eCat, pricePence, nonMemberPricePence, nominalCode: eNominalCode || null }) });
     } else {
       const overridePercent = eOverride.trim() === '' ? null : Math.round(parseFloat(eOverride));
       if (overridePercent !== null && (overridePercent < 0 || overridePercent > 100)) return;
       await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: p.id, name: eName.trim(), category: eCat, basePricePence: pricePence, memberDiscountOverridePercent: showOverride ? overridePercent : undefined }) });
+        body: JSON.stringify({ id: p.id, name: eName.trim(), category: eCat, basePricePence: pricePence, memberDiscountOverridePercent: showOverride ? overridePercent : undefined, nominalCode: eNominalCode || null }) });
     }
     setEditId(null); onChanged();
+  }
+
+  // ── Manage Categories ────────────────────────────────────────────────────
+  const [newCatKey, setNewCatKey] = useState('');
+  const [newCatLabel, setNewCatLabel] = useState('');
+  const [newCatColor, setNewCatColor] = useState(CATEGORY_COLOR_KEYS[0]);
+  const [newCatNominal, setNewCatNominal] = useState('');
+  async function addCategory() {
+    const key = newCatKey.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    if (!key || !newCatLabel.trim()) return;
+    await fetch('/api/bar/categories', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, label: newCatLabel.trim(), colorKey: newCatColor, nominalCode: newCatNominal || undefined, isNew: true }) });
+    setNewCatKey(''); setNewCatLabel(''); setNewCatNominal(''); onChanged();
+  }
+  async function toggleCategory(c: BarCategoryRow) {
+    await fetch('/api/bar/categories', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: c.key, setActive: !c.active }) });
+    onChanged();
+  }
+  const [editCatKey, setEditCatKey] = useState<string | null>(null);
+  const [eCatLabel, setECatLabel] = useState('');
+  const [eCatColor, setECatColor] = useState('');
+  const [eCatNominal, setECatNominal] = useState('');
+  function startEditCategory(c: BarCategoryRow) {
+    setEditCatKey(c.key); setECatLabel(c.label); setECatColor(c.colorKey); setECatNominal(c.nominalCode ?? '');
+  }
+  async function saveEditCategory(c: BarCategoryRow) {
+    if (!eCatLabel.trim()) return;
+    await fetch('/api/bar/categories', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: c.key, label: eCatLabel.trim(), colorKey: eCatColor, nominalCode: eCatNominal || null, isNew: false }) });
+    setEditCatKey(null); onChanged();
   }
 
   // How a product's pricing reads on the list line, per mode.
@@ -1134,11 +1262,52 @@ function ProductsAdmin({ products, pricingConfig, onChanged }: { products: BarPr
   }
 
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-5 max-w-2xl">
+    <div className="space-y-5">
+      <div className="bg-white border border-gray-200 rounded-xl p-5 max-w-2xl">
+        <h2 className="font-bold text-gray-900 mb-3">Manage Categories</h2>
+        <div className="flex flex-wrap gap-2 mb-4 items-end">
+          <input value={newCatKey} onChange={(e) => setNewCatKey(e.target.value)} placeholder="key (e.g. mixers)" className="border rounded px-2 py-1.5 text-sm w-32" />
+          <input value={newCatLabel} onChange={(e) => setNewCatLabel(e.target.value)} placeholder="Label" className="border rounded px-2 py-1.5 text-sm flex-1 min-w-[120px]" />
+          <select value={newCatColor} onChange={(e) => setNewCatColor(e.target.value)} className="border rounded px-2 py-1.5 text-sm">
+            {CATEGORY_COLOR_KEYS.map((k) => <option key={k} value={k}>{k}</option>)}
+          </select>
+          <div>
+            <label className="block text-[10px] text-gray-500">Nominal code</label>
+            <input value={newCatNominal} onChange={(e) => setNewCatNominal(e.target.value)} placeholder="optional" className="border rounded px-2 py-1.5 text-sm w-28" />
+          </div>
+          <button onClick={addCategory} className="px-3 py-1.5 bg-green-600 text-white rounded text-sm font-medium">Add</button>
+        </div>
+        {categories.map((c) => (
+          editCatKey === c.key ? (
+            <div key={c.key} className="flex flex-wrap gap-2 items-center py-1.5 border-b border-gray-100">
+              <input value={eCatLabel} onChange={(e) => setECatLabel(e.target.value)} className="border rounded px-2 py-1 text-sm flex-1 min-w-[120px]" />
+              <select value={eCatColor} onChange={(e) => setECatColor(e.target.value)} className="border rounded px-2 py-1 text-sm">
+                {CATEGORY_COLOR_KEYS.map((k) => <option key={k} value={k}>{k}</option>)}
+              </select>
+              <input value={eCatNominal} onChange={(e) => setECatNominal(e.target.value)} placeholder="Nominal code" className="border rounded px-2 py-1 text-sm w-32" />
+              <button onClick={() => saveEditCategory(c)} className="px-3 py-1 bg-green-600 text-white rounded text-sm font-medium">Save</button>
+              <button onClick={() => setEditCatKey(null)} className="text-sm text-gray-500">Cancel</button>
+            </div>
+          ) : (
+            <div key={c.key} className={`flex justify-between items-center text-sm py-1 ${c.active ? '' : 'opacity-40'}`}>
+              <span className="flex items-center gap-2">
+                <span className={`inline-block w-3 h-3 rounded-full ${categoryColorClasses(c.colorKey).active.split(' ')[0]}`} />
+                {c.label} <span className="text-gray-400">({c.key}{c.nominalCode ? ` · ${c.nominalCode}` : ''})</span>
+              </span>
+              <span className="flex gap-3">
+                <button onClick={() => startEditCategory(c)} className="text-xs text-blue-600">Edit</button>
+                <button onClick={() => toggleCategory(c)} className="text-xs text-gray-500">{c.active ? 'Deactivate' : 'Activate'}</button>
+              </span>
+            </div>
+          )
+        ))}
+      </div>
+
+      <div className="bg-white border border-gray-200 rounded-xl p-5 max-w-2xl">
       <div className="flex flex-wrap gap-2 mb-4 items-end">
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Item name" className="border rounded px-2 py-1.5 text-sm flex-1 min-w-[140px]" />
         <select value={category} onChange={(e) => setCategory(e.target.value)} className="border rounded px-2 py-1.5 text-sm">
-          {CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+          {activeCategories.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
         </select>
         <div>
           <label className="block text-[10px] text-gray-500">{isSplit ? 'Member £' : 'Price £'}</label>
@@ -1156,9 +1325,13 @@ function ProductsAdmin({ products, pricingConfig, onChanged }: { products: BarPr
             <input value={override} onChange={(e) => setOverride(e.target.value)} placeholder="%" inputMode="decimal" className="border rounded px-2 py-1.5 text-sm w-32" />
           </div>
         )}
+        <div>
+          <label className="block text-[10px] text-gray-500">Nominal code</label>
+          <input value={nominalCode} onChange={(e) => setNominalCode(e.target.value)} placeholder="optional" className="border rounded px-2 py-1.5 text-sm w-28" />
+        </div>
         <button onClick={add} className="px-3 py-1.5 bg-green-600 text-white rounded text-sm font-medium">Add</button>
       </div>
-      {CATEGORIES.map((c) => {
+      {categories.map((c) => {
         const items = products.filter((p) => p.category === c.key);
         if (items.length === 0) return null;
         return (
@@ -1169,7 +1342,7 @@ function ProductsAdmin({ products, pricingConfig, onChanged }: { products: BarPr
                 <div key={p.id} className="flex flex-wrap gap-2 items-center py-1.5 border-b border-gray-100">
                   <input value={eName} onChange={(e) => setEName(e.target.value)} className="border rounded px-2 py-1 text-sm flex-1 min-w-[140px]" />
                   <select value={eCat} onChange={(e) => setECat(e.target.value)} className="border rounded px-2 py-1 text-sm">
-                    {CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+                    {activeCategories.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
                   </select>
                   <input value={ePrice} onChange={(e) => setEPrice(e.target.value)} placeholder={isSplit ? 'Member £' : 'Price £'} inputMode="decimal" className="border rounded px-2 py-1 text-sm w-20" />
                   {isSplit && (
@@ -1178,6 +1351,7 @@ function ProductsAdmin({ products, pricingConfig, onChanged }: { products: BarPr
                   {showOverride && (
                     <input value={eOverride} onChange={(e) => setEOverride(e.target.value)} placeholder={`Override % (blank = ${pricingConfig.memberDiscountPercent}%)`} inputMode="decimal" className="border rounded px-2 py-1 text-sm w-40" />
                   )}
+                  <input value={eNominalCode} onChange={(e) => setENominalCode(e.target.value)} placeholder="Nominal code" className="border rounded px-2 py-1 text-sm w-32" />
                   <button onClick={() => saveEdit(p)} className="px-3 py-1 bg-green-600 text-white rounded text-sm font-medium">Save</button>
                   <button onClick={() => setEditId(null)} className="text-sm text-gray-500">Cancel</button>
                 </div>
@@ -1194,6 +1368,7 @@ function ProductsAdmin({ products, pricingConfig, onChanged }: { products: BarPr
           </div>
         );
       })}
+      </div>
     </div>
   );
 }

@@ -12,6 +12,15 @@ import { getInputClasses, getCardClasses, getAlertClasses } from '@/config/theme
 
 type Tab = 'general' | 'labels' | 'rowland' | 'bar';
 
+const BAR_NOMINAL_FIELDS: [string, string][] = [
+  ['bar_nominal_cash_account', 'Cash-in-hand'],
+  ['bar_nominal_card_account', 'Card clearing'],
+  ['bar_nominal_wallet_liability_account', 'Member wallet liability'],
+  ['bar_nominal_discounts_account', 'Discounts given'],
+  ['bar_nominal_cash_variance_account', 'Cash over/short'],
+  ['bar_nominal_default_sales_account', 'Default sales (fallback when a category/product has no code)'],
+];
+
 const BAR_PRICING_MODES: [string, string, string][] = [
   // value, label, hint
   ['single', 'Single price', 'One price per product — everyone pays the same.'],
@@ -169,6 +178,14 @@ export default function AdminConfigPage() {
     }
   }
 
+  // Config stores the float in pence (bar_till_float_pence); the form edits it as
+  // pounds for readability — this seeds that transient UI-only field from config
+  // whenever entering (or cancelling out of) edit mode.
+  function seedEditBar(cfg: Record<string, string>): Record<string, string> {
+    const floatPence = parseInt(cfg.bar_till_float_pence || '0', 10);
+    return { ...cfg, bar_till_float_pounds: (floatPence / 100).toFixed(2) };
+  }
+
   async function saveBar() {
     setBarError(null);
     const rate = parseInt(editBar.bar_member_discount_percent ?? '', 10);
@@ -176,12 +193,19 @@ export default function AdminConfigPage() {
       setBarError('Member discount rate must be between 0 and 100');
       return;
     }
+    const floatPounds = parseFloat(editBar.bar_till_float_pounds ?? '');
+    if (!Number.isFinite(floatPounds) || floatPounds < 0) {
+      setBarError('Till float must be a non-negative amount');
+      return;
+    }
     setSavingBar(true);
     try {
-      const updates = {
+      const updates: Record<string, string> = {
         bar_pricing_mode: editBar.bar_pricing_mode ?? 'member_product_discount',
         bar_member_discount_percent: String(rate),
+        bar_till_float_pence: String(Math.round(floatPounds * 100)),
       };
+      for (const [key] of BAR_NOMINAL_FIELDS) updates[key] = editBar[key] ?? '';
       const res = await fetch('/api/admin/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -462,13 +486,13 @@ export default function AdminConfigPage() {
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-medium text-gray-700">Bar pricing</h2>
               {!isEditingBar ? (
-                <button onClick={() => { setEditBar(config); setIsEditingBar(true); }} className="text-sm text-blue-600 hover:text-blue-800">
+                <button onClick={() => { setEditBar(seedEditBar(config)); setIsEditingBar(true); }} className="text-sm text-blue-600 hover:text-blue-800">
                   Edit
                 </button>
               ) : (
                 <div className="flex gap-3">
                   <button
-                    onClick={() => { setEditBar(config); setIsEditingBar(false); setBarError(null); }}
+                    onClick={() => { setEditBar(seedEditBar(config)); setIsEditingBar(false); setBarError(null); }}
                     className="text-sm text-gray-500 hover:text-gray-700"
                   >
                     Cancel
@@ -520,6 +544,50 @@ export default function AdminConfigPage() {
                 <p className="text-xs text-gray-700 mt-1">
                   Used as the whole-bill discount in Member discount mode, and as the default rate any product can override in Member product discount mode. Not used in Single price or Split pricing modes.
                 </p>
+              </div>
+
+              <div>
+                <label className="block text-gray-900 mb-1">Till float (£)</label>
+                {isEditingBar ? (
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={editBar.bar_till_float_pounds ?? ''}
+                    onChange={(e) => setEditBar((prev) => ({ ...prev, bar_till_float_pounds: e.target.value }))}
+                    className={`${getInputClasses()} max-w-[10rem]`}
+                  />
+                ) : (
+                  <span className="text-gray-900">£{(parseInt(config.bar_till_float_pence || '0', 10) / 100).toFixed(2)}</span>
+                )}
+                <p className="text-xs text-gray-700 mt-1">
+                  The cash amount left in the till after cashing up — the End of Day screen on the till defaults "cash removed" to everything above this.
+                </p>
+              </div>
+
+              <div className="pt-2 border-t border-gray-200">
+                <h3 className="text-sm font-medium text-gray-700 mb-2">Xero nominal codes</h3>
+                <p className="text-xs text-gray-700 mb-3">
+                  Fixed control accounts for the End of Day / Xero export. Per-category and
+                  per-product revenue codes are set on the till&apos;s Products screen instead.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                  {BAR_NOMINAL_FIELDS.map(([key, label]) => (
+                    <div key={key}>
+                      <label className="block text-gray-900 mb-1">{label}</label>
+                      {isEditingBar ? (
+                        <input
+                          type="text"
+                          value={editBar[key] ?? ''}
+                          onChange={(e) => setEditBar((prev) => ({ ...prev, [key]: e.target.value }))}
+                          className={`${getInputClasses()} w-full`}
+                        />
+                      ) : (
+                        <span className="text-gray-900">{config[key] || '—'}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
