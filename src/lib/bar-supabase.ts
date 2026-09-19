@@ -485,6 +485,92 @@ export async function markDayEndsExported(dayEndIds: string[], exportedBy: strin
   if (error) throw new Error(`Failed to mark day ends exported: ${error.message}`);
 }
 
+// ── Day End drill-down (Treasurer Bar Reconciliation) ────────────────────────
+
+export interface BarDayEndLedgerRow {
+  id: string;
+  type: 'topup' | 'refund';
+  amountPence: number;
+  paymentMethod: 'cash' | 'card' | null;
+  userName: string;
+  memberName: string;
+  staff: string | null;
+  note: string | null;
+  createdAt: string;
+}
+
+/** The sales making up one payment-method line of a Day End (e.g. "Wallet sales" -> the
+ * bar_sales rows linked to it with payment_method = 'wallet'). */
+export async function getDayEndSales(dayEndId: string, method: 'wallet' | 'card' | 'cash'): Promise<BarSaleSummary[]> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('bar_sales')
+    .select('id, created_at, payment_method, user_name, total_pence, gross_total_pence, discount_pence, voided, bar_sale_items ( qty, unit_price_pence, bar_products ( name ) )')
+    .eq('day_end_id', dayEndId).eq('payment_method', method).eq('voided', false)
+    .order('created_at', { ascending: true });
+  if (error) throw new Error(`Failed to load sales: ${error.message}`);
+  const names = await nameMap();
+  return (data ?? []).map((s: any) => ({
+    id: s.id,
+    createdAt: s.created_at,
+    paymentMethod: s.payment_method,
+    userName: s.user_name,
+    memberName: s.user_name ? (names.get(s.user_name.toLowerCase()) || s.user_name) : null,
+    totalPence: s.total_pence,
+    grossTotalPence: s.gross_total_pence,
+    discountPence: s.discount_pence,
+    voided: s.voided,
+    items: (s.bar_sale_items ?? []).map((i: any) => ({ name: i.bar_products?.name ?? 'Item', qty: i.qty, unitPricePence: i.unit_price_pence })),
+  }));
+}
+
+/** The top-ups/refunds making up one line of a Day End. paymentMethod 'cash' also matches
+ * legacy rows with a null payment_method, mirroring getReport()'s cash/null equivalence. */
+export async function getDayEndLedger(dayEndId: string, type: 'topup' | 'refund', paymentMethod?: 'cash' | 'card'): Promise<BarDayEndLedgerRow[]> {
+  const supabase = getSupabaseClient();
+  let query = supabase
+    .from('bar_ledger')
+    .select('id, type, amount_pence, payment_method, user_name, staff, note, created_at')
+    .eq('day_end_id', dayEndId).eq('type', type)
+    .order('created_at', { ascending: true });
+  if (paymentMethod === 'card') query = query.eq('payment_method', 'card');
+  else if (paymentMethod === 'cash') query = query.or('payment_method.is.null,payment_method.eq.cash');
+  const { data, error } = await query;
+  if (error) throw new Error(`Failed to load ledger: ${error.message}`);
+  const names = await nameMap();
+  return (data ?? []).map((r: any) => ({
+    id: r.id, type: r.type, amountPence: Math.abs(r.amount_pence), paymentMethod: r.payment_method,
+    userName: r.user_name, memberName: names.get(r.user_name.toLowerCase()) || r.user_name,
+    staff: r.staff, note: r.note, createdAt: r.created_at,
+  }));
+}
+
+export interface BarNominalRevenue {
+  nominalCode: string | null;   // null = no product/category override; caller falls back to the global default
+  pence: number;
+}
+
+/** Net revenue (what was actually charged, after any member discount) for one payment
+ * method of a Day End, split by nominal code via the product -> category -> default
+ * hierarchy. Used to build the per-code revenue lines of the Xero export. */
+export async function getDayEndRevenueByNominalCode(dayEndId: string, method: 'wallet' | 'card' | 'cash'): Promise<BarNominalRevenue[]> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('bar_sales')
+    .select('bar_sale_items ( qty, unit_price_pence, bar_products ( nominal_code, category, bar_categories ( nominal_code ) ) )')
+    .eq('day_end_id', dayEndId).eq('payment_method', method).eq('voided', false);
+  if (error) throw new Error(`Failed to load sale items: ${error.message}`);
+  const totals = new Map<string | null, number>();
+  for (const s of (data ?? []) as any[]) {
+    for (const item of (s.bar_sale_items ?? []) as any[]) {
+      const line = item.qty * item.unit_price_pence;
+      const code = item.bar_products?.nominal_code ?? item.bar_products?.bar_categories?.nominal_code ?? null;
+      totals.set(code, (totals.get(code) ?? 0) + line);
+    }
+  }
+  return [...totals.entries()].map(([nominalCode, pence]) => ({ nominalCode, pence }));
+}
+
 // ── Recent sales (for the void screen) ───────────────────────────────────────
 
 export interface BarSaleItem {
