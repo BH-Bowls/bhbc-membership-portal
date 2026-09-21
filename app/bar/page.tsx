@@ -24,7 +24,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import jsQR from 'jsqr';
 import { canUseBarTill } from '@/lib/role-utils';
-import { priceItem, type BarPricingConfig, type BarProduct, type BarCategoryRow, type BarAccount, type BarPerson, type BarReport, type BarSaleSummary, type BarDayEnd } from '@/lib/bar-supabase';
+import { priceItem, type BarPricingConfig, type BarProduct, type BarCategoryRow, type BarAccount, type BarPerson, type BarReport, type BarSaleSummary, type BarDayEnd, type BarDayEndLedgerRow } from '@/lib/bar-supabase';
 import { useOnlineStatus } from '@/hooks/useOnlineStatus';
 import { enqueue, listQueued, dequeue, newQueueId, type QueuedEntry } from '@/lib/bar-offline-queue';
 
@@ -82,7 +82,7 @@ const SCREEN_TITLES: Record<View, string> = {
   volunteer: "Who's Serving",
   topup: 'Topup',
   sales: 'Sales',
-  report: 'Report',
+  report: 'Dayend',
   products: 'Products',
 };
 
@@ -572,7 +572,7 @@ export default function BarTillPage() {
             {view === 'person' && (
               <>
                 <button onClick={loadSales} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Sales</button>
-                <button onClick={openEndOfDay} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Report</button>
+                <button onClick={openEndOfDay} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Dayend</button>
                 <button onClick={() => setView('products')} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Products</button>
                 {isBarTillLogin && (
                   <button onClick={() => signOut({ callbackUrl: '/bar' })}
@@ -1049,15 +1049,16 @@ function TopUp({ member, busy, onConfirm }: { member: BarAccount; busy: boolean;
   );
 }
 
+type DrillKind = 'wallet_sales' | 'card_sales' | 'cash_sales' | 'cash_topups' | 'card_topups' | 'refunds';
+
 function ReportView({ report, submitting, success, onSubmit }: { report: BarReport; submitting: boolean; success: BarDayEnd | null; onSubmit: (cashRemovedPence: number, reason: string) => void }) {
-  const row = (label: string, pence: number, strong = false) => (
-    <div className={`flex justify-between py-1 ${strong ? 'font-bold text-lg border-t mt-1 pt-2' : 'text-sm'}`}>
-      <span>{label}</span><span>{fmt(pence)}</span>
-    </div>
-  );
   const [cashRemoved, setCashRemoved] = useState(() => (report.expectedCashPence / 100).toFixed(2));
   const [reason, setReason] = useState('');
   const [touched, setTouched] = useState(false);
+  const [expanded, setExpanded] = useState<DrillKind | null>(null);
+  const [drillSales, setDrillSales] = useState<BarSaleSummary[] | null>(null);
+  const [drillLedger, setDrillLedger] = useState<BarDayEndLedgerRow[] | null>(null);
+  const [drillLoading, setDrillLoading] = useState(false);
   // Re-sync the default when the report changes underneath us (e.g. a fresh
   // sale lands) as long as the bar person hasn't started editing it, and
   // reset back to untouched once a day end has just been recorded — done
@@ -1070,10 +1071,45 @@ function ReportView({ report, submitting, success, onSubmit }: { report: BarRepo
   const [prevSuccess, setPrevSuccess] = useState(success);
   if (success !== prevSuccess) {
     setPrevSuccess(success);
-    if (success) { setTouched(false); setReason(''); }
+    if (success) { setTouched(false); setReason(''); setExpanded(null); }
   }
   const cashRemovedPence = Math.round(parseFloat(cashRemoved || '0') * 100);
   const differs = cashRemovedPence !== report.expectedCashPence;
+
+  async function toggleExpand(kind: DrillKind) {
+    if (expanded === kind) { setExpanded(null); return; }
+    setExpanded(kind);
+    setDrillSales(null); setDrillLedger(null); setDrillLoading(true);
+    try {
+      const res = await fetch(`/api/bar/report/transactions?kind=${kind}`);
+      const data = await res.json();
+      if (data.sales) setDrillSales(data.sales);
+      if (data.ledger) setDrillLedger(data.ledger);
+    } finally {
+      setDrillLoading(false);
+    }
+  }
+
+  const row = (label: string, pence: number, kind?: DrillKind, strong = false) => (
+    <div>
+      <div
+        className={`flex justify-between py-1.5 ${strong ? 'font-bold text-lg border-t mt-1 pt-2' : 'text-sm'} ${kind ? 'cursor-pointer hover:bg-gray-50 rounded px-1 -mx-1' : ''}`}
+        onClick={kind ? () => toggleExpand(kind) : undefined}
+      >
+        <span className={kind ? 'text-blue-700 underline decoration-dotted' : ''}>{label}</span>
+        <span>{fmt(pence)}</span>
+      </div>
+      {kind && expanded === kind && (
+        <div className="mt-2 mb-2 bg-gray-50 border border-gray-200 rounded-lg p-3">
+          {drillLoading && <p className="text-xs text-gray-500">Loading…</p>}
+          {!drillLoading && drillSales && <DrillSalesTable sales={drillSales} />}
+          {!drillLoading && drillLedger && <DrillLedgerTable ledger={drillLedger} />}
+          {!drillLoading && !drillSales && !drillLedger && <p className="text-xs text-gray-500">No transactions.</p>}
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-5 max-w-lg">
       {success && (
@@ -1082,30 +1118,12 @@ function ReportView({ report, submitting, success, onSubmit }: { report: BarRepo
         </div>
       )}
       <p className="text-xs text-gray-500 mb-4">Since the last cash-up — {report.salesCount} sales</p>
-      {row('Wallet sales', report.byMethodPence.wallet)}
-      {row('Card sales', report.byMethodPence.card)}
-      {row('Cash sales (visitors)', report.byMethodPence.cash)}
-      {row('Total sales', report.byMethodPence.wallet + report.byMethodPence.card + report.byMethodPence.cash, true)}
-      <div className="mt-4">
-        {row('Top-ups taken (cash in)', report.topupsPence)}
-        {row('Top-ups taken (by card)', report.cardTopupsPence)}
-        {row('Refunds paid (cash out)', report.refundsPence)}
-        {row('Expected cash in till', report.expectedCashPence, true)}
-      </div>
-      <div className="mt-4 pt-3 border-t">
-        {row('Member discounts given', report.discountsGivenPence)}
-        {row('Outstanding member balances (float owed)', report.outstandingPence)}
-      </div>
-      {report.byProduct.length > 0 && (
-        <div className="mt-4 pt-3 border-t">
-          <h3 className="text-sm font-semibold text-gray-700 mb-1">By product</h3>
-          {report.byProduct.map((p) => (
-            <div key={p.name} className="flex justify-between text-sm py-0.5">
-              <span>{p.name} ×{p.qty}</span><span>{fmt(p.totalPence)}</span>
-            </div>
-          ))}
-        </div>
-      )}
+
+      {row('Member Account Top-ups (cash)', report.topupsPence, 'cash_topups')}
+      {row('Cash Sales', report.byMethodPence.cash, 'cash_sales')}
+      {row('Refunds paid out (cash)', report.refundsPence, 'refunds')}
+      {row('Expected cash in till', report.expectedCashPence, undefined, true)}
+
       <div className="mt-5 pt-4 border-t space-y-3">
         <div>
           <label className="block text-sm text-gray-700 mb-1">Cash removed from till</label>
@@ -1135,9 +1153,50 @@ function ReportView({ report, submitting, success, onSubmit }: { report: BarRepo
           disabled={submitting || cashRemovedPence < 0}
           className="w-full py-3 rounded-lg bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-50"
         >
-          {submitting ? 'Saving…' : 'Update'}
+          {submitting ? 'Saving…' : 'Confirm Day End'}
         </button>
       </div>
+
+      <div className="mt-5 pt-4 border-t">
+        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">For completeness</h3>
+        {row('Member Account Sales', report.byMethodPence.wallet, 'wallet_sales')}
+        {row('Card Sales', report.byMethodPence.card, 'card_sales')}
+        {row('Member Account Top-ups (by card)', report.cardTopupsPence, 'card_topups')}
+      </div>
+    </div>
+  );
+}
+
+function DrillSalesTable({ sales }: { sales: BarSaleSummary[] }) {
+  if (sales.length === 0) return <p className="text-xs text-gray-500">No sales.</p>;
+  return (
+    <div className="space-y-1">
+      {sales.map((s) => (
+        <div key={s.id} className="flex justify-between text-xs text-gray-700">
+          <span>
+            {new Date(s.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+            {' — '}{s.memberName || 'Visitor'} — {s.items.map((i) => `${i.name} ×${i.qty}`).join(', ')}
+          </span>
+          <span className="font-medium">{fmt(s.totalPence)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DrillLedgerTable({ ledger }: { ledger: BarDayEndLedgerRow[] }) {
+  if (ledger.length === 0) return <p className="text-xs text-gray-500">No transactions.</p>;
+  return (
+    <div className="space-y-1">
+      {ledger.map((l) => (
+        <div key={l.id} className="flex justify-between text-xs text-gray-700">
+          <span>
+            {new Date(l.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+            {' — '}{l.memberName}{l.staff ? ` (staff: ${l.staff})` : ''}
+          </span>
+          <span className="font-medium">{fmt(l.amountPence)}</span>
+        </div>
+      ))}
     </div>
   );
 }

@@ -500,14 +500,16 @@ export interface BarDayEndLedgerRow {
 }
 
 /** The sales making up one payment-method line of a Day End (e.g. "Wallet sales" -> the
- * bar_sales rows linked to it with payment_method = 'wallet'). */
-export async function getDayEndSales(dayEndId: string, method: 'wallet' | 'card' | 'cash'): Promise<BarSaleSummary[]> {
+ * bar_sales rows linked to it with payment_method = 'wallet'). dayEndId null means "not
+ * yet linked to any Day End" -- the till's live Dayend screen, before Confirm Day End. */
+export async function getDayEndSales(dayEndId: string | null, method: 'wallet' | 'card' | 'cash'): Promise<BarSaleSummary[]> {
   const supabase = getSupabaseClient();
-  const { data, error } = await supabase
+  let query = supabase
     .from('bar_sales')
     .select('id, created_at, payment_method, user_name, total_pence, gross_total_pence, discount_pence, voided, bar_sale_items ( qty, unit_price_pence, bar_products ( name ) )')
-    .eq('day_end_id', dayEndId).eq('payment_method', method).eq('voided', false)
-    .order('created_at', { ascending: true });
+    .eq('payment_method', method).eq('voided', false);
+  query = dayEndId === null ? query.is('day_end_id', null) : query.eq('day_end_id', dayEndId);
+  const { data, error } = await query.order('created_at', { ascending: true });
   if (error) throw new Error(`Failed to load sales: ${error.message}`);
   const names = await nameMap();
   return (data ?? []).map((s: any) => ({
@@ -525,17 +527,18 @@ export async function getDayEndSales(dayEndId: string, method: 'wallet' | 'card'
 }
 
 /** The top-ups/refunds making up one line of a Day End. paymentMethod 'cash' also matches
- * legacy rows with a null payment_method, mirroring getReport()'s cash/null equivalence. */
-export async function getDayEndLedger(dayEndId: string, type: 'topup' | 'refund', paymentMethod?: 'cash' | 'card'): Promise<BarDayEndLedgerRow[]> {
+ * legacy rows with a null payment_method, mirroring getReport()'s cash/null equivalence.
+ * dayEndId null means "not yet linked to any Day End" -- the till's live Dayend screen. */
+export async function getDayEndLedger(dayEndId: string | null, type: 'topup' | 'refund', paymentMethod?: 'cash' | 'card'): Promise<BarDayEndLedgerRow[]> {
   const supabase = getSupabaseClient();
   let query = supabase
     .from('bar_ledger')
     .select('id, type, amount_pence, payment_method, user_name, staff, note, created_at')
-    .eq('day_end_id', dayEndId).eq('type', type)
-    .order('created_at', { ascending: true });
+    .eq('type', type);
+  query = dayEndId === null ? query.is('day_end_id', null) : query.eq('day_end_id', dayEndId);
   if (paymentMethod === 'card') query = query.eq('payment_method', 'card');
   else if (paymentMethod === 'cash') query = query.or('payment_method.is.null,payment_method.eq.cash');
-  const { data, error } = await query;
+  const { data, error } = await query.order('created_at', { ascending: true });
   if (error) throw new Error(`Failed to load ledger: ${error.message}`);
   const names = await nameMap();
   return (data ?? []).map((r: any) => ({
