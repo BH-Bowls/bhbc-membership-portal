@@ -338,6 +338,6 @@ export default withAuth(
  */
 export const config = {
   matcher: [
-    '/((?!api/auth|api/apply|api/unlock|unlock|login|forgot-password|reset-password|kiosk|apply|help/login|_next/static|_next/image|favicon.ico|bhbc-logo.jpg|manifest.json|icons/).*)',
+    '/((?!api/auth|api/apply|api/unlock|unlock|login|forgot-password|reset-password|kiosk|apply|help/login|_next/static|_next/image|favicon.ico|bhbc-logo.jpg|manifest.json|manifest-bar.json|icons/).*)',
   ],
 };
