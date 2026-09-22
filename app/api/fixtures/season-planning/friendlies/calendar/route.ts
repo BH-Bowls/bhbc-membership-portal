@@ -1,6 +1,6 @@
 // app/api/fixtures/season-planning/friendlies/calendar/route.ts
-// GET: the draft season plus all of its Friendlies (any status), for the
-// month-by-month calendar popup. Deliberately resolves the draft season
+// GET: the draft season plus all of its Friendlies and Events (any status), for
+// the month-by-month calendar popup. Deliberately resolves the draft season
 // itself server-side rather than taking a seasonId — the calendar button is
 // mounted on several pages, some of which (Events, Clubs list) never load a
 // season at all, so it needs to be fully self-contained.
@@ -28,9 +28,12 @@ export async function GET() {
       return NextResponse.json({ season: null, fixtures: [] });
     }
 
-    const fixtures = await listPlanningFixtures(draftSeason.id, 'Friendly');
+    const [friendlies, events] = await Promise.all([
+      listPlanningFixtures(draftSeason.id, 'Friendly'),
+      listPlanningFixtures(draftSeason.id, 'Event'),
+    ]);
 
-    return NextResponse.json({ season: draftSeason, fixtures });
+    return NextResponse.json({ season: draftSeason, fixtures: [...friendlies, ...events] });
   } catch (error) {
     console.error('Error fetching calendar data:', error);
     return NextResponse.json({ error: 'Failed to fetch calendar data' }, { status: 500 });

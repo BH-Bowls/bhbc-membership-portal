@@ -81,22 +81,26 @@ function planningBadgeClasses(status: string): string {
 }
 
 function buildGmailLink(recipientEmail: string, clubName: string, year: number, pendingFixtures: ClubFixtureHistoryRow[]): string {
-  const subject = `BHBC Friendly Fixtures ${year} — Proposed Dates`;
+  const subject = `BHBC Friendly Fixtures ${year} — Proposed Dates vs ${clubName}`;
   const many = pendingFixtures.length > 1;
-  const lines = pendingFixtures.map((f) =>
-    `- ${formatDisplayDate(f.date)} (${f.homeAway === 'A' ? 'Away' : 'Home'})${f.format ? `, ${f.format}` : ''}`
-  );
+  const lines = pendingFixtures.map((f) => {
+    const venue = f.homeAway === 'A' ? `at ${clubName}` : f.homeAway === 'H' ? 'at BHBC' : null;
+    const details = [f.time || null, venue].filter(Boolean).join(', ');
+    return `- ${formatDisplayDate(f.date)}${details ? ` (${details})` : ''}${f.format ? `, ${f.format}` : ''}${f.ladiesMen ? `, ${f.ladiesMen}` : ''}`;
+  });
   const body = [
     'Hi,',
     '',
-    `Ahead of the ${year} season, here ${many ? 'are our proposed dates' : 'is our proposed date'} for our friendly fixture${many ? 's' : ''} against ${clubName}:`,
+    // Two alternative openers — pick one, delete the other before sending.
+    `Ahead of the ${year} season, here ${many ? 'are our proposed dates' : 'is our proposed date'} for our friendly fixture${many ? 's' : ''} against ${clubName}, following the BE schedule:`,
+    `Ahead of the ${year} season, I would like to get our fixture date${many ? 's' : ''} sorted. According to the BE schedule and past fixtures, our ${year} fixture${many ? 's' : ''} should be:`,
     '',
     ...lines,
     '',
     `Please let us know if ${many ? 'these all still work' : 'this still works'}, or if anything needs to move.`,
     '',
-    'Thanks,',
-    'Burgess Hill Bowls Club',
+    // No closing signature — Gmail drops the account's own signature whenever a
+    // `body` param is supplied, so whoever sends this adds their own by hand.
   ].join('\n');
   return `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(recipientEmail)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
