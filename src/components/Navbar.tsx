@@ -670,7 +670,13 @@ export function Navbar() {
   // 'Bar' role itself). Placed after every hook above runs, never before —
   // conditionally skipping hooks based on a role that can change between renders
   // (e.g. via impersonation) would break React's rules of hooks.
-  if (roles.includes('Bar')) return null;
+  //
+  // Also hide on /bar itself while logged out (the till's own PIN entry screen) —
+  // roles is empty at that point (no session yet), so the check above alone
+  // wouldn't catch it, and the till is meant to look like a locked-down kiosk
+  // even before signing in. Gated on !session so Admin/Committee still see the
+  // normal navbar when they're the ones authenticated and visiting /bar.
+  if (roles.includes('Bar') || (pathname === '/bar' && !session)) return null;
 
   return (
     <nav className="sticky top-0 z-50 bg-white shadow-sm print:hidden">
