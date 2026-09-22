@@ -13,6 +13,13 @@ import { clearColumnMapCache } from './sheets';
 import { parseRoles, hasRole } from './role-utils';
 import { isDeviceTrusted } from './bar-devices-supabase';
 
+// Every role's expiry policy in the session() callback below signals expiry by
+// throwing (NextAuth's documented way to invalidate a JWT session), so this fires
+// on every ordinary expiry -- the Bar till's 4h/24h policy, and the 90-day
+// absolute ceiling for everyone else -- not just on a genuine problem. Suppress
+// only those two expected messages; anything else still logs normally.
+const EXPECTED_SESSION_ERRORS = new Set(['Session expired', 'Invalid session token']);
+
 /**
  * NextAuth configuration object
  * Defines authentication providers, session strategy, and security settings
@@ -295,4 +302,16 @@ export const authOptions: NextAuthOptions = {
 
   // Secret key for signing JWT tokens (MUST be set in environment variables)
   secret: process.env.NEXTAUTH_SECRET,
+
+  // Only overrides error() -- NextAuth merges this with its defaults, so warn()
+  // and debug() are untouched. See EXPECTED_SESSION_ERRORS above.
+  logger: {
+    error(code, metadata) {
+      const message = metadata instanceof Error ? metadata.message : undefined;
+      if (code === 'JWT_SESSION_ERROR' && message && EXPECTED_SESSION_ERRORS.has(message)) {
+        return;
+      }
+      console.error(`[next-auth][error][${code}]`, metadata);
+    },
+  },
 };
