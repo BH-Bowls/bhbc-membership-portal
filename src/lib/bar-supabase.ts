@@ -39,6 +39,7 @@ export interface BarProduct {
   nonMemberPricePence: number;                    // split mode: visitor price
   memberDiscountOverridePercent: number | null;   // member_product_discount mode: null = inherit the global default
   nominalCode: string | null;                     // Xero nominal code override; null = inherit the category's code
+  variablePrice: boolean;                         // Cash Movement products: amount is entered per-transaction, not fixed here
   active: boolean;
   sortOrder: number;
 }
@@ -142,6 +143,7 @@ export async function getProducts(includeInactive = false): Promise<BarProduct[]
     nonMemberPricePence: r.non_member_price_pence,
     memberDiscountOverridePercent: r.member_discount_override_percent,
     nominalCode: r.nominal_code,
+    variablePrice: r.variable_price,
     active: r.active, sortOrder: r.sort_order,
   }));
 }
@@ -152,6 +154,7 @@ export async function saveProduct(
     basePricePence?: number; pricePence?: number; nonMemberPricePence?: number;
     memberDiscountOverridePercent?: number | null;
     nominalCode?: string | null;
+    variablePrice?: boolean;
     sortOrder?: number; active?: boolean;
   },
   editedBy: string,
@@ -165,10 +168,17 @@ export async function saveProduct(
   // sane starting point instead of failing the insert. An existing product's
   // untouched columns are left alone on update (nothing added to `row` below), so
   // switching modes and back doesn't lose previously-entered split/base prices.
+  // Variable-price products (Cash Movement) never charge a fixed price at all --
+  // the amount is entered per-transaction -- so all three just default to 0.
   if (!input.id) {
     if (basePricePence === undefined && nonMemberPricePence !== undefined) basePricePence = nonMemberPricePence;
     if (pricePence === undefined && basePricePence !== undefined) pricePence = basePricePence;
     if (nonMemberPricePence === undefined && basePricePence !== undefined) nonMemberPricePence = basePricePence;
+    if (input.variablePrice) {
+      if (basePricePence === undefined) basePricePence = 0;
+      if (pricePence === undefined) pricePence = 0;
+      if (nonMemberPricePence === undefined) nonMemberPricePence = 0;
+    }
   }
 
   const row: Record<string, unknown> = {
@@ -184,6 +194,7 @@ export async function saveProduct(
   if (nonMemberPricePence !== undefined) row.non_member_price_pence = nonMemberPricePence;
   if (input.memberDiscountOverridePercent !== undefined) row.member_discount_override_percent = input.memberDiscountOverridePercent;
   if (input.nominalCode !== undefined) row.nominal_code = input.nominalCode;
+  if (input.variablePrice !== undefined) row.variable_price = input.variablePrice;
 
   if (input.id) {
     const { error } = await supabase.from('bar_products').update(row).eq('id', input.id);
@@ -337,6 +348,20 @@ export async function visitorSale(method: 'card' | 'cash', items: BasketItem[], 
   });
   if (error) throw new Error(error.message);
   return { saleId: data.sale_id, totalPence: data.total_pence, grossTotalPence: data.gross_total_pence, discountPence: data.discount_pence };
+}
+
+/** Cash added to or removed from the till for a non-sale reason (float top-up, petty
+ * cash, paying a delivery driver, etc.) -- posted as an ordinary cash sale of a
+ * variable-price product so it rolls into the Dayend cash total and the Xero
+ * export's nominal-code split like any other sale (see bar_cash_movement() in
+ * 0064_bar_cash_movements.sql). productId must be a variable_price product. */
+export async function cashMovement(productId: string, amountPence: number, direction: 'in' | 'out', reason: string, staff: string): Promise<{ saleId: string; totalPence: number }> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.rpc('bar_cash_movement', {
+    p_product_id: productId, p_amount_pence: amountPence, p_direction: direction, p_reason: reason, p_staff: staff,
+  });
+  if (error) throw new Error(error.message);
+  return { saleId: data.sale_id, totalPence: data.total_pence };
 }
 
 export async function voidSale(saleId: string, staff: string): Promise<void> {
@@ -506,7 +531,7 @@ export async function getDayEndSales(dayEndId: string | null, method: 'wallet' |
   const supabase = getSupabaseClient();
   let query = supabase
     .from('bar_sales')
-    .select('id, created_at, payment_method, user_name, total_pence, gross_total_pence, discount_pence, voided, bar_sale_items ( qty, unit_price_pence, bar_products ( name ) )')
+    .select('id, created_at, payment_method, user_name, total_pence, gross_total_pence, discount_pence, voided, is_cash_movement, reason, bar_sale_items ( qty, unit_price_pence, bar_products ( name ) )')
     .eq('payment_method', method).eq('voided', false);
   query = dayEndId === null ? query.is('day_end_id', null) : query.eq('day_end_id', dayEndId);
   const { data, error } = await query.order('created_at', { ascending: true });
@@ -522,6 +547,8 @@ export async function getDayEndSales(dayEndId: string | null, method: 'wallet' |
     grossTotalPence: s.gross_total_pence,
     discountPence: s.discount_pence,
     voided: s.voided,
+    isCashMovement: s.is_cash_movement,
+    reason: s.reason,
     items: (s.bar_sale_items ?? []).map((i: any) => ({ name: i.bar_products?.name ?? 'Item', qty: i.qty, unitPricePence: i.unit_price_pence })),
   }));
 }
@@ -592,6 +619,8 @@ export interface BarSaleSummary {
   grossTotalPence: number;
   discountPence: number;
   voided: boolean;
+  isCashMovement: boolean;
+  reason: string | null;       // Cash Movement only
   items: BarSaleItem[];
 }
 
@@ -599,7 +628,7 @@ export async function getRecentSales(limit = 40): Promise<BarSaleSummary[]> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
     .from('bar_sales')
-    .select('id, created_at, payment_method, user_name, total_pence, gross_total_pence, discount_pence, voided, bar_sale_items ( qty, unit_price_pence, bar_products ( name ) )')
+    .select('id, created_at, payment_method, user_name, total_pence, gross_total_pence, discount_pence, voided, is_cash_movement, reason, bar_sale_items ( qty, unit_price_pence, bar_products ( name ) )')
     .order('created_at', { ascending: false })
     .limit(limit);
   if (error) throw new Error(`Failed to load sales: ${error.message}`);
@@ -614,6 +643,8 @@ export async function getRecentSales(limit = 40): Promise<BarSaleSummary[]> {
     grossTotalPence: s.gross_total_pence,
     discountPence: s.discount_pence,
     voided: s.voided,
+    isCashMovement: s.is_cash_movement,
+    reason: s.reason,
     items: (s.bar_sale_items ?? []).map((i: any) => ({ name: i.bar_products?.name ?? 'Item', qty: i.qty, unitPricePence: i.unit_price_pence })),
   }));
 }

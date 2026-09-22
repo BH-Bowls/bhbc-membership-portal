@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
       }
       const hasBase = typeof body.basePricePence === 'number';
       const hasSplit = typeof body.pricePence === 'number' && typeof body.nonMemberPricePence === 'number';
-      if (!body.id && !hasBase && !hasSplit) {
+      if (!body.id && !hasBase && !hasSplit && !body.variablePrice) {
         return NextResponse.json({ error: 'A price is required' }, { status: 400 });
       }
       if (body.memberDiscountOverridePercent !== undefined && body.memberDiscountOverridePercent !== null) {
@@ -50,6 +50,7 @@ export async function POST(req: NextRequest) {
           nonMemberPricePence: typeof body.nonMemberPricePence === 'number' ? Math.round(body.nonMemberPricePence) : undefined,
           memberDiscountOverridePercent: body.memberDiscountOverridePercent === undefined ? undefined : body.memberDiscountOverridePercent,
           nominalCode: body.nominalCode === undefined ? undefined : body.nominalCode,
+          variablePrice: body.variablePrice === undefined ? undefined : !!body.variablePrice,
           sortOrder: body.sortOrder, active: body.active,
         },
         session.user.userName,

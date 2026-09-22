@@ -296,8 +296,8 @@ function SalesTable({ sales }: { sales: BarSaleSummary[] }) {
         {sales.map((s) => (
           <tr key={s.id} className="border-t">
             <td className="py-1 pr-3">{fmtDate(s.createdAt)}</td>
-            <td className="py-1 pr-3">{s.memberName || 'Visitor'}</td>
-            <td className="py-1 pr-3">{s.items.map((i) => `${i.name} ×${i.qty}`).join(', ')}</td>
+            <td className="py-1 pr-3">{s.isCashMovement ? 'Cash Movement' : (s.memberName || 'Visitor')}</td>
+            <td className="py-1 pr-3">{s.isCashMovement ? s.reason : s.items.map((i) => `${i.name} ×${i.qty}`).join(', ')}</td>
             <td className="py-1 pr-3 text-right">{s.discountPence > 0 ? fmt(s.discountPence) : '-'}</td>
             <td className="py-1 text-right font-semibold">{fmt(s.totalPence)}</td>
           </tr>

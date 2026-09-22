@@ -48,15 +48,30 @@ async function buildJournalLines(dayEnd: BarDayEnd, config: BarNominalConfig): P
     if (debitPence === 0 && creditPence === 0) return;
     lines.push({ narration, date, description, accountCode, debitPence, creditPence });
   };
+  // Posts a signed amount to one side or the other of one account. positiveIsDebit
+  // says which side a positive pence normally belongs on for that account; a
+  // negative pence (e.g. a Cash Movement removal, which can make a "sales" total
+  // negative) simply lands on the opposite side instead of going negative itself --
+  // every caller posts the same pence to two accounts with opposite positiveIsDebit,
+  // so each pair always balances regardless of sign.
+  const postSigned = (description: string, accountCode: string, pence: number, positiveIsDebit: boolean) => {
+    if (pence === 0) return;
+    const abs = Math.abs(pence);
+    const isDebit = (pence > 0) === positiveIsDebit;
+    push(description, accountCode, isDebit ? abs : 0, isDebit ? 0 : abs);
+  };
 
   // Top-ups: cash/card comes in, a matching liability is created (not revenue --
   // it isn't earned until the member actually spends it).
-  push('Cash top-ups', config.cashAccount, dayEnd.cashTopupsPence, 0);
-  push('Cash top-ups', config.walletLiabilityAccount, 0, dayEnd.cashTopupsPence);
-  push('Card top-ups', config.cardAccount, dayEnd.cardTopupsPence, 0);
-  push('Card top-ups', config.walletLiabilityAccount, 0, dayEnd.cardTopupsPence);
+  postSigned('Cash top-ups', config.cashAccount, dayEnd.cashTopupsPence, true);
+  postSigned('Cash top-ups', config.walletLiabilityAccount, dayEnd.cashTopupsPence, false);
+  postSigned('Card top-ups', config.cardAccount, dayEnd.cardTopupsPence, true);
+  postSigned('Card top-ups', config.walletLiabilityAccount, dayEnd.cardTopupsPence, false);
 
   // Sales revenue, split by nominal code (product override -> category -> default).
+  // Includes Cash Movements (see 0064_bar_cash_movements.sql) posted through the
+  // 'cash' method as an ordinary, possibly negative, sale -- postSigned handles a
+  // net-negative total (more removed than sold) the same way as any other sign.
   const salesByMethod: { method: 'wallet' | 'cash' | 'card'; totalPence: number; debitAccount: string }[] = [
     { method: 'wallet', totalPence: dayEnd.walletSalesPence, debitAccount: config.walletLiabilityAccount },
     { method: 'cash', totalPence: dayEnd.cashSalesPence, debitAccount: config.cashAccount },
@@ -65,28 +80,21 @@ async function buildJournalLines(dayEnd: BarDayEnd, config: BarNominalConfig): P
   for (const { method, totalPence, debitAccount } of salesByMethod) {
     if (totalPence === 0) continue;
     const byCode = await getDayEndRevenueByNominalCode(dayEnd.id, method);
-    push(`${method} sales`, debitAccount, totalPence, 0);
+    postSigned(`${method} sales`, debitAccount, totalPence, true);
     for (const { nominalCode, pence } of byCode) {
-      if (pence === 0) continue;
-      push(`${method} sales`, nominalCode || config.defaultSalesAccount, 0, pence);
+      postSigned(`${method} sales`, nominalCode || config.defaultSalesAccount, pence, false);
     }
   }
 
   // Refunds: cash paid back out of a member's wallet.
-  push('Refunds', config.walletLiabilityAccount, dayEnd.refundsPence, 0);
-  push('Refunds', config.cashAccount, 0, dayEnd.refundsPence);
+  postSigned('Refunds', config.walletLiabilityAccount, dayEnd.refundsPence, true);
+  postSigned('Refunds', config.cashAccount, dayEnd.refundsPence, false);
 
   // Cash-count variance: expected vs. what was actually removed from the till.
+  // Positive = shortfall (less removed than expected), negative = surplus.
   const variance = dayEnd.cashExpectedPence - dayEnd.cashRemovedPence;
-  if (variance > 0) {
-    // Less cash removed than expected -- a shortfall, write cash-in-hand down.
-    push('Cash variance (short)', config.cashVarianceAccount, variance, 0);
-    push('Cash variance (short)', config.cashAccount, 0, variance);
-  } else if (variance < 0) {
-    // More cash removed than expected -- a surplus.
-    push('Cash variance (over)', config.cashAccount, -variance, 0);
-    push('Cash variance (over)', config.cashVarianceAccount, 0, -variance);
-  }
+  postSigned('Cash variance', config.cashVarianceAccount, variance, true);
+  postSigned('Cash variance', config.cashAccount, variance, false);
 
   return lines;
 }

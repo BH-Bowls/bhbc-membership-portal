@@ -72,7 +72,7 @@ const ACCENT_BORDERS = [
 
 const fmt = (pence: number) => `£${(pence / 100).toFixed(2)}`;
 
-type View = 'volunteer' | 'person' | 'sale' | 'topup' | 'report' | 'sales' | 'products';
+type View = 'volunteer' | 'person' | 'sale' | 'topup' | 'report' | 'sales' | 'products' | 'cashmovement';
 interface BasketLine { product: BarProduct; qty: number }
 interface MemberOption { userName: string; fullName: string }
 
@@ -84,6 +84,7 @@ const SCREEN_TITLES: Record<View, string> = {
   sales: 'Sales',
   report: 'Dayend',
   products: 'Products',
+  cashmovement: 'Cash Movement',
 };
 
 export default function BarTillPage() {
@@ -107,7 +108,7 @@ export default function BarTillPage() {
   // What to do once a name is tapped on the volunteer picker — set when it's opened
   // to identify a Cash/Card tab or to attribute a Top Up, rather than just to change
   // who's marked as serving (the plain 'Change' link leaves this null).
-  const [pendingAction, setPendingAction] = useState<'cashcard' | 'topup' | 'endofday' | null>(null);
+  const [pendingAction, setPendingAction] = useState<'cashcard' | 'topup' | 'endofday' | 'cashmovement' | null>(null);
   const [personSearch, setPersonSearch] = useState('');
   const [showScanner, setShowScanner] = useState(false);
   const [error, setError] = useState('');
@@ -268,6 +269,9 @@ export default function BarTillPage() {
       setPendingAction(null);
       setDayEndSuccess(null);
       loadReport();
+    } else if (pendingAction === 'cashmovement') {
+      setPendingAction(null);
+      setView('cashmovement');
     } else {
       setView('person');
     }
@@ -457,6 +461,27 @@ export default function BarTillPage() {
       await loadReport();
     } catch (err: any) { setError(err.message); } finally { setDayEndSubmitting(false); }
   }
+
+  // Cash added to or removed from the till for a non-sale reason (float top-up,
+  // petty cash, etc.) -- discouraged but needed, so it still asks who's serving
+  // for audit, same as a Top Up. See bar_cash_movement() in 0064_bar_cash_movements.sql.
+  function openCashMovement() {
+    setPendingAction('cashmovement');
+    setView('volunteer');
+  }
+  async function doCashMovement(productId: string, amountPence: number, direction: 'in' | 'out', reason: string) {
+    if (offline) { setError('Cash movements need a live connection.'); return; }
+    if (!requireVolunteer()) return;
+    setBusy(true); setError('');
+    try {
+      const res = await fetch('/api/bar/cash-movement', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productId, amountPence, direction, reason, staff: volunteer }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to record cash movement');
+      await load();
+      setView('person');
+    } catch (err: any) { setError(err.message); } finally { setBusy(false); }
+  }
   async function loadSales() {
     setView('sales'); setSales(null); setExpandedSaleId(null);
     const data = await fetch('/api/bar/sales?limit=40').then((r) => r.json());
@@ -574,6 +599,7 @@ export default function BarTillPage() {
                 <button onClick={loadSales} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Sales</button>
                 <button onClick={openEndOfDay} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Dayend</button>
                 <button onClick={() => setView('products')} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Products</button>
+                <button onClick={openCashMovement} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Cash Movement</button>
                 {isBarTillLogin && (
                   <button onClick={() => signOut({ callbackUrl: '/bar' })}
                     className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 text-red-600">Logout</button>
@@ -659,7 +685,7 @@ export default function BarTillPage() {
                 ))}
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
-                {products.filter((p) => p.active && p.category === activeCat).map((p) => (
+                {products.filter((p) => p.active && !p.variablePrice && p.category === activeCat).map((p) => (
                   <button key={p.id} onClick={() => addToBasket(p)}
                     className={`p-3 rounded-lg border border-gray-200 ${categoryColorFor(p.category, categories)} bg-white text-left hover:border-blue-400 hover:shadow-sm transition-colors`}>
                     <div className="font-medium text-gray-900 text-sm leading-tight">{p.name}</div>
@@ -763,6 +789,11 @@ export default function BarTillPage() {
         {/* ── TOP UP ───────────────────────────────────────────────────────── */}
         {view === 'topup' && member && <TopUp member={member} busy={busy} onConfirm={doTopUp} />}
 
+        {/* ── CASH MOVEMENT: cash in/out of the till for a non-sale reason ────── */}
+        {view === 'cashmovement' && (
+          <CashMovementView categories={categories} products={products} busy={busy} onConfirm={doCashMovement} />
+        )}
+
         {/* ── REPORT ───────────────────────────────────────────────────────── */}
         {view === 'report' && report && (
           <ReportView report={report} submitting={dayEndSubmitting} success={dayEndSuccess} onSubmit={submitDayEnd} />
@@ -785,7 +816,8 @@ export default function BarTillPage() {
                         <div className="min-w-0 cursor-pointer" onClick={() => setExpandedSaleId(expanded ? null : s.id)}>
                           <div className="text-sm text-gray-900">
                             <span className="text-gray-400 mr-1">{expanded ? '▾' : '▸'}</span>
-                            <span className="font-semibold">{fmt(s.totalPence)}</span> · {s.paymentMethod}{s.memberName ? ` · ${s.memberName}` : ' · visitor'}
+                            <span className="font-semibold">{fmt(s.totalPence)}</span> · {s.paymentMethod}
+                            {s.isCashMovement ? ' · Cash Movement' : (s.memberName ? ` · ${s.memberName}` : ' · visitor')}
                             <span className="text-gray-400"> · {s.items.length} item{s.items.length === 1 ? '' : 's'}</span>
                           </div>
                           <div className="text-xs text-gray-500">
@@ -801,6 +833,7 @@ export default function BarTillPage() {
                       </div>
                       {expanded && (
                         <div className="pl-4 pb-2 space-y-0.5">
+                          {s.reason && <p className="text-xs text-gray-600 italic">Reason: {s.reason}</p>}
                           {s.items.length === 0 ? (
                             <p className="text-xs text-gray-400">No items recorded.</p>
                           ) : s.items.map((it, idx) => (
@@ -1049,6 +1082,95 @@ function TopUp({ member, busy, onConfirm }: { member: BarAccount; busy: boolean;
   );
 }
 
+// Cash added to or removed from the till for a non-sale reason. The product picked
+// (a variable_price product -- see 0064_bar_cash_movements.sql) supplies the nominal
+// code; the amount and reason are entered fresh each time.
+function CashMovementView({ categories, products, busy, onConfirm }: {
+  categories: BarCategoryRow[];
+  products: BarProduct[];
+  busy: boolean;
+  onConfirm: (productId: string, amountPence: number, direction: 'in' | 'out', reason: string) => void;
+}) {
+  const movementProducts = products.filter((p) => p.active && p.variablePrice);
+  const movementCategories = categories.filter((c) => c.active && movementProducts.some((p) => p.category === c.key));
+  const [direction, setDirection] = useState<'in' | 'out'>('out');
+  const [category, setCategory] = useState(movementCategories.length > 0 ? movementCategories[0].key : '');
+  const productsInCategory = movementProducts.filter((p) => p.category === category);
+  const [productId, setProductId] = useState(productsInCategory.length > 0 ? productsInCategory[0].id : '');
+  const [amount, setAmount] = useState('');
+  const [reason, setReason] = useState('');
+
+  // Keep the product selection valid as the category changes — during render, not
+  // an effect (React's "adjusting state" pattern, same as ReportView above).
+  const [prevCategory, setPrevCategory] = useState(category);
+  if (category !== prevCategory) {
+    setPrevCategory(category);
+    setProductId(productsInCategory.length > 0 ? productsInCategory[0].id : '');
+  }
+
+  const pence = Math.round(parseFloat(amount || '0') * 100);
+  const canSubmit = productId !== '' && pence > 0 && reason.trim() !== '';
+
+  if (movementProducts.length === 0) {
+    return (
+      <div className="max-w-sm mx-auto bg-white border border-gray-200 rounded-xl p-5 text-sm text-gray-600">
+        No Cash Movement products set up yet. Add one on the Products screen using the Variable price option.
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-sm mx-auto bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+      <div className="flex gap-2">
+        <button onClick={() => setDirection('in')}
+          className={`flex-1 py-2 rounded-lg font-medium ${direction === 'in' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-700'}`}>Cash In</button>
+        <button onClick={() => setDirection('out')}
+          className={`flex-1 py-2 rounded-lg font-medium ${direction === 'out' ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-700'}`}>Cash Out</button>
+      </div>
+      <div>
+        <label className="block text-sm text-gray-700 mb-1">Product group</label>
+        <select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full border border-gray-300 rounded px-2 py-2 text-sm">
+          {movementCategories.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+        </select>
+      </div>
+      <div>
+        <label className="block text-sm text-gray-700 mb-1">Product</label>
+        <select value={productId} onChange={(e) => setProductId(e.target.value)} className="w-full border border-gray-300 rounded px-2 py-2 text-sm">
+          {productsInCategory.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+      </div>
+      <div>
+        <label className="block text-sm text-gray-700 mb-1">Amount</label>
+        <div className="flex items-center gap-2">
+          <span className="text-gray-600">£</span>
+          <input
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            inputMode="decimal"
+            className="border border-gray-300 rounded px-2 py-1.5 text-sm w-28"
+          />
+        </div>
+      </div>
+      <div>
+        <label className="block text-sm text-gray-700 mb-1">Reason</label>
+        <input
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="e.g. paid milk delivery driver"
+          className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
+        />
+      </div>
+      <button
+        onClick={() => onConfirm(productId, pence, direction, reason.trim())}
+        disabled={busy || !canSubmit}
+        className={`w-full py-3 rounded-lg text-white font-semibold disabled:opacity-50 ${direction === 'in' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}
+      >
+        {busy ? 'Saving…' : `${direction === 'in' ? 'Add' : 'Remove'} £${(pence / 100).toFixed(2)}`}
+      </button>
+    </div>
+  );
+}
+
 type DrillKind = 'wallet_sales' | 'card_sales' | 'cash_sales' | 'cash_topups' | 'card_topups' | 'refunds';
 
 function ReportView({ report, submitting, success, onSubmit }: { report: BarReport; submitting: boolean; success: BarDayEnd | null; onSubmit: (cashRemovedPence: number, reason: string) => void }) {
@@ -1175,7 +1297,8 @@ function DrillSalesTable({ sales }: { sales: BarSaleSummary[] }) {
         <div key={s.id} className="flex justify-between text-xs text-gray-700">
           <span>
             {new Date(s.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
-            {' — '}{s.memberName || 'Visitor'} — {s.items.map((i) => `${i.name} ×${i.qty}`).join(', ')}
+            {' — '}
+            {s.isCashMovement ? `Cash Movement — ${s.reason}` : `${s.memberName || 'Visitor'} — ${s.items.map((i) => `${i.name} ×${i.qty}`).join(', ')}`}
           </span>
           <span className="font-medium">{fmt(s.totalPence)}</span>
         </div>
@@ -1217,21 +1340,27 @@ function ProductsAdmin({ products, categories, pricingConfig, onChanged }: { pro
   const [visitorPrice, setVisitorPrice] = useState(''); // split mode only
   const [override, setOverride] = useState('');      // member_product_discount mode only
   const [nominalCode, setNominalCode] = useState('');
+  const [variablePrice, setVariablePrice] = useState(false); // Cash Movement: amount entered per-transaction
   async function add() {
-    const pricePence = Math.round(parseFloat(price || '0') * 100);
-    if (!name.trim() || pricePence <= 0) return;
-    if (isSplit) {
+    if (!name.trim()) return;
+    if (variablePrice) {
+      await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, category, variablePrice: true, nominalCode: nominalCode || undefined }) });
+    } else if (isSplit) {
+      const pricePence = Math.round(parseFloat(price || '0') * 100);
       const nonMemberPricePence = Math.round(parseFloat(visitorPrice || '0') * 100);
-      if (nonMemberPricePence <= 0) return;
+      if (pricePence <= 0 || nonMemberPricePence <= 0) return;
       await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, category, pricePence, nonMemberPricePence, nominalCode: nominalCode || undefined }) });
     } else {
+      const pricePence = Math.round(parseFloat(price || '0') * 100);
+      if (pricePence <= 0) return;
       const overridePercent = override.trim() === '' ? undefined : Math.round(parseFloat(override));
       if (overridePercent !== undefined && (overridePercent < 0 || overridePercent > 100)) return;
       await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, category, basePricePence: pricePence, memberDiscountOverridePercent: showOverride ? overridePercent : undefined, nominalCode: nominalCode || undefined }) });
     }
-    setName(''); setPrice(''); setVisitorPrice(''); setOverride(''); setNominalCode(''); onChanged();
+    setName(''); setPrice(''); setVisitorPrice(''); setOverride(''); setNominalCode(''); setVariablePrice(false); onChanged();
   }
   async function toggle(p: BarProduct) {
     await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1247,26 +1376,33 @@ function ProductsAdmin({ products, categories, pricingConfig, onChanged }: { pro
   const [eVisitorPrice, setEVisitorPrice] = useState('');
   const [eOverride, setEOverride] = useState('');
   const [eNominalCode, setENominalCode] = useState('');
+  const [eVariablePrice, setEVariablePrice] = useState(false);
   function startEdit(p: BarProduct) {
     setEditId(p.id); setEName(p.name); setECat(p.category);
     setEPrice(((isSplit ? p.pricePence : p.basePricePence) / 100).toFixed(2));
     setEVisitorPrice((p.nonMemberPricePence / 100).toFixed(2));
     setEOverride(p.memberDiscountOverridePercent === null ? '' : String(p.memberDiscountOverridePercent));
-    setENominalCode(p.nominalCode ?? '');
+    setENominalCode(p.nominalCode === null ? '' : p.nominalCode);
+    setEVariablePrice(p.variablePrice);
   }
   async function saveEdit(p: BarProduct) {
-    const pricePence = Math.round(parseFloat(ePrice || '0') * 100);
-    if (!eName.trim() || pricePence <= 0) return;
-    if (isSplit) {
-      const nonMemberPricePence = Math.round(parseFloat(eVisitorPrice || '0') * 100);
-      if (nonMemberPricePence <= 0) return;
+    if (!eName.trim()) return;
+    if (eVariablePrice) {
       await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: p.id, name: eName.trim(), category: eCat, pricePence, nonMemberPricePence, nominalCode: eNominalCode || null }) });
+        body: JSON.stringify({ id: p.id, name: eName.trim(), category: eCat, variablePrice: true, nominalCode: eNominalCode || null }) });
+    } else if (isSplit) {
+      const pricePence = Math.round(parseFloat(ePrice || '0') * 100);
+      const nonMemberPricePence = Math.round(parseFloat(eVisitorPrice || '0') * 100);
+      if (pricePence <= 0 || nonMemberPricePence <= 0) return;
+      await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: p.id, name: eName.trim(), category: eCat, pricePence, nonMemberPricePence, variablePrice: false, nominalCode: eNominalCode || null }) });
     } else {
+      const pricePence = Math.round(parseFloat(ePrice || '0') * 100);
+      if (pricePence <= 0) return;
       const overridePercent = eOverride.trim() === '' ? null : Math.round(parseFloat(eOverride));
       if (overridePercent !== null && (overridePercent < 0 || overridePercent > 100)) return;
       await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: p.id, name: eName.trim(), category: eCat, basePricePence: pricePence, memberDiscountOverridePercent: showOverride ? overridePercent : undefined, nominalCode: eNominalCode || null }) });
+        body: JSON.stringify({ id: p.id, name: eName.trim(), category: eCat, basePricePence: pricePence, memberDiscountOverridePercent: showOverride ? overridePercent : undefined, variablePrice: false, nominalCode: eNominalCode || null }) });
     }
     setEditId(null); onChanged();
   }
@@ -1304,6 +1440,7 @@ function ProductsAdmin({ products, categories, pricingConfig, onChanged }: { pro
 
   // How a product's pricing reads on the list line, per mode.
   function priceLabel(p: BarProduct): string {
+    if (p.variablePrice) return 'Variable amount (Cash Movement)';
     switch (pricingConfig.mode) {
       case 'split':
         return `${fmt(p.pricePence)} member / ${fmt(p.nonMemberPricePence)} visitor`;
@@ -1368,17 +1505,19 @@ function ProductsAdmin({ products, categories, pricingConfig, onChanged }: { pro
         <select value={category} onChange={(e) => setCategory(e.target.value)} className="border rounded px-2 py-1.5 text-sm">
           {activeCategories.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
         </select>
-        <div>
-          <label className="block text-[10px] text-gray-500">{isSplit ? 'Member £' : 'Price £'}</label>
-          <input value={price} onChange={(e) => setPrice(e.target.value)} placeholder="£" inputMode="decimal" className="border rounded px-2 py-1.5 text-sm w-20" />
-        </div>
-        {isSplit && (
+        {!variablePrice && (
+          <div>
+            <label className="block text-[10px] text-gray-500">{isSplit ? 'Member £' : 'Price £'}</label>
+            <input value={price} onChange={(e) => setPrice(e.target.value)} placeholder="£" inputMode="decimal" className="border rounded px-2 py-1.5 text-sm w-20" />
+          </div>
+        )}
+        {!variablePrice && isSplit && (
           <div>
             <label className="block text-[10px] text-gray-500">Visitor £</label>
             <input value={visitorPrice} onChange={(e) => setVisitorPrice(e.target.value)} placeholder="£" inputMode="decimal" className="border rounded px-2 py-1.5 text-sm w-20" />
           </div>
         )}
-        {showOverride && (
+        {!variablePrice && showOverride && (
           <div>
             <label className="block text-[10px] text-gray-500">Override % (blank = {pricingConfig.memberDiscountPercent}%)</label>
             <input value={override} onChange={(e) => setOverride(e.target.value)} placeholder="%" inputMode="decimal" className="border rounded px-2 py-1.5 text-sm w-32" />
@@ -1388,6 +1527,10 @@ function ProductsAdmin({ products, categories, pricingConfig, onChanged }: { pro
           <label className="block text-[10px] text-gray-500">Nominal code</label>
           <input value={nominalCode} onChange={(e) => setNominalCode(e.target.value)} placeholder="optional" className="border rounded px-2 py-1.5 text-sm w-28" />
         </div>
+        <label className="flex items-center gap-1 text-xs text-gray-600 pb-1.5">
+          <input type="checkbox" checked={variablePrice} onChange={(e) => setVariablePrice(e.target.checked)} />
+          Variable price (Cash Movement)
+        </label>
         <button onClick={add} className="px-3 py-1.5 bg-green-600 text-white rounded text-sm font-medium">Add</button>
       </div>
       {categories.map((c) => {
@@ -1403,14 +1546,20 @@ function ProductsAdmin({ products, categories, pricingConfig, onChanged }: { pro
                   <select value={eCat} onChange={(e) => setECat(e.target.value)} className="border rounded px-2 py-1 text-sm">
                     {activeCategories.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
                   </select>
-                  <input value={ePrice} onChange={(e) => setEPrice(e.target.value)} placeholder={isSplit ? 'Member £' : 'Price £'} inputMode="decimal" className="border rounded px-2 py-1 text-sm w-20" />
-                  {isSplit && (
+                  {!eVariablePrice && (
+                    <input value={ePrice} onChange={(e) => setEPrice(e.target.value)} placeholder={isSplit ? 'Member £' : 'Price £'} inputMode="decimal" className="border rounded px-2 py-1 text-sm w-20" />
+                  )}
+                  {!eVariablePrice && isSplit && (
                     <input value={eVisitorPrice} onChange={(e) => setEVisitorPrice(e.target.value)} placeholder="Visitor £" inputMode="decimal" className="border rounded px-2 py-1 text-sm w-20" />
                   )}
-                  {showOverride && (
+                  {!eVariablePrice && showOverride && (
                     <input value={eOverride} onChange={(e) => setEOverride(e.target.value)} placeholder={`Override % (blank = ${pricingConfig.memberDiscountPercent}%)`} inputMode="decimal" className="border rounded px-2 py-1 text-sm w-40" />
                   )}
                   <input value={eNominalCode} onChange={(e) => setENominalCode(e.target.value)} placeholder="Nominal code" className="border rounded px-2 py-1 text-sm w-32" />
+                  <label className="flex items-center gap-1 text-xs text-gray-600">
+                    <input type="checkbox" checked={eVariablePrice} onChange={(e) => setEVariablePrice(e.target.checked)} />
+                    Variable price
+                  </label>
                   <button onClick={() => saveEdit(p)} className="px-3 py-1 bg-green-600 text-white rounded text-sm font-medium">Save</button>
                   <button onClick={() => setEditId(null)} className="text-sm text-gray-500">Cancel</button>
                 </div>
