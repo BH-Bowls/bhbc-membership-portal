@@ -483,12 +483,16 @@ export interface BarDayEnd {
   cardTopupsPence: number;
   discountsGivenPence: number;
   outstandingBalancePence: number;
+  confirmedAt: string | null;   // reviewed (and corrected, if needed) — see specs/BAR_BANKING_XERO_SPEC.md §3
+  confirmedBy: string | null;
+  bankingId: string | null;     // set once included in a bar_bankings batch (§5); null = not yet banked
   xeroExportedAt: string | null;
   xeroExportedBy: string | null;
 }
 
 function mapDayEndRow(r: any): BarDayEnd {
   const carriedForward = r.carried_forward;
+  const bankingLinks = r.bar_banking_day_ends;
   return {
     id: r.id, staff: r.staff, createdAt: r.created_at, floatPence: r.float_pence,
     carriedInPence: r.carried_in_pence,
@@ -499,6 +503,8 @@ function mapDayEndRow(r: any): BarDayEnd {
     differenceReason: r.difference_reason, walletSalesPence: r.wallet_sales_pence,
     cardSalesPence: r.card_sales_pence, cardTopupsPence: r.card_topups_pence,
     discountsGivenPence: r.discounts_given_pence, outstandingBalancePence: r.outstanding_balance_pence,
+    confirmedAt: r.confirmed_at, confirmedBy: r.confirmed_by,
+    bankingId: (bankingLinks && bankingLinks.length > 0) ? bankingLinks[0].banking_id : null,
     xeroExportedAt: r.xero_exported_at, xeroExportedBy: r.xero_exported_by,
   };
 }
@@ -516,13 +522,65 @@ export async function createDayEnd(staff: string, cashRemovedPence: number, carr
   return mapDayEndRow(data);
 }
 
-export async function getDayEnds(includeExported = false): Promise<BarDayEnd[]> {
+/** Day Ends still awaiting Treasurer review (specs/BAR_BANKING_XERO_SPEC.md §3) --
+ * oldest first, since that's the order they must be confirmed/edited in for the
+ * carry-forward chain guard in bar_edit_day_end() to stay meaningful. */
+export async function getUnconfirmedDayEnds(): Promise<BarDayEnd[]> {
   const supabase = getSupabaseClient();
-  let query = supabase.from('bar_day_ends').select('*').order('created_at', { ascending: false });
-  if (!includeExported) query = query.is('xero_exported_at', null);
-  const { data, error } = await query;
+  const { data, error } = await supabase
+    .from('bar_day_ends').select('*').is('confirmed_at', null).order('created_at', { ascending: true });
   if (error) throw new Error(`Failed to load day ends: ${error.message}`);
   return (data ?? []).map(mapDayEndRow);
+}
+
+/** Confirmed Day Ends, newest first -- every one regardless of banked/exported
+ * status (both shown as columns; the caller/UI decides what to hide by default). */
+export async function getConfirmedDayEnds(): Promise<BarDayEnd[]> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('bar_day_ends').select('*, bar_banking_day_ends ( banking_id )')
+    .not('confirmed_at', 'is', null).order('created_at', { ascending: false });
+  if (error) throw new Error(`Failed to load day ends: ${error.message}`);
+  return (data ?? []).map(mapDayEndRow);
+}
+
+export async function confirmDayEnd(dayEndId: string, staff: string): Promise<BarDayEnd> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.rpc('bar_confirm_day_end', { p_day_end_id: dayEndId, p_staff: staff });
+  if (error) throw new Error(error.message);
+  return mapDayEndRow(data);
+}
+
+export async function unconfirmDayEnd(dayEndId: string): Promise<BarDayEnd> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.rpc('bar_unconfirm_day_end', { p_day_end_id: dayEndId });
+  if (error) throw new Error(error.message);
+  return mapDayEndRow(data);
+}
+
+/** Corrects an unconfirmed Day End's cash-count outcome. Blocked once confirmed,
+ * or once a later Day End has already consumed what this one carried forward --
+ * see bar_edit_day_end() in 0067_bar_confirm_manual_bankings.sql for the exact
+ * guard. The reason alone can always still be changed. */
+export async function editDayEnd(dayEndId: string, cashRemovedPence: number, carryForward: boolean, reason?: string): Promise<BarDayEnd> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.rpc('bar_edit_day_end', {
+    p_day_end_id: dayEndId, p_cash_removed_pence: cashRemovedPence, p_carry_forward: carryForward, p_reason: reason ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return mapDayEndRow(data);
+}
+
+/** Cash that never went through the till (raffle, teas, ...) — its own
+ * self-contained Day End, never visible to the till's own cash-up sweep. See
+ * bar_create_manual_day_end() in 0067_bar_confirm_manual_bankings.sql. */
+export async function createManualDayEnd(countedBy: string, productId: string, amountPence: number, note?: string): Promise<BarDayEnd> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.rpc('bar_create_manual_day_end', {
+    p_counted_by: countedBy, p_product_id: productId, p_amount_pence: amountPence, p_note: note ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return mapDayEndRow(data);
 }
 
 export async function markDayEndsExported(dayEndIds: string[], exportedBy: string): Promise<void> {
@@ -532,6 +590,78 @@ export async function markDayEndsExported(dayEndIds: string[], exportedBy: strin
     .update({ xero_exported_at: new Date().toISOString(), xero_exported_by: exportedBy })
     .in('id', dayEndIds);
   if (error) throw new Error(`Failed to mark day ends exported: ${error.message}`);
+}
+
+// ── Cash banking batches (specs/BAR_BANKING_XERO_SPEC.md §5) ─────────────────
+
+export interface BarBanking {
+  id: string;
+  bankedDate: string;
+  totalPence: number;
+  bankedBy: string;
+  note: string | null;
+  createdAt: string;
+  xeroExportedAt: string | null;
+  xeroExportedBy: string | null;
+}
+
+function mapBankingRow(r: any): BarBanking {
+  return {
+    id: r.id, bankedDate: r.banked_date, totalPence: r.total_pence, bankedBy: r.banked_by,
+    note: r.note, createdAt: r.created_at, xeroExportedAt: r.xero_exported_at, xeroExportedBy: r.xero_exported_by,
+  };
+}
+
+export async function getBankings(includeExported = false): Promise<BarBanking[]> {
+  const supabase = getSupabaseClient();
+  let query = supabase.from('bar_bankings').select('*').order('banked_date', { ascending: false });
+  if (!includeExported) query = query.is('xero_exported_at', null);
+  const { data, error } = await query;
+  if (error) throw new Error(`Failed to load bankings: ${error.message}`);
+  return (data ?? []).map(mapBankingRow);
+}
+
+/** The Day Ends bundled into one Banking record. */
+export async function getBankingDayEnds(bankingId: string): Promise<BarDayEnd[]> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('bar_banking_day_ends')
+    .select('bar_day_ends ( * )')
+    .eq('banking_id', bankingId);
+  if (error) throw new Error(`Failed to load banking contents: ${error.message}`);
+  return (data ?? []).map((r: any) => mapDayEndRow(r.bar_day_ends));
+}
+
+export async function createBanking(bankedBy: string, bankedDate: string, dayEndIds: string[], note?: string): Promise<BarBanking> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.rpc('bar_create_banking', {
+    p_banked_by: bankedBy, p_banked_date: bankedDate, p_day_end_ids: dayEndIds, p_note: note ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return mapBankingRow(data);
+}
+
+export async function addDayEndToBanking(bankingId: string, dayEndId: string): Promise<BarBanking> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.rpc('bar_add_day_end_to_banking', { p_banking_id: bankingId, p_day_end_id: dayEndId });
+  if (error) throw new Error(error.message);
+  return mapBankingRow(data);
+}
+
+export async function removeDayEndFromBanking(bankingId: string, dayEndId: string): Promise<BarBanking> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.rpc('bar_remove_day_end_from_banking', { p_banking_id: bankingId, p_day_end_id: dayEndId });
+  if (error) throw new Error(error.message);
+  return mapBankingRow(data);
+}
+
+export async function markBankingsExported(bankingIds: string[], exportedBy: string): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase
+    .from('bar_bankings')
+    .update({ xero_exported_at: new Date().toISOString(), xero_exported_by: exportedBy })
+    .in('id', bankingIds);
+  if (error) throw new Error(`Failed to mark bankings exported: ${error.message}`);
 }
 
 // ── Day End drill-down (Treasurer Bar Reconciliation) ────────────────────────

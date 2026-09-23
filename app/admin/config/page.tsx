@@ -19,6 +19,7 @@ const BAR_NOMINAL_FIELDS: [string, string][] = [
   ['bar_nominal_discounts_account', 'Discounts given'],
   ['bar_nominal_cash_variance_account', 'Cash over/short'],
   ['bar_nominal_default_sales_account', 'Default sales (fallback when a category/product has no code)'],
+  ['bar_nominal_cash_banked_account', 'Cash banked (in transit to the bank)'],
 ];
 
 const BAR_PRICING_MODES: [string, string, string][] = [

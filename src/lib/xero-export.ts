@@ -11,7 +11,7 @@
 // Xero has changed this format before, and the *TaxRate value here ('No VAT')
 // is a guess, not a confirmed rate name from your org's chart of accounts.
 
-import { getDayEndRevenueByNominalCode, type BarDayEnd } from './bar-supabase';
+import { getDayEndRevenueByNominalCode, type BarDayEnd, type BarBanking } from './bar-supabase';
 
 export interface BarNominalConfig {
   cashAccount: string;
@@ -20,6 +20,7 @@ export interface BarNominalConfig {
   discountsAccount: string;
   cashVarianceAccount: string;
   defaultSalesAccount: string;
+  cashBankedAccount: string;
 }
 
 interface JournalLine {
@@ -108,22 +109,48 @@ async function buildJournalLines(dayEnd: BarDayEnd, config: BarNominalConfig): P
   return lines;
 }
 
-export async function buildXeroManualJournalCsv(dayEnds: BarDayEnd[], config: BarNominalConfig): Promise<string> {
+// A Banking record's own journal is deliberately much simpler than a Day End's --
+// it's just cash moving from the till/safe to "in transit to the bank" (a new
+// Balance Sheet control account), not a re-statement of any revenue. Revenue was
+// already fully recognised by each bundled Day End's own journal; this one only
+// records the physical movement, at the combined total, with no nominal-code
+// split needed (see specs/BAR_BANKING_XERO_SPEC.md §6.2, §7).
+function buildBankingJournalLines(banking: BarBanking, config: BarNominalConfig): JournalLine[] {
+  const narration = `Bar banking ${banking.bankedDate} (${banking.bankedBy})`;
+  const lines: JournalLine[] = [];
+  if (banking.totalPence === 0) return lines;
+  const abs = Math.abs(banking.totalPence);
+  const isDebit = banking.totalPence > 0;
+  lines.push({ narration, date: banking.bankedDate, description: 'Cash banked', accountCode: config.cashBankedAccount, debitPence: isDebit ? abs : 0, creditPence: isDebit ? 0 : abs });
+  lines.push({ narration, date: banking.bankedDate, description: 'Cash banked', accountCode: config.cashAccount, debitPence: isDebit ? 0 : abs, creditPence: isDebit ? abs : 0 });
+  return lines;
+}
+
+function pushRows(rows: string[], lines: JournalLine[]) {
+  for (const l of lines) {
+    rows.push([
+      csvEscape(l.narration),
+      l.date,
+      csvEscape(l.description),
+      csvEscape(l.accountCode),
+      'No VAT',
+      l.debitPence ? pounds(l.debitPence) : '',
+      l.creditPence ? pounds(l.creditPence) : '',
+    ].join(','));
+  }
+}
+
+/** Builds one combined Manual Journal CSV covering both kinds of export this app
+ * produces (specs/BAR_BANKING_XERO_SPEC.md §6.3, "order independence" -- either
+ * set can be empty, and a Day End can be exported before or after being banked). */
+export async function buildXeroManualJournalCsv(dayEnds: BarDayEnd[], bankings: BarBanking[], config: BarNominalConfig): Promise<string> {
   const header = ['*Narration', '*Date', 'Description', '*AccountCode', '*TaxRate', '*Debit', '*Credit'];
   const rows: string[] = [header.join(',')];
   for (const dayEnd of dayEnds) {
-    const lines = await buildJournalLines(dayEnd, config);
-    for (const l of lines) {
-      rows.push([
-        csvEscape(l.narration),
-        l.date,
-        csvEscape(l.description),
-        csvEscape(l.accountCode),
-        'No VAT',
-        l.debitPence ? pounds(l.debitPence) : '',
-        l.creditPence ? pounds(l.creditPence) : '',
-      ].join(','));
-    }
+    pushRows(rows, await buildJournalLines(dayEnd, config));
+  }
+  for (const banking of bankings) {
+    pushRows(rows, buildBankingJournalLines(banking, config));
   }
   return rows.join('\n');
 }

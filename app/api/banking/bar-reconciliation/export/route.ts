@@ -1,14 +1,16 @@
 // app/api/banking/bar-reconciliation/export/route.ts
-// POST { dayEndIds: string[] } — builds a Xero Manual Journal CSV for a batch of
-// Day End records and marks them exported in the same call. See
-// src/lib/xero-export.ts for the column-format caveat: not yet verified against
-// a live Xero org.
+// POST { dayEndIds?: string[], bankingIds?: string[] } — builds one combined
+// Xero Manual Journal CSV covering both pools (specs/BAR_BANKING_XERO_SPEC.md
+// §6.3: "order independence" -- either can be empty, a Day End can be exported
+// before or after being banked) and marks whichever were included exported.
+// See src/lib/xero-export.ts for the column-format caveat: not yet verified
+// against a live Xero org.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
-import { getDayEnds, markDayEndsExported } from '@/lib/bar-supabase';
+import { getConfirmedDayEnds, markDayEndsExported, getBankings, markBankingsExported } from '@/lib/bar-supabase';
 import { getConfig } from '@/lib/config-supabase';
 import { buildXeroManualJournalCsv } from '@/lib/xero-export';
 
@@ -23,7 +25,10 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json();
   const dayEndIds: string[] = Array.isArray(body.dayEndIds) ? body.dayEndIds : [];
-  if (dayEndIds.length === 0) return NextResponse.json({ error: 'dayEndIds is required' }, { status: 400 });
+  const bankingIds: string[] = Array.isArray(body.bankingIds) ? body.bankingIds : [];
+  if (dayEndIds.length === 0 && bankingIds.length === 0) {
+    return NextResponse.json({ error: 'Select at least one day end or banking' }, { status: 400 });
+  }
 
   try {
     const config = await getConfig();
@@ -34,17 +39,31 @@ export async function POST(req: NextRequest) {
       discountsAccount: config.bar_nominal_discounts_account || '',
       cashVarianceAccount: config.bar_nominal_cash_variance_account || '',
       defaultSalesAccount: config.bar_nominal_default_sales_account || '',
+      cashBankedAccount: config.bar_nominal_cash_banked_account || '',
     };
 
-    const all = await getDayEnds(true);
-    const selected = all.filter((d) => dayEndIds.includes(d.id));
-    if (selected.length !== dayEndIds.length) {
-      return NextResponse.json({ error: 'One or more day ends were not found' }, { status: 404 });
+    let selectedDayEnds: Awaited<ReturnType<typeof getConfirmedDayEnds>> = [];
+    if (dayEndIds.length > 0) {
+      const confirmed = await getConfirmedDayEnds();
+      selectedDayEnds = confirmed.filter((d) => dayEndIds.includes(d.id));
+      if (selectedDayEnds.length !== dayEndIds.length) {
+        return NextResponse.json({ error: 'One or more day ends were not found, or are not yet confirmed' }, { status: 404 });
+      }
     }
 
-    const csv = await buildXeroManualJournalCsv(selected, nominalConfig);
-    await markDayEndsExported(dayEndIds, session.user.userName);
-    return NextResponse.json({ csv, count: selected.length });
+    let selectedBankings: Awaited<ReturnType<typeof getBankings>> = [];
+    if (bankingIds.length > 0) {
+      const bankings = await getBankings(true);
+      selectedBankings = bankings.filter((b) => bankingIds.includes(b.id));
+      if (selectedBankings.length !== bankingIds.length) {
+        return NextResponse.json({ error: 'One or more bankings were not found' }, { status: 404 });
+      }
+    }
+
+    const csv = await buildXeroManualJournalCsv(selectedDayEnds, selectedBankings, nominalConfig);
+    if (dayEndIds.length > 0) await markDayEndsExported(dayEndIds, session.user.userName);
+    if (bankingIds.length > 0) await markBankingsExported(bankingIds, session.user.userName);
+    return NextResponse.json({ csv, dayEndCount: selectedDayEnds.length, bankingCount: selectedBankings.length });
   } catch (err: any) {
     return NextResponse.json({ error: err.message || 'Failed to export' }, { status: 500 });
   }
