@@ -182,6 +182,7 @@ export default function BarReconciliationPage() {
                   <th className="px-3 py-2 text-left">Staff</th>
                   <th className="px-3 py-2 text-right">Cash expected</th>
                   <th className="px-3 py-2 text-right">Cash removed</th>
+                  <th className="px-3 py-2 text-right">Carried forward</th>
                   <th className="px-3 py-2 text-left">Reason</th>
                   <th className="px-3 py-2 text-left">Status</th>
                 </tr>
@@ -203,6 +204,7 @@ export default function BarReconciliationPage() {
                       <td className="px-3 py-2">{d.staff}</td>
                       <td className="px-3 py-2 text-right">{fmt(d.cashExpectedPence)}</td>
                       <td className="px-3 py-2 text-right font-semibold">{fmt(d.cashRemovedPence)}</td>
+                      <td className="px-3 py-2 text-right">{d.carriedForward ? fmt(d.carriedOutPence) : '-'}</td>
                       <td className="px-3 py-2 text-gray-600">{d.differenceReason || '-'}</td>
                       <td className="px-3 py-2">
                         {d.xeroExportedAt ? (
@@ -214,7 +216,7 @@ export default function BarReconciliationPage() {
                     </tr>
                     {expandedId === d.id && (
                       <tr key={`${d.id}-detail`} className="border-t bg-gray-50">
-                        <td colSpan={7} className="px-6 py-4">
+                        <td colSpan={8} className="px-6 py-4">
                           <DayEndDetail
                             dayEnd={d}
                             onDrill={(kind) => openDrill(d.id, kind)}
@@ -267,8 +269,10 @@ function DayEndDetail({ dayEnd, onDrill, activeDrillKind }: { dayEnd: BarDayEnd;
       </div>
       <div>
         {row('Till float', dayEnd.floatPence)}
+        {dayEnd.carriedInPence !== 0 && row('Brought forward from last cash-up', dayEnd.carriedInPence)}
         {row('Cash expected', dayEnd.cashExpectedPence)}
         {row('Cash removed', dayEnd.cashRemovedPence)}
+        {dayEnd.carriedForward && row('Carried forward to next cash-up', dayEnd.carriedOutPence)}
         {row('Member discounts given', dayEnd.discountsGivenPence)}
         {row('Outstanding member balances', dayEnd.outstandingBalancePence)}
         {dayEnd.differenceReason && (

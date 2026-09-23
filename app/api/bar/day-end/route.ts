@@ -1,7 +1,7 @@
 // app/api/bar/day-end/route.ts
 // POST — cash up: aggregates everything not yet linked to a Day End into one
 // durable record and links it (see createDayEnd()/bar_create_day_end() in
-// src/lib/bar-supabase.ts). { staff, cashRemovedPence, reason? }
+// src/lib/bar-supabase.ts). { staff, cashRemovedPence, carryForward, reason? }
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'staff and a non-negative cashRemovedPence are required' }, { status: 400 });
   }
   try {
-    const dayEnd = await createDayEnd(body.staff, cashRemovedPence, body.reason || undefined);
+    const dayEnd = await createDayEnd(body.staff, cashRemovedPence, !!body.carryForward, body.reason || undefined);
     return NextResponse.json({ ok: true, dayEnd });
   } catch (err: any) {
     return NextResponse.json({ error: err.message || 'Failed to record day end' }, { status: 500 });

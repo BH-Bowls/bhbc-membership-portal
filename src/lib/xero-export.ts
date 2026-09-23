@@ -90,9 +90,15 @@ async function buildJournalLines(dayEnd: BarDayEnd, config: BarNominalConfig): P
   postSigned('Refunds', config.walletLiabilityAccount, dayEnd.refundsPence, true);
   postSigned('Refunds', config.cashAccount, dayEnd.refundsPence, false);
 
-  // Cash-count variance: expected vs. what was actually removed from the till.
-  // Positive = shortfall (less removed than expected), negative = surplus.
-  const variance = dayEnd.cashExpectedPence - dayEnd.cashRemovedPence;
+  // Cash-count variance: expected vs. what was actually removed from the till,
+  // minus whatever was deliberately carried forward rather than explained (see
+  // carriedOutPence/mapDayEndRow() in bar-supabase.ts) -- a carried amount isn't
+  // lost, it's still cash sitting in the till, so it posts nothing here at all
+  // (it stays part of Cash-in-hand via next period's carried-in, never re-posted).
+  // Only a genuine, explained difference hits this account. Positive = shortfall,
+  // negative = surplus; either way this is 0 whenever the whole difference was
+  // carried forward.
+  const variance = dayEnd.cashExpectedPence - dayEnd.cashRemovedPence - dayEnd.carriedOutPence;
   postSigned('Cash variance', config.cashVarianceAccount, variance, true);
   postSigned('Cash variance', config.cashAccount, variance, false);
 

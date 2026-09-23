@@ -180,10 +180,12 @@ export default function AdminConfigPage() {
 
   // Config stores the float in pence (bar_till_float_pence); the form edits it as
   // pounds for readability — this seeds that transient UI-only field from config
-  // whenever entering (or cancelling out of) edit mode.
+  // whenever entering (or cancelling out of) edit mode. Same for the carried-forward
+  // balance, which can be negative (see bar_cash_carried_forward_pence).
   function seedEditBar(cfg: Record<string, string>): Record<string, string> {
     const floatPence = parseInt(cfg.bar_till_float_pence || '0', 10);
-    return { ...cfg, bar_till_float_pounds: (floatPence / 100).toFixed(2) };
+    const carriedPence = parseInt(cfg.bar_cash_carried_forward_pence || '0', 10);
+    return { ...cfg, bar_till_float_pounds: (floatPence / 100).toFixed(2), bar_cash_carried_forward_pounds: (carriedPence / 100).toFixed(2) };
   }
 
   async function saveBar() {
@@ -198,12 +200,20 @@ export default function AdminConfigPage() {
       setBarError('Till float must be a non-negative amount');
       return;
     }
+    // Carried forward can legitimately be negative (a shortfall deferred rather
+    // than explained) — no lower bound here, unlike the float.
+    const carriedPounds = parseFloat(editBar.bar_cash_carried_forward_pounds ?? '');
+    if (!Number.isFinite(carriedPounds)) {
+      setBarError('Cash carried forward must be a number');
+      return;
+    }
     setSavingBar(true);
     try {
       const updates: Record<string, string> = {
         bar_pricing_mode: editBar.bar_pricing_mode ?? 'member_product_discount',
         bar_member_discount_percent: String(rate),
         bar_till_float_pence: String(Math.round(floatPounds * 100)),
+        bar_cash_carried_forward_pence: String(Math.round(carriedPounds * 100)),
       };
       for (const [key] of BAR_NOMINAL_FIELDS) updates[key] = editBar[key] ?? '';
       const res = await fetch('/api/admin/config', {
@@ -562,6 +572,24 @@ export default function AdminConfigPage() {
                 )}
                 <p className="text-xs text-gray-700 mt-1">
                   The cash amount left in the till after cashing up — the End of Day screen on the till defaults "cash removed" to everything above this.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-gray-900 mb-1">Cash carried forward (£)</label>
+                {isEditingBar ? (
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={editBar.bar_cash_carried_forward_pounds ?? ''}
+                    onChange={(e) => setEditBar((prev) => ({ ...prev, bar_cash_carried_forward_pounds: e.target.value }))}
+                    className={`${getInputClasses()} max-w-[10rem]`}
+                  />
+                ) : (
+                  <span className="text-gray-900">£{(parseInt(config.bar_cash_carried_forward_pence || '0', 10) / 100).toFixed(2)}</span>
+                )}
+                <p className="text-xs text-gray-700 mt-1">
+                  A cash-count difference deferred rather than explained on the till&apos;s Dayend screen, carried into the next cash-up&apos;s expected total. Can be negative. Edit here only to correct it manually.
                 </p>
               </div>
 

@@ -450,11 +450,11 @@ export default function BarTillPage() {
     setPendingAction('endofday');
     setView('volunteer');
   }
-  async function submitDayEnd(cashRemovedPence: number, reason: string) {
+  async function submitDayEnd(cashRemovedPence: number, carryForward: boolean, reason: string) {
     setDayEndSubmitting(true); setError('');
     try {
       const res = await fetch('/api/bar/day-end', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ staff: volunteer, cashRemovedPence, reason: reason || undefined }) });
+        body: JSON.stringify({ staff: volunteer, cashRemovedPence, carryForward, reason: reason || undefined }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to record day end');
       setDayEndSuccess(data.dayEnd);
@@ -1173,8 +1173,12 @@ function CashMovementView({ categories, products, busy, onConfirm }: {
 
 type DrillKind = 'wallet_sales' | 'card_sales' | 'cash_sales' | 'cash_topups' | 'card_topups' | 'refunds';
 
-function ReportView({ report, submitting, success, onSubmit }: { report: BarReport; submitting: boolean; success: BarDayEnd | null; onSubmit: (cashRemovedPence: number, reason: string) => void }) {
-  const [cashRemoved, setCashRemoved] = useState(() => (report.expectedCashPence / 100).toFixed(2));
+function ReportView({ report, submitting, success, onSubmit }: { report: BarReport; submitting: boolean; success: BarDayEnd | null; onSubmit: (cashRemovedPence: number, carryForward: boolean, reason: string) => void }) {
+  // Default suggests removing everything expected, but never a negative amount —
+  // you can't physically remove negative cash (see the -£5 expected example: the
+  // suggestion there is £0, not "-£5.00").
+  const [cashRemoved, setCashRemoved] = useState(() => (Math.max(0, report.expectedCashPence) / 100).toFixed(2));
+  const [carryForward, setCarryForward] = useState(false);
   const [reason, setReason] = useState('');
   const [touched, setTouched] = useState(false);
   const [expanded, setExpanded] = useState<DrillKind | null>(null);
@@ -1188,15 +1192,20 @@ function ReportView({ report, submitting, success, onSubmit }: { report: BarRepo
   const [prevExpected, setPrevExpected] = useState(report.expectedCashPence);
   if (!touched && report.expectedCashPence !== prevExpected) {
     setPrevExpected(report.expectedCashPence);
-    setCashRemoved((report.expectedCashPence / 100).toFixed(2));
+    setCashRemoved((Math.max(0, report.expectedCashPence) / 100).toFixed(2));
   }
   const [prevSuccess, setPrevSuccess] = useState(success);
   if (success !== prevSuccess) {
     setPrevSuccess(success);
-    if (success) { setTouched(false); setReason(''); setExpanded(null); }
+    if (success) { setTouched(false); setCarryForward(false); setReason(''); setExpanded(null); }
   }
   const cashRemovedPence = Math.round(parseFloat(cashRemoved || '0') * 100);
-  const differs = cashRemovedPence !== report.expectedCashPence;
+  // Signed: positive means more was left in the till than removed, negative means
+  // more was removed than the books say was there (e.g. topping up the float from
+  // personal cash, or a pre-existing shortfall) — carrying forward works either way.
+  const difference = report.expectedCashPence - cashRemovedPence;
+  const differs = difference !== 0;
+  const reasonRequired = differs && !carryForward;
 
   async function toggleExpand(kind: DrillKind) {
     if (expanded === kind) { setExpanded(null); return; }
@@ -1237,10 +1246,14 @@ function ReportView({ report, submitting, success, onSubmit }: { report: BarRepo
       {success && (
         <div className="mb-4 p-3 bg-green-50 border border-green-200 text-green-800 rounded text-sm">
           Day end recorded — {fmt(success.cashRemovedPence)} removed, float {fmt(success.floatPence)} left in the till.
+          {success.carriedForward && success.carriedOutPence !== 0 && (
+            <> {fmt(success.carriedOutPence)} carried forward to next time.</>
+          )}
         </div>
       )}
       <p className="text-xs text-gray-500 mb-4">Since the last cash-up — {report.salesCount} sales</p>
 
+      {report.carriedForwardPence !== 0 && row('Brought forward from last cash-up', report.carriedForwardPence)}
       {row('Member Account Top-ups (cash)', report.topupsPence, 'cash_topups')}
       {row('Cash Sales', report.byMethodPence.cash, 'cash_sales')}
       {row('Refunds paid out (cash)', report.refundsPence, 'refunds')}
@@ -1259,20 +1272,32 @@ function ReportView({ report, submitting, success, onSubmit }: { report: BarRepo
             />
           </div>
         </div>
+        <div className="flex justify-between text-sm">
+          <span className="text-gray-700">Difference</span>
+          <span className={differs ? (difference > 0 ? 'text-amber-700 font-medium' : 'text-red-700 font-medium') : 'text-gray-500'}>
+            {fmt(difference)}
+          </span>
+        </div>
+        {differs && (
+          <label className="flex items-center gap-2 text-sm text-gray-700">
+            <input type="checkbox" checked={carryForward} onChange={(e) => setCarryForward(e.target.checked)} />
+            Carry difference forward to next cash-up
+          </label>
+        )}
         {differs && (
           <div>
-            <label className="block text-sm text-gray-700 mb-1">Reason for difference</label>
+            <label className="block text-sm text-gray-700 mb-1">Reason for difference{carryForward ? ' (optional)' : ''}</label>
             <input
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              placeholder="e.g. till float short at start of shift"
+              placeholder={carryForward ? 'e.g. Not cashed up' : 'e.g. till float short at start of shift'}
               className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
             />
           </div>
         )}
         <button
-          onClick={() => onSubmit(cashRemovedPence, reason)}
-          disabled={submitting || cashRemovedPence < 0}
+          onClick={() => onSubmit(cashRemovedPence, carryForward, reason)}
+          disabled={submitting || cashRemovedPence < 0 || (reasonRequired && reason.trim() === '')}
           className="w-full py-3 rounded-lg bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-50"
         >
           {submitting ? 'Saving…' : 'Confirm Day End'}

@@ -117,7 +117,8 @@ export interface BarReport {
   refundsPence: number;  // cash paid back out in range
   cashSalesPence: number; // = byMethodPence.cash (visitor/emergency cash)
   outstandingPence: number; // current total float owed to members (not range-bound)
-  expectedCashPence: number; // top-ups + cash sales − refunds in range (a bank-time guide)
+  carriedForwardPence: number; // brought forward from the last cash-up (config bar_cash_carried_forward_pence); signed
+  expectedCashPence: number; // carried forward + top-ups + cash sales − refunds in range (a bank-time guide)
   discountsGivenPence: number; // sum of member discounts given in range — informational, ready for Xero
 }
 
@@ -435,12 +436,18 @@ export async function getReport(): Promise<BarReport> {
 
   const cashSalesPence = byMethodPence.cash;
 
+  // Whatever was carried forward from the last cash-up (see bar_create_day_end()) --
+  // signed, since a shortfall that was carried rather than explained lowers next
+  // time's expected cash, same as a surplus raises it.
+  const config = await getConfig();
+  const carriedForwardPence = parseInt(config.bar_cash_carried_forward_pence || '0', 10) || 0;
+
   return {
     salesCount: (sales ?? []).length,
     byMethodPence, byCategoryPence,
     byProduct: [...byProductMap.values()].sort((a, b) => b.totalPence - a.totalPence),
-    topupsPence, cardTopupsPence, refundsPence, cashSalesPence, outstandingPence,
-    expectedCashPence: topupsPence + cashSalesPence - refundsPence,
+    topupsPence, cardTopupsPence, refundsPence, cashSalesPence, outstandingPence, carriedForwardPence,
+    expectedCashPence: carriedForwardPence + topupsPence + cashSalesPence - refundsPence,
     discountsGivenPence,
   };
 }
@@ -452,11 +459,14 @@ export interface BarDayEnd {
   staff: string;
   createdAt: string;
   floatPence: number;
+  carriedInPence: number;    // brought forward into this cash-up (config snapshot at the time)
   cashTopupsPence: number;
   cashSalesPence: number;
   refundsPence: number;
   cashExpectedPence: number;
   cashRemovedPence: number;
+  carriedForward: boolean;   // true if the difference was deferred rather than explained
+  carriedOutPence: number;   // computed, not its own column: carriedForward ? (expected - removed) : 0
   differenceReason: string | null;
   walletSalesPence: number;
   cardSalesPence: number;
@@ -468,10 +478,14 @@ export interface BarDayEnd {
 }
 
 function mapDayEndRow(r: any): BarDayEnd {
+  const carriedForward = r.carried_forward;
   return {
     id: r.id, staff: r.staff, createdAt: r.created_at, floatPence: r.float_pence,
+    carriedInPence: r.carried_in_pence,
     cashTopupsPence: r.cash_topups_pence, cashSalesPence: r.cash_sales_pence, refundsPence: r.refunds_pence,
     cashExpectedPence: r.cash_expected_pence, cashRemovedPence: r.cash_removed_pence,
+    carriedForward,
+    carriedOutPence: carriedForward ? r.cash_expected_pence - r.cash_removed_pence : 0,
     differenceReason: r.difference_reason, walletSalesPence: r.wallet_sales_pence,
     cardSalesPence: r.card_sales_pence, cardTopupsPence: r.card_topups_pence,
     discountsGivenPence: r.discounts_given_pence, outstandingBalancePence: r.outstanding_balance_pence,
@@ -483,10 +497,10 @@ function mapDayEndRow(r: any): BarDayEnd {
  * durable record, then links them all to it (see bar_create_day_end() in
  * 0063_bar_day_ends.sql) -- the whole "run it again, nothing to report" mechanic
  * lives in that one atomic function, not here. */
-export async function createDayEnd(staff: string, cashRemovedPence: number, reason?: string): Promise<BarDayEnd> {
+export async function createDayEnd(staff: string, cashRemovedPence: number, carryForward: boolean, reason?: string): Promise<BarDayEnd> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase.rpc('bar_create_day_end', {
-    p_staff: staff, p_cash_removed_pence: cashRemovedPence, p_reason: reason ?? null,
+    p_staff: staff, p_cash_removed_pence: cashRemovedPence, p_carry_forward: carryForward, p_reason: reason ?? null,
   });
   if (error) throw new Error(error.message);
   return mapDayEndRow(data);
