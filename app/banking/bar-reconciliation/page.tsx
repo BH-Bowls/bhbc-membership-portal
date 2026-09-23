@@ -147,12 +147,6 @@ export default function BarReconciliationPage() {
               Show all records
             </label>
             <button
-              onClick={() => router.push('/banking')}
-              className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
-            >
-              Back to Banking
-            </button>
-            <button
               onClick={exportToXero}
               disabled={selected.size === 0 || exporting}
               className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
