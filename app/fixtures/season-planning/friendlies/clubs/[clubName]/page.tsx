@@ -80,8 +80,14 @@ function planningBadgeClasses(status: string): string {
   }
 }
 
-function buildGmailLink(recipientEmail: string, clubName: string, year: number, pendingFixtures: ClubFixtureHistoryRow[]): string {
+/** First word of a contact's full name (e.g. "John Smith" -> "John"), for the greeting — '' if no name is known (a manually-typed email has none). */
+function firstNameOf(fullName: string): string {
+  return fullName.trim().split(/\s+/)[0] || '';
+}
+
+function buildGmailLink(recipientEmail: string, recipientName: string, clubName: string, year: number, pendingFixtures: ClubFixtureHistoryRow[]): string {
   const subject = `BHBC Friendly Fixtures ${year} — Proposed Dates vs ${clubName}`;
+  const firstName = firstNameOf(recipientName);
   const many = pendingFixtures.length > 1;
   const lines = pendingFixtures.map((f) => {
     const venue = f.homeAway === 'A' ? `at ${clubName}` : f.homeAway === 'H' ? 'at BHBC' : null;
@@ -89,7 +95,7 @@ function buildGmailLink(recipientEmail: string, clubName: string, year: number, 
     return `- ${formatDisplayDate(f.date)}${details ? ` (${details})` : ''}${f.format ? `, ${f.format}` : ''}${f.ladiesMen ? `, ${f.ladiesMen}` : ''}`;
   });
   const body = [
-    'Hi,',
+    firstName ? `Hi ${firstName},` : 'Hi,',
     '',
     // Two alternative openers — pick one, delete the other before sending.
     `Ahead of the ${year} season, here ${many ? 'are our proposed dates' : 'is our proposed date'} for our friendly fixture${many ? 's' : ''} against ${clubName}, following the BE schedule:`,
@@ -121,6 +127,7 @@ export default function ClubInfoPage({ params }: PageProps) {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<ClubInfo | null>(null);
   const [recipientEmail, setRecipientEmail] = useState('');
+  const [recipientName, setRecipientName] = useState(''); // '' whenever the email was typed by hand rather than picked from a known contact
   const [selectedContactIndex, setSelectedContactIndex] = useState<number | null>(null);
   const [updating, setUpdating] = useState(false);
 
@@ -146,6 +153,7 @@ export default function ClubInfoPage({ params }: PageProps) {
         setInfo(data);
         if (data.matchSecretary && data.matchSecretary.email) {
           setRecipientEmail(data.matchSecretary.email);
+          setRecipientName(data.matchSecretary.name || '');
         }
       })
       .catch((err) => setError(err.message))
@@ -175,7 +183,10 @@ export default function ClubInfoPage({ params }: PageProps) {
   function selectContact(index: number) {
     setSelectedContactIndex(index);
     const contact = info && info.contacts[index];
-    if (contact && contact.email) setRecipientEmail(contact.email);
+    if (contact && contact.email) {
+      setRecipientEmail(contact.email);
+      setRecipientName(contact.name || '');
+    }
   }
 
   function setEmailStatus(sent: boolean) {
@@ -202,7 +213,7 @@ export default function ClubInfoPage({ params }: PageProps) {
 
   function draftEmail() {
     if (!recipientEmail || draftYear === undefined) return;
-    window.open(buildGmailLink(recipientEmail, clubName, draftYear, pendingDraftFixtures), '_blank');
+    window.open(buildGmailLink(recipientEmail, recipientName, clubName, draftYear, pendingDraftFixtures), '_blank');
   }
 
   function startEdit(f: ClubFixtureHistoryRow) {
@@ -332,7 +343,7 @@ export default function ClubInfoPage({ params }: PageProps) {
                   placeholder="Type an email manually if none on file"
                   className="border border-gray-300 rounded-md px-3 py-1.5 text-sm w-full"
                   value={recipientEmail}
-                  onChange={(e) => setRecipientEmail(e.target.value)}
+                  onChange={(e) => { setRecipientEmail(e.target.value); setRecipientName(''); }}
                 />
               </div>
               <button
