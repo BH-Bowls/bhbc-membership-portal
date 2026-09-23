@@ -1171,7 +1171,7 @@ function CashMovementView({ categories, products, busy, onConfirm }: {
   );
 }
 
-type DrillKind = 'wallet_sales' | 'card_sales' | 'cash_sales' | 'cash_topups' | 'card_topups' | 'refunds';
+type DrillKind = 'wallet_sales' | 'card_sales' | 'cash_sales' | 'cash_movements' | 'cash_topups' | 'card_topups' | 'refunds';
 
 function ReportView({ report, submitting, success, onSubmit }: { report: BarReport; submitting: boolean; success: BarDayEnd | null; onSubmit: (cashRemovedPence: number, carryForward: boolean, reason: string) => void }) {
   // Default suggests removing everything expected, but never a negative amount —
@@ -1255,7 +1255,8 @@ function ReportView({ report, submitting, success, onSubmit }: { report: BarRepo
 
       {report.carriedForwardPence !== 0 && row('Brought forward from last cash-up', report.carriedForwardPence)}
       {row('Member Account Top-ups (cash)', report.topupsPence, 'cash_topups')}
-      {row('Cash Sales', report.byMethodPence.cash, 'cash_sales')}
+      {row('Cash Sales', report.cashSalesPence, 'cash_sales')}
+      {report.cashMovementsPence !== 0 && row('Cash Movements', report.cashMovementsPence, 'cash_movements')}
       {row('Refunds paid out (cash)', report.refundsPence, 'refunds')}
       {row('Expected cash in till', report.expectedCashPence, undefined, true)}
 

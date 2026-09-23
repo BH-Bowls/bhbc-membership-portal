@@ -25,7 +25,9 @@ export async function GET(req: NextRequest) {
       case 'card_sales':
         return NextResponse.json({ sales: await getDayEndSales(null, 'card') });
       case 'cash_sales':
-        return NextResponse.json({ sales: await getDayEndSales(null, 'cash') });
+        return NextResponse.json({ sales: await getDayEndSales(null, 'cash', false) });
+      case 'cash_movements':
+        return NextResponse.json({ sales: await getDayEndSales(null, 'cash', true) });
       case 'cash_topups':
         return NextResponse.json({ ledger: await getDayEndLedger(null, 'topup', 'cash') });
       case 'card_topups':

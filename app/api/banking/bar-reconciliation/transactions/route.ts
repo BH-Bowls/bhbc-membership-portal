@@ -1,7 +1,7 @@
 // app/api/banking/bar-reconciliation/transactions/route.ts
 // GET — the underlying bar_sales/bar_ledger rows behind one line of a Day End
 // record (drill-down from the Treasurer Bar Reconciliation page).
-// ?dayEndId=<id>&kind=wallet_sales|card_sales|cash_sales|cash_topups|card_topups|refunds
+// ?dayEndId=<id>&kind=wallet_sales|card_sales|cash_sales|cash_movements|cash_topups|card_topups|refunds
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
@@ -29,7 +29,9 @@ export async function GET(req: NextRequest) {
       case 'card_sales':
         return NextResponse.json({ sales: await getDayEndSales(dayEndId, 'card') });
       case 'cash_sales':
-        return NextResponse.json({ sales: await getDayEndSales(dayEndId, 'cash') });
+        return NextResponse.json({ sales: await getDayEndSales(dayEndId, 'cash', false) });
+      case 'cash_movements':
+        return NextResponse.json({ sales: await getDayEndSales(dayEndId, 'cash', true) });
       case 'cash_topups':
         return NextResponse.json({ ledger: await getDayEndLedger(dayEndId, 'topup', 'cash') });
       case 'card_topups':

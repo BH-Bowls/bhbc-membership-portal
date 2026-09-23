@@ -14,12 +14,13 @@ import type { BarDayEnd, BarSaleSummary, BarDayEndLedgerRow } from '@/lib/bar-su
 const fmt = (pence: number) => `£${(pence / 100).toFixed(2)}`;
 const fmtDate = (iso: string) => new Date(iso).toLocaleString('en-GB');
 
-type DrillKind = 'wallet_sales' | 'card_sales' | 'cash_sales' | 'cash_topups' | 'card_topups' | 'refunds';
+type DrillKind = 'wallet_sales' | 'card_sales' | 'cash_sales' | 'cash_movements' | 'cash_topups' | 'card_topups' | 'refunds';
 
 const DRILL_LABELS: Record<DrillKind, string> = {
   wallet_sales: 'Wallet sales',
   card_sales: 'Card sales',
   cash_sales: 'Cash sales (visitors)',
+  cash_movements: 'Cash Movements',
   cash_topups: 'Top-ups taken (cash in)',
   card_topups: 'Top-ups taken (by card)',
   refunds: 'Refunds paid (cash out)',
@@ -263,6 +264,7 @@ function DayEndDetail({ dayEnd, onDrill, activeDrillKind }: { dayEnd: BarDayEnd;
         {row('Wallet sales', dayEnd.walletSalesPence, 'wallet_sales')}
         {row('Card sales', dayEnd.cardSalesPence, 'card_sales')}
         {row('Cash sales (visitors)', dayEnd.cashSalesPence, 'cash_sales')}
+        {dayEnd.cashMovementsPence !== 0 && row('Cash Movements', dayEnd.cashMovementsPence, 'cash_movements')}
         {row('Top-ups taken (cash in)', dayEnd.cashTopupsPence, 'cash_topups')}
         {row('Top-ups taken (by card)', dayEnd.cardTopupsPence, 'card_topups')}
         {row('Refunds paid (cash out)', dayEnd.refundsPence, 'refunds')}

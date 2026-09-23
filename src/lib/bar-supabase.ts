@@ -115,10 +115,11 @@ export interface BarReport {
   topupsPence: number;      // cash taken as top-ups in range (card top-ups excluded — see cardTopupsPence)
   cardTopupsPence: number;  // top-ups taken by card in range — informational, not cash in the box
   refundsPence: number;  // cash paid back out in range
-  cashSalesPence: number; // = byMethodPence.cash (visitor/emergency cash)
+  cashSalesPence: number; // = byMethodPence.cash — real product sales only, Cash Movements excluded (see cashMovementsPence)
+  cashMovementsPence: number; // net non-sale cash in/out of the till (see 0064_bar_cash_movements.sql); signed
   outstandingPence: number; // current total float owed to members (not range-bound)
   carriedForwardPence: number; // brought forward from the last cash-up (config bar_cash_carried_forward_pence); signed
-  expectedCashPence: number; // carried forward + top-ups + cash sales − refunds in range (a bank-time guide)
+  expectedCashPence: number; // carried forward + top-ups + cash sales + cash movements − refunds in range (a bank-time guide)
   discountsGivenPence: number; // sum of member discounts given in range — informational, ready for Xero
 }
 
@@ -392,7 +393,7 @@ export async function getReport(): Promise<BarReport> {
   // Non-voided, not-yet-linked sales, with line items + product info
   const { data: sales, error: salesErr } = await supabase
     .from('bar_sales')
-    .select('id, payment_method, total_pence, discount_pence, voided, created_at, bar_sale_items ( qty, unit_price_pence, bar_products ( name, category ) )')
+    .select('id, payment_method, total_pence, discount_pence, voided, is_cash_movement, created_at, bar_sale_items ( qty, unit_price_pence, bar_products ( name, category ) )')
     .is('day_end_id', null).eq('voided', false);
   if (salesErr) throw new Error(`Failed to load sales: ${salesErr.message}`);
 
@@ -400,10 +401,18 @@ export async function getReport(): Promise<BarReport> {
   const byCategoryPence: Record<string, number> = {};
   const byProductMap = new Map<string, { name: string; qty: number; totalPence: number }>();
   let discountsGivenPence = 0;
+  let cashMovementsPence = 0;
 
   for (const s of sales ?? []) {
     const method = s.payment_method as 'wallet' | 'card' | 'cash';
-    byMethodPence[method] = (byMethodPence[method] ?? 0) + s.total_pence;
+    // Cash Movements are a distinct, non-sale bucket on the Dayend screen (see
+    // 0064_bar_cash_movements.sql) — kept out of byMethodPence.cash so "Cash
+    // Sales" reads as real product sales only.
+    if (method === 'cash' && s.is_cash_movement) {
+      cashMovementsPence += s.total_pence;
+    } else {
+      byMethodPence[method] = (byMethodPence[method] ?? 0) + s.total_pence;
+    }
     discountsGivenPence += s.discount_pence ?? 0;
     for (const item of (s.bar_sale_items ?? []) as any[]) {
       const line = item.qty * item.unit_price_pence;
@@ -446,8 +455,8 @@ export async function getReport(): Promise<BarReport> {
     salesCount: (sales ?? []).length,
     byMethodPence, byCategoryPence,
     byProduct: [...byProductMap.values()].sort((a, b) => b.totalPence - a.totalPence),
-    topupsPence, cardTopupsPence, refundsPence, cashSalesPence, outstandingPence, carriedForwardPence,
-    expectedCashPence: carriedForwardPence + topupsPence + cashSalesPence - refundsPence,
+    topupsPence, cardTopupsPence, refundsPence, cashSalesPence, cashMovementsPence, outstandingPence, carriedForwardPence,
+    expectedCashPence: carriedForwardPence + topupsPence + cashSalesPence + cashMovementsPence - refundsPence,
     discountsGivenPence,
   };
 }
@@ -461,7 +470,8 @@ export interface BarDayEnd {
   floatPence: number;
   carriedInPence: number;    // brought forward into this cash-up (config snapshot at the time)
   cashTopupsPence: number;
-  cashSalesPence: number;
+  cashSalesPence: number;      // real product sales only — Cash Movements excluded
+  cashMovementsPence: number;  // net non-sale cash in/out of the till; signed
   refundsPence: number;
   cashExpectedPence: number;
   cashRemovedPence: number;
@@ -482,7 +492,7 @@ function mapDayEndRow(r: any): BarDayEnd {
   return {
     id: r.id, staff: r.staff, createdAt: r.created_at, floatPence: r.float_pence,
     carriedInPence: r.carried_in_pence,
-    cashTopupsPence: r.cash_topups_pence, cashSalesPence: r.cash_sales_pence, refundsPence: r.refunds_pence,
+    cashTopupsPence: r.cash_topups_pence, cashSalesPence: r.cash_sales_pence, cashMovementsPence: r.cash_movements_pence, refundsPence: r.refunds_pence,
     cashExpectedPence: r.cash_expected_pence, cashRemovedPence: r.cash_removed_pence,
     carriedForward,
     carriedOutPence: carriedForward ? r.cash_expected_pence - r.cash_removed_pence : 0,
@@ -540,13 +550,17 @@ export interface BarDayEndLedgerRow {
 
 /** The sales making up one payment-method line of a Day End (e.g. "Wallet sales" -> the
  * bar_sales rows linked to it with payment_method = 'wallet'). dayEndId null means "not
- * yet linked to any Day End" -- the till's live Dayend screen, before Confirm Day End. */
-export async function getDayEndSales(dayEndId: string | null, method: 'wallet' | 'card' | 'cash'): Promise<BarSaleSummary[]> {
+ * yet linked to any Day End" -- the till's live Dayend screen, before Confirm Day End.
+ * cashMovementsOnly separates the 'cash' method into its two Dayend rows: false for
+ * "Cash Sales" (real product sales), true for "Cash Movements"; leave undefined for
+ * 'wallet'/'card', which never have Cash Movement rows. */
+export async function getDayEndSales(dayEndId: string | null, method: 'wallet' | 'card' | 'cash', cashMovementsOnly?: boolean): Promise<BarSaleSummary[]> {
   const supabase = getSupabaseClient();
   let query = supabase
     .from('bar_sales')
     .select('id, created_at, payment_method, user_name, total_pence, gross_total_pence, discount_pence, voided, is_cash_movement, reason, bar_sale_items ( qty, unit_price_pence, bar_products ( name ) )')
     .eq('payment_method', method).eq('voided', false);
+  if (cashMovementsOnly !== undefined) query = query.eq('is_cash_movement', cashMovementsOnly);
   query = dayEndId === null ? query.is('day_end_id', null) : query.eq('day_end_id', dayEndId);
   const { data, error } = await query.order('created_at', { ascending: true });
   if (error) throw new Error(`Failed to load sales: ${error.message}`);
@@ -596,13 +610,17 @@ export interface BarNominalRevenue {
 
 /** Net revenue (what was actually charged, after any member discount) for one payment
  * method of a Day End, split by nominal code via the product -> category -> default
- * hierarchy. Used to build the per-code revenue lines of the Xero export. */
-export async function getDayEndRevenueByNominalCode(dayEndId: string, method: 'wallet' | 'card' | 'cash'): Promise<BarNominalRevenue[]> {
+ * hierarchy. Used to build the per-code revenue lines of the Xero export.
+ * cashMovementsOnly separates 'cash' the same way as getDayEndSales() -- Cash
+ * Movements are posted as their own journal lines, not blended into cash sales. */
+export async function getDayEndRevenueByNominalCode(dayEndId: string, method: 'wallet' | 'card' | 'cash', cashMovementsOnly?: boolean): Promise<BarNominalRevenue[]> {
   const supabase = getSupabaseClient();
-  const { data, error } = await supabase
+  let query = supabase
     .from('bar_sales')
     .select('bar_sale_items ( qty, unit_price_pence, bar_products ( nominal_code, category, bar_categories ( nominal_code ) ) )')
     .eq('day_end_id', dayEndId).eq('payment_method', method).eq('voided', false);
+  if (cashMovementsOnly !== undefined) query = query.eq('is_cash_movement', cashMovementsOnly);
+  const { data, error } = await query;
   if (error) throw new Error(`Failed to load sale items: ${error.message}`);
   const totals = new Map<string | null, number>();
   for (const s of (data ?? []) as any[]) {

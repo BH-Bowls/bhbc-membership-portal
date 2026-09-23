@@ -69,20 +69,23 @@ async function buildJournalLines(dayEnd: BarDayEnd, config: BarNominalConfig): P
   postSigned('Card top-ups', config.walletLiabilityAccount, dayEnd.cardTopupsPence, false);
 
   // Sales revenue, split by nominal code (product override -> category -> default).
-  // Includes Cash Movements (see 0064_bar_cash_movements.sql) posted through the
-  // 'cash' method as an ordinary, possibly negative, sale -- postSigned handles a
-  // net-negative total (more removed than sold) the same way as any other sign.
-  const salesByMethod: { method: 'wallet' | 'cash' | 'card'; totalPence: number; debitAccount: string }[] = [
-    { method: 'wallet', totalPence: dayEnd.walletSalesPence, debitAccount: config.walletLiabilityAccount },
-    { method: 'cash', totalPence: dayEnd.cashSalesPence, debitAccount: config.cashAccount },
-    { method: 'card', totalPence: dayEnd.cardSalesPence, debitAccount: config.cardAccount },
+  // Cash Movements (0064_bar_cash_movements.sql) post as their own line, not
+  // blended into cash sales -- cashMovementsOnly keeps the nominal-code split in
+  // step with which total (cashSalesPence vs cashMovementsPence) is being posted,
+  // so each pair still balances. postSigned handles a negative total (e.g. more
+  // removed via a Cash Movement than was ever added) the same way as any sign.
+  const salesByMethod: { description: string; method: 'wallet' | 'cash' | 'card'; totalPence: number; debitAccount: string; cashMovementsOnly?: boolean }[] = [
+    { description: 'wallet sales', method: 'wallet', totalPence: dayEnd.walletSalesPence, debitAccount: config.walletLiabilityAccount },
+    { description: 'cash sales', method: 'cash', totalPence: dayEnd.cashSalesPence, debitAccount: config.cashAccount, cashMovementsOnly: false },
+    { description: 'card sales', method: 'card', totalPence: dayEnd.cardSalesPence, debitAccount: config.cardAccount },
+    { description: 'cash movements', method: 'cash', totalPence: dayEnd.cashMovementsPence, debitAccount: config.cashAccount, cashMovementsOnly: true },
   ];
-  for (const { method, totalPence, debitAccount } of salesByMethod) {
+  for (const { description, method, totalPence, debitAccount, cashMovementsOnly } of salesByMethod) {
     if (totalPence === 0) continue;
-    const byCode = await getDayEndRevenueByNominalCode(dayEnd.id, method);
-    postSigned(`${method} sales`, debitAccount, totalPence, true);
+    const byCode = await getDayEndRevenueByNominalCode(dayEnd.id, method, cashMovementsOnly);
+    postSigned(description, debitAccount, totalPence, true);
     for (const { nominalCode, pence } of byCode) {
-      postSigned(`${method} sales`, nominalCode || config.defaultSalesAccount, pence, false);
+      postSigned(description, nominalCode || config.defaultSalesAccount, pence, false);
     }
   }
 
