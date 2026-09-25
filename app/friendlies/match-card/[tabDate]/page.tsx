@@ -188,7 +188,45 @@ export default function MatchCardPage() {
   // Extract Match Card Data
   // ============================================================================
 
-  const { game, teams, reserves, reserveTeams, opposition, withdrawn, captain, teaRota, clubDetails, clubContacts } = matchCard;
+  const { game, teams, reserves, reserveTeams, opposition, withdrawn, teaRota, clubDetails, clubContacts } = matchCard;
+
+  // How many team boxes fit in the left (front) column's printable height before the
+  // next one has to move to a fresh page. Team boxes are all the same height today
+  // (one `format` per game, so every team has the same player count) — that makes an
+  // upfront estimate workable instead of needing to measure the live DOM, which isn't
+  // possible anyway: @page pagination only exists during the browser's print pass, so
+  // there's nothing on-screen to measure it against.
+  // TEAM_ROWS_BUDGET_PX, recomputed from the original baseline rather than nudged
+  // incrementally (the incremental nudges undercounted the real total). Baseline: 8
+  // Triples teams (544px needed) overflowed by one player at the original 8mm margin
+  // with the full original header, so real capacity there was ~524-544px. Since then:
+  // margin 8mm->5mm (+22.7px) and the header itself recomputed fresh — was 133px
+  // (border+padding+3 lines+captain block+margin), now 92px (captain block gone,
+  // tighter margin) — another +41px. ~64px freed on top of the baseline puts real
+  // capacity at roughly 590-600px, comfortably past what 8 Triples teams need.
+  const ROW_HEIGHT_PX = 20;
+  const TEAM_OVERHEAD_PX = 8; // each team table's own border + the gap above it
+  const TEAM_ROWS_BUDGET_PX = 590; // page-1 left column, below the match header box
+  const CONTINUATION_ROWS_BUDGET_PX = 608; // continuation pages have a smaller header, so more room
+  const rowsPerTeam = teams[0]?.players.length || 4;
+  const teamHeightPx = rowsPerTeam * ROW_HEIGHT_PX + TEAM_OVERHEAD_PX;
+  const teamsPerPage1 = Math.max(1, Math.floor(TEAM_ROWS_BUDGET_PX / teamHeightPx));
+  const teamsPerContinuationPage = Math.max(1, Math.floor(CONTINUATION_ROWS_BUDGET_PX / teamHeightPx));
+
+  // Chunk teams into pages: page 1 gets teamsPerPage1, every page after that gets
+  // teamsPerContinuationPage, until every team has a page.
+  const teamPages: Team[][] = [];
+  {
+    let remaining = teams;
+    let perPage = teamsPerPage1;
+    while (remaining.length > 0) {
+      teamPages.push(remaining.slice(0, perPage));
+      remaining = remaining.slice(perPage);
+      perPage = teamsPerContinuationPage;
+    }
+    if (teamPages.length === 0) teamPages.push([]);
+  }
+  const hasOverflowPages = teamPages.length > 1;
 
   // Count rinks
   const rinkCount = teams.length;
@@ -217,7 +255,9 @@ export default function MatchCardPage() {
         @media print {
           @page {
             size: A4 portrait;
-            margin: 8mm;
+            /* Top/bottom trimmed from 8mm — every mm here is a line of a team
+               that might otherwise spill onto its own extra page. */
+            margin: 5mm 8mm;
           }
           body {
             print-color-adjust: exact;
@@ -231,6 +271,10 @@ export default function MatchCardPage() {
           }
           .print-page:last-child {
             page-break-after: avoid;
+          }
+          .no-split {
+            break-inside: avoid;
+            page-break-inside: avoid;
           }
         }
       `}</style>
@@ -270,7 +314,7 @@ export default function MatchCardPage() {
               {/* ======================================================== */}
               <div className="border-r border-gray-300 p-4">
                 {/* Match Header */}
-                <div className="border-2 border-gray-400 mb-2">
+                <div className="border-2 border-gray-400 mb-1">
                   <div className="text-center p-2">
                     <h1 className="text-lg font-bold text-red-600">
                       Burgess Hill vs {game.clubName}
@@ -282,15 +326,14 @@ export default function MatchCardPage() {
                       {game.format} | {game.ladiesMen} | Dress : {game.dress || 'W'}
                     </p>
                   </div>
-                  <div className="border-t border-gray-400 p-2 text-center">
-                    <p className="text-sm">Captain : {captain || 'TBC'}</p>
-                  </div>
                 </div>
 
-                {/* Teams Grid */}
+                {/* Teams Grid — only the teams that fit this page; any rest continue on their own page(s) below.
+                    Captain of the Day is now shown as a badge on their name below, not a separate line here —
+                    it stayed blank whenever no captain was set, wasting a whole row for nothing. */}
                 <div className="space-y-1">
-                  {teams.map(team => (
-                    <table key={team.team} className="w-full border-collapse border-2 border-gray-500 text-sm">
+                  {teamPages[0].map(team => (
+                    <table key={team.team} className="no-split w-full border-collapse border-2 border-gray-500 text-sm">
                       <tbody>
                         {team.players
                           .sort((a, b) => {
@@ -304,7 +347,6 @@ export default function MatchCardPage() {
                               </td>
                               <td className="border border-gray-400 px-2 py-px">
                                 {player.name}
-                                {player.isCaptain && ' ★'}
                               </td>
                               <td className="border border-gray-400 px-1 py-px w-6 text-center text-xs">
                                 {player.status === 'Y' ? 'Y' : ''}
@@ -317,79 +359,81 @@ export default function MatchCardPage() {
                   ))}
                 </div>
 
-                {/* PTO notice for away games */}
-                {game.homeAway === 'A' && (
-                  <p className="text-center text-sm font-bold mt-4">
-                    *** PTO FOR CAR SHARE DETAILS ***
-                  </p>
-                )}
+                {/* Reserves/opposition/withdrawn belong with the roster, so they follow
+                    wherever the team list actually ends — page 1 when it all fits,
+                    otherwise the last continuation page below. */}
+                {!hasOverflowPages && (
+                  <>
+                    {game.homeAway === 'A' && (
+                      <p className="text-center text-sm font-bold mt-4">
+                        *** PTO FOR CAR SHARE DETAILS ***
+                      </p>
+                    )}
 
-                {/* Reserves Section - two columns */}
-                {reserves.length > 0 && (
-                  <div className="mt-2 border-2 border-gray-400">
-                    <p className="text-sm font-bold text-center border-b border-gray-400 py-1">
-                      Reserves
-                    </p>
-                    <div className="grid grid-cols-2 gap-x-1 p-1">
-                      {[
-                        reserves.filter((_, i) => i < Math.ceil(reserves.length / 2)),
-                        reserves.filter((_, i) => i >= Math.ceil(reserves.length / 2)),
-                      ].map((col, colIdx) => (
-                        <table key={colIdx} className="w-full border-collapse border border-gray-400 text-sm">
+                    {reserves.length > 0 && (
+                      <div className="mt-2 border-2 border-gray-400">
+                        <p className="text-sm font-bold text-center border-b border-gray-400 py-1">
+                          Reserves
+                        </p>
+                        <div className="grid grid-cols-2 gap-x-1 p-1">
+                          {[
+                            reserves.filter((_, i) => i < Math.ceil(reserves.length / 2)),
+                            reserves.filter((_, i) => i >= Math.ceil(reserves.length / 2)),
+                          ].map((col, colIdx) => (
+                            <table key={colIdx} className="w-full border-collapse border border-gray-400 text-sm">
+                              <tbody>
+                                {col.map((reserve, idx) => (
+                                  <tr key={idx}>
+                                    <td className="border border-gray-400 px-2 py-px">{reserve.name}</td>
+                                    <td className="border border-gray-400 px-1 py-px w-6 text-center text-xs">
+                                      {reserve.status === 'Y' ? 'Y' : ''}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {opposition && opposition.length > 0 && (
+                      <div className="mt-2 border-2 border-blue-400">
+                        <p className="text-sm font-bold text-center border-b border-blue-400 py-1 text-blue-700">
+                          {game.clubName}
+                        </p>
+                        <table className="w-full border-collapse text-sm">
                           <tbody>
-                            {col.map((reserve, idx) => (
+                            {opposition.map((player, idx) => (
                               <tr key={idx}>
-                                <td className="border border-gray-400 px-2 py-px">{reserve.name}</td>
-                                <td className="border border-gray-400 px-1 py-px w-6 text-center text-xs">
-                                  {reserve.status === 'Y' ? 'Y' : ''}
+                                <td className="border border-blue-300 px-2 py-px">{player.name}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    {withdrawn && withdrawn.length > 0 && (
+                      <div className="mt-2 border-2 border-red-300">
+                        <p className="text-sm font-bold text-center border-b border-red-300 py-1 text-red-600">
+                          Withdrawn
+                        </p>
+                        <table className="w-full border-collapse text-sm">
+                          <tbody>
+                            {withdrawn.map((player, idx) => (
+                              <tr key={idx}>
+                                <td className="border border-red-200 px-2 py-px line-through text-gray-500">
+                                  {player.name}
                                 </td>
                               </tr>
                             ))}
                           </tbody>
                         </table>
-                      ))}
-                    </div>
-                  </div>
+                      </div>
+                    )}
+                  </>
                 )}
-
-                {/* Opposition Section */}
-                {opposition && opposition.length > 0 && (
-                  <div className="mt-2 border-2 border-blue-400">
-                    <p className="text-sm font-bold text-center border-b border-blue-400 py-1 text-blue-700">
-                      {game.clubName}
-                    </p>
-                    <table className="w-full border-collapse text-sm">
-                      <tbody>
-                        {opposition.map((player, idx) => (
-                          <tr key={idx}>
-                            <td className="border border-blue-300 px-2 py-px">{player.name}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-
-                {/* Withdrawn Section */}
-                {withdrawn && withdrawn.length > 0 && (
-                  <div className="mt-2 border-2 border-red-300">
-                    <p className="text-sm font-bold text-center border-b border-red-300 py-1 text-red-600">
-                      Withdrawn
-                    </p>
-                    <table className="w-full border-collapse text-sm">
-                      <tbody>
-                        {withdrawn.map((player, idx) => (
-                          <tr key={idx}>
-                            <td className="border border-red-200 px-2 py-px line-through text-gray-500">
-                              {player.name}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-
               </div>
 
               {/* ======================================================== */}
@@ -521,6 +565,137 @@ export default function MatchCardPage() {
           </div>
 
           {/* ============================================================ */}
+          {/* TEAMS CONTINUED — one page per remaining chunk, each with its own
+              repeated header so it's still readable on its own sheet. Only
+              appears when the roster didn't fit on page 1. */}
+          {/* ============================================================ */}
+          {teamPages.slice(1).map((pageTeams, pageIdx) => {
+            const isLastTeamPage = pageIdx === teamPages.length - 2; // -1 for slice offset, -1 for 0-index
+            return (
+              <div key={pageIdx} className="print-page bg-white shadow-lg mt-8 print:mt-0 text-gray-900">
+                <div className="grid grid-cols-2 min-h-[calc(100vh-200px)] print:min-h-0">
+                  <div className="border-r border-gray-300 p-4">
+                    <div className="border-2 border-gray-400 mb-1">
+                      <div className="text-center p-2">
+                        <h1 className="text-lg font-bold text-red-600">
+                          Burgess Hill vs {game.clubName} (continued)
+                        </h1>
+                        <p className="text-sm">
+                          {formattedDate}, {game.time}, {game.homeAway === 'H' ? 'Home' : 'Away'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      {pageTeams.map(team => (
+                        <table key={team.team} className="no-split w-full border-collapse border-2 border-gray-500 text-sm">
+                          <tbody>
+                            {team.players
+                              .sort((a, b) => {
+                                const order: { [key: string]: number } = { '1': 0, '2': 1, '3': 2, 'S': 3 };
+                                return (order[a.position] ?? 99) - (order[b.position] ?? 99);
+                              })
+                              .map((player, idx) => (
+                                <tr key={idx} className={player.isCaptain ? 'bg-purple-100' : ''}>
+                                  <td className="border border-gray-400 px-1 py-px w-6 text-center text-xs">
+                                    {player.position === '1' ? 'L' : (player.position || '-')}
+                                  </td>
+                                  <td className="border border-gray-400 px-2 py-px">
+                                    {player.name}
+                                  </td>
+                                  <td className="border border-gray-400 px-1 py-px w-6 text-center text-xs">
+                                    {player.status === 'Y' ? 'Y' : ''}
+                                  </td>
+                                  <td className="border border-gray-400 w-10" title="Initials" />
+                                </tr>
+                              ))}
+                          </tbody>
+                        </table>
+                      ))}
+                    </div>
+
+                    {isLastTeamPage && (
+                      <>
+                        {game.homeAway === 'A' && (
+                          <p className="text-center text-sm font-bold mt-4">
+                            *** PTO FOR CAR SHARE DETAILS ***
+                          </p>
+                        )}
+
+                        {reserves.length > 0 && (
+                          <div className="mt-2 border-2 border-gray-400">
+                            <p className="text-sm font-bold text-center border-b border-gray-400 py-1">
+                              Reserves
+                            </p>
+                            <div className="grid grid-cols-2 gap-x-1 p-1">
+                              {[
+                                reserves.filter((_, i) => i < Math.ceil(reserves.length / 2)),
+                                reserves.filter((_, i) => i >= Math.ceil(reserves.length / 2)),
+                              ].map((col, colIdx) => (
+                                <table key={colIdx} className="w-full border-collapse border border-gray-400 text-sm">
+                                  <tbody>
+                                    {col.map((reserve, idx) => (
+                                      <tr key={idx}>
+                                        <td className="border border-gray-400 px-2 py-px">{reserve.name}</td>
+                                        <td className="border border-gray-400 px-1 py-px w-6 text-center text-xs">
+                                          {reserve.status === 'Y' ? 'Y' : ''}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {opposition && opposition.length > 0 && (
+                          <div className="mt-2 border-2 border-blue-400">
+                            <p className="text-sm font-bold text-center border-b border-blue-400 py-1 text-blue-700">
+                              {game.clubName}
+                            </p>
+                            <table className="w-full border-collapse text-sm">
+                              <tbody>
+                                {opposition.map((player, idx) => (
+                                  <tr key={idx}>
+                                    <td className="border border-blue-300 px-2 py-px">{player.name}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+
+                        {withdrawn && withdrawn.length > 0 && (
+                          <div className="mt-2 border-2 border-red-300">
+                            <p className="text-sm font-bold text-center border-b border-red-300 py-1 text-red-600">
+                              Withdrawn
+                            </p>
+                            <table className="w-full border-collapse text-sm">
+                              <tbody>
+                                {withdrawn.map((player, idx) => (
+                                  <tr key={idx}>
+                                    <td className="border border-red-200 px-2 py-px line-through text-gray-500">
+                                      {player.name}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                  <div className="p-4">
+                    {/* Intentionally empty — matches the reserve-teams page's own back side */}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+
+          {/* ============================================================ */}
           {/* RESERVE TEAMS - Page 2 (if any) */}
           {/* ============================================================ */}
           {reserveTeams.length > 0 && (
@@ -534,7 +709,7 @@ export default function MatchCardPage() {
 
                   <div className="space-y-2">
                     {reserveTeams.map(team => (
-                      <div key={team.team}>
+                      <div key={team.team} className="no-split">
                         <p className="text-sm font-bold mb-1">Reserve Team {team.team}</p>
                         <table className="w-full border-collapse border border-gray-400 text-sm">
                           <tbody>
