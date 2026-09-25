@@ -237,12 +237,16 @@ export function htmlToPlainText(html: string): string {
  * List-Unsubscribe is expected by Gmail/Yahoo/BT on anything that looks like bulk
  * mail. A monitored `mailto:` is the low-risk form — it needs no one-click endpoint
  * and simply lets a recipient (or their provider) request removal by email.
+ * List-Unsubscribe-Post must accompany it — without this, mailbox providers treat
+ * List-Unsubscribe as the older, weaker form and it doesn't count toward their
+ * 2024+ bulk-sender requirements the same way.
  */
 export function commonMailHeaders(): Record<string, string> {
   const club = process.env.SMTP_USER || '';
   if (!club) return {};
   return {
     'List-Unsubscribe': `<mailto:${club}?subject=Unsubscribe>`,
+    'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
   };
 }
 
