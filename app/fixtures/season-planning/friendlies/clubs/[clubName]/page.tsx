@@ -57,18 +57,14 @@ function toDateInputValue(dateStr: string): string {
   return '';
 }
 
-function clashTooltip(clashes: ClubClash[]): string {
-  return clashes
-    .map((c) => {
-      const parts = [
-        c.isEvent ? 'Event' : null,
-        c.homeAway === 'A' ? 'Away' : c.homeAway === 'H' ? 'Home' : null,
-        c.ladiesMen && c.ladiesMen !== 'Mixed' ? c.ladiesMen : null,
-        c.format || null,
-      ].filter(Boolean);
-      return `${c.clubName}${parts.length ? ` — ${parts.join(', ')}` : ''}`;
-    })
-    .join('\n');
+function clashDetails(c: ClubClash): string {
+  const parts = [
+    c.isEvent ? 'Event' : null,
+    c.homeAway === 'A' ? 'Away' : c.homeAway === 'H' ? 'Home' : null,
+    c.ladiesMen && c.ladiesMen !== 'Mixed' ? c.ladiesMen : null,
+    c.format || null,
+  ].filter(Boolean);
+  return parts.join(', ');
 }
 
 function planningBadgeClasses(status: string): string {
@@ -138,6 +134,7 @@ export default function ClubInfoPage({ params }: PageProps) {
   const [editHomeAway, setEditHomeAway] = useState<'H' | 'A'>('H');
   const [editFormat, setEditFormat] = useState('');
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [openClashId, setOpenClashId] = useState<string | null>(null); // fixture id whose clash popover is showing
 
   useEffect(() => {
     if (session === null) { router.push('/'); return; }
@@ -447,14 +444,42 @@ export default function ClubInfoPage({ params }: PageProps) {
                         {clash && clash.length > 0 && (() => {
                           const clashGames = clash.filter((c) => !c.isEvent);
                           const clashEvents = clash.filter((c) => c.isEvent);
+                          const isOpen = openClashId === f.id;
                           return (
                             <span
-                              title={clashTooltip(clash)}
-                              className="text-xs px-2 py-0.5 rounded-full font-medium bg-gray-200 text-gray-800 cursor-help"
+                              className="relative inline-block"
+                              onMouseEnter={() => setOpenClashId(f.id)}
+                              onMouseLeave={() => setOpenClashId((k) => (k === f.id ? null : k))}
                             >
-                              {clashGames.length > 0 ? `${clashGames.length} Game${clashGames.length === 1 ? '' : 's'}` : ''}
-                              {clashGames.length > 0 && clashEvents.length > 0 ? ' + ' : ''}
-                              {clashEvents.length > 0 ? `${clashEvents.length} Event${clashEvents.length === 1 ? '' : 's'}` : ''}
+                              <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-gray-200 text-gray-800 cursor-help">
+                                {clashGames.length > 0 ? `${clashGames.length} Game${clashGames.length === 1 ? '' : 's'}` : ''}
+                                {clashGames.length > 0 && clashEvents.length > 0 ? ' + ' : ''}
+                                {clashEvents.length > 0 ? `${clashEvents.length} Event${clashEvents.length === 1 ? '' : 's'}` : ''}
+                              </span>
+                              {isOpen && (
+                                <div className="absolute z-20 top-full left-0 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg p-2 text-xs space-y-1.5">
+                                  {clash.map((c, i) => {
+                                    const details = clashDetails(c);
+                                    return (
+                                      <div key={i} className="flex items-center justify-between gap-2">
+                                        <span className="text-gray-800">
+                                          <span className="font-medium text-gray-900">{c.clubName}</span>
+                                          {details && <span className="text-gray-500"> — {details}</span>}
+                                        </span>
+                                        {!c.isEvent && (
+                                          <Link
+                                            href={`/fixtures/season-planning/friendlies/clubs/${encodeURIComponent(c.clubName)}`}
+                                            target="_blank"
+                                            className="text-blue-600 hover:text-blue-800 shrink-0 whitespace-nowrap"
+                                          >
+                                            Contact
+                                          </Link>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
                             </span>
                           );
                         })()}
