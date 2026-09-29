@@ -180,6 +180,7 @@ export default function ClubDetailPage({ params }: PageProps) {
       clubEmailAddress: club.clubEmailAddress,
       clubEmailNote: club.clubEmailNote,
       generalInformation: club.generalInformation,
+      friendlyPlanningNotes: club.friendlyPlanningNotes,
       drivingBand: club.drivingBand,
       address1: club.address1,
       address2: club.address2,
@@ -768,6 +769,28 @@ export default function ClubDetailPage({ params }: PageProps) {
                 <p className="text-gray-700 whitespace-pre-wrap">{club.generalInformation}</p>
               ) : (
                 <p className="text-gray-500 italic">No additional information</p>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Friendly Planning Notes */}
+        <div className="bg-white rounded-lg shadow p-6 mb-6">
+          <h2 className="text-lg font-semibold mb-4 text-gray-900">Friendly Planning Notes</h2>
+          {isEditingClub ? (
+            <textarea
+              value={editedClub.friendlyPlanningNotes || ''}
+              onChange={(e) => setEditedClub({ ...editedClub, friendlyPlanningNotes: e.target.value })}
+              rows={4}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+              placeholder="Notes for arranging next season's friendly fixtures — preferred dates, format quirks, etc..."
+            />
+          ) : (
+            <>
+              {club.friendlyPlanningNotes ? (
+                <p className="text-gray-700 whitespace-pre-wrap">{club.friendlyPlanningNotes}</p>
+              ) : (
+                <p className="text-gray-500 italic">No planning notes</p>
               )}
             </>
           )}

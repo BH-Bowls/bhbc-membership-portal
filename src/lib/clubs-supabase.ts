@@ -20,6 +20,7 @@ export interface Club {
   clubEmailAddress: string;
   clubEmailNote: string;
   generalInformation: string;
+  friendlyPlanningNotes: string;
   drivingBand: string;
   petrolCost: number;
   address1: string;
@@ -60,6 +61,7 @@ export interface CreateClubRequest {
   clubEmailAddress?: string;
   clubEmailNote?: string;
   generalInformation?: string;
+  friendlyPlanningNotes?: string;
   drivingBand?: string;
   address1?: string;
   address2?: string;
@@ -79,6 +81,7 @@ export interface UpdateClubRequest {
   clubEmailAddress?: string;
   clubEmailNote?: string;
   generalInformation?: string;
+  friendlyPlanningNotes?: string;
   drivingBand?: string;
   address1?: string;
   address2?: string;
@@ -147,6 +150,7 @@ function mapClubRow(row: any, petrolBands: Record<string, number>): Club {
     clubEmailAddress: row.club_email_address || '',
     clubEmailNote: row.club_email_note || '',
     generalInformation: row.general_information || '',
+    friendlyPlanningNotes: row.friendly_planning_notes || '',
     drivingBand,
     petrolCost: petrolBands[drivingBand] ?? 0,
     address1: row.address_1 || '',
@@ -254,6 +258,7 @@ export async function createClub(clubData: CreateClubRequest): Promise<Club> {
     club_email_address: clubData.clubEmailAddress || null,
     club_email_note: clubData.clubEmailNote || null,
     general_information: clubData.generalInformation || null,
+    friendly_planning_notes: clubData.friendlyPlanningNotes || null,
     driving_band: clubData.drivingBand || null,
     address_1: clubData.address1 || null,
     address_2: clubData.address2 || null,
@@ -289,6 +294,7 @@ export async function updateClub(clubName: string, updates: UpdateClubRequest): 
   if (updates.clubEmailAddress !== undefined) columnUpdates.club_email_address = updates.clubEmailAddress;
   if (updates.clubEmailNote !== undefined) columnUpdates.club_email_note = updates.clubEmailNote;
   if (updates.generalInformation !== undefined) columnUpdates.general_information = updates.generalInformation;
+  if (updates.friendlyPlanningNotes !== undefined) columnUpdates.friendly_planning_notes = updates.friendlyPlanningNotes;
   if (updates.drivingBand !== undefined) columnUpdates.driving_band = updates.drivingBand;
   if (updates.address1 !== undefined) columnUpdates.address_1 = updates.address1;
   if (updates.address2 !== undefined) columnUpdates.address_2 = updates.address2;

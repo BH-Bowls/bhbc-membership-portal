@@ -122,6 +122,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     const fieldLabels: Record<string, string> = {
       clubNumber: 'Phone', clubMobile: 'Mobile', clubEmailAddress: 'Email',
       clubEmailNote: 'Email note', generalInformation: 'General info',
+      friendlyPlanningNotes: 'Friendly planning notes',
       drivingBand: 'Driving band', address1: 'Address 1', address2: 'Address 2',
       address3: 'Town', address4: 'County', postCode: 'Post code',
       website: 'Website', latitude: 'Latitude', longitude: 'Longitude',
@@ -134,7 +135,11 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
         if (from !== to) changes[label] = { from, to };
       }
     }
-    if (Object.keys(changes).length > 0) {
+    // Disabled for now (2026-09-28, at Liam's request) — every club edit, including the
+    // Friendly Planning Notes quick-save on the Season Planning Club Info page, was
+    // emailing burgesshillbc@gmail.com a change summary. Flip back to true to resume.
+    const CLUB_CHANGE_NOTIFICATIONS_ENABLED = false;
+    if (CLUB_CHANGE_NOTIFICATIONS_ENABLED && Object.keys(changes).length > 0) {
       sendClubChangeNotification(
         { type: 'club_updated', clubName: decodedClubName, changes },
         { name: session.user.name ?? session.user.userName, userName: session.user.userName, role },

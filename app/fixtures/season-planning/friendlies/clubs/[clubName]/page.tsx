@@ -81,11 +81,11 @@ function firstNameOf(fullName: string): string {
   return fullName.trim().split(/\s+/)[0] || '';
 }
 
-function buildGmailLink(recipientEmail: string, recipientName: string, clubName: string, year: number, pendingFixtures: ClubFixtureHistoryRow[]): string {
+function buildGmailLink(recipientEmail: string, recipientName: string, clubName: string, year: number, fixtures: ClubFixtureHistoryRow[]): string {
   const subject = `BHBC Friendly Fixtures ${year} — Proposed Dates vs ${clubName}`;
   const firstName = firstNameOf(recipientName);
-  const many = pendingFixtures.length > 1;
-  const lines = pendingFixtures.map((f) => {
+  const many = fixtures.length > 1;
+  const lines = fixtures.map((f) => {
     const venue = f.homeAway === 'A' ? `at ${clubName}` : f.homeAway === 'H' ? 'at BHBC' : null;
     const details = [f.time || null, venue].filter(Boolean).join(', ');
     return `- ${formatDisplayDate(f.date)}${details ? ` (${details})` : ''}${f.format ? `, ${f.format}` : ''}${f.ladiesMen ? `, ${f.ladiesMen}` : ''}`;
@@ -101,8 +101,9 @@ function buildGmailLink(recipientEmail: string, recipientName: string, clubName:
     '',
     `Please let us know if ${many ? 'these all still work' : 'this still works'}, or if anything needs to move.`,
     '',
-    // No closing signature — Gmail drops the account's own signature whenever a
-    // `body` param is supplied, so whoever sends this adds their own by hand.
+    'Best Regards,',
+    // No name/signature block here — Gmail drops the account's own signature
+    // whenever a `body` param is supplied, so whoever sends this adds it by hand.
   ].join('\n');
   return `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(recipientEmail)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
@@ -126,6 +127,10 @@ export default function ClubInfoPage({ params }: PageProps) {
   const [recipientName, setRecipientName] = useState(''); // '' whenever the email was typed by hand rather than picked from a known contact
   const [selectedContactIndex, setSelectedContactIndex] = useState<number | null>(null);
   const [updating, setUpdating] = useState(false);
+  const [showMarkSentPrompt, setShowMarkSentPrompt] = useState(false); // shown right after Draft Email opens
+  const [editingNotes, setEditingNotes] = useState(false);
+  const [notesDraft, setNotesDraft] = useState('');
+  const [savingNotes, setSavingNotes] = useState(false);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDate, setEditDate] = useState('');
@@ -210,7 +215,33 @@ export default function ClubInfoPage({ params }: PageProps) {
 
   function draftEmail() {
     if (!recipientEmail || draftYear === undefined) return;
-    window.open(buildGmailLink(recipientEmail, recipientName, clubName, draftYear, pendingDraftFixtures), '_blank');
+    // All of the draft season's fixtures, not just the pending ones — the captain may
+    // want to draft a recap email even once everything's already Confirmed.
+    window.open(buildGmailLink(recipientEmail, recipientName, clubName, draftYear, draftFixtures), '_blank');
+    setShowMarkSentPrompt(true);
+  }
+
+  function startEditingNotes() {
+    setNotesDraft(info?.club?.friendlyPlanningNotes || '');
+    setEditingNotes(true);
+  }
+
+  function saveNotes() {
+    setSavingNotes(true);
+    setError(null);
+    fetch(`/api/clubs/${encodeURIComponent(clubName)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ friendlyPlanningNotes: notesDraft }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.error) throw new Error(data.error);
+        setInfo((prev) => prev && prev.club ? { ...prev, club: { ...prev.club, friendlyPlanningNotes: notesDraft } } : prev);
+        setEditingNotes(false);
+      })
+      .catch((err) => setError(err.message))
+      .finally(() => setSavingNotes(false));
   }
 
   function startEdit(f: ClubFixtureHistoryRow) {
@@ -332,6 +363,50 @@ export default function ClubInfoPage({ params }: PageProps) {
               <p className="text-xs text-gray-700 mb-3">No contacts on file for this club — check Clubs.</p>
             )}
 
+            {info.club && (
+              <div className="mb-3 bg-amber-50 border border-amber-200 rounded-md p-3">
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-xs font-medium text-amber-800">Friendly Planning Notes</p>
+                  {!editingNotes && (
+                    <button onClick={startEditingNotes} className="text-xs text-amber-700 hover:text-amber-900 underline">
+                      {info.club.friendlyPlanningNotes ? 'Edit' : 'Add note'}
+                    </button>
+                  )}
+                </div>
+                {editingNotes ? (
+                  <div>
+                    <textarea
+                      value={notesDraft}
+                      onChange={(e) => setNotesDraft(e.target.value)}
+                      rows={3}
+                      className="w-full border border-amber-300 rounded-md px-2 py-1.5 text-sm bg-white"
+                      autoFocus
+                    />
+                    <div className="flex gap-3 mt-1.5">
+                      <button
+                        onClick={saveNotes}
+                        disabled={savingNotes}
+                        className="text-xs font-medium text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-50 rounded px-2 py-1"
+                      >
+                        {savingNotes ? 'Saving…' : 'Save'}
+                      </button>
+                      <button
+                        onClick={() => setEditingNotes(false)}
+                        disabled={savingNotes}
+                        className="text-xs text-gray-600 hover:text-gray-800"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-sm text-amber-900 whitespace-pre-wrap">
+                    {info.club.friendlyPlanningNotes || <span className="italic text-amber-700">No planning notes</span>}
+                  </p>
+                )}
+              </div>
+            )}
+
             <div className="flex flex-wrap items-end gap-3">
               <div className="flex-1 min-w-[220px]">
                 <label className="block text-xs font-medium text-gray-700 mb-1">Recipient email</label>
@@ -345,9 +420,9 @@ export default function ClubInfoPage({ params }: PageProps) {
               </div>
               <button
                 className={`px-4 py-2 text-sm font-medium rounded-lg ${
-                  recipientEmail && pendingDraftFixtures.length > 0 ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                  recipientEmail && draftFixtures.length > 0 ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-200 text-gray-500 cursor-not-allowed'
                 }`}
-                disabled={!recipientEmail || pendingDraftFixtures.length === 0}
+                disabled={!recipientEmail || draftFixtures.length === 0}
                 onClick={draftEmail}
               >
                 Draft Email
@@ -371,8 +446,8 @@ export default function ClubInfoPage({ params }: PageProps) {
                 </button>
               )}
             </div>
-            {pendingDraftFixtures.length === 0 && draftYear !== undefined && (
-              <p className="text-xs text-gray-700 mt-2">No pending {draftYear} fixtures to email about.</p>
+            {draftFixtures.length === 0 && draftYear !== undefined && (
+              <p className="text-xs text-gray-700 mt-2">No {draftYear} fixtures to email about.</p>
             )}
           </div>
         )}
@@ -447,7 +522,12 @@ export default function ClubInfoPage({ params }: PageProps) {
                           const isOpen = openClashId === f.id;
                           return (
                             <span
-                              className="relative inline-block"
+                              // pb-2 (not mt-1 on the popover below) so the gap between the badge and the
+                              // popover is part of THIS element's own hit area — a real mouse has to pass
+                              // through that gap pixel-by-pixel, and if it's empty space belonging to neither
+                              // element, the browser fires mouseleave the instant it's over it. A touchscreen
+                              // tap never showed this since it doesn't travel through the gap.
+                              className="relative inline-block pb-2"
                               onMouseEnter={() => setOpenClashId(f.id)}
                               onMouseLeave={() => setOpenClashId((k) => (k === f.id ? null : k))}
                             >
@@ -457,7 +537,7 @@ export default function ClubInfoPage({ params }: PageProps) {
                                 {clashEvents.length > 0 ? `${clashEvents.length} Event${clashEvents.length === 1 ? '' : 's'}` : ''}
                               </span>
                               {isOpen && (
-                                <div className="absolute z-20 top-full left-0 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg p-2 text-xs space-y-1.5">
+                                <div className="absolute z-20 top-full left-0 w-72 bg-white border border-gray-200 rounded-lg shadow-lg p-2 text-xs space-y-1.5">
                                   {clash.map((c, i) => {
                                     const details = clashDetails(c);
                                     return (
@@ -516,6 +596,16 @@ export default function ClubInfoPage({ params }: PageProps) {
         confirmVariant="danger"
         onConfirm={submitDelete}
         onCancel={() => setDeleteId(null)}
+      />
+
+      <ConfirmDialog
+        isOpen={showMarkSentPrompt}
+        title="Mark as sent?"
+        message="Mark this club's pending fixtures as Email Sent?"
+        confirmLabel="Yes"
+        cancelLabel="No"
+        onConfirm={() => { setShowMarkSentPrompt(false); setEmailStatus(true); }}
+        onCancel={() => setShowMarkSentPrompt(false)}
       />
     </div>
   );
