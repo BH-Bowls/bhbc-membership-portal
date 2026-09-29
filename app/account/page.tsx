@@ -8,6 +8,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import QRCode from 'qrcode';
+import { validUntilLabel } from '@/lib/membership-card';
 
 interface BarLedgerEntry {
   id: string;
@@ -27,21 +28,6 @@ interface MembershipCardData {
 }
 
 const fmt = (pence: number) => '£' + (pence / 100).toFixed(2);
-
-function validUntilLabel(card: MembershipCardData): { text: string; renewalDue: boolean } {
-  if (card.honorary) {
-    return { text: 'Honorary Member — no expiry', renewalDue: false };
-  }
-  if (card.latestRenewedSeasonYear === null) {
-    return { text: 'Not yet renewed', renewalDue: true };
-  }
-  // Interim rule — renewals has no stored expiry date yet (see
-  // src/lib/renewals-supabase.ts's getLatestRenewedSeason). Membership runs through
-  // to the end of February the year after the season it was renewed for.
-  const validUntilDate = new Date(card.latestRenewedSeasonYear + 1, 2, 0);
-  const formatted = validUntilDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
-  return { text: 'Valid until ' + formatted, renewalDue: false };
-}
 
 type Tab = 'transactions' | 'card';
 

@@ -115,6 +115,31 @@ export async function getLatestRenewedSeason(userName: string): Promise<number |
   return data.season_year;
 }
 
+// Bulk form of getLatestRenewedSeason for label printing — lowercased username →
+// most recent season_year they confirmed renewing for. Paged, since the table is
+// multi-year and PostgREST caps a single response at 1000 rows.
+export async function getLatestRenewedSeasonsByUser(): Promise<Map<string, number>> {
+  const supabase = getSupabaseClient();
+  const latest = new Map<string, number>();
+  const pageSize = 1000;
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from('renewals')
+      .select('username, season_year')
+      .eq('renewing_membership', true)
+      .order('id', { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`Failed to fetch renewed seasons: ${error.message}`);
+    for (const row of data || []) {
+      const key = String(row.username).toLowerCase();
+      const current = latest.get(key);
+      if (current === undefined || row.season_year > current) latest.set(key, row.season_year);
+    }
+    if (!data || data.length < pageSize) break;
+  }
+  return latest;
+}
+
 function mapRow(row: any): Renewal {
   return {
     userName: row.username,

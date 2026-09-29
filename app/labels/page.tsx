@@ -1,13 +1,15 @@
 'use client';
 
 // app/labels/page.tsx
-// Label printing — Address, Booklet, and Locker labels using Avery L7163 layout
+// Label printing — Address, Booklet, Locker, and Membership Card labels using Avery L7163 layout
 
 import { useEffect, useState, useMemo } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import QRCode from 'qrcode';
 import { hasRole } from '@/lib/role-utils';
+import { validUntilLabel } from '@/lib/membership-card';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -33,9 +35,12 @@ interface LabelMember {
   postCode: string | null;
   memberType: string;
   include: string | null;
+  userName: string;
+  honorary: boolean;
+  latestRenewedSeasonYear: number | null;
 }
 
-type LabelType = 'address' | 'booklet' | 'locker';
+type LabelType = 'address' | 'booklet' | 'locker' | 'card';
 type MemberFilter = 'all' | 'include' | 'manual';
 
 const DEFAULT_CONFIG: LabelConfig = {
@@ -93,17 +98,57 @@ function LockerLabel({ member, widthMm, heightMm }: { member: LabelMember; width
   );
 }
 
-function LabelContent({ type, member, config }: { type: LabelType; member: LabelMember; config: LabelConfig }) {
+// Credit-card dimensions (ISO/IEC 7810 ID-1).
+const CARD_WIDTH_MM = 85.6;
+const CARD_HEIGHT_MM = 53.98;
+// Gap kept between the card's cut line and the label edge, so the outline still
+// prints if the sheet feeds slightly off.
+const CARD_INSET_MM = 1;
+
+// The My Account membership card (app/account/page.tsx) with its QR "back" folded
+// in on the right, so one card carries both. Drawn as a cut-out outline centred on
+// the label: credit-card width, and credit-card height when the label is tall
+// enough (otherwise as tall as the label allows). White background to save ink.
+// The QR encodes the username, same as the on-screen card, for the till lookup.
+function CardLabel({ member, qrSrc, widthMm, heightMm }: { member: LabelMember; qrSrc: string | undefined; widthMm: number; heightMm: number }) {
+  const validity = validUntilLabel(member);
+  const cardW = Math.min(CARD_WIDTH_MM, widthMm - 2 * CARD_INSET_MM);
+  const cardH = Math.min(CARD_HEIGHT_MM, heightMm - 2 * CARD_INSET_MM);
+  const qrMm = Math.min(cardH - 11, 30);
+  return (
+    <div style={{ width: `${widthMm}mm`, height: `${heightMm}mm`, boxSizing: 'border-box', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', fontFamily: 'Arial, sans-serif' }}>
+      <div style={{ width: `${cardW}mm`, height: `${cardH}mm`, boxSizing: 'border-box', border: '0.2mm solid #9ca3af', borderRadius: '3mm', display: 'flex', alignItems: 'center', padding: '3mm', gap: '3mm', color: '#111827' }}>
+        <div style={{ flex: 1, minWidth: 0, height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '2mm' }}>
+            <img src="/bhbc-logo.jpg" alt="" style={{ height: '9mm', width: 'auto' }} />
+            <div>
+              <div style={{ fontWeight: 'bold', fontSize: '9pt', lineHeight: '1.15', color: '#1e3a8a' }}>Burgess Hill Bowls Club</div>
+              <div style={{ fontSize: '6.5pt', color: '#6b7280' }}>Membership Card</div>
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: '12pt', fontWeight: 600, lineHeight: '1.15', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{member.fullName}</div>
+            <div style={{ fontSize: '7pt', marginTop: '0.5mm', color: validity.renewalDue ? '#b45309' : '#4b5563', fontWeight: validity.renewalDue ? 600 : 400 }}>{validity.text}</div>
+          </div>
+        </div>
+        {qrSrc && <img src={qrSrc} alt="" style={{ width: `${qrMm}mm`, height: `${qrMm}mm`, flexShrink: 0 }} />}
+      </div>
+    </div>
+  );
+}
+
+function LabelContent({ type, member, config, qrCodes }: { type: LabelType; member: LabelMember; config: LabelConfig; qrCodes: Record<string, string> }) {
   const w = parseFloat(config.label_width_mm);
   const h = parseFloat(config.label_height_mm);
   if (type === 'address') return <AddressLabel member={member} widthMm={w} heightMm={h} />;
   if (type === 'booklet') return <BookletLabel member={member} config={config} widthMm={w} heightMm={h} />;
+  if (type === 'card') return <CardLabel member={member} qrSrc={qrCodes[member.userName]} widthMm={w} heightMm={h} />;
   return <LockerLabel member={member} widthMm={w} heightMm={h} />;
 }
 
 // ── Label sheet ───────────────────────────────────────────────────────────────
 
-function LabelSheet({ labelsOnSheet, type, config, skipCount = 0 }: { labelsOnSheet: LabelMember[]; type: LabelType; config: LabelConfig; skipCount?: number }) {
+function LabelSheet({ labelsOnSheet, type, config, qrCodes, skipCount = 0 }: { labelsOnSheet: LabelMember[]; type: LabelType; config: LabelConfig; qrCodes: Record<string, string>; skipCount?: number }) {
   const w = parseFloat(config.label_width_mm);
   const h = parseFloat(config.label_height_mm);
   const top = parseFloat(config.top_margin_mm);
@@ -130,7 +175,7 @@ function LabelSheet({ labelsOnSheet, type, config, skipCount = 0 }: { labelsOnSh
         ))}
         {labelsOnSheet.map((member, i) => (
           <div key={i} style={{ width: `${w}mm`, height: `${h}mm`, overflow: 'hidden', border: '0.1mm dashed #ccc' }} className="label-cell">
-            <LabelContent type={type} member={member} config={config} />
+            <LabelContent type={type} member={member} config={config} qrCodes={qrCodes} />
           </div>
         ))}
       </div>
@@ -188,6 +233,10 @@ export default function LabelsPage() {
       .finally(() => setMembersLoading(false));
   }, []);
 
+  // QR codes (as SVG data URIs, so they print crisp) for membership card labels,
+  // keyed by username — generated on demand for whoever is selected.
+  const [qrCodes, setQrCodes] = useState<Record<string, string>>({});
+
   // Filtered members for manual selection list
   const filteredForSearch = useMemo(() => {
     if (!searchTerm) return members;
@@ -211,6 +260,28 @@ export default function LabelsPage() {
     }
     return list;
   }, [members, memberFilter, selectedNames, sortOrder]);
+
+  useEffect(() => {
+    if (labelType !== 'card') return;
+    const missing = selectedMembers.map((m) => m.userName).filter((u) => u && !qrCodes[u]);
+    if (missing.length === 0) return;
+    let cancelled = false;
+    Promise.all(
+      missing.map((u) =>
+        QRCode.toString(u, { type: 'svg', margin: 0 })
+          .then((svg) => [u, 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg)] as const)
+          .catch(() => null)
+      )
+    ).then((results) => {
+      if (cancelled) return;
+      setQrCodes((prev) => {
+        const next = { ...prev };
+        for (const r of results) if (r) next[r[0]] = r[1];
+        return next;
+      });
+    });
+    return () => { cancelled = true; };
+  }, [labelType, selectedMembers, qrCodes]);
 
   // Expand for copies
   const labelList = useMemo(() => {
@@ -253,7 +324,7 @@ export default function LabelsPage() {
 
   if (!session || !hasRole(session.user?.role, 'Admin')) return null;
 
-  const labelTypeLabel = { address: 'Address', booklet: 'Booklet', locker: 'Locker' };
+  const labelTypeLabel = { address: 'Address', booklet: 'Booklet', locker: 'Locker', card: 'Membership Card' };
 
   return (
     <>
@@ -272,7 +343,7 @@ export default function LabelsPage() {
       <div id="print-area">
         {sheets.map((sheet, i) => (
           <div key={i} style={{ pageBreakAfter: i < sheets.length - 1 ? 'always' : 'auto' }}>
-            <LabelSheet labelsOnSheet={sheet} type={labelType} config={config} skipCount={i === 0 ? skipLabels : 0} />
+            <LabelSheet labelsOnSheet={sheet} type={labelType} config={config} qrCodes={qrCodes} skipCount={i === 0 ? skipLabels : 0} />
           </div>
         ))}
       </div>
@@ -299,7 +370,7 @@ export default function LabelsPage() {
           <div className="bg-white shadow rounded-lg p-4">
             <h2 className="text-sm font-medium text-gray-700 mb-3">Label type</h2>
             <div className="flex gap-4">
-              {(['address', 'booklet', 'locker'] as LabelType[]).map((t) => (
+              {(['address', 'booklet', 'locker', 'card'] as LabelType[]).map((t) => (
                 <label key={t} className="flex items-center gap-2 cursor-pointer">
                   <input type="radio" name="labelType" value={t} checked={labelType === t} onChange={() => setLabelType(t)} className="text-blue-600" />
                   <span className="text-sm text-gray-700">{labelTypeLabel[t]}</span>
@@ -420,7 +491,7 @@ export default function LabelsPage() {
                     {sheets.length > 1 && <p className="text-xs text-gray-400 mb-1">Sheet {i + 1}</p>}
                     {/* Scale preview to fit screen */}
                     <div style={{ transform: 'scale(0.55)', transformOrigin: 'top left', width: '210mm', marginBottom: '-130mm' }}>
-                      <LabelSheet labelsOnSheet={sheet} type={labelType} config={config} skipCount={i === 0 ? skipLabels : 0} />
+                      <LabelSheet labelsOnSheet={sheet} type={labelType} config={config} qrCodes={qrCodes} skipCount={i === 0 ? skipLabels : 0} />
                     </div>
                   </div>
                 ))}
