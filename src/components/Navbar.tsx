@@ -154,6 +154,7 @@ export function Navbar() {
       members.push({ name: 'Send Member Emails', href: '/admin/emails' });
       members.push({ name: 'Data Export', href: '/data-export' });
       members.push({ name: 'Print Labels', href: '/labels' });
+      members.push({ name: 'Locker Register', href: '/admin/lockers' });
       members.push({ name: 'Availability', href: '/availability' });
     }
     if (isCaptain || isAdmin) {

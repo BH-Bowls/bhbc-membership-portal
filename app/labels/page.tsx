@@ -1,7 +1,8 @@
 'use client';
 
 // app/labels/page.tsx
-// Label printing — Address, Booklet, Locker, and Membership Card labels using Avery L7163 layout
+// Label printing — Address, Booklet, Locker, and Membership Card labels using Avery L7163 layout.
+// Locker labels print from the Locker Register (/admin/lockers), not the member list.
 
 import { useEffect, useState, useMemo } from 'react';
 import { useSession } from 'next-auth/react';
@@ -10,6 +11,8 @@ import Link from 'next/link';
 import QRCode from 'qrcode';
 import { hasRole } from '@/lib/role-utils';
 import { validUntilLabel } from '@/lib/membership-card';
+import { LOCKER_ROOMS } from '@/types/lockers';
+import type { LockerRoom, LockerWithMember } from '@/types/lockers';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -38,10 +41,31 @@ interface LabelMember {
   userName: string;
   honorary: boolean;
   latestRenewedSeasonYear: number | null;
+  // Set on locker labels only (built from the Locker Register)
+  locker?: { room: LockerRoom; lockerNumber: number };
 }
 
 type LabelType = 'address' | 'booklet' | 'locker' | 'card';
 type MemberFilter = 'all' | 'include' | 'manual';
+type LockerFilter = 'allocated' | 'all' | 'manual';
+
+// What a locker label says under its number: the allocated member, else "Club
+// Locker" for club lockers, else nothing (an unknown occupant or an empty locker).
+function lockerLabelName(l: LockerWithMember): string {
+  if (l.memberName) return l.memberName;
+  if (l.status === 'club') return 'Club Locker';
+  return '';
+}
+
+function lockerToLabel(l: LockerWithMember): LabelMember {
+  return {
+    fullName: lockerLabelName(l),
+    address1: null, address2: null, address3: null, postCode: null,
+    memberType: '', include: null,
+    userName: l.userName || '', honorary: false, latestRenewedSeasonYear: null,
+    locker: { room: l.room, lockerNumber: l.lockerNumber },
+  };
+}
 
 const DEFAULT_CONFIG: LabelConfig = {
   booklet_label_message: 'Valid to 28th February 2027',
@@ -91,6 +115,19 @@ function BookletLabel({ member, config, widthMm, heightMm }: { member: LabelMemb
 }
 
 function LockerLabel({ member, widthMm, heightMm }: { member: LabelMember; widthMm: number; heightMm: number }) {
+  if (member.locker) {
+    return (
+      <div style={{ width: `${widthMm}mm`, height: `${heightMm}mm`, boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: '4mm', padding: '2mm 5mm', overflow: 'hidden', fontFamily: 'Arial, sans-serif' }}>
+        <div style={{ textAlign: 'center', flexShrink: 0, minWidth: '22mm' }}>
+          <div style={{ fontSize: '36pt', fontWeight: 'bold', lineHeight: '1' }}>{member.locker.lockerNumber}</div>
+          <div style={{ fontSize: '7pt', color: '#6b7280', marginTop: '1mm' }}>{member.locker.room}</div>
+        </div>
+        {member.fullName && (
+          <div style={{ fontSize: '16pt', fontWeight: 'bold', lineHeight: '1.2' }}>{member.fullName}</div>
+        )}
+      </div>
+    );
+  }
   return (
     <div style={{ width: `${widthMm}mm`, height: `${heightMm}mm`, boxSizing: 'border-box', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2mm', overflow: 'hidden', fontFamily: 'Arial, sans-serif' }}>
       <div style={{ fontSize: '18pt', fontWeight: 'bold', textAlign: 'center', lineHeight: '1.2' }}>{member.fullName}</div>
@@ -203,6 +240,12 @@ export default function LabelsPage() {
   const [copies, setCopies] = useState(1);
   const [skipLabels, setSkipLabels] = useState(0);
 
+  // Locker labels — from the Locker Register, loaded the first time Locker is picked
+  const [lockers, setLockers] = useState<LockerWithMember[] | null>(null);
+  const [lockerRoom, setLockerRoom] = useState<'all' | LockerRoom>('all');
+  const [lockerFilter, setLockerFilter] = useState<LockerFilter>('allocated');
+  const [selectedLockerIds, setSelectedLockerIds] = useState<Set<string>>(new Set());
+
   // Auth guard
   useEffect(() => {
     if (status === 'loading') return;
@@ -233,6 +276,19 @@ export default function LabelsPage() {
       .finally(() => setMembersLoading(false));
   }, []);
 
+  useEffect(() => {
+    if (labelType !== 'locker' || lockers !== null) return;
+    fetch('/api/admin/lockers')
+      .then((r) => r.json())
+      .then((data) => setLockers(data.lockers || []))
+      .catch(() => setLockers([]));
+  }, [labelType, lockers]);
+
+  const lockersInRoom = useMemo(
+    () => (lockers || []).filter((l) => lockerRoom === 'all' || l.room === lockerRoom),
+    [lockers, lockerRoom]
+  );
+
   // QR codes (as SVG data URIs, so they print crisp) for membership card labels,
   // keyed by username — generated on demand for whoever is selected.
   const [qrCodes, setQrCodes] = useState<Record<string, string>>({});
@@ -246,6 +302,12 @@ export default function LabelsPage() {
 
   // Members that will appear on labels
   const selectedMembers = useMemo(() => {
+    if (labelType === 'locker') {
+      let chosen = lockersInRoom;
+      if (lockerFilter === 'allocated') chosen = chosen.filter((l) => l.status !== 'empty');
+      else if (lockerFilter === 'manual') chosen = chosen.filter((l) => selectedLockerIds.has(l.id));
+      return chosen.map(lockerToLabel);
+    }
     let list: LabelMember[];
     if (memberFilter === 'all') list = members;
     else if (memberFilter === 'include') list = members.filter((m) => m.include === 'Y');
@@ -259,7 +321,7 @@ export default function LabelsPage() {
       return [...list].sort((a, b) => lastName(a).localeCompare(lastName(b)));
     }
     return list;
-  }, [members, memberFilter, selectedNames, sortOrder]);
+  }, [labelType, lockersInRoom, lockerFilter, selectedLockerIds, members, memberFilter, selectedNames, sortOrder]);
 
   useEffect(() => {
     if (labelType !== 'card') return;
@@ -305,6 +367,15 @@ export default function LabelsPage() {
     return result;
   }, [labelList, labelsPerSheet, skipLabels]);
 
+  function toggleLocker(id: string) {
+    setSelectedLockerIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   function toggleSelected(name: string) {
     setSelectedNames((prev) => {
       const next = new Set(prev);
@@ -324,6 +395,7 @@ export default function LabelsPage() {
 
   if (!session || !hasRole(session.user?.role, 'Admin')) return null;
 
+  const isLocker = labelType === 'locker';
   const labelTypeLabel = { address: 'Address', booklet: 'Booklet', locker: 'Locker', card: 'Membership Card' };
 
   return (
@@ -379,11 +451,36 @@ export default function LabelsPage() {
             </div>
           </div>
 
-          {/* ── Members ── */}
+          {/* ── Members (or Lockers) ── */}
           <div className="bg-white shadow rounded-lg p-4 space-y-4">
-            <h2 className="text-sm font-medium text-gray-700">Members</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-medium text-gray-700">{isLocker ? 'Lockers' : 'Members'}</h2>
+              {isLocker && <Link href="/admin/lockers" className="text-sm text-blue-600 hover:text-blue-800">Locker Register →</Link>}
+            </div>
+
+            {isLocker && (
+              <>
+                <div className="flex flex-wrap gap-4">
+                  {([['all', 'Both rooms'], ...LOCKER_ROOMS.map((r) => [r, r])] as ['all' | LockerRoom, string][]).map(([v, label]) => (
+                    <label key={v} className="flex items-center gap-2 cursor-pointer">
+                      <input type="radio" name="lockerRoom" value={v} checked={lockerRoom === v} onChange={() => setLockerRoom(v)} className="text-blue-600" />
+                      <span className="text-sm text-gray-700">{label}</span>
+                    </label>
+                  ))}
+                </div>
+                <div className="flex flex-wrap gap-4">
+                  {([['allocated', 'In use (not empty)'], ['all', 'All lockers (empty ones print number only)'], ['manual', 'Manual selection']] as [LockerFilter, string][]).map(([v, label]) => (
+                    <label key={v} className="flex items-center gap-2 cursor-pointer">
+                      <input type="radio" name="lockerFilter" value={v} checked={lockerFilter === v} onChange={() => setLockerFilter(v)} className="text-blue-600" />
+                      <span className="text-sm text-gray-700">{label}</span>
+                    </label>
+                  ))}
+                </div>
+              </>
+            )}
 
             {/* Filter */}
+            {!isLocker && <>
             <div className="flex gap-4">
               {([['all', 'All members'], ['include', 'Include = Y only'], ['manual', 'Manual selection']] as [MemberFilter, string][]).map(([v, label]) => (
                 <label key={v} className="flex items-center gap-2 cursor-pointer">
@@ -403,6 +500,7 @@ export default function LabelsPage() {
                 </label>
               ))}
             </div>
+            </>}
 
             {/* Copies / skip */}
             <div className="flex items-center gap-4">
@@ -418,7 +516,7 @@ export default function LabelsPage() {
                 />
               </div>
               <div className="flex items-center gap-2">
-                <label className="text-sm text-gray-700 whitespace-nowrap">Copies per member</label>
+                <label className="text-sm text-gray-700 whitespace-nowrap">Copies per {isLocker ? 'locker' : 'member'}</label>
                 <input
                   type="number"
                   min={1}
@@ -430,7 +528,42 @@ export default function LabelsPage() {
               </div>
             </div>
 
-            {memberFilter === 'manual' && (
+            {isLocker && lockerFilter === 'manual' && (
+              <div className="space-y-2">
+                <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-md divide-y divide-gray-100">
+                  {lockers === null ? (
+                    <p className="text-sm text-gray-500 p-3">Loading...</p>
+                  ) : lockersInRoom.length === 0 ? (
+                    <p className="text-sm text-gray-500 p-3">No lockers found</p>
+                  ) : (
+                    lockersInRoom.map((l) => (
+                      <label key={l.id} className="flex items-center gap-3 px-3 py-2 hover:bg-gray-50 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={selectedLockerIds.has(l.id)}
+                          onChange={() => toggleLocker(l.id)}
+                          className="h-4 w-4 text-blue-600 border-gray-300 rounded"
+                        />
+                        <span className="text-sm text-gray-900">{l.room} {l.lockerNumber}</span>
+                        <span className="text-sm text-gray-600">{lockerLabelName(l)}</span>
+                      </label>
+                    ))
+                  )}
+                </div>
+                {selectedLockerIds.size > 0 && (
+                  <p className="text-xs text-gray-500">{selectedLockerIds.size} locker{selectedLockerIds.size !== 1 ? 's' : ''} selected</p>
+                )}
+              </div>
+            )}
+
+            {isLocker && lockerFilter !== 'manual' && lockers !== null && (
+              <p className="text-sm text-gray-500">
+                {selectedMembers.length} locker{selectedMembers.length !== 1 ? 's' : ''}
+                {copies > 1 ? ` × ${copies} copies = ${labelList.length} labels` : ''}
+              </p>
+            )}
+
+            {!isLocker && memberFilter === 'manual' && (
               <div className="space-y-2">
                 <input
                   type="text"
@@ -465,7 +598,7 @@ export default function LabelsPage() {
               </div>
             )}
 
-            {memberFilter !== 'manual' && !membersLoading && (
+            {!isLocker && memberFilter !== 'manual' && !membersLoading && (
               <p className="text-sm text-gray-500">
                 {selectedMembers.length} member{selectedMembers.length !== 1 ? 's' : ''}
                 {copies > 1 ? ` × ${copies} copies = ${labelList.length} labels` : ''}
@@ -499,9 +632,11 @@ export default function LabelsPage() {
             </div>
           )}
 
-          {labelList.length === 0 && !membersLoading && (
+          {labelList.length === 0 && (isLocker ? lockers !== null : !membersLoading) && (
             <div className="bg-white shadow rounded-lg p-8 text-center text-sm text-gray-500">
-              {memberFilter === 'manual' ? 'Select members above to preview labels.' : 'No members match the selected filter.'}
+              {isLocker
+                ? (lockerFilter === 'manual' ? 'Select lockers above to preview labels.' : 'No lockers match the selected filter.')
+                : (memberFilter === 'manual' ? 'Select members above to preview labels.' : 'No members match the selected filter.')}
             </div>
           )}
 

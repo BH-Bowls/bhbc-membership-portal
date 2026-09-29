@@ -84,7 +84,6 @@ const FIELD_TO_COLUMN: Record<string, string> = {
   address2: 'address_2',
   address3: 'address_3',
   postCode: 'post_code',
-  lockerNo: 'locker_no',
   buddyUserName: 'buddy_user_name',
   emailAddress: 'email_address',
   ageDemographic: 'age_demographic',
@@ -116,7 +115,7 @@ export async function updateUserProfile(
 
     const allowedFields = [
       'firstName', 'lastName', 'knownAs', 'role', 'buddyUserName', 'emailAddress',
-      'landline', 'mobile', 'address1', 'address2', 'address3', 'postCode', 'lockerNo',
+      'landline', 'mobile', 'address1', 'address2', 'address3', 'postCode',
       'birthdate', 'ageDemographic', 'memberType', 'yearStarted',
       'honorary', 'handicap', 'include', 'gmc', 'renewStatus', 'socialEmails',
       'handbookEntry', 'drivingAwayMatches', 'drivingAdditionalInfo', 'greenMaintenance',

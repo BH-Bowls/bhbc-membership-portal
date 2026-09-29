@@ -648,17 +648,9 @@ export default function ProfilePage() {
                 )}
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Locker Number</label>
-                  {isEditing ? (
-                    <input
-                      type="text"
-                      value={editedProfile.lockerNo || ''}
-                      onChange={(e) => handleChange('lockerNo', e.target.value)}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border text-gray-900"
-                    />
-                  ) : (
-                    <p className="mt-1 text-sm text-gray-900">{profile.lockerNo || '—'}</p>
-                  )}
+                  <label className="block text-sm font-medium text-gray-700">Locker</label>
+                  {/* Read-only — allocated by the club in the Locker Register */}
+                  <p className="mt-1 text-sm text-gray-900">{profile.lockerNo || '—'}</p>
                 </div>
               </div>
             </div>
