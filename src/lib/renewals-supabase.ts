@@ -92,6 +92,54 @@ export function getCurrentSeasonYear(): number {
   return new Date().getFullYear();
 }
 
+/**
+ * The most recent season_year this member has confirmed renewing_membership = true for,
+ * or null if they never have. Used by the My Account membership card to derive a
+ * "valid until" date (see app/api/account/membership-card/route.ts) -- interim, since
+ * renewals has no stored expiry date yet.
+ */
+export async function getLatestRenewedSeason(userName: string): Promise<number | null> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('renewals')
+    .select('season_year')
+    .ilike('username', userName)
+    .eq('renewing_membership', true)
+    .order('season_year', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(`Failed to fetch latest renewed season for ${userName}: ${error.message}`);
+  if (!data) {
+    return null;
+  }
+  return data.season_year;
+}
+
+// Bulk form of getLatestRenewedSeason for label printing — lowercased username →
+// most recent season_year they confirmed renewing for. Paged, since the table is
+// multi-year and PostgREST caps a single response at 1000 rows.
+export async function getLatestRenewedSeasonsByUser(): Promise<Map<string, number>> {
+  const supabase = getSupabaseClient();
+  const latest = new Map<string, number>();
+  const pageSize = 1000;
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from('renewals')
+      .select('username, season_year')
+      .eq('renewing_membership', true)
+      .order('id', { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`Failed to fetch renewed seasons: ${error.message}`);
+    for (const row of data || []) {
+      const key = String(row.username).toLowerCase();
+      const current = latest.get(key);
+      if (current === undefined || row.season_year > current) latest.set(key, row.season_year);
+    }
+    if (!data || data.length < pageSize) break;
+  }
+  return latest;
+}
+
 function mapRow(row: any): Renewal {
   return {
     userName: row.username,

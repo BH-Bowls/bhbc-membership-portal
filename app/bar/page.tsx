@@ -1,92 +1,233 @@
 // app/bar/page.tsx
 // The bar till (iPad, kiosk-style). Committee-gated device; per-sale attribution via
-// the Bar Volunteer step (bar-duty members). Handles cash-member top-ups, wallet
-// purchases, and visitor card/cash sales, plus an anytime report and product admin.
+// whoever's marked as serving. Handles cash-member top-ups, wallet purchases, and
+// visitor card/cash sales, plus an anytime report and product admin.
 //
-// Flow: pick a Bar Volunteer (buttons, persisted in localStorage and pre-highlighted
-// across sessions, but always shown on entry rather than auto-skipped — an explicit
-// tap is required even to reconfirm the same one, so the till never silently starts
-// attributing sales to whoever last used it) -> pick who's buying, from every club
-// member (not just existing cash-account holders) via a search box that filters the
-// full list live, plus a "Non Member" option -> the product/basket screen, priced
-// and actioned differently depending on who's buying:
-//   - Member: Top Up / Pay by Account / History buttons. Selecting a member with no
+// Flow: person picker (every club member, not just existing cash-account holders,
+// via a live-filtering search box, plus a Cash/Card option for non-members) -> the
+// product/basket screen, priced and actioned differently depending on who's buying:
+//   - Member: Top Up / Pay by Account / Pay by Card. Selecting a member with no
 //     bar_accounts row yet doesn't create one — bar_topup creates it silently on
 //     their first top-up (see 0025_bar.sql); a Pay-by-Account attempt before that
 //     correctly fails (no funds to charge against), same as an existing member with
-//     an empty wallet.
-//   - Non Member: Pay by Cash / Pay by Card buttons, priced at nonMemberPricePence.
-// After any completed transaction, returns to the person picker for the next
-// customer — the volunteer stays selected throughout a shift.
+//     an empty wallet. Their transaction history lives on My Account
+//     (app/account/page.tsx), not here.
+//   - Cash/Card (non-member): Pay by Cash / Pay by Card, priced at basePricePence.
+// "Who's serving" is no longer a blocking gate — it's only asked for when opening a
+// Cash/Card tab or a Top Up (see openCashCardTab/openTopUp/pendingAction), since a
+// Cash/Card tab is held/resumed by staff name rather than by a member. A basket left
+// via "← Back" is parked in heldOrders and resumed if that same member/tab is reopened.
 
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
-import { useSession } from 'next-auth/react';
-import { isCommitteeMember } from '@/lib/role-utils';
-import type { BarProduct, BarAccount, BarPerson, BarLedgerEntry, BarReport, BarSaleSummary, BarSaleItem } from '@/lib/bar-supabase';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { useSession, signIn, signOut } from 'next-auth/react';
+import jsQR from 'jsqr';
+import { canUseBarTill } from '@/lib/role-utils';
+import { priceItem, type BarPricingConfig, type BarProduct, type BarCategoryRow, type BarAccount, type BarPerson, type BarReport, type BarSaleSummary, type BarDayEnd, type BarDayEndLedgerRow } from '@/lib/bar-supabase';
+import { useOnlineStatus } from '@/hooks/useOnlineStatus';
+import { enqueue, listQueued, dequeue, newQueueId, type QueuedEntry } from '@/lib/bar-offline-queue';
 
-const CATEGORIES: { key: string; label: string }[] = [
-  { key: 'beer',    label: 'Beers / Lagers' },
-  { key: 'wine',    label: 'Wines' },
-  { key: 'spirit',  label: 'Spirits' },
-  { key: 'zero_gf', label: '0% & Gluten Free' },
-  { key: 'soft',    label: 'Soft Drinks / Splashes' },
-  { key: 'snack',   label: 'Snacks' },
+const OFFLINE_WALLET_DELTAS_KEY = 'bar_offline_wallet_deltas';
+
+// Categories are admin-managed data (bar_categories table), not a hardcoded list —
+// see the "Manage Categories" section in ProductsAdmin below. Tailwind's JIT
+// compiler only bundles a colour class it finds as a literal string in source, so
+// an admin adding a new category can't get an arbitrary new colour at request
+// time — each category instead picks one of this fixed palette by colorKey.
+const CATEGORY_COLOR_PALETTE: Record<string, { active: string; inactive: string; tile: string }> = {
+  amber:   { active: 'bg-amber-500 text-white',    inactive: 'bg-amber-50 text-amber-800 hover:bg-amber-100',     tile: 'border-l-4 border-l-amber-400' },
+  rose:    { active: 'bg-rose-500 text-white',     inactive: 'bg-rose-50 text-rose-800 hover:bg-rose-100',        tile: 'border-l-4 border-l-rose-400' },
+  purple:  { active: 'bg-purple-500 text-white',   inactive: 'bg-purple-50 text-purple-800 hover:bg-purple-100',  tile: 'border-l-4 border-l-purple-400' },
+  teal:    { active: 'bg-teal-500 text-white',     inactive: 'bg-teal-50 text-teal-800 hover:bg-teal-100',        tile: 'border-l-4 border-l-teal-400' },
+  sky:     { active: 'bg-sky-500 text-white',      inactive: 'bg-sky-50 text-sky-800 hover:bg-sky-100',           tile: 'border-l-4 border-l-sky-400' },
+  orange:  { active: 'bg-orange-500 text-white',   inactive: 'bg-orange-50 text-orange-800 hover:bg-orange-100',  tile: 'border-l-4 border-l-orange-400' },
+  emerald: { active: 'bg-emerald-500 text-white',  inactive: 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100', tile: 'border-l-4 border-l-emerald-400' },
+  indigo:  { active: 'bg-indigo-500 text-white',   inactive: 'bg-indigo-50 text-indigo-800 hover:bg-indigo-100',  tile: 'border-l-4 border-l-indigo-400' },
+  pink:    { active: 'bg-pink-500 text-white',     inactive: 'bg-pink-50 text-pink-800 hover:bg-pink-100',        tile: 'border-l-4 border-l-pink-400' },
+  lime:    { active: 'bg-lime-500 text-white',     inactive: 'bg-lime-50 text-lime-800 hover:bg-lime-100',        tile: 'border-l-4 border-l-lime-400' },
+};
+const CATEGORY_COLOR_KEYS = Object.keys(CATEGORY_COLOR_PALETTE);
+function categoryColorClasses(colorKey: string): { active: string; inactive: string; tile: string } {
+  return CATEGORY_COLOR_PALETTE[colorKey] ?? CATEGORY_COLOR_PALETTE[CATEGORY_COLOR_KEYS[0]];
+}
+/** A product's tile border colour, looked up via its category's colorKey. */
+function categoryColorFor(categoryKey: string, categories: BarCategoryRow[]): string {
+  const found = categories.find((c) => c.key === categoryKey);
+  if (!found) return '';
+  return categoryColorClasses(found.colorKey).tile;
+}
+
+// Rotating border colours for the volunteer picker — just visual variety, no meaning per colour.
+const ACCENT_BORDERS = [
+  'border-blue-300 hover:border-blue-500',
+  'border-emerald-300 hover:border-emerald-500',
+  'border-amber-300 hover:border-amber-500',
+  'border-pink-300 hover:border-pink-500',
+  'border-purple-300 hover:border-purple-500',
+  'border-cyan-300 hover:border-cyan-500',
+  'border-rose-300 hover:border-rose-500',
+  'border-lime-400 hover:border-lime-600',
 ];
 
 const fmt = (pence: number) => `£${(pence / 100).toFixed(2)}`;
 
-type View = 'volunteer' | 'person' | 'sale' | 'topup' | 'report' | 'sales' | 'products';
+type View = 'volunteer' | 'person' | 'sale' | 'topup' | 'report' | 'sales' | 'products' | 'cashmovement';
 interface BasketLine { product: BarProduct; qty: number }
 interface MemberOption { userName: string; fullName: string }
+
+const SCREEN_TITLES: Record<View, string> = {
+  person: 'Home',
+  sale: 'Basket',
+  volunteer: "Who's Serving",
+  topup: 'Topup',
+  sales: 'Sales',
+  report: 'Dayend',
+  products: 'Products',
+  cashmovement: 'Cash Movement',
+};
 
 export default function BarTillPage() {
   const { data: session, status } = useSession();
   const role = session?.user?.role ?? '';
-  const allowed = isCommitteeMember(role);
+  const allowed = canUseBarTill(role);
+  // The dedicated till login has no navbar (Navbar.tsx hides itself for this role),
+  // so it needs its own way to sign out — see the Logout button on the Home screen.
+  const isBarTillLogin = role === 'Bar';
 
-  // Always starts on the volunteer picker, even if one is already stored from a
-  // previous session — see the header comment for why.
-  const [view, setView] = useState<View>('volunteer');
+  // Starts straight on the person picker — "who's serving" is no longer a
+  // mandatory front gate, only asked for contextually (see chooseVolunteer).
+  const [view, setView] = useState<View>('person');
   const [products, setProducts] = useState<BarProduct[]>([]);
+  const [categories, setCategories] = useState<BarCategoryRow[]>([]);
+  const [pricingConfig, setPricingConfig] = useState<BarPricingConfig>({ mode: 'member_product_discount', memberDiscountPercent: 0 });
   const [accounts, setAccounts] = useState<BarAccount[]>([]);
   const [allMembers, setAllMembers] = useState<MemberOption[]>([]);
   const [barPersons, setBarPersons] = useState<BarPerson[]>([]);
   const [volunteer, setVolunteer] = useState<string>('');   // username of the bar person serving
+  // What to do once a name is tapped on the volunteer picker — set when it's opened
+  // to identify a Cash/Card tab or to attribute a Top Up, rather than just to change
+  // who's marked as serving (the plain 'Change' link leaves this null).
+  const [pendingAction, setPendingAction] = useState<'cashcard' | 'topup' | 'endofday' | 'cashmovement' | null>(null);
   const [personSearch, setPersonSearch] = useState('');
+  const [showScanner, setShowScanner] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
   // selection / flow state
   const [member, setMember] = useState<BarAccount | null>(null); // null + view 'sale' means non-member
   const [basket, setBasket] = useState<BasketLine[]>([]);
+  // Orders parked mid-basket so a bar person can serve someone else and come back —
+  // keyed by `member:<userName>` for a member's basket, or `staff:<userName>` for a
+  // non-member (Cash/Card) tab, since a non-member sale has no member to key off.
+  const [heldOrders, setHeldOrders] = useState<Map<string, BasketLine[]>>(new Map());
   const [activeCat, setActiveCat] = useState<string>('beer');
-  const [history, setHistory] = useState<BarLedgerEntry[] | null>(null);
-  const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null);
-  const [historyItemsBySale, setHistoryItemsBySale] = useState<Record<string, BarSaleItem[]>>({});
   const [report, setReport] = useState<BarReport | null>(null);
+  const [dayEndSubmitting, setDayEndSubmitting] = useState(false);
+  const [dayEndSuccess, setDayEndSuccess] = useState<BarDayEnd | null>(null);
   const [sales, setSales] = useState<BarSaleSummary[] | null>(null);
   const [expandedSaleId, setExpandedSaleId] = useState<string | null>(null);
   const [showRefund, setShowRefund] = useState(false);
   const [refundAmt, setRefundAmt] = useState('');
 
-  const volunteerName = barPersons.find((b) => b.userName === volunteer)?.fullName ?? '';
+  // ── offline (see src/hooks/useOnlineStatus.ts, src/lib/bar-offline-queue.ts) ────
+  const { offline, retry: retryOnline } = useOnlineStatus();
+  const [queuedCount, setQueuedCount] = useState(0);
+  const [syncing, setSyncing] = useState(false);
+  // A member's spendable balance *while offline*, starting at zero regardless of
+  // their last-cached real balance — never trust a stale balance for spending
+  // decisions. Only what's topped up during this offline window is spendable
+  // offline; replayed as real ledger deltas against the server's true balance on
+  // reconnect (see syncQueue). Persisted so it survives a reload while offline.
+  const [offlineWalletDeltas, setOfflineWalletDeltas] = useState<Record<string, number>>({});
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(OFFLINE_WALLET_DELTAS_KEY);
+      if (raw) setOfflineWalletDeltas(JSON.parse(raw));
+    } catch { /* ignore corrupt/missing data */ }
+    refreshQueuedCount();
+  }, []);
+  function refreshQueuedCount() {
+    listQueued().then((q) => setQueuedCount(q.length)).catch(() => {});
+  }
+  function addOfflineWalletDelta(userName: string, deltaPence: number) {
+    setOfflineWalletDeltas((prev) => {
+      const next = { ...prev, [userName]: (prev[userName] ?? 0) + deltaPence };
+      try { localStorage.setItem(OFFLINE_WALLET_DELTAS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  }
 
   const load = useCallback(async () => {
     try {
-      const [p, a, b, m] = await Promise.all([
+      const [p, a, b, m, c, cat] = await Promise.all([
         fetch('/api/bar/products?all=1').then((r) => r.json()),
         fetch('/api/bar/accounts').then((r) => r.json()),
         fetch('/api/bar/bar-persons').then((r) => r.json()),
         fetch('/api/members/lookup').then((r) => r.json()),
+        fetch('/api/bar/pricing-config').then((r) => r.json()),
+        fetch('/api/bar/categories?all=1').then((r) => r.json()),
       ]);
       if (p.products) setProducts(p.products);
       if (a.accounts) setAccounts(a.accounts);
       if (b.barPersons) setBarPersons(b.barPersons);
       if (m.members) setAllMembers(m.members);
+      if (c.pricingConfig) setPricingConfig(c.pricingConfig);
+      if (cat.categories) setCategories(cat.categories);
     } catch { setError('Failed to load bar data'); }
   }, []);
+
+  // Drains the offline queue in order on reconnect — re-verifies the session/device
+  // is still valid first (a revoked device or expired session must not silently sync),
+  // and stops at the first failure rather than risking reordering the rest.
+  const syncQueue = useCallback(async () => {
+    if (syncing) return;
+    setSyncing(true); setError('');
+    try {
+      const check = await fetch('/api/bar/pricing-config');
+      if (!check.ok) {
+        if (check.status === 401 || check.status === 403) {
+          setError('Session no longer valid — log in again before syncing queued sales.');
+        }
+        return;
+      }
+      const queue = await listQueued();
+      for (const entry of queue) {
+        let res: Response;
+        if (entry.kind === 'sale') {
+          res = await fetch('/api/bar/sale', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ method: entry.method, items: entry.items, staff: entry.staff, userName: entry.userName }) });
+        } else if (entry.kind === 'topup') {
+          res = await fetch('/api/bar/topup', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userName: entry.userName, amountPence: entry.amountPence, staff: entry.staff, paymentMethod: entry.paymentMethod }) });
+        } else {
+          res = await fetch('/api/bar/purchase', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userName: entry.userName, items: entry.items, staff: entry.staff }) });
+        }
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}) as any);
+          setError(`Sync stopped: ${data.error || 'a queued item failed'} — will retry the rest later.`);
+          break;
+        }
+        await dequeue(entry.id);
+      }
+      const remaining = await listQueued();
+      setQueuedCount(remaining.length);
+      if (remaining.length === 0) {
+        setOfflineWalletDeltas({});
+        try { localStorage.removeItem(OFFLINE_WALLET_DELTAS_KEY); } catch { /* ignore */ }
+      }
+      await load();
+    } finally {
+      setSyncing(false);
+    }
+  }, [syncing, load]);
+
+  // Auto-sync the moment connectivity comes back, if anything's queued.
+  useEffect(() => {
+    if (!offline && queuedCount > 0) syncQueue();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [offline]);
 
   useEffect(() => { if (allowed) load(); }, [allowed, load]);
   useEffect(() => { window.scrollTo(0, 0); }, [view]);
@@ -95,19 +236,71 @@ export default function BarTillPage() {
     const s = localStorage.getItem('bar_served_by');
     if (s) setVolunteer(s);
   }, []);
-  function chooseVolunteer(u: string) { setVolunteer(u); localStorage.setItem('bar_served_by', u); setView('person'); }
-
-  // Returns to the till (person picker) for the next customer — the volunteer stays
-  // selected. Use changeVolunteer() below, not this, to actually switch who's serving.
-  function backToPersonPicker() {
-    setView('person'); setMember(null); setBasket([]); setPersonSearch('');
-    setHistory(null); setExpandedHistoryId(null); setShowRefund(false); setRefundAmt('');
+  // Key for parking/resuming the basket currently on screen — null if there's
+  // nothing to park it under (no member and no one marked as serving yet).
+  function currentOrderKey(): string | null {
+    if (member) return `member:${member.userName}`;
+    if (volunteer) return `staff:${volunteer}`;
+    return null;
   }
-  function changeVolunteer() { setView('volunteer'); }
+  function holdCurrentOrder() {
+    if (basket.length === 0) return;
+    const key = currentOrderKey();
+    if (!key) return;
+    setHeldOrders((prev) => { const next = new Map(prev); next.set(key, basket); return next; });
+  }
+  function clearHeldOrder(key: string | null) {
+    if (!key) return;
+    setHeldOrders((prev) => { if (!prev.has(key)) return prev; const next = new Map(prev); next.delete(key); return next; });
+  }
+
+  // Tapping a name always sets who's serving, then either resumes/starts whatever
+  // it was opened for (a Cash/Card tab or a Top Up) or, from the plain 'Change'
+  // link (no pendingAction), just returns to the till.
+  function chooseVolunteer(u: string) {
+    setVolunteer(u); localStorage.setItem('bar_served_by', u);
+    if (pendingAction === 'cashcard') {
+      setPendingAction(null);
+      setMember(null); setBasket(heldOrders.get(`staff:${u}`) ?? []); setActiveCat('beer'); setView('sale');
+    } else if (pendingAction === 'topup') {
+      setPendingAction(null);
+      setView('topup');
+    } else if (pendingAction === 'endofday') {
+      setPendingAction(null);
+      setDayEndSuccess(null);
+      loadReport();
+    } else if (pendingAction === 'cashmovement') {
+      setPendingAction(null);
+      setView('cashmovement');
+    } else {
+      setView('person');
+    }
+  }
+
+  // Returns to the till (person picker) for the next customer, parking whatever
+  // basket is on screen so it can be resumed later.
+  // skipHold is set by completeSale, which has already cleared/emptied the basket
+  // itself after a successful sale — without it, this would re-park the very
+  // basket that was just paid for (a stale closure would still see it as full).
+  function backToPersonPicker(skipHold = false) {
+    if (!skipHold) holdCurrentOrder();
+    setView('person'); setMember(null); setBasket([]); setPersonSearch('');
+    setShowRefund(false); setRefundAmt('');
+  }
 
   // ── basket / pricing helpers ─────────────────────────────────────────────────
-  const unitPrice = (p: BarProduct) => (member ? p.pricePence : p.nonMemberPricePence);
+  // unitPrice is what's actually charged (net); unitGrossPrice is what a visitor/
+  // list price would be under the active mode — the difference is the member's
+  // discount, shown on the basket and carried into the sale record.
+  const unitPrice = (p: BarProduct) => priceItem(p, pricingConfig, !!member).netPence;
+  const unitGrossPrice = (p: BarProduct) => priceItem(p, pricingConfig, !!member).grossPence;
   const basketTotal = basket.reduce((s, l) => s + unitPrice(l.product) * l.qty, 0);
+  const basketGross = basket.reduce((s, l) => s + unitGrossPrice(l.product) * l.qty, 0);
+  const basketDiscount = basketGross - basketTotal;
+  // What the member can actually spend right now — the real (possibly stale) balance
+  // when online, or only what's been topped up this offline session when not (see
+  // offlineWalletDeltas above; never the stale cached balance while offline).
+  const availableBalancePence = member ? (offline ? (offlineWalletDeltas[member.userName] ?? 0) : member.balancePence) : 0;
   function addToBasket(p: BarProduct) {
     setBasket((prev) => {
       const found = prev.find((l) => l.product.id === p.id);
@@ -122,47 +315,120 @@ export default function BarTillPage() {
   }
 
   // ── actions ─────────────────────────────────────────────────────────────────
+  // Still used by doVoid/doRefund below — those reversal actions keep the hard
+  // requirement. Ordinary sales no longer do (see selectMember/openCashCardTab).
   function requireVolunteer(): boolean {
     if (!volunteer) { setError('Select the bar volunteer first.'); return false; }
     setError(''); return true;
   }
 
+  // No staff prompt for a wallet sale — resumes that member's held order if any.
   function selectMember(m: BarAccount) {
-    if (!requireVolunteer()) return;
-    setMember(m); setBasket([]); setActiveCat('beer'); setHistory(null); setExpandedHistoryId(null); setShowRefund(false); setView('sale');
+    setMember(m); setBasket(heldOrders.get(`member:${m.userName}`) ?? []); setActiveCat('beer');
+    setShowRefund(false); setView('sale');
   }
-  function selectNonMember() {
-    if (!requireVolunteer()) return;
-    setMember(null); setBasket([]); setActiveCat('beer'); setView('sale');
+  // Cash/Card always asks who's serving — that's also the key for which held tab
+  // to resume (see chooseVolunteer's 'cashcard' branch).
+  function openCashCardTab() {
+    setPendingAction('cashcard');
+    setView('volunteer');
+  }
+
+  // The single "← Back" button's destination depends on how the current screen was
+  // reached, not just which screen it is:
+  //  - Who's Serving opened for a Cash/Card tab -> Home (cancels starting the tab)
+  //  - Who's Serving opened for a Top Up, or the Top Up screen itself -> Basket
+  //    (cancels just the top-up, keeps the member/basket you were already on)
+  //  - everything else (Basket, Sales, Report, Products) -> Home
+  function handleBack() {
+    if (view === 'volunteer' && pendingAction === 'topup') {
+      setPendingAction(null);
+      setView('sale');
+      return;
+    }
+    if (view === 'topup') {
+      setView('sale');
+      return;
+    }
+    setPendingAction(null);
+    backToPersonPicker();
   }
 
   async function completeSale(mode: 'wallet' | 'card' | 'cash') {
-    if (basket.length === 0 || !requireVolunteer()) return;
+    if (basket.length === 0) return;
     setBusy(true); setError('');
     const items = basket.map((l) => ({ productId: l.product.id, qty: l.qty }));
+    // A member account sale (wallet, or "Pay by Card" for a known member) doesn't
+    // need a staff id stored against it. Only a genuine no-member-account sale does
+    // — that's the one case we ask who's serving for (see openCashCardTab), so it's
+    // always available here to store for audit.
+    const staffForSale = member ? '' : volunteer;
     try {
+      if (offline) {
+        if (mode === 'wallet') {
+          if (!member) return;
+          // Never against the stale cached balance — only what's been topped up
+          // during this offline window (see offlineWalletDeltas above).
+          const available = offlineWalletDeltas[member.userName] ?? 0;
+          if (available < basketTotal) {
+            setError('Insufficient offline balance — only top-ups made this session can be spent while offline.');
+            return;
+          }
+          await enqueue({ id: newQueueId(), createdAt: Date.now(), kind: 'purchase', userName: member.userName, staff: staffForSale, amountPence: -basketTotal, items });
+          addOfflineWalletDelta(member.userName, -basketTotal);
+        } else {
+          // Cash/card never touches a balance, so it's always safe to queue offline
+          // regardless of who's buying.
+          await enqueue({ id: newQueueId(), createdAt: Date.now(), kind: 'sale', method: mode, items, staff: staffForSale, userName: member?.userName, grossPence: basketGross, netPence: basketTotal, discountPence: basketDiscount });
+        }
+        refreshQueuedCount();
+        clearHeldOrder(currentOrderKey());
+        setBasket([]);
+        backToPersonPicker(true);
+        return;
+      }
+
       let res;
       if (mode === 'wallet') {
         if (!member) return;
         res = await fetch('/api/bar/purchase', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userName: member.userName, items, staff: volunteer }) });
+          body: JSON.stringify({ userName: member.userName, items, staff: staffForSale }) });
       } else {
+        // member is only ever set here for "Pay by Card" — attributes the sale to
+        // them (member pricing, history) without touching their wallet.
         res = await fetch('/api/bar/sale', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ method: mode, items, staff: volunteer }) });
+          body: JSON.stringify({ method: mode, items, staff: staffForSale, userName: member?.userName }) });
       }
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Sale failed');
+      clearHeldOrder(currentOrderKey());
+      setBasket([]);
       await load();
-      backToPersonPicker();
+      backToPersonPicker(true);
     } catch (err: any) { setError(err.message); } finally { setBusy(false); }
   }
 
-  async function doTopUp(amountPence: number) {
+  // Always asks who's serving, every time — a top-up is stored against that staff
+  // id for audit (see doTopUp), so it's confirmed fresh rather than silently reused
+  // from an earlier selection.
+  function openTopUp() {
+    setPendingAction('topup');
+    setView('volunteer');
+  }
+
+  async function doTopUp(amountPence: number, paymentMethod: 'cash' | 'card') {
     if (!member || !requireVolunteer()) return;
     setBusy(true); setError('');
     try {
+      if (offline) {
+        await enqueue({ id: newQueueId(), createdAt: Date.now(), kind: 'topup', userName: member.userName, staff: volunteer, amountPence, paymentMethod });
+        addOfflineWalletDelta(member.userName, amountPence);
+        refreshQueuedCount();
+        setView('sale');
+        return;
+      }
       const res = await fetch('/api/bar/topup', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userName: member.userName, amountPence, staff: volunteer }) });
+        body: JSON.stringify({ userName: member.userName, amountPence, staff: volunteer, paymentMethod }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Top-up failed');
       // Back to the product list (not the person picker) with the fresh balance —
@@ -174,27 +440,47 @@ export default function BarTillPage() {
     } catch (err: any) { setError(err.message); } finally { setBusy(false); }
   }
 
-  async function loadHistory() {
-    if (!member) return;
-    if (history) { setHistory(null); setExpandedHistoryId(null); return; } // toggle closed
-    const data = await fetch(`/api/bar/account?userName=${encodeURIComponent(member.userName)}`).then((r) => r.json());
-    setHistory(data.account?.history ?? []);
-  }
-
-  // Expand a purchase entry to show its line items, fetching once per sale (cached
-  // in historyItemsBySale) — top-ups/refunds/adjustments have no items to show.
-  async function toggleHistoryItem(h: BarLedgerEntry) {
-    if (!h.saleId) return;
-    if (expandedHistoryId === h.id) { setExpandedHistoryId(null); return; }
-    setExpandedHistoryId(h.id);
-    if (!historyItemsBySale[h.saleId]) {
-      const data = await fetch(`/api/bar/sale/${h.saleId}/items`).then((r) => r.json());
-      setHistoryItemsBySale((prev) => ({ ...prev, [h.saleId as string]: data.items ?? [] }));
-    }
-  }
   async function loadReport() {
     const data = await fetch('/api/bar/report').then((r) => r.json());
     setReport(data.report ?? null); setView('report');
+  }
+  // End of Day always asks who's serving — the cash-up is done by, and stored
+  // against, that person (see bar_create_day_end() in 0063_bar_day_ends.sql).
+  function openEndOfDay() {
+    setPendingAction('endofday');
+    setView('volunteer');
+  }
+  async function submitDayEnd(cashRemovedPence: number, carryForward: boolean, reason: string) {
+    setDayEndSubmitting(true); setError('');
+    try {
+      const res = await fetch('/api/bar/day-end', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ staff: volunteer, cashRemovedPence, carryForward, reason: reason || undefined }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to record day end');
+      setDayEndSuccess(data.dayEnd);
+      await loadReport();
+    } catch (err: any) { setError(err.message); } finally { setDayEndSubmitting(false); }
+  }
+
+  // Cash added to or removed from the till for a non-sale reason (float top-up,
+  // petty cash, etc.) -- discouraged but needed, so it still asks who's serving
+  // for audit, same as a Top Up. See bar_cash_movement() in 0064_bar_cash_movements.sql.
+  function openCashMovement() {
+    setPendingAction('cashmovement');
+    setView('volunteer');
+  }
+  async function doCashMovement(productId: string, amountPence: number, direction: 'in' | 'out', reason: string) {
+    if (offline) { setError('Cash movements need a live connection.'); return; }
+    if (!requireVolunteer()) return;
+    setBusy(true); setError('');
+    try {
+      const res = await fetch('/api/bar/cash-movement', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productId, amountPence, direction, reason, staff: volunteer }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to record cash movement');
+      await load();
+      setView('person');
+    } catch (err: any) { setError(err.message); } finally { setBusy(false); }
   }
   async function loadSales() {
     setView('sales'); setSales(null); setExpandedSaleId(null);
@@ -202,6 +488,7 @@ export default function BarTillPage() {
     setSales(data.sales ?? []);
   }
   async function doVoid(saleId: string) {
+    if (offline) { setError('Voiding needs a live connection.'); return; }
     if (!requireVolunteer()) return;
     if (!confirm('Void this sale? If it was charged to an account, the balance is refunded.')) return;
     setBusy(true); setError('');
@@ -216,6 +503,7 @@ export default function BarTillPage() {
     } catch (err: any) { setError(err.message); } finally { setBusy(false); }
   }
   async function doRefund() {
+    if (offline) { setError('Refunds need a live connection.'); return; }
     if (!member || !requireVolunteer()) return;
     const pence = Math.round(parseFloat(refundAmt || '0') * 100);
     if (!Number.isFinite(pence) || pence <= 0 || pence > member.balancePence) {
@@ -252,8 +540,19 @@ export default function BarTillPage() {
       return a.fullName.localeCompare(b.fullName);
     });
 
+  // A scanned QR just carries the member's userName (same trust level as picking
+  // them from the list — selecting a member here has never required proof of
+  // identity, so this introduces no new risk).
+  function handleScan(value: string) {
+    setShowScanner(false);
+    const found = sortedPeople.find((m) => m.userName === value.trim());
+    if (found) selectMember(found);
+    else setError('QR code did not match a member.');
+  }
+
   // ── guards ──────────────────────────────────────────────────────────────────
   if (status === 'loading') return null;
+  if (status === 'unauthenticated') return <BarPinLogin />;
   if (!allowed) {
     return (
       <div className="min-h-screen bg-gray-50">
@@ -264,44 +563,66 @@ export default function BarTillPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="container mx-auto px-4 py-5 max-w-4xl">
+      <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-5 max-w-7xl">
 
-        {/* Header: volunteer chip + nav */}
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <div className="flex items-center gap-2 text-sm">
-            {volunteer ? (
-              <>
-                <span className="text-gray-600">Serving:</span>
-                <span className="font-semibold text-gray-900">{volunteerName}</span>
-                <button onClick={changeVolunteer} className="text-blue-600 hover:text-blue-800">Change</button>
-              </>
-            ) : (
-              <span className="text-gray-500">Select the bar volunteer to begin</span>
+        {/* Offline / queued-sales banner — separate from the site-wide OfflineBanner,
+            since this one also shows the queue and offers a manual sync. */}
+        {(offline || queuedCount > 0) && (
+          <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900">
+            <span>
+              {offline ? 'Running offline — cash/card sales are queued locally.' : 'Back online.'}
+              {queuedCount > 0 && ` ${queuedCount} sale${queuedCount === 1 ? '' : 's'} waiting to sync.`}
+            </span>
+            {!offline && queuedCount > 0 && (
+              <button onClick={syncQueue} disabled={syncing}
+                className="px-2 py-1 text-xs font-medium bg-amber-600 text-white rounded hover:bg-amber-700 disabled:opacity-50">
+                {syncing ? 'Syncing…' : 'Sync now'}
+              </button>
+            )}
+            {offline && (
+              <button onClick={retryOnline} className="px-2 py-1 text-xs font-medium border border-amber-400 rounded hover:bg-amber-100">Retry connection</button>
             )}
           </div>
-          <div className="flex gap-2">
-            {view !== 'volunteer' && view !== 'person' && (
-              <button onClick={backToPersonPicker}
-                className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">← Till</button>
+        )}
+
+        {/* Header: screen title + nav. Back's destination depends on how the screen
+            was reached (see handleBack); Sales/Report/Products only launch from Home. */}
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+          <h1 className="text-lg font-bold text-gray-900">{SCREEN_TITLES[view]}</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            {view !== 'person' && (
+              <button onClick={handleBack}
+                className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">← Back</button>
             )}
-            <button onClick={loadSales} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Sales</button>
-            <button onClick={loadReport} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Report</button>
-            <button onClick={() => setView('products')} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Products</button>
+            {view === 'person' && (
+              <>
+                <button onClick={loadSales} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Sales</button>
+                <button onClick={openEndOfDay} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Dayend</button>
+                <button onClick={() => setView('products')} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Products</button>
+                <button onClick={openCashMovement} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Cash Movement</button>
+                {isBarTillLogin && (
+                  <button onClick={() => signOut({ callbackUrl: '/bar' })}
+                    className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 text-red-600">Logout</button>
+                )}
+              </>
+            )}
           </div>
         </div>
 
         {error && <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded">{error}</div>}
 
-        {/* ── VOLUNTEER: always shown on entry, current one highlighted ──────── */}
+        {/* ── VOLUNTEER: opened for a Cash/Card tab, or a Top Up ──────────────── */}
         {view === 'volunteer' && (
-          <div className="max-w-lg mx-auto">
-            <h2 className="text-sm font-semibold text-gray-700 mb-3 text-center">Who's on the bar?</h2>
-            <div className="grid grid-cols-2 gap-3">
-              {barPersons.map((b) => (
+          <div className="max-w-5xl mx-auto">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+              {barPersons.map((b, i) => (
                 <button key={b.userName} onClick={() => chooseVolunteer(b.userName)}
-                  className={`py-5 rounded-xl border-2 bg-white font-semibold text-gray-900 hover:border-blue-400 hover:shadow ${
-                    b.userName === volunteer ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200'
+                  className={`relative py-8 rounded-xl border-2 bg-white font-semibold text-lg text-gray-900 hover:shadow-md transition-colors ${
+                    b.userName === volunteer ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : ACCENT_BORDERS[i % ACCENT_BORDERS.length]
                   }`}>
+                  {pendingAction === 'cashcard' && heldOrders.has(`staff:${b.userName}`) && (
+                    <span title="Tab waiting" className="absolute top-2 right-2 h-2.5 w-2.5 rounded-full bg-amber-400" />
+                  )}
                   {b.fullName}
                 </button>
               ))}
@@ -313,22 +634,33 @@ export default function BarTillPage() {
         {/* ── PERSON: full member list, search-filterable, + Non Member ──────── */}
         {view === 'person' && (
           <>
-            <h2 className="text-sm font-semibold text-gray-700 mb-2">Who's buying?</h2>
-            <input
-              value={personSearch}
-              onChange={(e) => setPersonSearch(e.target.value)}
-              placeholder="Search members…"
-              className="w-full border border-gray-300 rounded-lg px-4 py-3 text-base mb-3"
-            />
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              <button onClick={selectNonMember}
-                className="p-4 rounded-xl border-2 border-dashed border-gray-300 bg-white text-left hover:border-amber-400 hover:shadow">
-                <div className="font-semibold text-gray-900">Non Member</div>
-                <div className="text-sm text-gray-500">Cash or card</div>
+            <div className="flex gap-2 mb-3">
+              <input
+                value={personSearch}
+                onChange={(e) => setPersonSearch(e.target.value)}
+                placeholder="Search members…"
+                className="flex-1 border border-gray-300 rounded-lg px-4 py-3 text-base"
+              />
+              <button onClick={() => setShowScanner(true)}
+                className="px-4 py-3 rounded-lg border-2 border-blue-300 bg-blue-50 text-blue-800 font-medium hover:bg-blue-100">
+                Scan
+              </button>
+            </div>
+            {showScanner && <QrScanModal onScan={handleScan} onClose={() => setShowScanner(false)} />}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+              <button onClick={openCashCardTab}
+                className="p-4 rounded-xl border-2 border-amber-300 bg-amber-50 text-left hover:border-amber-500 hover:shadow-md transition-colors">
+                <div className="font-semibold text-amber-900">Cash / Card</div>
+                <div className="text-sm text-amber-700">No member account</div>
               </button>
               {sortedPeople.map((m) => (
                 <button key={m.userName} onClick={() => selectMember(m)}
-                  className="p-4 rounded-xl border border-gray-200 bg-white text-left hover:border-green-400 hover:shadow">
+                  className={`relative p-4 rounded-xl border border-gray-200 ${
+                    !m.hasAccount ? 'border-l-4 border-l-gray-300' : m.balancePence <= 200 ? 'border-l-4 border-l-red-400' : 'border-l-4 border-l-green-400'
+                  } bg-white text-left hover:border-green-400 hover:shadow-md transition-colors`}>
+                  {heldOrders.has(`member:${m.userName}`) && (
+                    <span title="Order waiting" className="absolute top-2 right-2 h-2.5 w-2.5 rounded-full bg-amber-400" />
+                  )}
                   <div className="font-semibold text-gray-900 truncate">{m.fullName}</div>
                   <div className={`text-lg font-bold ${!m.hasAccount ? 'text-gray-400' : m.balancePence <= 200 ? 'text-red-600' : 'text-green-700'}`}>
                     {m.hasAccount ? fmt(m.balancePence) : 'No account yet'}
@@ -345,17 +677,19 @@ export default function BarTillPage() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="md:col-span-2">
               <div className="flex flex-wrap gap-2 mb-3">
-                {CATEGORIES.map((c) => (
+                {categories.filter((c) => c.active).map((c) => (
                   <button key={c.key} onClick={() => setActiveCat(c.key)}
-                    className={`px-3 py-1.5 rounded-full text-sm font-medium ${activeCat === c.key ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'}`}>{c.label}</button>
+                    className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                      activeCat === c.key ? categoryColorClasses(c.colorKey).active : categoryColorClasses(c.colorKey).inactive
+                    }`}>{c.label}</button>
                 ))}
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {products.filter((p) => p.active && p.category === activeCat).map((p) => (
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                {products.filter((p) => p.active && !p.variablePrice && p.category === activeCat).map((p) => (
                   <button key={p.id} onClick={() => addToBasket(p)}
-                    className="p-3 rounded-lg border border-gray-200 bg-white text-left hover:border-blue-400">
+                    className={`p-3 rounded-lg border border-gray-200 ${categoryColorFor(p.category, categories)} bg-white text-left hover:border-blue-400 hover:shadow-sm transition-colors`}>
                     <div className="font-medium text-gray-900 text-sm leading-tight">{p.name}</div>
-                    <div className="text-gray-600 text-sm">{fmt(unitPrice(p))}</div>
+                    <div className="text-gray-600 text-sm">{fmt(unitGrossPrice(p))}</div>
                   </button>
                 ))}
               </div>
@@ -373,37 +707,59 @@ export default function BarTillPage() {
                         <button onClick={() => changeQty(l.product.id, -1)} className="w-6 h-6 rounded bg-gray-100">−</button>
                         <span className="w-5 text-center">{l.qty}</span>
                         <button onClick={() => changeQty(l.product.id, 1)} className="w-6 h-6 rounded bg-gray-100">+</button>
-                        <span className="w-14 text-right">{fmt(unitPrice(l.product) * l.qty)}</span>
+                        <span className="w-14 text-right">{fmt(unitGrossPrice(l.product) * l.qty)}</span>
                       </div>
                     </div>
                   ))}
                 </div>
               )}
-              <div className="flex justify-between font-bold text-lg mt-3 pt-3 border-t">
-                <span>Total</span><span>{fmt(basketTotal)}</span>
+              <div className="mt-3 pt-3 border-t">
+                {basketDiscount > 0 ? (
+                  <>
+                    <div className="flex justify-between text-sm text-gray-600">
+                      <span>Total</span><span>{fmt(basketGross)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm text-green-700">
+                      <span>Member Discount</span><span>−{fmt(basketDiscount)}</span>
+                    </div>
+                    <div className="flex justify-between font-bold text-lg mt-1">
+                      <span>Payable</span><span>{fmt(basketTotal)}</span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex justify-between font-bold text-lg">
+                    <span>Total</span><span>{fmt(basketTotal)}</span>
+                  </div>
+                )}
               </div>
               {member && (
-                <div className={`text-sm mt-1 ${member.balancePence < basketTotal ? 'text-red-600 font-medium' : 'text-gray-600'}`}>
-                  Balance {fmt(member.balancePence)}{member.balancePence < basketTotal ? ' — insufficient, top up first' : ''}
+                <div className={`text-sm mt-1 ${availableBalancePence < basketTotal ? 'text-red-600 font-medium' : 'text-gray-600'}`}>
+                  {offline ? (
+                    <>Offline balance {fmt(availableBalancePence)} (top-ups made this session only){availableBalancePence < basketTotal ? ' — insufficient' : ''}</>
+                  ) : (
+                    <>Balance {fmt(availableBalancePence)}{availableBalancePence < basketTotal ? ' — insufficient, top up first' : ''}</>
+                  )}
                 </div>
               )}
 
               {/* Action buttons — differ for a member vs a non-member */}
               {member ? (
-                <div className="grid grid-cols-2 gap-2 mt-3">
-                  <button onClick={() => setView('topup')} disabled={busy}
-                    className="py-3 rounded-lg bg-amber-600 text-white font-semibold hover:bg-amber-700 disabled:opacity-50">Top Up</button>
-                  <button onClick={() => completeSale('wallet')} disabled={busy || basket.length === 0 || member.balancePence < basketTotal}
-                    className="py-3 rounded-lg bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-50">
+                <div className="grid grid-cols-3 gap-2 mt-3">
+                  <button onClick={openTopUp} disabled={busy}
+                    className="py-3 rounded-lg bg-amber-600 text-white font-semibold hover:bg-amber-700 disabled:opacity-50 text-sm">Top Up</button>
+                  <button onClick={() => completeSale('wallet')} disabled={busy || basket.length === 0 || availableBalancePence < basketTotal}
+                    className="py-3 rounded-lg bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-50 text-sm">
                     {busy ? 'Saving…' : `Pay by Account`}
                   </button>
-                  <button onClick={loadHistory} className="py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50">
-                    {history ? 'Hide History' : 'History'}
+                  <button onClick={() => completeSale('card')} disabled={busy || basket.length === 0}
+                    className="py-3 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700 disabled:opacity-50 text-sm">
+                    {busy ? 'Saving…' : `Pay by Card`}
                   </button>
                   {!showRefund ? (
-                    <button onClick={() => { setShowRefund(true); setRefundAmt(''); setError(''); }} className="py-2 text-sm text-red-600 font-medium">Refund cash…</button>
+                    <button onClick={() => { setShowRefund(true); setRefundAmt(''); setError(''); }} disabled={offline}
+                      className="col-span-3 py-2 text-sm text-red-600 font-medium disabled:opacity-50" title={offline ? 'Refunds need a live connection' : undefined}>Refund cash…</button>
                   ) : (
-                    <div className="col-span-2 flex items-center gap-2 flex-wrap pt-1">
+                    <div className="col-span-3 flex items-center gap-2 flex-wrap pt-1">
                       <span className="text-sm text-gray-600">£</span>
                       <input value={refundAmt} onChange={(e) => setRefundAmt(e.target.value)} inputMode="decimal" placeholder="0.00"
                         className="border border-gray-300 rounded px-2 py-1.5 text-sm w-24" />
@@ -426,43 +782,6 @@ export default function BarTillPage() {
                   </button>
                 </div>
               )}
-
-              {member && history && (
-                <div className="mt-4 border-t pt-3 max-h-72 overflow-y-auto">
-                  {history.length === 0 ? <p className="text-gray-400 text-sm">No history.</p> : history.map((h) => {
-                    const expandable = h.type === 'purchase' && !!h.saleId;
-                    const items = h.saleId ? historyItemsBySale[h.saleId] : undefined;
-                    return (
-                      <div key={h.id} className="border-b border-gray-100">
-                        <div
-                          className={`flex justify-between text-sm py-1 ${expandable ? 'cursor-pointer hover:bg-gray-50' : ''}`}
-                          onClick={expandable ? () => toggleHistoryItem(h) : undefined}
-                        >
-                          <span className="text-gray-700">
-                            {expandable && <span className="text-gray-400 mr-1">{expandedHistoryId === h.id ? '▾' : '▸'}</span>}
-                            {new Date(h.createdAt).toLocaleDateString('en-GB')} · {h.type}
-                          </span>
-                          <span className={h.amountPence < 0 ? 'text-gray-700' : 'text-green-700'}>{h.amountPence < 0 ? '−' : '+'}{fmt(Math.abs(h.amountPence))}</span>
-                        </div>
-                        {expandable && expandedHistoryId === h.id && (
-                          <div className="pl-4 pb-2 space-y-0.5">
-                            {items === undefined ? (
-                              <p className="text-xs text-gray-400">Loading…</p>
-                            ) : items.length === 0 ? (
-                              <p className="text-xs text-gray-400">No items recorded.</p>
-                            ) : items.map((it, idx) => (
-                              <div key={idx} className="flex justify-between text-xs text-gray-600">
-                                <span>{it.qty}× {it.name}</span>
-                                <span>{fmt(it.unitPricePence * it.qty)}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
             </div>
           </div>
         )}
@@ -470,13 +789,19 @@ export default function BarTillPage() {
         {/* ── TOP UP ───────────────────────────────────────────────────────── */}
         {view === 'topup' && member && <TopUp member={member} busy={busy} onConfirm={doTopUp} />}
 
+        {/* ── CASH MOVEMENT: cash in/out of the till for a non-sale reason ────── */}
+        {view === 'cashmovement' && (
+          <CashMovementView categories={categories} products={products} busy={busy} onConfirm={doCashMovement} />
+        )}
+
         {/* ── REPORT ───────────────────────────────────────────────────────── */}
-        {view === 'report' && report && <ReportView report={report} />}
+        {view === 'report' && report && (
+          <ReportView report={report} submitting={dayEndSubmitting} success={dayEndSuccess} onSubmit={submitDayEnd} />
+        )}
 
         {/* ── SALES (void) ─────────────────────────────────────────────────── */}
         {view === 'sales' && (
           <div className="bg-white border border-gray-200 rounded-xl p-4 max-w-2xl">
-            <h2 className="font-bold text-gray-900 mb-3">Recent sales</h2>
             {sales === null ? (
               <p className="text-gray-400 text-sm py-2">Loading…</p>
             ) : sales.length === 0 ? (
@@ -491,7 +816,8 @@ export default function BarTillPage() {
                         <div className="min-w-0 cursor-pointer" onClick={() => setExpandedSaleId(expanded ? null : s.id)}>
                           <div className="text-sm text-gray-900">
                             <span className="text-gray-400 mr-1">{expanded ? '▾' : '▸'}</span>
-                            <span className="font-semibold">{fmt(s.totalPence)}</span> · {s.paymentMethod}{s.memberName ? ` · ${s.memberName}` : ' · visitor'}
+                            <span className="font-semibold">{fmt(s.totalPence)}</span> · {s.paymentMethod}
+                            {s.isCashMovement ? ' · Cash Movement' : (s.memberName ? ` · ${s.memberName}` : ' · visitor')}
                             <span className="text-gray-400"> · {s.items.length} item{s.items.length === 1 ? '' : 's'}</span>
                           </div>
                           <div className="text-xs text-gray-500">
@@ -501,12 +827,13 @@ export default function BarTillPage() {
                         {s.voided ? (
                           <span className="text-xs text-red-600 font-medium shrink-0">Voided</span>
                         ) : (
-                          <button onClick={() => doVoid(s.id)} disabled={busy}
+                          <button onClick={() => doVoid(s.id)} disabled={busy || offline}
                             className="shrink-0 px-3 py-1.5 text-sm text-red-600 border border-red-200 rounded hover:bg-red-50 disabled:opacity-50">Void</button>
                         )}
                       </div>
                       {expanded && (
                         <div className="pl-4 pb-2 space-y-0.5">
+                          {s.reason && <p className="text-xs text-gray-600 italic">Reason: {s.reason}</p>}
                           {s.items.length === 0 ? (
                             <p className="text-xs text-gray-400">No items recorded.</p>
                           ) : s.items.map((it, idx) => (
@@ -515,6 +842,12 @@ export default function BarTillPage() {
                               <span>{fmt(it.unitPricePence * it.qty)}</span>
                             </div>
                           ))}
+                          {s.discountPence > 0 && (
+                            <div className="flex justify-between text-xs text-green-700 pt-0.5 border-t border-gray-100 mt-1">
+                              <span>Total {fmt(s.grossTotalPence)} − Member Discount {fmt(s.discountPence)}</span>
+                              <span>{fmt(s.totalPence)}</span>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -526,7 +859,7 @@ export default function BarTillPage() {
         )}
 
         {/* ── PRODUCTS ─────────────────────────────────────────────────────── */}
-        {view === 'products' && <ProductsAdmin products={products} onChanged={load} />}
+        {view === 'products' && <ProductsAdmin products={products} categories={categories} pricingConfig={pricingConfig} onChanged={load} />}
       </div>
     </div>
   );
@@ -534,8 +867,185 @@ export default function BarTillPage() {
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
-function TopUp({ member, busy, onConfirm }: { member: BarAccount; busy: boolean; onConfirm: (pence: number) => void }) {
+const BAR_DEVICE_ID_KEY = 'bar_device_id';
+const BAR_PAIRING_CODE_KEY = 'bar_pairing_code';
+
+// /bar's own login — a PIN pad like /kiosk's, but for the dedicated 'bar' till
+// account rather than 'clubhouse'. No special PIN mechanism: whatever's typed is
+// sent straight through as the password to the same credentials flow every login
+// uses (see app/kiosk/page.tsx for the identical pattern). /bar is a public route
+// (proxy.ts) so an unauthenticated visit lands here instead of bouncing to /login.
+//
+// Also generates and registers this device's id/pairing code on first run (kept in
+// localStorage across reloads) and sends the id along with every login attempt —
+// authorize() (src/lib/auth.ts) rejects a 'Bar' login from an unapproved device. See
+// /admin/bar-devices for the approval side.
+function BarPinLogin() {
+  const [pin, setPin] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [deviceId, setDeviceId] = useState('');
+  const [pairingCode, setPairingCode] = useState('');
+  const [registerError, setRegisterError] = useState('');
+
+  useEffect(() => {
+    let id = localStorage.getItem(BAR_DEVICE_ID_KEY);
+    let code = localStorage.getItem(BAR_PAIRING_CODE_KEY);
+    if (!id || !code) {
+      id = crypto.randomUUID();
+      code = String(Math.floor(100000 + Math.random() * 900000));
+      localStorage.setItem(BAR_DEVICE_ID_KEY, id);
+      localStorage.setItem(BAR_PAIRING_CODE_KEY, code);
+    }
+    setDeviceId(id); setPairingCode(code);
+    fetch('/api/bar/devices', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceId: id, pairingCode: code }) })
+      .then(async (res) => {
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}) as any);
+          setRegisterError(data.error || 'Failed to register this device — an admin won’t see it on Bar Till Devices yet.');
+        }
+      })
+      .catch(() => {
+        setRegisterError('Could not reach the server to register this device — check the connection and reload.');
+      });
+  }, []);
+
+  function handlePinChange(value: string) {
+    setPin(value.replace(/\D/g, ''));
+    setError('');
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!pin || !deviceId) return;
+    setLoading(true); setError('');
+    try {
+      const result = await signIn('credentials', { identifier: 'bar', password: pin, deviceId, redirect: false });
+      if (result?.error) { setError(result.error); setPin(''); }
+      // On success, useSession() picks up the new session and BarTillPage re-renders.
+    } catch {
+      setError('An error occurred. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-blue-600 flex flex-col items-center justify-center p-4">
+      <div className="text-center mb-8">
+        <h1 className="text-4xl font-bold text-white mb-2">Burgess Hill Bowls Club</h1>
+        <p className="text-blue-100 text-xl">Bar Till</p>
+      </div>
+      <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
+        <h2 className="text-2xl font-semibold text-gray-900 text-center mb-6">Enter PIN to Continue</h2>
+        <form onSubmit={handleSubmit}>
+          <input
+            type="password"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            value={pin}
+            onChange={(e) => handlePinChange(e.target.value)}
+            placeholder="••••••"
+            maxLength={8}
+            autoFocus
+            disabled={loading}
+            className="w-full text-center text-4xl tracking-[0.5em] py-4 px-6 border-2 border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-50"
+          />
+          {error && <p className="mt-4 text-center text-red-600 font-medium">{error}</p>}
+          <button
+            type="submit"
+            disabled={loading || !pin}
+            className="w-full mt-6 py-4 px-6 text-xl font-semibold text-white bg-blue-600 rounded-xl hover:bg-blue-700 focus:outline-none focus:ring-4 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {loading ? 'Signing in…' : 'Enter'}
+          </button>
+        </form>
+      </div>
+      {pairingCode && (
+        <p className="mt-8 text-blue-100 text-sm text-center max-w-xs">
+          New device pairing code: <span className="font-mono font-semibold text-white">{pairingCode}</span>
+          <br />An admin needs to approve this device on Bar Till Devices before it can log in.
+        </p>
+      )}
+      {registerError && (
+        <p className="mt-3 text-amber-200 text-sm text-center max-w-xs font-medium">{registerError}</p>
+      )}
+    </div>
+  );
+}
+
+// Camera modal for scanning a member's QR (their userName, shown to them on
+// /profile). Decodes with jsQR against captured video frames rather than the
+// native BarcodeDetector API, which isn't available on iPad Safari.
+function QrScanModal({ onScan, onClose }: { onScan: (value: string) => void; onClose: () => void }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [scanError, setScanError] = useState('');
+
+  useEffect(() => {
+    let stream: MediaStream | null = null;
+    let rafId = 0;
+    let stopped = false;
+
+    function tick() {
+      if (stopped) return;
+      const video = videoRef.current, canvas = canvasRef.current;
+      if (video && canvas && video.readyState === video.HAVE_ENOUGH_DATA) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const code = jsQR(imageData.data, imageData.width, imageData.height);
+          if (code?.data) { onScan(code.data); return; }
+        }
+      }
+      rafId = requestAnimationFrame(tick);
+    }
+
+    (async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        if (stopped) { stream.getTracks().forEach((t) => t.stop()); return; }
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play();
+        }
+        tick();
+      } catch {
+        setScanError('Camera unavailable — check permissions.');
+      }
+    })();
+
+    return () => {
+      stopped = true;
+      cancelAnimationFrame(rafId);
+      stream?.getTracks().forEach((t) => t.stop());
+    };
+  }, [onScan]);
+
+  return (
+    <div className="fixed inset-0 bg-black/70 z-[100] flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl p-4 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+        <div className="flex justify-between items-center mb-2">
+          <h3 className="font-semibold text-gray-900">Scan member QR</h3>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-700 text-xl leading-none">✕</button>
+        </div>
+        <div className="relative aspect-square rounded-lg overflow-hidden bg-black">
+          <video ref={videoRef} className="w-full h-full object-cover" muted playsInline />
+        </div>
+        <canvas ref={canvasRef} className="hidden" />
+        {scanError && <p className="text-sm text-red-600 mt-2">{scanError}</p>}
+      </div>
+    </div>
+  );
+}
+
+function TopUp({ member, busy, onConfirm }: { member: BarAccount; busy: boolean; onConfirm: (pence: number, paymentMethod: 'cash' | 'card') => void }) {
   const [amount, setAmount] = useState('');       // pounds as typed
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card'>('cash');
   const pence = Math.round(parseFloat(amount || '0') * 100);
   const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫'];
   function press(k: string) {
@@ -548,74 +1058,335 @@ function TopUp({ member, busy, onConfirm }: { member: BarAccount; busy: boolean;
       <div className="text-center mb-1 text-gray-700">Top up <strong>{member.fullName}</strong></div>
       <div className="text-center text-4xl font-bold mb-4">£{amount || '0'}</div>
       <div className="flex gap-2 mb-3">
-        {[10, 20].map((v) => <button key={v} onClick={() => setAmount(String(v))} className="flex-1 py-2 rounded-lg bg-gray-100 font-medium">£{v}</button>)}
+        <button onClick={() => setPaymentMethod('cash')}
+          className={`flex-1 py-2 rounded-lg font-medium ${paymentMethod === 'cash' ? 'bg-amber-600 text-white' : 'bg-gray-100 text-gray-700'}`}>Cash</button>
+        <button onClick={() => setPaymentMethod('card')}
+          className={`flex-1 py-2 rounded-lg font-medium ${paymentMethod === 'card' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'}`}>Card</button>
+      </div>
+      <div className="grid grid-cols-3 gap-2 mb-3">
+        {[10, 20, 50].map((v) => (
+          <button key={v} onClick={() => {
+            const currentPence = Math.round(parseFloat(amount || '0') * 100);
+            setAmount(String((currentPence + v * 100) / 100));
+          }} className="py-2 rounded-lg bg-gray-100 font-medium">+£{v}</button>
+        ))}
       </div>
       <div className="grid grid-cols-3 gap-2 mb-4">
         {keys.map((k) => <button key={k} onClick={() => press(k)} className="py-4 rounded-lg bg-gray-100 text-xl font-medium">{k}</button>)}
       </div>
-      <button onClick={() => onConfirm(pence)} disabled={busy || pence <= 0}
+      <button onClick={() => onConfirm(pence, paymentMethod)} disabled={busy || pence <= 0}
         className="w-full py-3 rounded-lg bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-50">
-        {busy ? 'Saving…' : `Add £${(pence / 100).toFixed(2)} (cash taken)`}
+        {busy ? 'Saving…' : `Add £${(pence / 100).toFixed(2)} (${paymentMethod === 'cash' ? 'cash taken' : 'by card'})`}
       </button>
     </div>
   );
 }
 
-function ReportView({ report }: { report: BarReport }) {
-  const row = (label: string, pence: number, strong = false) => (
-    <div className={`flex justify-between py-1 ${strong ? 'font-bold text-lg border-t mt-1 pt-2' : 'text-sm'}`}>
-      <span>{label}</span><span>{fmt(pence)}</span>
-    </div>
-  );
+// Cash added to or removed from the till for a non-sale reason. The product picked
+// (a variable_price product -- see 0064_bar_cash_movements.sql) supplies the nominal
+// code; the amount and reason are entered fresh each time.
+function CashMovementView({ categories, products, busy, onConfirm }: {
+  categories: BarCategoryRow[];
+  products: BarProduct[];
+  busy: boolean;
+  onConfirm: (productId: string, amountPence: number, direction: 'in' | 'out', reason: string) => void;
+}) {
+  const movementProducts = products.filter((p) => p.active && p.variablePrice);
+  const movementCategories = categories.filter((c) => c.active && movementProducts.some((p) => p.category === c.key));
+  const [direction, setDirection] = useState<'in' | 'out'>('out');
+  const [category, setCategory] = useState(movementCategories.length > 0 ? movementCategories[0].key : '');
+  const productsInCategory = movementProducts.filter((p) => p.category === category);
+  const [productId, setProductId] = useState(productsInCategory.length > 0 ? productsInCategory[0].id : '');
+  const [amount, setAmount] = useState('');
+  const [reason, setReason] = useState('');
+
+  // Keep the product selection valid as the category changes — during render, not
+  // an effect (React's "adjusting state" pattern, same as ReportView above).
+  const [prevCategory, setPrevCategory] = useState(category);
+  if (category !== prevCategory) {
+    setPrevCategory(category);
+    setProductId(productsInCategory.length > 0 ? productsInCategory[0].id : '');
+  }
+
+  const pence = Math.round(parseFloat(amount || '0') * 100);
+  const canSubmit = productId !== '' && pence > 0 && reason.trim() !== '';
+
+  if (movementProducts.length === 0) {
+    return (
+      <div className="max-w-sm mx-auto bg-white border border-gray-200 rounded-xl p-5 text-sm text-gray-600">
+        No Cash Movement products set up yet. Add one on the Products screen using the Variable price option.
+      </div>
+    );
+  }
+
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-5 max-w-lg">
-      <h2 className="font-bold text-gray-900 mb-1">Today so far</h2>
-      <p className="text-xs text-gray-500 mb-4">{report.salesCount} sales</p>
-      {row('Wallet sales', report.byMethodPence.wallet)}
-      {row('Card sales', report.byMethodPence.card)}
-      {row('Cash sales (visitors)', report.byMethodPence.cash)}
-      {row('Total sales', report.byMethodPence.wallet + report.byMethodPence.card + report.byMethodPence.cash, true)}
-      <div className="mt-4">
-        {row('Top-ups taken (cash in)', report.topupsPence)}
-        {row('Refunds paid (cash out)', report.refundsPence)}
-        {row('Expected cash in box', report.expectedCashPence, true)}
+    <div className="max-w-sm mx-auto bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+      <div className="flex gap-2">
+        <button onClick={() => setDirection('in')}
+          className={`flex-1 py-2 rounded-lg font-medium ${direction === 'in' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-700'}`}>Cash In</button>
+        <button onClick={() => setDirection('out')}
+          className={`flex-1 py-2 rounded-lg font-medium ${direction === 'out' ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-700'}`}>Cash Out</button>
       </div>
-      <div className="mt-4 pt-3 border-t">
-        {row('Outstanding member balances (float owed)', report.outstandingPence)}
+      <div>
+        <label className="block text-sm text-gray-700 mb-1">Product group</label>
+        <select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full border border-gray-300 rounded px-2 py-2 text-sm">
+          {movementCategories.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+        </select>
       </div>
-      {report.byProduct.length > 0 && (
-        <div className="mt-4 pt-3 border-t">
-          <h3 className="text-sm font-semibold text-gray-700 mb-1">By product</h3>
-          {report.byProduct.map((p) => (
-            <div key={p.name} className="flex justify-between text-sm py-0.5">
-              <span>{p.name} ×{p.qty}</span><span>{fmt(p.totalPence)}</span>
-            </div>
-          ))}
+      <div>
+        <label className="block text-sm text-gray-700 mb-1">Product</label>
+        <select value={productId} onChange={(e) => setProductId(e.target.value)} className="w-full border border-gray-300 rounded px-2 py-2 text-sm">
+          {productsInCategory.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+      </div>
+      <div>
+        <label className="block text-sm text-gray-700 mb-1">Amount</label>
+        <div className="flex items-center gap-2">
+          <span className="text-gray-600">£</span>
+          <input
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            inputMode="decimal"
+            className="border border-gray-300 rounded px-2 py-1.5 text-sm w-28"
+          />
         </div>
-      )}
+      </div>
+      <div>
+        <label className="block text-sm text-gray-700 mb-1">Reason</label>
+        <input
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="e.g. paid milk delivery driver"
+          className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
+        />
+      </div>
+      <button
+        onClick={() => onConfirm(productId, pence, direction, reason.trim())}
+        disabled={busy || !canSubmit}
+        className={`w-full py-3 rounded-lg text-white font-semibold disabled:opacity-50 ${direction === 'in' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}
+      >
+        {busy ? 'Saving…' : `${direction === 'in' ? 'Add' : 'Remove'} £${(pence / 100).toFixed(2)}`}
+      </button>
     </div>
   );
 }
 
-function ProductsAdmin({ products, onChanged }: { products: BarProduct[]; onChanged: () => void }) {
-  const [name, setName] = useState('');
-  const [category, setCategory] = useState('beer');
-  const [price, setPrice] = useState('');
-  const [nonMemberPrice, setNonMemberPrice] = useState('');
-  // Keep the non-member price 10p above whatever's typed in the member price,
-  // until the admin edits it directly — a starting suggestion, not enforced.
-  function onPriceChange(v: string) {
-    setPrice(v);
-    const p = parseFloat(v);
-    if (Number.isFinite(p)) setNonMemberPrice((p + 0.10).toFixed(2));
+type DrillKind = 'wallet_sales' | 'card_sales' | 'cash_sales' | 'cash_movements' | 'cash_topups' | 'card_topups' | 'refunds';
+
+function ReportView({ report, submitting, success, onSubmit }: { report: BarReport; submitting: boolean; success: BarDayEnd | null; onSubmit: (cashRemovedPence: number, carryForward: boolean, reason: string) => void }) {
+  // Default suggests removing everything expected, but never a negative amount —
+  // you can't physically remove negative cash (see the -£5 expected example: the
+  // suggestion there is £0, not "-£5.00").
+  const [cashRemoved, setCashRemoved] = useState(() => (Math.max(0, report.expectedCashPence) / 100).toFixed(2));
+  const [carryForward, setCarryForward] = useState(false);
+  const [reason, setReason] = useState('');
+  const [touched, setTouched] = useState(false);
+  const [expanded, setExpanded] = useState<DrillKind | null>(null);
+  const [drillSales, setDrillSales] = useState<BarSaleSummary[] | null>(null);
+  const [drillLedger, setDrillLedger] = useState<BarDayEndLedgerRow[] | null>(null);
+  const [drillLoading, setDrillLoading] = useState(false);
+  // Re-sync the default when the report changes underneath us (e.g. a fresh
+  // sale lands) as long as the bar person hasn't started editing it, and
+  // reset back to untouched once a day end has just been recorded — done
+  // during render (not an effect) per React's "adjusting state" pattern.
+  const [prevExpected, setPrevExpected] = useState(report.expectedCashPence);
+  if (!touched && report.expectedCashPence !== prevExpected) {
+    setPrevExpected(report.expectedCashPence);
+    setCashRemoved((Math.max(0, report.expectedCashPence) / 100).toFixed(2));
   }
+  const [prevSuccess, setPrevSuccess] = useState(success);
+  if (success !== prevSuccess) {
+    setPrevSuccess(success);
+    if (success) { setTouched(false); setCarryForward(false); setReason(''); setExpanded(null); }
+  }
+  const cashRemovedPence = Math.round(parseFloat(cashRemoved || '0') * 100);
+  // Signed: positive means more was left in the till than removed, negative means
+  // more was removed than the books say was there (e.g. topping up the float from
+  // personal cash, or a pre-existing shortfall) — carrying forward works either way.
+  const difference = report.expectedCashPence - cashRemovedPence;
+  const differs = difference !== 0;
+  const reasonRequired = differs && !carryForward;
+
+  async function toggleExpand(kind: DrillKind) {
+    if (expanded === kind) { setExpanded(null); return; }
+    setExpanded(kind);
+    setDrillSales(null); setDrillLedger(null); setDrillLoading(true);
+    try {
+      const res = await fetch(`/api/bar/report/transactions?kind=${kind}`);
+      const data = await res.json();
+      if (data.sales) setDrillSales(data.sales);
+      if (data.ledger) setDrillLedger(data.ledger);
+    } finally {
+      setDrillLoading(false);
+    }
+  }
+
+  const row = (label: string, pence: number, kind?: DrillKind, strong = false) => (
+    <div>
+      <div
+        className={`flex justify-between py-1.5 ${strong ? 'font-bold text-lg border-t mt-1 pt-2' : 'text-sm'} ${kind ? 'cursor-pointer hover:bg-gray-50 rounded px-1 -mx-1' : ''}`}
+        onClick={kind ? () => toggleExpand(kind) : undefined}
+      >
+        <span className={kind ? 'text-blue-700 underline decoration-dotted' : ''}>{label}</span>
+        <span>{fmt(pence)}</span>
+      </div>
+      {kind && expanded === kind && (
+        <div className="mt-2 mb-2 bg-gray-50 border border-gray-200 rounded-lg p-3">
+          {drillLoading && <p className="text-xs text-gray-500">Loading…</p>}
+          {!drillLoading && drillSales && <DrillSalesTable sales={drillSales} />}
+          {!drillLoading && drillLedger && <DrillLedgerTable ledger={drillLedger} />}
+          {!drillLoading && !drillSales && !drillLedger && <p className="text-xs text-gray-500">No transactions.</p>}
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl p-5 max-w-lg">
+      {success && (
+        <div className="mb-4 p-3 bg-green-50 border border-green-200 text-green-800 rounded text-sm">
+          Day end recorded — {fmt(success.cashRemovedPence)} removed, float {fmt(success.floatPence)} left in the till.
+          {success.carriedForward && success.carriedOutPence !== 0 && (
+            <> {fmt(success.carriedOutPence)} carried forward to next time.</>
+          )}
+        </div>
+      )}
+      <p className="text-xs text-gray-500 mb-4">Since the last cash-up — {report.salesCount} sales</p>
+
+      {report.carriedForwardPence !== 0 && row('Brought forward from last cash-up', report.carriedForwardPence)}
+      {row('Member Account Top-ups (cash)', report.topupsPence, 'cash_topups')}
+      {row('Cash Sales', report.cashSalesPence, 'cash_sales')}
+      {report.cashMovementsPence !== 0 && row('Cash Movements', report.cashMovementsPence, 'cash_movements')}
+      {row('Refunds paid out (cash)', report.refundsPence, 'refunds')}
+      {row('Expected cash in till', report.expectedCashPence, undefined, true)}
+
+      <div className="mt-5 pt-4 border-t space-y-3">
+        <div>
+          <label className="block text-sm text-gray-700 mb-1">Cash removed from till</label>
+          <div className="flex items-center gap-2">
+            <span className="text-gray-600">£</span>
+            <input
+              value={cashRemoved}
+              onChange={(e) => { setCashRemoved(e.target.value); setTouched(true); }}
+              inputMode="decimal"
+              className="border border-gray-300 rounded px-2 py-1.5 text-sm w-28"
+            />
+          </div>
+        </div>
+        <div className="flex justify-between text-sm">
+          <span className="text-gray-700">Difference</span>
+          <span className={differs ? (difference > 0 ? 'text-amber-700 font-medium' : 'text-red-700 font-medium') : 'text-gray-500'}>
+            {fmt(difference)}
+          </span>
+        </div>
+        {differs && (
+          <label className="flex items-center gap-2 text-sm text-gray-700">
+            <input type="checkbox" checked={carryForward} onChange={(e) => setCarryForward(e.target.checked)} />
+            Carry difference forward to next cash-up
+          </label>
+        )}
+        {differs && (
+          <div>
+            <label className="block text-sm text-gray-700 mb-1">Reason for difference{carryForward ? ' (optional)' : ''}</label>
+            <input
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder={carryForward ? 'e.g. Not cashed up' : 'e.g. till float short at start of shift'}
+              className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
+            />
+          </div>
+        )}
+        <button
+          onClick={() => onSubmit(cashRemovedPence, carryForward, reason)}
+          disabled={submitting || cashRemovedPence < 0 || (reasonRequired && reason.trim() === '')}
+          className="w-full py-3 rounded-lg bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-50"
+        >
+          {submitting ? 'Saving…' : 'Confirm Day End'}
+        </button>
+      </div>
+
+      <div className="mt-5 pt-4 border-t">
+        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">For completeness</h3>
+        {row('Member Account Sales', report.byMethodPence.wallet, 'wallet_sales')}
+        {row('Card Sales', report.byMethodPence.card, 'card_sales')}
+        {row('Member Account Top-ups (by card)', report.cardTopupsPence, 'card_topups')}
+      </div>
+    </div>
+  );
+}
+
+function DrillSalesTable({ sales }: { sales: BarSaleSummary[] }) {
+  if (sales.length === 0) return <p className="text-xs text-gray-500">No sales.</p>;
+  return (
+    <div className="space-y-1">
+      {sales.map((s) => (
+        <div key={s.id} className="flex justify-between text-xs text-gray-700">
+          <span>
+            {new Date(s.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+            {' — '}
+            {s.isCashMovement ? `Cash Movement — ${s.reason}` : `${s.memberName || 'Visitor'} — ${s.items.map((i) => `${i.name} ×${i.qty}`).join(', ')}`}
+          </span>
+          <span className="font-medium">{fmt(s.totalPence)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DrillLedgerTable({ ledger }: { ledger: BarDayEndLedgerRow[] }) {
+  if (ledger.length === 0) return <p className="text-xs text-gray-500">No transactions.</p>;
+  return (
+    <div className="space-y-1">
+      {ledger.map((l) => (
+        <div key={l.id} className="flex justify-between text-xs text-gray-700">
+          <span>
+            {new Date(l.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+            {' — '}{l.memberName}{l.staff ? ` (staff: ${l.staff})` : ''}
+          </span>
+          <span className="font-medium">{fmt(l.amountPence)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Product form fields shown depend on the active pricing mode: Split needs two
+// independent prices; the other three modes need one price, and Member Product
+// Discount additionally takes an optional per-product override (blank = inherit
+// the global default from /admin/config's Bar tab).
+function ProductsAdmin({ products, categories, pricingConfig, onChanged }: { products: BarProduct[]; categories: BarCategoryRow[]; pricingConfig: BarPricingConfig; onChanged: () => void }) {
+  const isSplit = pricingConfig.mode === 'split';
+  const showOverride = pricingConfig.mode === 'member_product_discount';
+  const activeCategories = categories.filter((c) => c.active);
+  const firstCategoryKey = activeCategories.length > 0 ? activeCategories[0].key : '';
+
+  const [name, setName] = useState('');
+  const [category, setCategory] = useState(firstCategoryKey);
+  const [price, setPrice] = useState('');           // base/single price, or split member price
+  const [visitorPrice, setVisitorPrice] = useState(''); // split mode only
+  const [override, setOverride] = useState('');      // member_product_discount mode only
+  const [nominalCode, setNominalCode] = useState('');
+  const [variablePrice, setVariablePrice] = useState(false); // Cash Movement: amount entered per-transaction
   async function add() {
-    const pricePence = Math.round(parseFloat(price || '0') * 100);
-    const nonMemberPricePence = Math.round(parseFloat(nonMemberPrice || '0') * 100);
-    if (!name.trim() || pricePence <= 0 || nonMemberPricePence <= 0) return;
-    await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, category, pricePence, nonMemberPricePence }) });
-    setName(''); setPrice(''); setNonMemberPrice(''); onChanged();
+    if (!name.trim()) return;
+    if (variablePrice) {
+      await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, category, variablePrice: true, nominalCode: nominalCode || undefined }) });
+    } else if (isSplit) {
+      const pricePence = Math.round(parseFloat(price || '0') * 100);
+      const nonMemberPricePence = Math.round(parseFloat(visitorPrice || '0') * 100);
+      if (pricePence <= 0 || nonMemberPricePence <= 0) return;
+      await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, category, pricePence, nonMemberPricePence, nominalCode: nominalCode || undefined }) });
+    } else {
+      const pricePence = Math.round(parseFloat(price || '0') * 100);
+      if (pricePence <= 0) return;
+      const overridePercent = override.trim() === '' ? undefined : Math.round(parseFloat(override));
+      if (overridePercent !== undefined && (overridePercent < 0 || overridePercent > 100)) return;
+      await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, category, basePricePence: pricePence, memberDiscountOverridePercent: showOverride ? overridePercent : undefined, nominalCode: nominalCode || undefined }) });
+    }
+    setName(''); setPrice(''); setVisitorPrice(''); setOverride(''); setNominalCode(''); setVariablePrice(false); onChanged();
   }
   async function toggle(p: BarProduct) {
     await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -623,43 +1394,172 @@ function ProductsAdmin({ products, onChanged }: { products: BarProduct[]; onChan
     onChanged();
   }
 
-  // Inline edit of an existing product (name / category / prices)
+  // Inline edit of an existing product
   const [editId, setEditId] = useState<string | null>(null);
   const [eName, setEName] = useState('');
-  const [eCat, setECat] = useState('beer');
+  const [eCat, setECat] = useState('');
   const [ePrice, setEPrice] = useState('');
-  const [eNonMemberPrice, setENonMemberPrice] = useState('');
+  const [eVisitorPrice, setEVisitorPrice] = useState('');
+  const [eOverride, setEOverride] = useState('');
+  const [eNominalCode, setENominalCode] = useState('');
+  const [eVariablePrice, setEVariablePrice] = useState(false);
   function startEdit(p: BarProduct) {
     setEditId(p.id); setEName(p.name); setECat(p.category);
-    setEPrice((p.pricePence / 100).toFixed(2)); setENonMemberPrice((p.nonMemberPricePence / 100).toFixed(2));
+    setEPrice(((isSplit ? p.pricePence : p.basePricePence) / 100).toFixed(2));
+    setEVisitorPrice((p.nonMemberPricePence / 100).toFixed(2));
+    setEOverride(p.memberDiscountOverridePercent === null ? '' : String(p.memberDiscountOverridePercent));
+    setENominalCode(p.nominalCode === null ? '' : p.nominalCode);
+    setEVariablePrice(p.variablePrice);
   }
   async function saveEdit(p: BarProduct) {
-    const pricePence = Math.round(parseFloat(ePrice || '0') * 100);
-    const nonMemberPricePence = Math.round(parseFloat(eNonMemberPrice || '0') * 100);
-    if (!eName.trim() || pricePence <= 0 || nonMemberPricePence <= 0) return;
-    await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: p.id, name: eName.trim(), category: eCat, pricePence, nonMemberPricePence }) });
+    if (!eName.trim()) return;
+    if (eVariablePrice) {
+      await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: p.id, name: eName.trim(), category: eCat, variablePrice: true, nominalCode: eNominalCode || null }) });
+    } else if (isSplit) {
+      const pricePence = Math.round(parseFloat(ePrice || '0') * 100);
+      const nonMemberPricePence = Math.round(parseFloat(eVisitorPrice || '0') * 100);
+      if (pricePence <= 0 || nonMemberPricePence <= 0) return;
+      await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: p.id, name: eName.trim(), category: eCat, pricePence, nonMemberPricePence, variablePrice: false, nominalCode: eNominalCode || null }) });
+    } else {
+      const pricePence = Math.round(parseFloat(ePrice || '0') * 100);
+      if (pricePence <= 0) return;
+      const overridePercent = eOverride.trim() === '' ? null : Math.round(parseFloat(eOverride));
+      if (overridePercent !== null && (overridePercent < 0 || overridePercent > 100)) return;
+      await fetch('/api/bar/products', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: p.id, name: eName.trim(), category: eCat, basePricePence: pricePence, memberDiscountOverridePercent: showOverride ? overridePercent : undefined, variablePrice: false, nominalCode: eNominalCode || null }) });
+    }
     setEditId(null); onChanged();
   }
+
+  // ── Manage Categories ────────────────────────────────────────────────────
+  const [newCatKey, setNewCatKey] = useState('');
+  const [newCatLabel, setNewCatLabel] = useState('');
+  const [newCatColor, setNewCatColor] = useState(CATEGORY_COLOR_KEYS[0]);
+  const [newCatNominal, setNewCatNominal] = useState('');
+  async function addCategory() {
+    const key = newCatKey.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    if (!key || !newCatLabel.trim()) return;
+    await fetch('/api/bar/categories', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, label: newCatLabel.trim(), colorKey: newCatColor, nominalCode: newCatNominal || undefined, isNew: true }) });
+    setNewCatKey(''); setNewCatLabel(''); setNewCatNominal(''); onChanged();
+  }
+  async function toggleCategory(c: BarCategoryRow) {
+    await fetch('/api/bar/categories', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: c.key, setActive: !c.active }) });
+    onChanged();
+  }
+  const [editCatKey, setEditCatKey] = useState<string | null>(null);
+  const [eCatLabel, setECatLabel] = useState('');
+  const [eCatColor, setECatColor] = useState('');
+  const [eCatNominal, setECatNominal] = useState('');
+  function startEditCategory(c: BarCategoryRow) {
+    setEditCatKey(c.key); setECatLabel(c.label); setECatColor(c.colorKey); setECatNominal(c.nominalCode ?? '');
+  }
+  async function saveEditCategory(c: BarCategoryRow) {
+    if (!eCatLabel.trim()) return;
+    await fetch('/api/bar/categories', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: c.key, label: eCatLabel.trim(), colorKey: eCatColor, nominalCode: eCatNominal || null, isNew: false }) });
+    setEditCatKey(null); onChanged();
+  }
+
+  // How a product's pricing reads on the list line, per mode.
+  function priceLabel(p: BarProduct): string {
+    if (p.variablePrice) return 'Variable amount (Cash Movement)';
+    switch (pricingConfig.mode) {
+      case 'split':
+        return `${fmt(p.pricePence)} member / ${fmt(p.nonMemberPricePence)} visitor`;
+      case 'member_discount':
+        return `${fmt(p.basePricePence)} (${pricingConfig.memberDiscountPercent}% off whole bill for members)`;
+      case 'member_product_discount': {
+        const rate = p.memberDiscountOverridePercent ?? pricingConfig.memberDiscountPercent;
+        const isOverride = p.memberDiscountOverridePercent !== null;
+        return `${fmt(p.basePricePence)} (${rate}% member discount${isOverride ? '' : ', default'})`;
+      }
+      case 'single':
+      default:
+        return fmt(p.basePricePence);
+    }
+  }
+
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-5 max-w-2xl">
-      <h2 className="font-bold text-gray-900 mb-3">Products</h2>
+    <div className="space-y-5">
+      <div className="bg-white border border-gray-200 rounded-xl p-5 max-w-2xl">
+        <h2 className="font-bold text-gray-900 mb-3">Manage Categories</h2>
+        <div className="flex flex-wrap gap-2 mb-4 items-end">
+          <input value={newCatKey} onChange={(e) => setNewCatKey(e.target.value)} placeholder="key (e.g. mixers)" className="border rounded px-2 py-1.5 text-sm w-32" />
+          <input value={newCatLabel} onChange={(e) => setNewCatLabel(e.target.value)} placeholder="Label" className="border rounded px-2 py-1.5 text-sm flex-1 min-w-[120px]" />
+          <select value={newCatColor} onChange={(e) => setNewCatColor(e.target.value)} className="border rounded px-2 py-1.5 text-sm">
+            {CATEGORY_COLOR_KEYS.map((k) => <option key={k} value={k}>{k}</option>)}
+          </select>
+          <div>
+            <label className="block text-[10px] text-gray-500">Nominal code</label>
+            <input value={newCatNominal} onChange={(e) => setNewCatNominal(e.target.value)} placeholder="optional" className="border rounded px-2 py-1.5 text-sm w-28" />
+          </div>
+          <button onClick={addCategory} className="px-3 py-1.5 bg-green-600 text-white rounded text-sm font-medium">Add</button>
+        </div>
+        {categories.map((c) => (
+          editCatKey === c.key ? (
+            <div key={c.key} className="flex flex-wrap gap-2 items-center py-1.5 border-b border-gray-100">
+              <input value={eCatLabel} onChange={(e) => setECatLabel(e.target.value)} className="border rounded px-2 py-1 text-sm flex-1 min-w-[120px]" />
+              <select value={eCatColor} onChange={(e) => setECatColor(e.target.value)} className="border rounded px-2 py-1 text-sm">
+                {CATEGORY_COLOR_KEYS.map((k) => <option key={k} value={k}>{k}</option>)}
+              </select>
+              <input value={eCatNominal} onChange={(e) => setECatNominal(e.target.value)} placeholder="Nominal code" className="border rounded px-2 py-1 text-sm w-32" />
+              <button onClick={() => saveEditCategory(c)} className="px-3 py-1 bg-green-600 text-white rounded text-sm font-medium">Save</button>
+              <button onClick={() => setEditCatKey(null)} className="text-sm text-gray-500">Cancel</button>
+            </div>
+          ) : (
+            <div key={c.key} className={`flex justify-between items-center text-sm py-1 ${c.active ? '' : 'opacity-40'}`}>
+              <span className="flex items-center gap-2">
+                <span className={`inline-block w-3 h-3 rounded-full ${categoryColorClasses(c.colorKey).active.split(' ')[0]}`} />
+                {c.label} <span className="text-gray-400">({c.key}{c.nominalCode ? ` · ${c.nominalCode}` : ''})</span>
+              </span>
+              <span className="flex gap-3">
+                <button onClick={() => startEditCategory(c)} className="text-xs text-blue-600">Edit</button>
+                <button onClick={() => toggleCategory(c)} className="text-xs text-gray-500">{c.active ? 'Deactivate' : 'Activate'}</button>
+              </span>
+            </div>
+          )
+        ))}
+      </div>
+
+      <div className="bg-white border border-gray-200 rounded-xl p-5 max-w-2xl">
       <div className="flex flex-wrap gap-2 mb-4 items-end">
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Item name" className="border rounded px-2 py-1.5 text-sm flex-1 min-w-[140px]" />
         <select value={category} onChange={(e) => setCategory(e.target.value)} className="border rounded px-2 py-1.5 text-sm">
-          {CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+          {activeCategories.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
         </select>
+        {!variablePrice && (
+          <div>
+            <label className="block text-[10px] text-gray-500">{isSplit ? 'Member £' : 'Price £'}</label>
+            <input value={price} onChange={(e) => setPrice(e.target.value)} placeholder="£" inputMode="decimal" className="border rounded px-2 py-1.5 text-sm w-20" />
+          </div>
+        )}
+        {!variablePrice && isSplit && (
+          <div>
+            <label className="block text-[10px] text-gray-500">Visitor £</label>
+            <input value={visitorPrice} onChange={(e) => setVisitorPrice(e.target.value)} placeholder="£" inputMode="decimal" className="border rounded px-2 py-1.5 text-sm w-20" />
+          </div>
+        )}
+        {!variablePrice && showOverride && (
+          <div>
+            <label className="block text-[10px] text-gray-500">Override % (blank = {pricingConfig.memberDiscountPercent}%)</label>
+            <input value={override} onChange={(e) => setOverride(e.target.value)} placeholder="%" inputMode="decimal" className="border rounded px-2 py-1.5 text-sm w-32" />
+          </div>
+        )}
         <div>
-          <label className="block text-[10px] text-gray-500">Member £</label>
-          <input value={price} onChange={(e) => onPriceChange(e.target.value)} placeholder="£" inputMode="decimal" className="border rounded px-2 py-1.5 text-sm w-20" />
+          <label className="block text-[10px] text-gray-500">Nominal code</label>
+          <input value={nominalCode} onChange={(e) => setNominalCode(e.target.value)} placeholder="optional" className="border rounded px-2 py-1.5 text-sm w-28" />
         </div>
-        <div>
-          <label className="block text-[10px] text-gray-500">Non-member £</label>
-          <input value={nonMemberPrice} onChange={(e) => setNonMemberPrice(e.target.value)} placeholder="£" inputMode="decimal" className="border rounded px-2 py-1.5 text-sm w-20" />
-        </div>
+        <label className="flex items-center gap-1 text-xs text-gray-600 pb-1.5">
+          <input type="checkbox" checked={variablePrice} onChange={(e) => setVariablePrice(e.target.checked)} />
+          Variable price (Cash Movement)
+        </label>
         <button onClick={add} className="px-3 py-1.5 bg-green-600 text-white rounded text-sm font-medium">Add</button>
       </div>
-      {CATEGORIES.map((c) => {
+      {categories.map((c) => {
         const items = products.filter((p) => p.category === c.key);
         if (items.length === 0) return null;
         return (
@@ -670,16 +1570,28 @@ function ProductsAdmin({ products, onChanged }: { products: BarProduct[]; onChan
                 <div key={p.id} className="flex flex-wrap gap-2 items-center py-1.5 border-b border-gray-100">
                   <input value={eName} onChange={(e) => setEName(e.target.value)} className="border rounded px-2 py-1 text-sm flex-1 min-w-[140px]" />
                   <select value={eCat} onChange={(e) => setECat(e.target.value)} className="border rounded px-2 py-1 text-sm">
-                    {CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+                    {activeCategories.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
                   </select>
-                  <input value={ePrice} onChange={(e) => setEPrice(e.target.value)} placeholder="Member £" inputMode="decimal" className="border rounded px-2 py-1 text-sm w-20" />
-                  <input value={eNonMemberPrice} onChange={(e) => setENonMemberPrice(e.target.value)} placeholder="Non-member £" inputMode="decimal" className="border rounded px-2 py-1 text-sm w-20" />
+                  {!eVariablePrice && (
+                    <input value={ePrice} onChange={(e) => setEPrice(e.target.value)} placeholder={isSplit ? 'Member £' : 'Price £'} inputMode="decimal" className="border rounded px-2 py-1 text-sm w-20" />
+                  )}
+                  {!eVariablePrice && isSplit && (
+                    <input value={eVisitorPrice} onChange={(e) => setEVisitorPrice(e.target.value)} placeholder="Visitor £" inputMode="decimal" className="border rounded px-2 py-1 text-sm w-20" />
+                  )}
+                  {!eVariablePrice && showOverride && (
+                    <input value={eOverride} onChange={(e) => setEOverride(e.target.value)} placeholder={`Override % (blank = ${pricingConfig.memberDiscountPercent}%)`} inputMode="decimal" className="border rounded px-2 py-1 text-sm w-40" />
+                  )}
+                  <input value={eNominalCode} onChange={(e) => setENominalCode(e.target.value)} placeholder="Nominal code" className="border rounded px-2 py-1 text-sm w-32" />
+                  <label className="flex items-center gap-1 text-xs text-gray-600">
+                    <input type="checkbox" checked={eVariablePrice} onChange={(e) => setEVariablePrice(e.target.checked)} />
+                    Variable price
+                  </label>
                   <button onClick={() => saveEdit(p)} className="px-3 py-1 bg-green-600 text-white rounded text-sm font-medium">Save</button>
                   <button onClick={() => setEditId(null)} className="text-sm text-gray-500">Cancel</button>
                 </div>
               ) : (
                 <div key={p.id} className={`flex justify-between items-center text-sm py-1 ${p.active ? '' : 'opacity-40'}`}>
-                  <span>{p.name} — {fmt(p.pricePence)} <span className="text-gray-400">/ {fmt(p.nonMemberPricePence)} non-member</span></span>
+                  <span>{p.name} — <span className="text-gray-500">{priceLabel(p)}</span></span>
                   <span className="flex gap-3">
                     <button onClick={() => startEdit(p)} className="text-xs text-blue-600">Edit</button>
                     <button onClick={() => toggle(p)} className="text-xs text-gray-500">{p.active ? 'Deactivate' : 'Activate'}</button>
@@ -690,6 +1602,7 @@ function ProductsAdmin({ products, onChanged }: { products: BarProduct[]; onChan
           </div>
         );
       })}
+      </div>
     </div>
   );
 }

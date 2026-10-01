@@ -16,6 +16,7 @@
 
 import { getSupabaseClient } from './supabase';
 import type { User } from './sheets';
+import { lockerRef } from '@/types/lockers';
 
 const USERS_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours, matches sheets.ts
 
@@ -67,6 +68,15 @@ function computeGmailLabel(profile: any): string {
   return label;
 }
 
+function formatLockers(lockers: any[] | null | undefined): string | null {
+  if (!lockers || lockers.length === 0) return null;
+  return lockers
+    .map((l) => ({ room: l.room as string, lockerNumber: l.locker_number as number }))
+    .sort((x, y) => x.room.localeCompare(y.room) || x.lockerNumber - y.lockerNumber)
+    .map(lockerRef)
+    .join(", ");
+}
+
 function mapRow(row: any): User {
   const profile = row.member_profiles ?? null;
   const roles: string[] = (row.user_roles ?? []).map((r: any) => r.role);
@@ -91,7 +101,8 @@ function mapRow(row: any): User {
     address2: profile?.address_2 ?? null,
     address3: profile?.address_3 ?? null,
     postCode: profile?.post_code ?? null,
-    lockerNo: profile?.locker_no ?? null,
+    // Read-only, derived from the Locker Register (lockers table, 0069) — e.g. "Mens 36".
+    lockerNo: formatLockers(row.lockers),
     birthdate: profile?.birthdate ?? null,
     ageDemographic: profile?.age_demographic ?? '',   // restored in 0020, directly editable — see profile-supabase.ts
     memberType: profile?.member_type ?? '',
@@ -151,7 +162,7 @@ export async function getAllUsers(forceFresh = false): Promise<User[]> {
     // member_profiles has two FKs to users (user_id, buddy_user_name) — PostgREST can't
     // infer which to embed without disambiguation. !user_id picks the profile-ownership
     // one, not the buddy-pairing one.
-    .select('*, member_profiles!user_id(*), user_roles(role)')
+    .select('*, member_profiles!user_id(*), user_roles(role), lockers(room, locker_number)')
     .eq('is_active', true);
   if (error) throw new Error(`Failed to fetch users from Postgres: ${error.message}`);
 

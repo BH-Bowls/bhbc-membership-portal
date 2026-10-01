@@ -30,7 +30,7 @@ export async function PATCH(
 
     const body = await request.json();
     const {
-      date, time, type, clubName, clubSuffix,
+      date, time, type, clubName, clubSuffix, description,
       homeAway, format, ladiesMen, dress, paired, maxPlayers, message, pickupInfo,
     } = body;
 
@@ -72,6 +72,7 @@ export async function PATCH(
       type: type as GameType | undefined,
       clubName,
       clubSuffix,
+      description,
       homeAway,
       format,
       ladiesMen,

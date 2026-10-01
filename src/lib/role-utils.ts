@@ -24,3 +24,12 @@ export function isCommitteeMember(role: string | undefined | null): boolean {
 export function isMember(role: string | undefined | null): boolean {
   return parseRoles(role).length === 0;
 }
+
+/** Return true if the user can use the bar till (/bar and its API routes): committee
+ *  members, plus the dedicated 'Bar' till login. Deliberately NOT folded into
+ *  isCommitteeMember() itself — that would grant the till's own credential committee
+ *  access everywhere else in the app (admin menus, other committee-only pages), not
+ *  just the bar subsystem it's scoped to. */
+export function canUseBarTill(role: string | undefined | null): boolean {
+  return isCommitteeMember(role) || hasRole(role, 'Bar');
+}

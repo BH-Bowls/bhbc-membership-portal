@@ -1,6 +1,7 @@
 'use client';
 
 import { useSession } from 'next-auth/react';
+import Link from 'next/link';
 import { getBadgeClasses } from '@/config/theme-helpers';
 import { useSessionRefresh } from '@/hooks/useSessionRefresh';
 import { AnnouncementsPanel } from '@/components/AnnouncementsPanel';
@@ -48,6 +49,15 @@ export default function HomePage() {
           <div className="mb-6">
             <DiaryPanel />
           </div>
+
+          {/* My Account — transactions + membership card */}
+          <Link
+            href="/account"
+            className="mb-6 flex items-center justify-between bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow px-5 py-4 transition-colors"
+          >
+            <span className="font-semibold text-lg">My Account</span>
+            <span className="text-sm text-blue-100">Membership card &amp; transactions →</span>
+          </Link>
 
           {/* Welcome Card */}
           <div className="bg-white overflow-hidden shadow rounded-lg">

@@ -10,7 +10,25 @@ import { useRouter } from 'next/navigation';
 import { hasRole } from '@/lib/role-utils';
 import { getInputClasses, getCardClasses, getAlertClasses } from '@/config/theme-helpers';
 
-type Tab = 'general' | 'labels' | 'rowland';
+type Tab = 'general' | 'labels' | 'rowland' | 'bar';
+
+const BAR_NOMINAL_FIELDS: [string, string][] = [
+  ['bar_nominal_cash_account', 'Cash-in-hand'],
+  ['bar_nominal_card_account', 'Card clearing'],
+  ['bar_nominal_wallet_liability_account', 'Member wallet liability'],
+  ['bar_nominal_discounts_account', 'Discounts given'],
+  ['bar_nominal_cash_variance_account', 'Cash over/short'],
+  ['bar_nominal_default_sales_account', 'Default sales (fallback when a category/product has no code)'],
+  ['bar_nominal_cash_banked_account', 'Cash banked (in transit to the bank)'],
+];
+
+const BAR_PRICING_MODES: [string, string, string][] = [
+  // value, label, hint
+  ['single', 'Single price', 'One price per product — everyone pays the same.'],
+  ['split', 'Split pricing', 'A member price and a visitor price set independently per product.'],
+  ['member_discount', 'Member discount (whole bill)', 'One price per product; a member’s whole basket gets the discount rate below off at checkout.'],
+  ['member_product_discount', 'Member product discount', 'One price per product; the discount rate below applies by default, but any product can override it (including to 0%) in Products.'],
+];
 
 const ROWLAND_FIELDS: [string, string, string][] = [
   // key, label, hint
@@ -55,6 +73,11 @@ export default function AdminConfigPage() {
   const [isEditingRowland, setIsEditingRowland] = useState(false);
   const [savingRowland, setSavingRowland] = useState(false);
 
+  const [editBar, setEditBar] = useState<Record<string, string>>({});
+  const [isEditingBar, setIsEditingBar] = useState(false);
+  const [savingBar, setSavingBar] = useState(false);
+  const [barError, setBarError] = useState<string | null>(null);
+
   // Auth guard
   useEffect(() => {
     if (status === 'loading') return;
@@ -73,6 +96,7 @@ export default function AdminConfigPage() {
           setEditGeneral(data.config);
           setEditLabels(data.config);
           setEditRowland(data.config);
+          setEditBar(data.config);
         } else {
           setError(data.error || 'Failed to load config');
         }
@@ -155,6 +179,59 @@ export default function AdminConfigPage() {
     }
   }
 
+  // Config stores the float in pence (bar_till_float_pence); the form edits it as
+  // pounds for readability — this seeds that transient UI-only field from config
+  // whenever entering (or cancelling out of) edit mode. Same for the carried-forward
+  // balance, which can be negative (see bar_cash_carried_forward_pence).
+  function seedEditBar(cfg: Record<string, string>): Record<string, string> {
+    const floatPence = parseInt(cfg.bar_till_float_pence || '0', 10);
+    const carriedPence = parseInt(cfg.bar_cash_carried_forward_pence || '0', 10);
+    return { ...cfg, bar_till_float_pounds: (floatPence / 100).toFixed(2), bar_cash_carried_forward_pounds: (carriedPence / 100).toFixed(2) };
+  }
+
+  async function saveBar() {
+    setBarError(null);
+    const rate = parseInt(editBar.bar_member_discount_percent ?? '', 10);
+    if (!Number.isFinite(rate) || rate < 0 || rate > 100) {
+      setBarError('Member discount rate must be between 0 and 100');
+      return;
+    }
+    const floatPounds = parseFloat(editBar.bar_till_float_pounds ?? '');
+    if (!Number.isFinite(floatPounds) || floatPounds < 0) {
+      setBarError('Till float must be a non-negative amount');
+      return;
+    }
+    // Carried forward can legitimately be negative (a shortfall deferred rather
+    // than explained) — no lower bound here, unlike the float.
+    const carriedPounds = parseFloat(editBar.bar_cash_carried_forward_pounds ?? '');
+    if (!Number.isFinite(carriedPounds)) {
+      setBarError('Cash carried forward must be a number');
+      return;
+    }
+    setSavingBar(true);
+    try {
+      const updates: Record<string, string> = {
+        bar_pricing_mode: editBar.bar_pricing_mode ?? 'member_product_discount',
+        bar_member_discount_percent: String(rate),
+        bar_till_float_pence: String(Math.round(floatPounds * 100)),
+        bar_cash_carried_forward_pence: String(Math.round(carriedPounds * 100)),
+      };
+      for (const [key] of BAR_NOMINAL_FIELDS) updates[key] = editBar[key] ?? '';
+      const res = await fetch('/api/admin/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+      });
+      if (!res.ok) throw new Error();
+      setConfig((prev) => ({ ...prev, ...updates }));
+      setIsEditingBar(false);
+    } catch {
+      setBarError('Failed to save bar pricing settings');
+    } finally {
+      setSavingBar(false);
+    }
+  }
+
   if (status === 'loading' || loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -182,7 +259,7 @@ export default function AdminConfigPage() {
 
         {/* Tabs */}
         <div className="border-b border-gray-200 flex gap-6">
-          {(['general', 'labels', 'rowland'] as Tab[]).map((t) => (
+          {(['general', 'labels', 'rowland', 'bar'] as Tab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -190,7 +267,7 @@ export default function AdminConfigPage() {
                 tab === t ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
               }`}
             >
-              {t === 'general' ? 'General' : t === 'labels' ? 'Labels' : 'Rowland'}
+              {t === 'general' ? 'General' : t === 'labels' ? 'Labels' : t === 'rowland' ? 'Rowland' : 'Bar'}
             </button>
           ))}
         </div>
@@ -410,6 +487,137 @@ export default function AdminConfigPage() {
                   <p className="text-xs text-gray-700 mt-1">{hint}</p>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Bar tab ── */}
+        {tab === 'bar' && (
+          <div className={`${getCardClasses('md')} space-y-4`}>
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-medium text-gray-700">Bar pricing</h2>
+              {!isEditingBar ? (
+                <button onClick={() => { setEditBar(seedEditBar(config)); setIsEditingBar(true); }} className="text-sm text-blue-600 hover:text-blue-800">
+                  Edit
+                </button>
+              ) : (
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => { setEditBar(seedEditBar(config)); setIsEditingBar(false); setBarError(null); }}
+                    className="text-sm text-gray-500 hover:text-gray-700"
+                  >
+                    Cancel
+                  </button>
+                  <button onClick={saveBar} disabled={savingBar} className="text-sm text-blue-600 hover:text-blue-800 disabled:opacity-50">
+                    {savingBar ? 'Saving...' : 'Save'}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {barError && <div className={getAlertClasses('danger')}>{barError}</div>}
+
+            <p className="text-xs text-gray-700">Club-wide — controls how every product on the bar till (/bar) is priced.</p>
+
+            <div className="space-y-4 text-sm">
+              <div>
+                <label className="block text-gray-900 mb-1">Pricing mode</label>
+                {isEditingBar ? (
+                  <select
+                    value={editBar.bar_pricing_mode ?? 'member_product_discount'}
+                    onChange={(e) => setEditBar((prev) => ({ ...prev, bar_pricing_mode: e.target.value }))}
+                    className={`${getInputClasses()} max-w-sm`}
+                  >
+                    {BAR_PRICING_MODES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                  </select>
+                ) : (
+                  <span className="text-gray-900">{BAR_PRICING_MODES.find(([v]) => v === config.bar_pricing_mode)?.[1] || '—'}</span>
+                )}
+                <p className="text-xs text-gray-700 mt-1">
+                  {BAR_PRICING_MODES.find(([v]) => v === (isEditingBar ? editBar.bar_pricing_mode : config.bar_pricing_mode))?.[2]}
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-gray-900 mb-1">Member discount rate (%)</label>
+                {isEditingBar ? (
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={editBar.bar_member_discount_percent ?? ''}
+                    onChange={(e) => setEditBar((prev) => ({ ...prev, bar_member_discount_percent: e.target.value }))}
+                    className={`${getInputClasses()} max-w-[10rem]`}
+                  />
+                ) : (
+                  <span className="text-gray-900">{config.bar_member_discount_percent ? `${config.bar_member_discount_percent}%` : '—'}</span>
+                )}
+                <p className="text-xs text-gray-700 mt-1">
+                  Used as the whole-bill discount in Member discount mode, and as the default rate any product can override in Member product discount mode. Not used in Single price or Split pricing modes.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-gray-900 mb-1">Till float (£)</label>
+                {isEditingBar ? (
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={editBar.bar_till_float_pounds ?? ''}
+                    onChange={(e) => setEditBar((prev) => ({ ...prev, bar_till_float_pounds: e.target.value }))}
+                    className={`${getInputClasses()} max-w-[10rem]`}
+                  />
+                ) : (
+                  <span className="text-gray-900">£{(parseInt(config.bar_till_float_pence || '0', 10) / 100).toFixed(2)}</span>
+                )}
+                <p className="text-xs text-gray-700 mt-1">
+                  The cash amount left in the till after cashing up — the End of Day screen on the till defaults "cash removed" to everything above this.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-gray-900 mb-1">Cash carried forward (£)</label>
+                {isEditingBar ? (
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={editBar.bar_cash_carried_forward_pounds ?? ''}
+                    onChange={(e) => setEditBar((prev) => ({ ...prev, bar_cash_carried_forward_pounds: e.target.value }))}
+                    className={`${getInputClasses()} max-w-[10rem]`}
+                  />
+                ) : (
+                  <span className="text-gray-900">£{(parseInt(config.bar_cash_carried_forward_pence || '0', 10) / 100).toFixed(2)}</span>
+                )}
+                <p className="text-xs text-gray-700 mt-1">
+                  A cash-count difference deferred rather than explained on the till&apos;s Dayend screen, carried into the next cash-up&apos;s expected total. Can be negative. Edit here only to correct it manually.
+                </p>
+              </div>
+
+              <div className="pt-2 border-t border-gray-200">
+                <h3 className="text-sm font-medium text-gray-700 mb-2">Xero nominal codes</h3>
+                <p className="text-xs text-gray-700 mb-3">
+                  Fixed control accounts for the End of Day / Xero export. Per-category and
+                  per-product revenue codes are set on the till&apos;s Products screen instead.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                  {BAR_NOMINAL_FIELDS.map(([key, label]) => (
+                    <div key={key}>
+                      <label className="block text-gray-900 mb-1">{label}</label>
+                      {isEditingBar ? (
+                        <input
+                          type="text"
+                          value={editBar[key] ?? ''}
+                          onChange={(e) => setEditBar((prev) => ({ ...prev, [key]: e.target.value }))}
+                          className={`${getInputClasses()} w-full`}
+                        />
+                      ) : (
+                        <span className="text-gray-900">{config[key] || '—'}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         )}

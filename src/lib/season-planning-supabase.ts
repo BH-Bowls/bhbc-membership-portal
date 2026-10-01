@@ -519,6 +519,7 @@ export interface ClubBasicInfo {
   phone: string;
   email: string;
   website: string;
+  friendlyPlanningNotes: string;
 }
 
 export interface ClubContactEntry {
@@ -568,7 +569,7 @@ export async function getClubInfo(clubName: string): Promise<ClubInfo> {
 
   const { data: clubRow, error: clubError } = await supabase
     .from('club_profiles')
-    .select('club_name, address_1, address_2, post_code, club_mobile, club_email_address, website')
+    .select('club_name, address_1, address_2, post_code, club_mobile, club_email_address, website, friendly_planning_notes')
     .eq('club_name', clubName)
     .maybeSingle();
   if (clubError) throw new Error(`Failed to fetch club: ${clubError.message}`);
@@ -580,6 +581,7 @@ export async function getClubInfo(clubName: string): Promise<ClubInfo> {
     phone: clubRow.club_mobile || '',
     email: clubRow.club_email_address || '',
     website: clubRow.website || '',
+    friendlyPlanningNotes: clubRow.friendly_planning_notes || '',
   } : null;
 
   const { data: contactRows, error: contactsError } = await supabase

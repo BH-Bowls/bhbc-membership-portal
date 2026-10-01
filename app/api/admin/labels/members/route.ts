@@ -6,6 +6,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
 import { getAllUsers } from '@/lib/members-supabase';
+import { getLatestRenewedSeasonsByUser } from '@/lib/renewals-supabase';
 
 export async function GET() {
   try {
@@ -13,7 +14,7 @@ export async function GET() {
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     if (!hasRole(session.user?.role, 'Admin')) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
-    const users = await getAllUsers();
+    const [users, renewedSeasons] = await Promise.all([getAllUsers(), getLatestRenewedSeasonsByUser()]);
     const members = users
       .filter((u) => u.memberType && u.memberType !== 'Cancelled')
       .map((u) => ({
@@ -24,6 +25,10 @@ export async function GET() {
         postCode: u.postCode,
         memberType: u.memberType,
         include: u.include,
+        // Membership card labels
+        userName: u.userName,
+        honorary: u.honorary === 'Y',
+        latestRenewedSeasonYear: renewedSeasons.get(u.userName.toLowerCase()) ?? null,
       }));
 
     return NextResponse.json({ members });

@@ -33,7 +33,6 @@ interface MemberForm {
   include: string;
   gmc: string;
   renewStatus: string;
-  lockerNo: string;
   buddyUserName: string;
   drivingAwayMatches: string;
   drivingAdditionalInfo: string;
@@ -68,6 +67,8 @@ export default function MemberDetailPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [settingPassword, setSettingPassword] = useState(false);
+  // Read-only — only changed in the Locker Register (/admin/lockers)
+  const [lockerNo, setLockerNo] = useState('');
   // Other members, for the buddy selector
   const [memberOptions, setMemberOptions] = useState<{ userName: string; name: string }[]>([]);
 
@@ -83,6 +84,7 @@ export default function MemberDetailPage() {
         }
         const json = await res.json();
         const m = json.member;
+        setLockerNo(str(m.lockerNo));
         setForm({
           firstName: str(m.firstName),
           lastName: str(m.lastName),
@@ -104,7 +106,6 @@ export default function MemberDetailPage() {
           include: str(m.include),
           gmc: str(m.gmc),
           renewStatus: str(m.renewStatus),
-          lockerNo: str(m.lockerNo),
           buddyUserName: str(m.buddyUserName),
           drivingAwayMatches: str(m.drivingAwayMatches),
           drivingAdditionalInfo: str(m.drivingAdditionalInfo),
@@ -294,7 +295,13 @@ export default function MemberDetailPage() {
                   </select>
                 </div>
                 {textField('Year Started', 'yearStarted', 'number')}
-                {textField('Locker No', 'lockerNo')}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Locker</label>
+                  <p className="text-sm text-gray-900 py-2">
+                    {lockerNo || '—'}
+                    <Link href="/admin/lockers" className="ml-2 text-xs text-blue-600 hover:text-blue-800">Locker Register →</Link>
+                  </p>
+                </div>
                 <div className="sm:col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-1">Buddy</label>
                   <select className={getInputClasses()} value={form.buddyUserName} onChange={(e) => set('buddyUserName', e.target.value)}>

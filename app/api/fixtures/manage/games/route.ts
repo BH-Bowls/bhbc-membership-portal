@@ -68,14 +68,21 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const {
-      date, time, type, clubName, clubSuffix,
+      date, time, type, clubSuffix,
       homeAway, format, ladiesMen, dress, paired, maxPlayers, message, pickupInfo,
       year,
     } = body;
+    // Trim so a whitespace-only value (e.g. a leftover space after clearing the
+    // field) doesn't sneak past the club-or-description check and then fail the
+    // club_name FK as a non-empty, non-matching value.
+    const clubName = (body.clubName || '').trim() || undefined;
+    const description = (body.description || '').trim() || undefined;
 
-    if (!date || !clubName) {
+    // No opponent club (an internal event, e.g. "End of Season Drive") is allowed,
+    // but the fixture then needs a description to identify it instead.
+    if (!date || (!clubName && !description)) {
       return NextResponse.json(
-        { error: 'Date and club name are required' },
+        { error: 'Date and either a club name or a description are required' },
         { status: 400 }
       );
     }
@@ -105,7 +112,8 @@ export async function POST(request: NextRequest) {
       tabDate = `${day} ${month} ${year}`;
     }
 
-    const tabName = tabDate ? `${clubName} ${tabDate}` : clubName;
+    const tabLabel = clubName || description;
+    const tabName = tabDate ? `${tabLabel} ${tabDate}` : tabLabel;
 
     await createFixture({
       date,
@@ -113,6 +121,7 @@ export async function POST(request: NextRequest) {
       type: (type as GameType) || 'Friendly',
       clubName,
       clubSuffix,
+      description,
       homeAway,
       format,
       ladiesMen,

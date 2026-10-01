@@ -5,19 +5,76 @@
 
 import { getSupabaseClient } from './supabase';
 import { getAllUsers } from './members-supabase';
+import { getConfig } from './config-supabase';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-export type BarCategory = 'beer' | 'wine' | 'spirit' | 'zero_gf' | 'soft' | 'snack';
+// Categories are admin-managed data (bar_categories table, 0063_bar_day_ends.sql),
+// not a fixed set — this is just a readability alias for the key stored on a product.
+export type BarCategory = string;
+
+// Club-wide, one active at a time (see BarPricingConfig) — see 0060_bar_pricing_modes.sql
+// for the authoritative server-side pricing (bar_price_item), which priceItem() below mirrors
+// for client-side display only.
+export type BarPricingMode = 'single' | 'split' | 'member_discount' | 'member_product_discount';
+
+export interface BarPricingConfig {
+  mode: BarPricingMode;
+  memberDiscountPercent: number;  // global default (member_product_discount) / whole-bill rate (member_discount)
+}
+
+export async function getPricingConfig(): Promise<BarPricingConfig> {
+  const config = await getConfig();
+  const mode = (config.bar_pricing_mode as BarPricingMode) || 'member_product_discount';
+  const memberDiscountPercent = parseInt(config.bar_member_discount_percent ?? '0', 10) || 0;
+  return { mode, memberDiscountPercent };
+}
 
 export interface BarProduct {
   id: string;
   name: string;
   category: BarCategory;
-  pricePence: number;           // member price — charged on wallet purchases
-  nonMemberPricePence: number;  // visitor price — charged on card/cash sales
+  basePricePence: number;                        // "the" price — single/member_discount/member_product_discount modes
+  pricePence: number;                             // split mode: member price
+  nonMemberPricePence: number;                    // split mode: visitor price
+  memberDiscountOverridePercent: number | null;   // member_product_discount mode: null = inherit the global default
+  nominalCode: string | null;                     // Xero nominal code override; null = inherit the category's code
+  variablePrice: boolean;                         // Cash Movement products: amount is entered per-transaction, not fixed here
   active: boolean;
   sortOrder: number;
+}
+
+export interface BarCategoryRow {
+  key: string;
+  label: string;
+  colorKey: string;
+  nominalCode: string | null;   // null = inherit the club-wide default sales code
+  sortOrder: number;
+  active: boolean;
+}
+
+/** basePricePence discounted by a given percentage — mirrors bar_member_price() in SQL. */
+function discountedPence(basePricePence: number, percent: number): number {
+  return Math.round(basePricePence * (100 - percent) / 100);
+}
+
+/** What a product actually costs under the active pricing mode — mirrors bar_price_item()
+ * in 0060_bar_pricing_modes.sql exactly, for client-side display before a sale is submitted.
+ * The server remains the source of truth: this is never trusted for the actual charge. */
+export function priceItem(p: BarProduct, config: BarPricingConfig, isMember: boolean): { grossPence: number; netPence: number } {
+  switch (config.mode) {
+    case 'single':
+      return { grossPence: p.basePricePence, netPence: p.basePricePence };
+    case 'split':
+      return { grossPence: p.nonMemberPricePence, netPence: isMember ? p.pricePence : p.nonMemberPricePence };
+    case 'member_discount':
+      return { grossPence: p.basePricePence, netPence: isMember ? discountedPence(p.basePricePence, config.memberDiscountPercent) : p.basePricePence };
+    case 'member_product_discount':
+    default: {
+      const rate = p.memberDiscountOverridePercent ?? config.memberDiscountPercent;
+      return { grossPence: p.basePricePence, netPence: isMember ? discountedPence(p.basePricePence, rate) : p.basePricePence };
+    }
+  }
 }
 
 export interface BarAccount {
@@ -39,6 +96,9 @@ export interface BarLedgerEntry {
   note: string | null;
   saleId: string | null;
   staff: string | null;
+  paymentMethod: 'cash' | 'card' | null;  // only meaningful for type 'topup'
+  grossTotalPence: number | null;         // only present for type 'purchase' (joined via saleId)
+  discountPence: number | null;           // only present for type 'purchase'
   createdAt: string;
 }
 
@@ -48,17 +108,19 @@ export interface BasketItem {
 }
 
 export interface BarReport {
-  fromIso: string;
-  toIso: string;
   salesCount: number;
   byMethodPence: { wallet: number; card: number; cash: number };
   byCategoryPence: Record<string, number>;
   byProduct: { name: string; qty: number; totalPence: number }[];
-  topupsPence: number;   // cash taken as top-ups in range
+  topupsPence: number;      // cash taken as top-ups in range (card top-ups excluded — see cardTopupsPence)
+  cardTopupsPence: number;  // top-ups taken by card in range — informational, not cash in the box
   refundsPence: number;  // cash paid back out in range
-  cashSalesPence: number; // = byMethodPence.cash (visitor/emergency cash)
+  cashSalesPence: number; // = byMethodPence.cash — real product sales only, Cash Movements excluded (see cashMovementsPence)
+  cashMovementsPence: number; // net non-sale cash in/out of the till (see 0064_bar_cash_movements.sql); signed
   outstandingPence: number; // current total float owed to members (not range-bound)
-  expectedCashPence: number; // top-ups + cash sales − refunds in range (a bank-time guide)
+  carriedForwardPence: number; // brought forward from the last cash-up (config bar_cash_carried_forward_pence); signed
+  expectedCashPence: number; // carried forward + top-ups + cash sales + cash movements − refunds in range (a bank-time guide)
+  discountsGivenPence: number; // sum of member discounts given in range — informational, ready for Xero
 }
 
 // ── Name lookup helper ───────────────────────────────────────────────────────
@@ -77,27 +139,65 @@ export async function getProducts(includeInactive = false): Promise<BarProduct[]
   const { data, error } = await query;
   if (error) throw new Error(`Failed to load bar products: ${error.message}`);
   return (data ?? []).map((r: any) => ({
-    id: r.id, name: r.name, category: r.category, pricePence: r.price_pence,
+    id: r.id, name: r.name, category: r.category,
+    basePricePence: r.base_price_pence,
+    pricePence: r.price_pence,
     nonMemberPricePence: r.non_member_price_pence,
+    memberDiscountOverridePercent: r.member_discount_override_percent,
+    nominalCode: r.nominal_code,
+    variablePrice: r.variable_price,
     active: r.active, sortOrder: r.sort_order,
   }));
 }
 
 export async function saveProduct(
-  input: { id?: string; name: string; category: BarCategory; pricePence: number; nonMemberPricePence: number; sortOrder?: number; active?: boolean },
+  input: {
+    id?: string; name: string; category: BarCategory;
+    basePricePence?: number; pricePence?: number; nonMemberPricePence?: number;
+    memberDiscountOverridePercent?: number | null;
+    nominalCode?: string | null;
+    variablePrice?: boolean;
+    sortOrder?: number; active?: boolean;
+  },
   editedBy: string,
 ): Promise<void> {
   const supabase = getSupabaseClient();
-  const row = {
+
+  let { basePricePence, pricePence, nonMemberPricePence } = input;
+  // On creation only: base_price_pence/price_pence/non_member_price_pence are all
+  // NOT NULL, but the form only ever fills in whichever "price shape" the active
+  // pricing mode needs — mirror across so the columns other modes use still get a
+  // sane starting point instead of failing the insert. An existing product's
+  // untouched columns are left alone on update (nothing added to `row` below), so
+  // switching modes and back doesn't lose previously-entered split/base prices.
+  // Variable-price products (Cash Movement) never charge a fixed price at all --
+  // the amount is entered per-transaction -- so all three just default to 0.
+  if (!input.id) {
+    if (basePricePence === undefined && nonMemberPricePence !== undefined) basePricePence = nonMemberPricePence;
+    if (pricePence === undefined && basePricePence !== undefined) pricePence = basePricePence;
+    if (nonMemberPricePence === undefined && basePricePence !== undefined) nonMemberPricePence = basePricePence;
+    if (input.variablePrice) {
+      if (basePricePence === undefined) basePricePence = 0;
+      if (pricePence === undefined) pricePence = 0;
+      if (nonMemberPricePence === undefined) nonMemberPricePence = 0;
+    }
+  }
+
+  const row: Record<string, unknown> = {
     name: input.name.trim(),
     category: input.category,
-    price_pence: input.pricePence,
-    non_member_price_pence: input.nonMemberPricePence,
     sort_order: input.sortOrder ?? 0,
     active: input.active ?? true,
     updated_by: editedBy,
     updated_at: new Date().toISOString(),
   };
+  if (basePricePence !== undefined) row.base_price_pence = basePricePence;
+  if (pricePence !== undefined) row.price_pence = pricePence;
+  if (nonMemberPricePence !== undefined) row.non_member_price_pence = nonMemberPricePence;
+  if (input.memberDiscountOverridePercent !== undefined) row.member_discount_override_percent = input.memberDiscountOverridePercent;
+  if (input.nominalCode !== undefined) row.nominal_code = input.nominalCode;
+  if (input.variablePrice !== undefined) row.variable_price = input.variablePrice;
+
   if (input.id) {
     const { error } = await supabase.from('bar_products').update(row).eq('id', input.id);
     if (error) throw new Error(`Failed to update product: ${error.message}`);
@@ -111,6 +211,47 @@ export async function setProductActive(id: string, active: boolean): Promise<voi
   const supabase = getSupabaseClient();
   const { error } = await supabase.from('bar_products').update({ active, updated_at: new Date().toISOString() }).eq('id', id);
   if (error) throw new Error(`Failed to update product: ${error.message}`);
+}
+
+// ── Categories (admin-manageable — see 0063_bar_day_ends.sql) ────────────────
+
+export async function getCategories(includeInactive = false): Promise<BarCategoryRow[]> {
+  const supabase = getSupabaseClient();
+  let query = supabase.from('bar_categories').select('*').order('sort_order').order('label');
+  if (!includeInactive) query = query.eq('active', true);
+  const { data, error } = await query;
+  if (error) throw new Error(`Failed to load bar categories: ${error.message}`);
+  return (data ?? []).map((r: any) => ({
+    key: r.key, label: r.label, colorKey: r.color_key, nominalCode: r.nominal_code,
+    sortOrder: r.sort_order, active: r.active,
+  }));
+}
+
+export async function saveCategory(
+  input: { key: string; label: string; colorKey: string; nominalCode?: string | null; sortOrder?: number; active?: boolean; isNew: boolean },
+): Promise<void> {
+  const supabase = getSupabaseClient();
+  const row: Record<string, unknown> = {
+    label: input.label.trim(),
+    color_key: input.colorKey,
+    sort_order: input.sortOrder ?? 0,
+    active: input.active ?? true,
+  };
+  if (input.nominalCode !== undefined) row.nominal_code = input.nominalCode;
+
+  if (input.isNew) {
+    const { error } = await supabase.from('bar_categories').insert({ key: input.key, ...row });
+    if (error) throw new Error(`Failed to create category: ${error.message}`);
+  } else {
+    const { error } = await supabase.from('bar_categories').update(row).eq('key', input.key);
+    if (error) throw new Error(`Failed to update category: ${error.message}`);
+  }
+}
+
+export async function setCategoryActive(key: string, active: boolean): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase.from('bar_categories').update({ active }).eq('key', key);
+  if (error) throw new Error(`Failed to update category: ${error.message}`);
 }
 
 // ── Cash accounts (opt-in members) ───────────────────────────────────────────
@@ -159,7 +300,7 @@ export async function getMemberAccount(userName: string): Promise<{ balancePence
   if (acctErr) throw new Error(`Failed to load account: ${acctErr.message}`);
 
   const { data: ledger, error: ledErr } = await supabase
-    .from('bar_ledger').select('*').eq('user_name', userName).order('created_at', { ascending: false }).limit(100);
+    .from('bar_ledger').select('*, bar_sales ( gross_total_pence, discount_pence )').eq('user_name', userName).order('created_at', { ascending: false }).limit(100);
   if (ledErr) throw new Error(`Failed to load history: ${ledErr.message}`);
 
   return {
@@ -167,23 +308,25 @@ export async function getMemberAccount(userName: string): Promise<{ balancePence
     balancePence: acct?.balance_pence ?? 0,
     history: (ledger ?? []).map((r: any) => ({
       id: r.id, type: r.type, amountPence: r.amount_pence, balanceAfterPence: r.balance_after_pence,
-      note: r.note, saleId: r.sale_id, staff: r.staff, createdAt: r.created_at,
+      note: r.note, saleId: r.sale_id, staff: r.staff, paymentMethod: r.payment_method ?? null,
+      grossTotalPence: r.bar_sales?.gross_total_pence ?? null, discountPence: r.bar_sales?.discount_pence ?? null,
+      createdAt: r.created_at,
     })),
   };
 }
 
 // ── Money operations (atomic RPCs) ───────────────────────────────────────────
 
-export async function topUp(userName: string, amountPence: number, staff: string, note?: string): Promise<number> {
+export async function topUp(userName: string, amountPence: number, staff: string, note?: string, paymentMethod: 'cash' | 'card' = 'cash'): Promise<number> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase.rpc('bar_topup', {
-    p_user_name: userName, p_amount_pence: amountPence, p_staff: staff, p_note: note ?? null,
+    p_user_name: userName, p_amount_pence: amountPence, p_staff: staff, p_note: note ?? null, p_payment_method: paymentMethod,
   });
   if (error) throw new Error(error.message);
   return data as number;
 }
 
-export async function walletPurchase(userName: string, items: BasketItem[], staff: string): Promise<{ saleId: string; balancePence: number; totalPence: number }> {
+export async function walletPurchase(userName: string, items: BasketItem[], staff: string): Promise<{ saleId: string; balancePence: number; totalPence: number; grossTotalPence: number; discountPence: number }> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase.rpc('bar_wallet_purchase', {
     p_user_name: userName,
@@ -191,15 +334,33 @@ export async function walletPurchase(userName: string, items: BasketItem[], staf
     p_staff: staff,
   });
   if (error) throw new Error(error.message);
-  return { saleId: data.sale_id, balancePence: data.balance_pence, totalPence: data.total_pence };
+  return { saleId: data.sale_id, balancePence: data.balance_pence, totalPence: data.total_pence, grossTotalPence: data.gross_total_pence, discountPence: data.discount_pence };
 }
 
-export async function visitorSale(method: 'card' | 'cash', items: BasketItem[], staff: string): Promise<{ saleId: string; totalPence: number }> {
+/** userName attributes a card/cash sale to a known member (e.g. "Pay by Card") without
+ * touching their wallet — priced at the member rate. Omitted, it's a plain visitor sale
+ * priced at the non-member rate, exactly as before. */
+export async function visitorSale(method: 'card' | 'cash', items: BasketItem[], staff: string, userName?: string): Promise<{ saleId: string; totalPence: number; grossTotalPence: number; discountPence: number }> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase.rpc('bar_visitor_sale', {
     p_payment_method: method,
     p_items: items.map((i) => ({ product_id: i.productId, qty: i.qty })),
     p_staff: staff,
+    p_user_name: userName ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return { saleId: data.sale_id, totalPence: data.total_pence, grossTotalPence: data.gross_total_pence, discountPence: data.discount_pence };
+}
+
+/** Cash added to or removed from the till for a non-sale reason (float top-up, petty
+ * cash, paying a delivery driver, etc.) -- posted as an ordinary cash sale of a
+ * variable-price product so it rolls into the Dayend cash total and the Xero
+ * export's nominal-code split like any other sale (see bar_cash_movement() in
+ * 0064_bar_cash_movements.sql). productId must be a variable_price product. */
+export async function cashMovement(productId: string, amountPence: number, direction: 'in' | 'out', reason: string, staff: string): Promise<{ saleId: string; totalPence: number }> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.rpc('bar_cash_movement', {
+    p_product_id: productId, p_amount_pence: amountPence, p_direction: direction, p_reason: reason, p_staff: staff,
   });
   if (error) throw new Error(error.message);
   return { saleId: data.sale_id, totalPence: data.total_pence };
@@ -222,23 +383,37 @@ export async function refund(userName: string, amountPence: number, staff: strin
 
 // ── Reporting ────────────────────────────────────────────────────────────────
 
-export async function getReport(fromIso: string, toIso: string): Promise<BarReport> {
+/** Everything not yet linked to a Day End (bar_day_ends, 0063_bar_day_ends.sql) --
+ * "since the last cash-up", not a calendar day, since a day end isn't guaranteed
+ * to align with midnight. Once bar_create_day_end() links every current row,
+ * this naturally goes back to reporting nothing until fresh activity happens. */
+export async function getReport(): Promise<BarReport> {
   const supabase = getSupabaseClient();
 
-  // Non-voided sales in range, with line items + product info
+  // Non-voided, not-yet-linked sales, with line items + product info
   const { data: sales, error: salesErr } = await supabase
     .from('bar_sales')
-    .select('id, payment_method, total_pence, voided, created_at, bar_sale_items ( qty, unit_price_pence, bar_products ( name, category ) )')
-    .gte('created_at', fromIso).lte('created_at', toIso).eq('voided', false);
+    .select('id, payment_method, total_pence, discount_pence, voided, is_cash_movement, created_at, bar_sale_items ( qty, unit_price_pence, bar_products ( name, category ) )')
+    .is('day_end_id', null).eq('voided', false);
   if (salesErr) throw new Error(`Failed to load sales: ${salesErr.message}`);
 
   const byMethodPence = { wallet: 0, card: 0, cash: 0 };
   const byCategoryPence: Record<string, number> = {};
   const byProductMap = new Map<string, { name: string; qty: number; totalPence: number }>();
+  let discountsGivenPence = 0;
+  let cashMovementsPence = 0;
 
   for (const s of sales ?? []) {
     const method = s.payment_method as 'wallet' | 'card' | 'cash';
-    byMethodPence[method] = (byMethodPence[method] ?? 0) + s.total_pence;
+    // Cash Movements are a distinct, non-sale bucket on the Dayend screen (see
+    // 0064_bar_cash_movements.sql) — kept out of byMethodPence.cash so "Cash
+    // Sales" reads as real product sales only.
+    if (method === 'cash' && s.is_cash_movement) {
+      cashMovementsPence += s.total_pence;
+    } else {
+      byMethodPence[method] = (byMethodPence[method] ?? 0) + s.total_pence;
+    }
+    discountsGivenPence += s.discount_pence ?? 0;
     for (const item of (s.bar_sale_items ?? []) as any[]) {
       const line = item.qty * item.unit_price_pence;
       const cat = item.bar_products?.category ?? 'other';
@@ -250,14 +425,17 @@ export async function getReport(fromIso: string, toIso: string): Promise<BarRepo
     }
   }
 
-  // Top-ups / refunds in range (cash in / cash out)
+  // Top-ups / refunds not yet linked (cash in / cash out). Card top-ups are
+  // tracked separately — they're not cash landing in the till.
   const { data: ledger, error: ledErr } = await supabase
-    .from('bar_ledger').select('type, amount_pence').gte('created_at', fromIso).lte('created_at', toIso).in('type', ['topup', 'refund']);
+    .from('bar_ledger').select('type, amount_pence, payment_method').is('day_end_id', null).in('type', ['topup', 'refund']);
   if (ledErr) throw new Error(`Failed to load ledger: ${ledErr.message}`);
-  let topupsPence = 0, refundsPence = 0;
+  let topupsPence = 0, cardTopupsPence = 0, refundsPence = 0;
   for (const l of ledger ?? []) {
-    if (l.type === 'topup') topupsPence += l.amount_pence;       // positive
-    else if (l.type === 'refund') refundsPence += -l.amount_pence; // stored negative → make positive
+    if (l.type === 'topup') {
+      if (l.payment_method === 'card') cardTopupsPence += l.amount_pence;
+      else topupsPence += l.amount_pence; // 'cash' or null (legacy rows, all cash)
+    } else if (l.type === 'refund') refundsPence += -l.amount_pence; // stored negative → make positive
   }
 
   // Current outstanding float (not range-bound)
@@ -267,14 +445,322 @@ export async function getReport(fromIso: string, toIso: string): Promise<BarRepo
 
   const cashSalesPence = byMethodPence.cash;
 
+  // Whatever was carried forward from the last cash-up (see bar_create_day_end()) --
+  // signed, since a shortfall that was carried rather than explained lowers next
+  // time's expected cash, same as a surplus raises it.
+  const config = await getConfig();
+  const carriedForwardPence = parseInt(config.bar_cash_carried_forward_pence || '0', 10) || 0;
+
   return {
-    fromIso, toIso,
     salesCount: (sales ?? []).length,
     byMethodPence, byCategoryPence,
     byProduct: [...byProductMap.values()].sort((a, b) => b.totalPence - a.totalPence),
-    topupsPence, refundsPence, cashSalesPence, outstandingPence,
-    expectedCashPence: topupsPence + cashSalesPence - refundsPence,
+    topupsPence, cardTopupsPence, refundsPence, cashSalesPence, cashMovementsPence, outstandingPence, carriedForwardPence,
+    expectedCashPence: carriedForwardPence + topupsPence + cashSalesPence + cashMovementsPence - refundsPence,
+    discountsGivenPence,
   };
+}
+
+// ── Day End (cash-up) ─────────────────────────────────────────────────────────
+
+export interface BarDayEnd {
+  id: string;
+  staff: string;
+  createdAt: string;
+  floatPence: number;
+  carriedInPence: number;    // brought forward into this cash-up (config snapshot at the time)
+  cashTopupsPence: number;
+  cashSalesPence: number;      // real product sales only — Cash Movements excluded
+  cashMovementsPence: number;  // net non-sale cash in/out of the till; signed
+  refundsPence: number;
+  cashExpectedPence: number;
+  cashRemovedPence: number;
+  carriedForward: boolean;   // true if the difference was deferred rather than explained
+  carriedOutPence: number;   // computed, not its own column: carriedForward ? (expected - removed) : 0
+  differenceReason: string | null;
+  walletSalesPence: number;
+  cardSalesPence: number;
+  cardTopupsPence: number;
+  discountsGivenPence: number;
+  outstandingBalancePence: number;
+  confirmedAt: string | null;   // reviewed (and corrected, if needed) — see specs/BAR_BANKING_XERO_SPEC.md §3
+  confirmedBy: string | null;
+  bankingId: string | null;     // set once included in a bar_bankings batch (§5); null = not yet banked
+  xeroExportedAt: string | null;
+  xeroExportedBy: string | null;
+}
+
+function mapDayEndRow(r: any): BarDayEnd {
+  const carriedForward = r.carried_forward;
+  const bankingLinks = r.bar_banking_day_ends;
+  return {
+    id: r.id, staff: r.staff, createdAt: r.created_at, floatPence: r.float_pence,
+    carriedInPence: r.carried_in_pence,
+    cashTopupsPence: r.cash_topups_pence, cashSalesPence: r.cash_sales_pence, cashMovementsPence: r.cash_movements_pence, refundsPence: r.refunds_pence,
+    cashExpectedPence: r.cash_expected_pence, cashRemovedPence: r.cash_removed_pence,
+    carriedForward,
+    carriedOutPence: carriedForward ? r.cash_expected_pence - r.cash_removed_pence : 0,
+    differenceReason: r.difference_reason, walletSalesPence: r.wallet_sales_pence,
+    cardSalesPence: r.card_sales_pence, cardTopupsPence: r.card_topups_pence,
+    discountsGivenPence: r.discounts_given_pence, outstandingBalancePence: r.outstanding_balance_pence,
+    confirmedAt: r.confirmed_at, confirmedBy: r.confirmed_by,
+    bankingId: (bankingLinks && bankingLinks.length > 0) ? bankingLinks[0].banking_id : null,
+    xeroExportedAt: r.xero_exported_at, xeroExportedBy: r.xero_exported_by,
+  };
+}
+
+/** Aggregates every bar_ledger/bar_sales row not yet linked to a day end into one
+ * durable record, then links them all to it (see bar_create_day_end() in
+ * 0063_bar_day_ends.sql) -- the whole "run it again, nothing to report" mechanic
+ * lives in that one atomic function, not here. */
+export async function createDayEnd(staff: string, cashRemovedPence: number, carryForward: boolean, reason?: string): Promise<BarDayEnd> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.rpc('bar_create_day_end', {
+    p_staff: staff, p_cash_removed_pence: cashRemovedPence, p_carry_forward: carryForward, p_reason: reason ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return mapDayEndRow(data);
+}
+
+/** Day Ends still awaiting Treasurer review (specs/BAR_BANKING_XERO_SPEC.md §3) --
+ * oldest first, since that's the order they must be confirmed/edited in for the
+ * carry-forward chain guard in bar_edit_day_end() to stay meaningful. */
+export async function getUnconfirmedDayEnds(): Promise<BarDayEnd[]> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('bar_day_ends').select('*').is('confirmed_at', null).order('created_at', { ascending: true });
+  if (error) throw new Error(`Failed to load day ends: ${error.message}`);
+  return (data ?? []).map(mapDayEndRow);
+}
+
+/** Confirmed Day Ends, newest first -- every one regardless of banked/exported
+ * status (both shown as columns; the caller/UI decides what to hide by default). */
+export async function getConfirmedDayEnds(): Promise<BarDayEnd[]> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('bar_day_ends').select('*, bar_banking_day_ends ( banking_id )')
+    .not('confirmed_at', 'is', null).order('created_at', { ascending: false });
+  if (error) throw new Error(`Failed to load day ends: ${error.message}`);
+  return (data ?? []).map(mapDayEndRow);
+}
+
+export async function confirmDayEnd(dayEndId: string, staff: string): Promise<BarDayEnd> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.rpc('bar_confirm_day_end', { p_day_end_id: dayEndId, p_staff: staff });
+  if (error) throw new Error(error.message);
+  return mapDayEndRow(data);
+}
+
+export async function unconfirmDayEnd(dayEndId: string): Promise<BarDayEnd> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.rpc('bar_unconfirm_day_end', { p_day_end_id: dayEndId });
+  if (error) throw new Error(error.message);
+  return mapDayEndRow(data);
+}
+
+/** Corrects an unconfirmed Day End's cash-count outcome. Blocked once confirmed,
+ * or once a later Day End has already consumed what this one carried forward --
+ * see bar_edit_day_end() in 0067_bar_confirm_manual_bankings.sql for the exact
+ * guard. The reason alone can always still be changed. */
+export async function editDayEnd(dayEndId: string, cashRemovedPence: number, carryForward: boolean, reason?: string): Promise<BarDayEnd> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.rpc('bar_edit_day_end', {
+    p_day_end_id: dayEndId, p_cash_removed_pence: cashRemovedPence, p_carry_forward: carryForward, p_reason: reason ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return mapDayEndRow(data);
+}
+
+/** Cash that never went through the till (raffle, teas, ...) — its own
+ * self-contained Day End, never visible to the till's own cash-up sweep. See
+ * bar_create_manual_day_end() in 0067_bar_confirm_manual_bankings.sql. */
+export async function createManualDayEnd(countedBy: string, productId: string, amountPence: number, note?: string): Promise<BarDayEnd> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.rpc('bar_create_manual_day_end', {
+    p_counted_by: countedBy, p_product_id: productId, p_amount_pence: amountPence, p_note: note ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return mapDayEndRow(data);
+}
+
+export async function markDayEndsExported(dayEndIds: string[], exportedBy: string): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase
+    .from('bar_day_ends')
+    .update({ xero_exported_at: new Date().toISOString(), xero_exported_by: exportedBy })
+    .in('id', dayEndIds);
+  if (error) throw new Error(`Failed to mark day ends exported: ${error.message}`);
+}
+
+// ── Cash banking batches (specs/BAR_BANKING_XERO_SPEC.md §5) ─────────────────
+
+export interface BarBanking {
+  id: string;
+  bankedDate: string;
+  totalPence: number;
+  bankedBy: string;
+  note: string | null;
+  createdAt: string;
+  xeroExportedAt: string | null;
+  xeroExportedBy: string | null;
+}
+
+function mapBankingRow(r: any): BarBanking {
+  return {
+    id: r.id, bankedDate: r.banked_date, totalPence: r.total_pence, bankedBy: r.banked_by,
+    note: r.note, createdAt: r.created_at, xeroExportedAt: r.xero_exported_at, xeroExportedBy: r.xero_exported_by,
+  };
+}
+
+export async function getBankings(includeExported = false): Promise<BarBanking[]> {
+  const supabase = getSupabaseClient();
+  let query = supabase.from('bar_bankings').select('*').order('banked_date', { ascending: false });
+  if (!includeExported) query = query.is('xero_exported_at', null);
+  const { data, error } = await query;
+  if (error) throw new Error(`Failed to load bankings: ${error.message}`);
+  return (data ?? []).map(mapBankingRow);
+}
+
+/** The Day Ends bundled into one Banking record. */
+export async function getBankingDayEnds(bankingId: string): Promise<BarDayEnd[]> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('bar_banking_day_ends')
+    .select('bar_day_ends ( * )')
+    .eq('banking_id', bankingId);
+  if (error) throw new Error(`Failed to load banking contents: ${error.message}`);
+  return (data ?? []).map((r: any) => mapDayEndRow(r.bar_day_ends));
+}
+
+export async function createBanking(bankedBy: string, bankedDate: string, dayEndIds: string[], note?: string): Promise<BarBanking> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.rpc('bar_create_banking', {
+    p_banked_by: bankedBy, p_banked_date: bankedDate, p_day_end_ids: dayEndIds, p_note: note ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return mapBankingRow(data);
+}
+
+export async function addDayEndToBanking(bankingId: string, dayEndId: string): Promise<BarBanking> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.rpc('bar_add_day_end_to_banking', { p_banking_id: bankingId, p_day_end_id: dayEndId });
+  if (error) throw new Error(error.message);
+  return mapBankingRow(data);
+}
+
+export async function removeDayEndFromBanking(bankingId: string, dayEndId: string): Promise<BarBanking> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.rpc('bar_remove_day_end_from_banking', { p_banking_id: bankingId, p_day_end_id: dayEndId });
+  if (error) throw new Error(error.message);
+  return mapBankingRow(data);
+}
+
+export async function markBankingsExported(bankingIds: string[], exportedBy: string): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase
+    .from('bar_bankings')
+    .update({ xero_exported_at: new Date().toISOString(), xero_exported_by: exportedBy })
+    .in('id', bankingIds);
+  if (error) throw new Error(`Failed to mark bankings exported: ${error.message}`);
+}
+
+// ── Day End drill-down (Treasurer Bar Reconciliation) ────────────────────────
+
+export interface BarDayEndLedgerRow {
+  id: string;
+  type: 'topup' | 'refund';
+  amountPence: number;
+  paymentMethod: 'cash' | 'card' | null;
+  userName: string;
+  memberName: string;
+  staff: string | null;
+  note: string | null;
+  createdAt: string;
+}
+
+/** The sales making up one payment-method line of a Day End (e.g. "Wallet sales" -> the
+ * bar_sales rows linked to it with payment_method = 'wallet'). dayEndId null means "not
+ * yet linked to any Day End" -- the till's live Dayend screen, before Confirm Day End.
+ * cashMovementsOnly separates the 'cash' method into its two Dayend rows: false for
+ * "Cash Sales" (real product sales), true for "Cash Movements"; leave undefined for
+ * 'wallet'/'card', which never have Cash Movement rows. */
+export async function getDayEndSales(dayEndId: string | null, method: 'wallet' | 'card' | 'cash', cashMovementsOnly?: boolean): Promise<BarSaleSummary[]> {
+  const supabase = getSupabaseClient();
+  let query = supabase
+    .from('bar_sales')
+    .select('id, created_at, payment_method, user_name, total_pence, gross_total_pence, discount_pence, voided, is_cash_movement, reason, bar_sale_items ( qty, unit_price_pence, bar_products ( name ) )')
+    .eq('payment_method', method).eq('voided', false);
+  if (cashMovementsOnly !== undefined) query = query.eq('is_cash_movement', cashMovementsOnly);
+  query = dayEndId === null ? query.is('day_end_id', null) : query.eq('day_end_id', dayEndId);
+  const { data, error } = await query.order('created_at', { ascending: true });
+  if (error) throw new Error(`Failed to load sales: ${error.message}`);
+  const names = await nameMap();
+  return (data ?? []).map((s: any) => ({
+    id: s.id,
+    createdAt: s.created_at,
+    paymentMethod: s.payment_method,
+    userName: s.user_name,
+    memberName: s.user_name ? (names.get(s.user_name.toLowerCase()) || s.user_name) : null,
+    totalPence: s.total_pence,
+    grossTotalPence: s.gross_total_pence,
+    discountPence: s.discount_pence,
+    voided: s.voided,
+    isCashMovement: s.is_cash_movement,
+    reason: s.reason,
+    items: (s.bar_sale_items ?? []).map((i: any) => ({ name: i.bar_products?.name ?? 'Item', qty: i.qty, unitPricePence: i.unit_price_pence })),
+  }));
+}
+
+/** The top-ups/refunds making up one line of a Day End. paymentMethod 'cash' also matches
+ * legacy rows with a null payment_method, mirroring getReport()'s cash/null equivalence.
+ * dayEndId null means "not yet linked to any Day End" -- the till's live Dayend screen. */
+export async function getDayEndLedger(dayEndId: string | null, type: 'topup' | 'refund', paymentMethod?: 'cash' | 'card'): Promise<BarDayEndLedgerRow[]> {
+  const supabase = getSupabaseClient();
+  let query = supabase
+    .from('bar_ledger')
+    .select('id, type, amount_pence, payment_method, user_name, staff, note, created_at')
+    .eq('type', type);
+  query = dayEndId === null ? query.is('day_end_id', null) : query.eq('day_end_id', dayEndId);
+  if (paymentMethod === 'card') query = query.eq('payment_method', 'card');
+  else if (paymentMethod === 'cash') query = query.or('payment_method.is.null,payment_method.eq.cash');
+  const { data, error } = await query.order('created_at', { ascending: true });
+  if (error) throw new Error(`Failed to load ledger: ${error.message}`);
+  const names = await nameMap();
+  return (data ?? []).map((r: any) => ({
+    id: r.id, type: r.type, amountPence: Math.abs(r.amount_pence), paymentMethod: r.payment_method,
+    userName: r.user_name, memberName: names.get(r.user_name.toLowerCase()) || r.user_name,
+    staff: r.staff, note: r.note, createdAt: r.created_at,
+  }));
+}
+
+export interface BarNominalRevenue {
+  nominalCode: string | null;   // null = no product/category override; caller falls back to the global default
+  pence: number;
+}
+
+/** Net revenue (what was actually charged, after any member discount) for one payment
+ * method of a Day End, split by nominal code via the product -> category -> default
+ * hierarchy. Used to build the per-code revenue lines of the Xero export.
+ * cashMovementsOnly separates 'cash' the same way as getDayEndSales() -- Cash
+ * Movements are posted as their own journal lines, not blended into cash sales. */
+export async function getDayEndRevenueByNominalCode(dayEndId: string, method: 'wallet' | 'card' | 'cash', cashMovementsOnly?: boolean): Promise<BarNominalRevenue[]> {
+  const supabase = getSupabaseClient();
+  let query = supabase
+    .from('bar_sales')
+    .select('bar_sale_items ( qty, unit_price_pence, bar_products ( nominal_code, category, bar_categories ( nominal_code ) ) )')
+    .eq('day_end_id', dayEndId).eq('payment_method', method).eq('voided', false);
+  if (cashMovementsOnly !== undefined) query = query.eq('is_cash_movement', cashMovementsOnly);
+  const { data, error } = await query;
+  if (error) throw new Error(`Failed to load sale items: ${error.message}`);
+  const totals = new Map<string | null, number>();
+  for (const s of (data ?? []) as any[]) {
+    for (const item of (s.bar_sale_items ?? []) as any[]) {
+      const line = item.qty * item.unit_price_pence;
+      const code = item.bar_products?.nominal_code ?? item.bar_products?.bar_categories?.nominal_code ?? null;
+      totals.set(code, (totals.get(code) ?? 0) + line);
+    }
+  }
+  return [...totals.entries()].map(([nominalCode, pence]) => ({ nominalCode, pence }));
 }
 
 // ── Recent sales (for the void screen) ───────────────────────────────────────
@@ -292,7 +778,11 @@ export interface BarSaleSummary {
   userName: string | null;
   memberName: string | null;   // null for visitor sales
   totalPence: number;
+  grossTotalPence: number;
+  discountPence: number;
   voided: boolean;
+  isCashMovement: boolean;
+  reason: string | null;       // Cash Movement only
   items: BarSaleItem[];
 }
 
@@ -300,7 +790,7 @@ export async function getRecentSales(limit = 40): Promise<BarSaleSummary[]> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
     .from('bar_sales')
-    .select('id, created_at, payment_method, user_name, total_pence, voided, bar_sale_items ( qty, unit_price_pence, bar_products ( name ) )')
+    .select('id, created_at, payment_method, user_name, total_pence, gross_total_pence, discount_pence, voided, is_cash_movement, reason, bar_sale_items ( qty, unit_price_pence, bar_products ( name ) )')
     .order('created_at', { ascending: false })
     .limit(limit);
   if (error) throw new Error(`Failed to load sales: ${error.message}`);
@@ -312,20 +802,11 @@ export async function getRecentSales(limit = 40): Promise<BarSaleSummary[]> {
     userName: s.user_name,
     memberName: s.user_name ? (names.get(s.user_name.toLowerCase()) || s.user_name) : null,
     totalPence: s.total_pence,
+    grossTotalPence: s.gross_total_pence,
+    discountPence: s.discount_pence,
     voided: s.voided,
+    isCashMovement: s.is_cash_movement,
+    reason: s.reason,
     items: (s.bar_sale_items ?? []).map((i: any) => ({ name: i.bar_products?.name ?? 'Item', qty: i.qty, unitPricePence: i.unit_price_pence })),
   }));
-}
-
-/** Line items for a single sale — used by the member History panel, where
- * unlike getRecentSales the item breakdown isn't preloaded (fetched on demand
- * only when a ledger entry is expanded). */
-export async function getSaleItems(saleId: string): Promise<BarSaleItem[]> {
-  const supabase = getSupabaseClient();
-  const { data, error } = await supabase
-    .from('bar_sale_items')
-    .select('qty, unit_price_pence, bar_products ( name )')
-    .eq('sale_id', saleId);
-  if (error) throw new Error(`Failed to load sale items: ${error.message}`);
-  return (data ?? []).map((i: any) => ({ name: i.bar_products?.name ?? 'Item', qty: i.qty, unitPricePence: i.unit_price_pence }));
 }

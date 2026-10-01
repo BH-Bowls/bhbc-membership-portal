@@ -154,6 +154,7 @@ export function Navbar() {
       members.push({ name: 'Send Member Emails', href: '/admin/emails' });
       members.push({ name: 'Data Export', href: '/data-export' });
       members.push({ name: 'Print Labels', href: '/labels' });
+      members.push({ name: 'Locker Register', href: '/admin/lockers' });
       members.push({ name: 'Availability', href: '/availability' });
     }
     if (isCaptain || isAdmin) {
@@ -187,6 +188,7 @@ export function Navbar() {
     // ── Club ──
     if (isAdmin || canAccessBanking) {
       club.push({ name: 'Banking', href: '/banking' });
+      club.push({ name: 'Bar Reconciliation', href: '/banking/bar-reconciliation' });
     }
     if (isGMC || isAdmin) {
       club.push({ name: 'Member Suggestions', href: '/member-suggestions' });
@@ -205,6 +207,8 @@ export function Navbar() {
       system.push({ name: 'Config', href: '/admin/config' });
       system.push({ name: 'Cache View', href: '/admin/cache' });
       system.push({ name: 'Logs', href: '/admin/logs' });
+      system.push({ name: 'Bar Till', href: '/bar' });
+      system.push({ name: 'Bar Till Devices', href: '/admin/bar-devices' });
     }
 
     const groups: SubMenuGroup[] = [
@@ -661,6 +665,20 @@ export function Navbar() {
     </button>
   );
 
+  // The dedicated bar-till login never sees a navbar — it only ever visits /bar,
+  // and the till hides all portal navigation there. Admin/Committee visiting /bar
+  // through their own login still see the normal navbar (this only fires for the
+  // 'Bar' role itself). Placed after every hook above runs, never before —
+  // conditionally skipping hooks based on a role that can change between renders
+  // (e.g. via impersonation) would break React's rules of hooks.
+  //
+  // Also hide on /bar itself while logged out (the till's own PIN entry screen) —
+  // roles is empty at that point (no session yet), so the check above alone
+  // wouldn't catch it, and the till is meant to look like a locked-down kiosk
+  // even before signing in. Gated on !session so Admin/Committee still see the
+  // normal navbar when they're the ones authenticated and visiting /bar.
+  if (roles.includes('Bar') || (pathname === '/bar' && !session)) return null;
+
   return (
     <nav className="sticky top-0 z-50 bg-white shadow-sm print:hidden">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -925,7 +943,7 @@ export function Navbar() {
                           </div>
                         )}
 
-                        {/* Profile & Renewals */}
+                        {/* Profile, My Account & Renewals */}
                         <Link
                           href="/profile"
                           onClick={(e) => {
@@ -935,6 +953,16 @@ export function Navbar() {
                           className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
                         >
                           My Profile
+                        </Link>
+                        <Link
+                          href="/account"
+                          onClick={(e) => {
+                            handleNavigation(e, '/account');
+                            setProfileMenuOpen(false);
+                          }}
+                          className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                        >
+                          My Account
                         </Link>
                         <Link
                           href="/renewals"
@@ -1230,7 +1258,7 @@ export function Navbar() {
                     </div>
                   )}
                   <div className="px-2 space-y-1">
-                    {/* Profile & Renewals */}
+                    {/* Profile, My Account & Renewals */}
                     <Link
                       href="/profile"
                       onClick={(e) => {
@@ -1240,6 +1268,16 @@ export function Navbar() {
                       className="block px-3 py-2 text-base font-medium text-gray-700 hover:bg-gray-100 rounded-md"
                     >
                       My Profile
+                    </Link>
+                    <Link
+                      href="/account"
+                      onClick={(e) => {
+                        handleNavigation(e, '/account');
+                        setMobileMenuOpen(false);
+                      }}
+                      className="block px-3 py-2 text-base font-medium text-gray-700 hover:bg-gray-100 rounded-md"
+                    >
+                      My Account
                     </Link>
                     <Link
                       href="/renewals"

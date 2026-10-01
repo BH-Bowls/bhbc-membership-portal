@@ -26,6 +26,7 @@ function isPublicRoute(pathname: string): boolean {
   const exactPages = [
     '/fixtures', '/members', '/friendlies', '/competitions',
     '/tea-rota', '/cleaning-rota', '/sweeping-rota', '/rowland', '/leagues',
+    '/bar', // the till has its own PIN login (BarPinLogin, app/bar/page.tsx) instead of /login
   ];
   if (exactPages.includes(pathname)) return true;
 
@@ -70,6 +71,15 @@ function isPublicRoute(pathname: string): boolean {
   ];
   if (exactApis.includes(pathname)) return true;
 
+  // POST /api/bar/devices — deliberately public despite being a write endpoint: the
+  // till calls it before it's logged in, to register its pairing code (see
+  // app/bar/page.tsx's BarPinLogin and app/api/bar/devices/route.ts). It only ever
+  // creates an unapproved, powerless pending row — nothing works until an admin
+  // approves it on /admin/bar-devices. Without this, the request 307-redirects to
+  // /login, which the browser's fetch() follows and reports as a misleading 200 OK
+  // against the login page — the registration silently never happens (found 2026-09-18).
+  if (pathname === '/api/bar/devices') return true;
+
   // /api/leagues/[leagueId] and sub-paths — public
   if (pathname.startsWith('/api/leagues/')) return true;
 
@@ -113,6 +123,10 @@ function isPublicRoute(pathname: string): boolean {
  * matcher, so it never reaches the gate.
  */
 function isPinExempt(pathname: string): boolean {
+  // The till has its own PIN login (a member-area PIN gate in front of that would be
+  // a confusing second, unrelated PIN prompt).
+  if (pathname === '/bar') return true;
+  if (pathname === '/api/bar/devices') return true;
   if (pathname === '/rowland' || pathname.startsWith('/rowland/')) return true;
   if (pathname.startsWith('/api/rowland')) return true;
   // Competition rules — a public page linked from the club website, plus the single
@@ -158,6 +172,15 @@ export default withAuth(
         }
         return NextResponse.redirect(new URL('/maintenance', req.url));
       }
+    }
+
+    // The bar till has no navbar (Navbar.tsx hides itself for role 'Bar') and should
+    // never show anything except /bar — if it somehow reaches any other page (e.g. a
+    // stale bookmark to "/"), send it straight back rather than leaving it stranded
+    // on a normal member page with no way to navigate anywhere. API routes are left
+    // alone — the till's own page makes many of those.
+    if (token && hasRole(token.role as string, 'Bar') && pathname !== '/bar' && !pathname.startsWith('/api/') && pathname !== '/maintenance') {
+      return NextResponse.redirect(new URL('/bar', req.url));
     }
 
     // Public-access PIN gate. When PUBLIC_ACCESS_PIN is configured, the public
@@ -315,6 +338,6 @@ export default withAuth(
  */
 export const config = {
   matcher: [
-    '/((?!api/auth|api/apply|api/unlock|unlock|login|forgot-password|reset-password|kiosk|apply|help/login|_next/static|_next/image|favicon.ico|bhbc-logo.jpg|manifest.json|icons/).*)',
+    '/((?!api/auth|api/apply|api/unlock|unlock|login|forgot-password|reset-password|kiosk|apply|help/login|_next/static|_next/image|favicon.ico|bhbc-logo.jpg|manifest.json|manifest-bar.json|icons/).*)',
   ],
 };

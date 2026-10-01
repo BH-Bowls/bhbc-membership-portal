@@ -94,3 +94,23 @@ export function groupPairedGames<T extends { paired?: string; status: GameStatus
 
   return result;
 }
+
+/**
+ * Best-effort category for a cancellation's free-text `reason` field, for the Games
+ * Stats page. There is no structured reason field anywhere in the app — captains type
+ * whatever they like into a plain text input (placeholder: "e.g., Weather, Insufficient
+ * players") — so this is keyword matching, not a reliable classification. Good enough
+ * for a rough breakdown; will miscategorize anything not phrased predictably.
+ */
+export type CancellationReasonCategory = 'Weather' | 'Insufficient players' | 'Other';
+
+const WEATHER_KEYWORDS = ['weather', 'rain', 'wind', 'storm', 'snow', 'frost', 'waterlog', 'flood', 'hail', 'icy', 'ice'];
+const PLAYERS_KEYWORDS = ['player', 'short', 'insufficient', 'unable to field', 'no team', 'understrength', 'not enough'];
+
+export function categorizeCancellationReason(reason: string | null | undefined): CancellationReasonCategory {
+  const text = (reason || '').toLowerCase();
+  if (!text) return 'Other';
+  if (WEATHER_KEYWORDS.some((k) => text.includes(k))) return 'Weather';
+  if (PLAYERS_KEYWORDS.some((k) => text.includes(k))) return 'Insufficient players';
+  return 'Other';
+}

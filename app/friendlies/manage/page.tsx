@@ -28,6 +28,48 @@ interface PlayerStatRow {
   entered: number;
   total: number;
 }
+
+interface ResultBreakdown {
+  won: number;
+  drawn: number;
+  lost: number;
+  noResult: number;
+}
+
+interface CancellationReasonTally {
+  weather: number;
+  insufficientPlayers: number;
+  other: number;
+  total: number;
+}
+
+interface SeasonGamesStats {
+  seasonId: string;
+  year: number;
+  clubsPlayed: number;
+  clubNames: string[];
+  nonClubFixtures: { count: number; descriptions: string[] };
+  reserveGamesArranged: number;
+  gamesArranged: number;
+  seatsArranged: number;
+  openUpcoming: number;
+  selectingSelected: number;
+  playedInFull: number;
+  results: ResultBreakdown;
+  abandoned: number;
+  cancelled: number;
+  cancelledBreakdown: Record<'burgessHill' | 'opponent' | 'unspecified', CancellationReasonTally>;
+  homeAway: { home: number; away: number };
+  homeAwayResults: { home: ResultBreakdown; away: ResultBreakdown };
+}
+
+interface GamesStatsResponse {
+  seasons: { id: string; year: number; isActive: boolean }[];
+  season: SeasonGamesStats;
+  compareSeason: SeasonGamesStats | null;
+  newClubs: string[];
+  lostClubs: string[];
+}
 import { getButtonClasses } from '@/config/theme-helpers';
 import { groupPairedGames, isPairedGame, type GameOrPair as GameOrPairGeneric } from '@/lib/friendlies-utils';
 type GameOrPair = GameOrPairGeneric<Game>;
@@ -149,8 +191,8 @@ export default function ManageGamesPage() {
     onProceed: () => void;
   } | null>(null);
 
-  // State: Manage page view toggle — Games list or Player Stats
-  const [manageView, setManageView] = useState<'games' | 'stats'>('games');
+  // State: Manage page view toggle — Games list, Player Stats, or Games Stats
+  const [manageView, setManageView] = useState<'games' | 'stats' | 'games-stats'>('games');
 
   // State: Player stats data
   const [playerStats, setPlayerStats] = useState<PlayerStatRow[] | null>(null);
@@ -161,6 +203,12 @@ export default function ManageGamesPage() {
   const [statsSortCol, setStatsSortCol] = useState<keyof PlayerStatRow>('fullName');
   const [statsSortDir, setStatsSortDir] = useState<'asc' | 'desc'>('asc');
   const [showNotPlayed, setShowNotPlayed] = useState(false);
+
+  // State: Games stats data (season-level: clubs, volume, status breakdown, W/D/L, cancellations)
+  const [gamesStats, setGamesStats] = useState<GamesStatsResponse | null>(null);
+  const [gamesStatsLoading, setGamesStatsLoading] = useState(false);
+  const [statsSeasonId, setStatsSeasonId] = useState<string>('');
+  const [statsCompareSeasonId, setStatsCompareSeasonId] = useState<string>(''); // '' = no comparison
 
   // ============================================================================
   // Effects
@@ -192,7 +240,7 @@ export default function ManageGamesPage() {
 
     // Restore saved view and filter tab
     const savedView = sessionStorage.getItem('friendlies_manage_view');
-    if (savedView === 'games' || savedView === 'stats') setManageView(savedView);
+    if (savedView === 'games' || savedView === 'stats' || savedView === 'games-stats') setManageView(savedView);
 
     const savedFilter = sessionStorage.getItem('friendlies_manage_filter');
     if (savedFilter === 'all' || savedFilter === 'upcoming' || savedFilter === 'open' || savedFilter === 'selecting' || savedFilter === 'played') {
@@ -271,6 +319,33 @@ export default function ManageGamesPage() {
       console.error('Failed to fetch player stats:', error);
     } finally {
       setPlayerStatsLoading(false);
+    }
+  }
+
+  /**
+   * Fetch season-level games stats. Pass seasonId/compareSeasonId to switch the
+   * season picker; omit both for the server's default (active season vs the prior
+   * year). compareSeasonId '' means "no comparison season".
+   */
+  async function fetchGamesStats(seasonId?: string, compareSeasonId?: string) {
+    setGamesStatsLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (seasonId) params.set('seasonId', seasonId);
+      if (compareSeasonId !== undefined) params.set('compareSeasonId', compareSeasonId);
+      const res = await fetch(`/api/friendlies/manage/games-stats${params.toString() ? `?${params}` : ''}`);
+      const data = await res.json();
+      if (res.ok) {
+        setGamesStats(data as GamesStatsResponse);
+        setStatsSeasonId(data.season.seasonId);
+        setStatsCompareSeasonId(data.compareSeason ? data.compareSeason.seasonId : '');
+      } else {
+        console.error('Games stats error:', data.error);
+      }
+    } catch (error) {
+      console.error('Failed to fetch games stats:', error);
+    } finally {
+      setGamesStatsLoading(false);
     }
   }
 
@@ -967,6 +1042,20 @@ export default function ManageGamesPage() {
           >
             Player Stats
           </button>
+          <button
+            onClick={() => {
+              setManageView('games-stats');
+              sessionStorage.setItem('friendlies_manage_view', 'games-stats');
+              if (!gamesStats) fetchGamesStats();
+            }}
+            className={`px-4 py-2 rounded font-medium text-sm transition-colors ${
+              manageView === 'games-stats'
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            Games Stats
+          </button>
         </div>
 
         {/* Filter tabs - allow captain to filter by game status (games view only) */}
@@ -1116,6 +1205,221 @@ export default function ManageGamesPage() {
                 )}
               </div>
             )}
+            </div>
+          );
+        })()}
+
+        {/* ── Games Stats view ───────────────────────────────────────────── */}
+        {manageView === 'games-stats' && (() => {
+          if (gamesStatsLoading || !gamesStats) {
+            return (
+              <div className="text-center py-12">
+                <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <p className="mt-2 text-gray-700">Loading games stats...</p>
+              </div>
+            );
+          }
+
+          const { season, compareSeason, newClubs, lostClubs, seasons } = gamesStats;
+
+          const Num = ({ value, compareValue }: { value: number; compareValue?: number | null }) => (
+            <span>
+              <span className="font-semibold text-gray-900">{value}</span>
+              {compareValue != null && (
+                <span className="text-gray-400 text-xs ml-1">(prev: {compareValue})</span>
+              )}
+            </span>
+          );
+
+          const ChipList = ({ items, empty }: { items: string[]; empty: string }) =>
+            items.length === 0 ? (
+              <span className="text-gray-400 text-sm">{empty}</span>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {items.map((item) => (
+                  <span key={item} className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 text-xs">
+                    {item}
+                  </span>
+                ))}
+              </div>
+            );
+
+          const ResultRow = ({ label, r }: { label: string; r: ResultBreakdown }) => (
+            <div className="flex justify-between text-sm py-1">
+              <span className="text-gray-600">{label}</span>
+              <span className="text-gray-900">
+                <span className="text-green-700 font-medium">{r.won}W</span>{' '}
+                <span className="text-gray-500 font-medium">{r.drawn}D</span>{' '}
+                <span className="text-red-700 font-medium">{r.lost}L</span>
+                {r.noResult > 0 && <span className="text-gray-400 ml-1">({r.noResult} no score)</span>}
+              </span>
+            </div>
+          );
+
+          const cancelWhoRows: { key: 'burgessHill' | 'opponent' | 'unspecified'; label: string }[] = [
+            { key: 'burgessHill', label: 'Burgess Hill' },
+            { key: 'opponent', label: 'Opponent' },
+            { key: 'unspecified', label: 'Unspecified' },
+          ];
+
+          return (
+            <div className="space-y-4">
+              {/* Season pickers */}
+              <div className="bg-white rounded-lg shadow p-4 flex flex-wrap items-end gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Season</label>
+                  <select
+                    value={statsSeasonId}
+                    onChange={(e) => fetchGamesStats(e.target.value, statsCompareSeasonId)}
+                    className="border border-gray-300 rounded-md px-3 py-1.5 text-sm"
+                  >
+                    {seasons.map((s) => (
+                      <option key={s.id} value={s.id}>{s.year}{s.isActive ? ' (current)' : ''}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Compare to</label>
+                  <select
+                    value={statsCompareSeasonId}
+                    onChange={(e) => fetchGamesStats(statsSeasonId, e.target.value)}
+                    className="border border-gray-300 rounded-md px-3 py-1.5 text-sm"
+                  >
+                    <option value="">None</option>
+                    {seasons.filter((s) => s.id !== statsSeasonId).map((s) => (
+                      <option key={s.id} value={s.id}>{s.year}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Clubs */}
+              <div className="bg-white rounded-lg shadow p-4">
+                <h3 className="font-semibold text-gray-900 mb-3">Clubs</h3>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
+                  <div>
+                    <div className="text-xs text-gray-500">Clubs played</div>
+                    <Num value={season.clubsPlayed} compareValue={compareSeason?.clubsPlayed} />
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-500">Non-club fixtures</div>
+                    <Num value={season.nonClubFixtures.count} compareValue={compareSeason?.nonClubFixtures.count} />
+                  </div>
+                </div>
+                {compareSeason && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-3">
+                    <div>
+                      <div className="text-xs text-gray-500 mb-1">New clubs this season ({newClubs.length})</div>
+                      <ChipList items={newClubs} empty="None" />
+                    </div>
+                    <div>
+                      <div className="text-xs text-gray-500 mb-1">Clubs not played this season ({lostClubs.length})</div>
+                      <ChipList items={lostClubs} empty="None" />
+                    </div>
+                  </div>
+                )}
+                <div>
+                  <div className="text-xs text-gray-500 mb-1">
+                    Non-club fixtures ({season.nonClubFixtures.descriptions.length}) — representative sides, Bowls England, internal drives etc.
+                  </div>
+                  <ChipList items={season.nonClubFixtures.descriptions} empty="None" />
+                </div>
+              </div>
+
+              {/* Volume */}
+              <div className="bg-white rounded-lg shadow p-4">
+                <h3 className="font-semibold text-gray-900 mb-3">Volume</h3>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  <div>
+                    <div className="text-xs text-gray-500">Games arranged</div>
+                    <Num value={season.gamesArranged} compareValue={compareSeason?.gamesArranged} />
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-500">Seats arranged</div>
+                    <Num value={season.seatsArranged} compareValue={compareSeason?.seatsArranged} />
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-500">Reserve games arranged</div>
+                    <Num value={season.reserveGamesArranged} compareValue={compareSeason?.reserveGamesArranged} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Status breakdown */}
+              <div className="bg-white rounded-lg shadow p-4">
+                <h3 className="font-semibold text-gray-900 mb-3">Status breakdown ({season.year})</h3>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                  <div>
+                    <div className="text-xs text-gray-500">Open / Upcoming</div>
+                    <Num value={season.openUpcoming} />
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-500">Selecting / Selected</div>
+                    <Num value={season.selectingSelected} />
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-500">Played in full</div>
+                    <Num value={season.playedInFull} />
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-500">Abandoned</div>
+                    <Num value={season.abandoned} />
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-500">Cancelled</div>
+                    <Num value={season.cancelled} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Results */}
+              <div className="bg-white rounded-lg shadow p-4">
+                <h3 className="font-semibold text-gray-900 mb-3">Results (games played in full)</h3>
+                <ResultRow label="Overall" r={season.results} />
+                <ResultRow label="Home" r={season.homeAwayResults.home} />
+                <ResultRow label="Away" r={season.homeAwayResults.away} />
+                <div className="text-xs text-gray-500 mt-2">
+                  Home/away split: {season.homeAway.home} home, {season.homeAway.away} away
+                </div>
+              </div>
+
+              {/* Cancellations */}
+              {season.cancelled > 0 && (
+                <div className="bg-white rounded-lg shadow p-4">
+                  <h3 className="font-semibold text-gray-900 mb-1">Cancellations</h3>
+                  <p className="text-xs text-gray-500 mb-3">
+                    Reason category is best-effort, keyword-matched from the free-text reason — treat as approximate.
+                  </p>
+                  <div className="overflow-x-auto">
+                    <table className="text-sm min-w-full">
+                      <thead>
+                        <tr className="text-left text-xs text-gray-500 uppercase">
+                          <th className="pr-6 py-1">Cancelled by</th>
+                          <th className="pr-6 py-1">Weather</th>
+                          <th className="pr-6 py-1">Insufficient players</th>
+                          <th className="pr-6 py-1">Other</th>
+                          <th className="pr-6 py-1">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {cancelWhoRows.map(({ key, label }) => {
+                          const tally = season.cancelledBreakdown[key];
+                          if (tally.total === 0) return null;
+                          return (
+                            <tr key={key} className="border-t border-gray-100">
+                              <td className="pr-6 py-1.5 font-medium text-gray-800">{label}</td>
+                              <td className="pr-6 py-1.5 text-gray-700">{tally.weather || '-'}</td>
+                              <td className="pr-6 py-1.5 text-gray-700">{tally.insufficientPlayers || '-'}</td>
+                              <td className="pr-6 py-1.5 text-gray-700">{tally.other || '-'}</td>
+                              <td className="pr-6 py-1.5 font-semibold text-gray-900">{tally.total}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </div>
           );
         })()}

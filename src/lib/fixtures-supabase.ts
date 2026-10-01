@@ -55,6 +55,7 @@ export interface Fixture {
   lockedAt: string;
   needsPlayers: boolean;
   description: string | null;
+  isReserve: boolean;
 }
 
 export interface TeaRotaEntry {
@@ -129,6 +130,7 @@ function mapFixtureRow(row: any): Fixture {
     lockedAt: row.locked_at || '',
     needsPlayers: (row.needs_players || '').trim().toUpperCase() === 'Y',
     description: row.description,
+    isReserve: !!row.is_reserve,
   };
 }
 
@@ -219,8 +221,9 @@ export async function createFixture(data: {
   date: string; // YYYY-MM-DD (HTML date input) or DD/MM/YYYY
   time?: string;
   type?: GameType;
-  clubName: string;
+  clubName?: string; // omit (and pass description) for a no-opponent internal event — club_name has a FK to club_profiles
   clubSuffix?: string;
+  description?: string;
   homeAway?: 'H' | 'A';
   format?: string;
   ladiesMen?: string;
@@ -245,7 +248,8 @@ export async function createFixture(data: {
     date: isoDate,
     time: data.time || null,
     fixture_type: data.type || 'Friendly',
-    club_name: data.clubName,
+    club_name: data.clubName?.trim() || null,
+    description: data.description?.trim() || null,
     club_suffix: data.clubSuffix || null,
     home_away: data.homeAway || 'H',
     format: data.format || null,
@@ -267,8 +271,9 @@ export async function updateFixture(
     date?: string;
     time?: string;
     type?: GameType;
-    clubName?: string;
+    clubName?: string; // '' clears the opponent club (FK to club_profiles) — pair with description for an internal event
     clubSuffix?: string;
+    description?: string;
     homeAway?: 'H' | 'A';
     format?: string;
     ladiesMen?: string;
@@ -299,8 +304,12 @@ export async function updateFixture(
   }
   if (fields.time !== undefined) updates.time = fields.time;
   if (fields.type !== undefined) updates.fixture_type = fields.type;
-  if (fields.clubName !== undefined) updates.club_name = fields.clubName;
+  // '' has no matching row in club_profiles, so an empty clubName must become
+  // null rather than tripping the FK — this is how a fixture becomes/stays an
+  // internal (no-opponent) event.
+  if (fields.clubName !== undefined) updates.club_name = fields.clubName.trim() || null;
   if (fields.clubSuffix !== undefined) updates.club_suffix = fields.clubSuffix;
+  if (fields.description !== undefined) updates.description = fields.description.trim() || null;
   if (fields.homeAway !== undefined) updates.home_away = fields.homeAway;
   if (fields.format !== undefined) updates.format = fields.format;
   if (fields.ladiesMen !== undefined) updates.ladies_men = fields.ladiesMen;
@@ -369,8 +378,11 @@ export async function createReserveFixture(
   const insertRow = {
     season_id: original.season_id,
     fixture_type: original.fixture_type,
-    club_name: hasTeamName ? options!.teamName!.trim() : original.club_name,
+    // club_name has a FK to club_profiles, so a custom reserve-team name (not a real club)
+    // goes in description instead — same convention used elsewhere for no-real-club fixtures.
+    club_name: hasTeamName ? null : original.club_name,
     club_suffix: hasTeamName ? '' : '2',
+    description: hasTeamName ? options!.teamName!.trim() : null,
     date: original.date,
     time: original.time,
     home_away: original.home_away,
@@ -380,6 +392,7 @@ export async function createReserveFixture(
     tab_name: newTabName,
     paired: 'C',
     game_status: 'X',
+    is_reserve: true,
     entered: 0,
     selected: 0,
     reserves: 0,
