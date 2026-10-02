@@ -366,6 +366,11 @@ export default function SeasonPlanningFriendliesPage() {
       )
     : [];
   const capacityByDate = computeDayCapacity(friendlies, capacityEvents, reservationOccurrences);
+  const statusCounts = {
+    projected: friendlies.filter((f) => f.planningStatus === 'Projected').length,
+    emailSent: friendlies.filter((f) => f.planningStatus === 'Email Sent').length,
+    confirmed: friendlies.filter((f) => f.planningStatus === 'Confirmed').length,
+  };
   const dateGroups: string[] = [];
   const seenDates = new Set<string>();
   for (const f of sortedFriendlies) {
@@ -507,6 +512,21 @@ export default function SeasonPlanningFriendliesPage() {
                   <button className={getButtonClasses('primary')} onClick={submitAddFriendly}>Add</button>
                   <button className={getButtonClasses('secondary')} onClick={() => setAddingFriendly(false)}>Cancel</button>
                 </div>
+              </div>
+            )}
+
+            {friendlies.length > 0 && (
+              <div className="grid grid-cols-3 gap-3 mb-4">
+                {[
+                  { label: 'Projected', count: statusCounts.projected, classes: 'border-amber-200 bg-amber-50 text-amber-800' },
+                  { label: 'Email Sent', count: statusCounts.emailSent, classes: 'border-emerald-200 bg-emerald-50 text-emerald-800' },
+                  { label: 'Confirmed', count: statusCounts.confirmed, classes: 'border-green-200 bg-green-50 text-green-800' },
+                ].map((stat) => (
+                  <div key={stat.label} className={`rounded-lg border px-4 py-3 ${stat.classes}`}>
+                    <div className="text-2xl font-bold">{stat.count}</div>
+                    <div className="text-xs font-medium">{stat.label}</div>
+                  </div>
+                ))}
               </div>
             )}
 

@@ -335,9 +335,12 @@ export default withAuth(
  * - /_next/static/* - Next.js static assets
  * - /_next/image/* - Next.js image optimization
  * - /favicon.ico - Site favicon
+ * - /sw.js, /workbox-*.js, /swe-worker-*.js - next-pwa service worker files. Browsers
+ *   refuse to register a service worker whose script redirects, so without this a
+ *   logged-out visitor got a 307 to /login and the PWA never installed for them.
  */
 export const config = {
   matcher: [
-    '/((?!api/auth|api/apply|api/unlock|unlock|login|forgot-password|reset-password|kiosk|apply|help/login|_next/static|_next/image|favicon.ico|bhbc-logo.jpg|manifest.json|manifest-bar.json|icons/).*)',
+    '/((?!api/auth|api/apply|api/unlock|unlock|login|forgot-password|reset-password|kiosk|apply|help/login|_next/static|_next/image|favicon.ico|bhbc-logo.jpg|manifest.json|manifest-bar.json|icons/|sw.js|workbox-|swe-worker-).*)',
   ],
 };
