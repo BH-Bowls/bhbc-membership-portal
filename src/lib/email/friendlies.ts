@@ -556,7 +556,7 @@ export async function sendGamePublishedEmail(
     let emailsSent = 0;
     const failedPlayers: string[] = [];
 
-    const { ensurePlayerToken } = await import('../friendlies-sheets');
+    const { ensurePlayerToken } = await import('../fixture-groups-supabase');
 
     for (const player of playersWithEmail) {
       let gameUrl = gameBaseUrl;
@@ -911,7 +911,7 @@ export async function sendGameCancelledEmail(
     const BUTTON_STYLE = 'display:inline-block;background-color:#0066cc;color:#ffffff;padding:12px 24px;text-decoration:none;border-radius:5px;margin-top:15px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;';
     const ACK_BUTTON_STYLE = 'display:inline-block;background-color:#16a34a;color:#ffffff;padding:12px 24px;text-decoration:none;border-radius:5px;margin-top:12px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;';
 
-    const { ensurePlayerToken: ensureToken } = await import('../friendlies-sheets');
+    const { ensurePlayerToken: ensureToken } = await import('../fixture-groups-supabase');
 
     let emailsSent = 0;
 
@@ -1228,7 +1228,7 @@ export async function sendEntryConfirmedEmail(
   // Token generation only succeeds once the per-game tab has been created (X/S status).
   let gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}?me=${encodeURIComponent(userName)}`;
   try {
-    const { ensurePlayerToken } = await import('../friendlies-sheets');
+    const { ensurePlayerToken } = await import('../fixture-groups-supabase');
     const token = await ensurePlayerToken(game.tabName, userName);
     gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(game.tabName)}?token=${token}`;
   } catch (tokenError) {
@@ -1316,7 +1316,7 @@ export async function sendLinkedEntryConfirmedEmail(
   // opens without the public access PIN (falls back to ?me= if token generation fails).
   let gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(gameA.tabName)}?me=${encodeURIComponent(userName)}`;
   try {
-    const { ensurePlayerToken } = await import('../friendlies-sheets');
+    const { ensurePlayerToken } = await import('../fixture-groups-supabase');
     const token = await ensurePlayerToken(gameA.tabName, userName);
     gameUrl = `${appUrl}/friendlies/game/${encodeURIComponent(gameA.tabName)}?token=${token}`;
   } catch (tokenError) {

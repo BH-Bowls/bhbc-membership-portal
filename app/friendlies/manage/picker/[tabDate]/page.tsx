@@ -32,6 +32,7 @@ interface GameData {
     entered: number;
     selected: number;
     reserves: number;
+    isReserve?: boolean; // reserve game: BH v BH, twice the teams
   };
   players: GameSheetPlayer[];
 }
@@ -99,8 +100,8 @@ export default function PickerSheetPage() {
   useEffect(() => {
     async function fetchGame() {
       try {
-        // No stats refresh here — display stats are snapshotted when the game is
-        // closed and frozen after, so the game data below already has final figures.
+        // Stats are computed live (excluding this game's own group), so the game
+        // data below already has the right figures.
         const response = await fetch(`/api/friendlies/manage/game/${tabDate}`);
         const data = await response.json();
         if (!response.ok) {
@@ -146,7 +147,8 @@ export default function PickerSheetPage() {
   const { game, players } = gameData;
   const isAway = game.homeAway === 'A';
   const positionLabels = getPositionLabels(game.format);
-  const teamBoxCount = getTeamCount(game.format);
+  // A reserve game is BH v BH — we supply both sides, so twice the teams
+  const teamBoxCount = getTeamCount(game.format) * (game.isReserve ? 2 : 1);
   const carShareBoxCount = 5;
 
   // Sort to match the main selection screen exactly:

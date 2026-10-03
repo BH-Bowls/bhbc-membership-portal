@@ -201,21 +201,31 @@ export function EnteredPlayersModal({
         }
       } else {
         // Default behavior: call the standard API endpoint
-        const response = await fetch(`/api/${gameType}/add-players`, {
+        const post = (confirm: boolean) => fetch(`/api/${gameType}/add-players`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             gameId,
             playerUserNames: selectedPlayers,
+            confirm,
           }),
         });
 
-        const data = await response.json();
+        let data = await (await post(false)).json();
+
+        // Captains: someone is on teas / in the wrong section — nothing was written,
+        // so ask before adding anyway
+        if (data.needsConfirmation) {
+          const lines = (data.warnings || []).map((w: { message: string }) => `• ${w.message}`).join('\n');
+          if (!window.confirm(`${lines}\n\nAdd anyway?`)) {
+            return;
+          }
+          data = await (await post(true)).json();
+        }
 
         if (data.success) {
-          // Joint (paired) games share a single entry list on the lead game — the
-          // captain moves overflow into the second game during selection. So a
-          // player is added to the lead game only, never to both halves of the pair.
+          // Linked games share one entry list (the group) — adding here enters the
+          // player for the whole occasion; the captains pick them into a game later.
 
           // Refresh the entered players list
           await fetchEnteredPlayers();

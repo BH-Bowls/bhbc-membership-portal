@@ -6,7 +6,7 @@ import {
   getGameSheet,
   getClubDetails,
   getClubContacts,
-} from '@/lib/friendlies-sheets';
+} from '@/lib/fixture-groups-supabase';
 import { getFixtureByTabName, getTeaRotaList } from '@/lib/fixtures-supabase';
 import { getAllUsers } from '@/lib/members-supabase';
 import { MatchCardData, Team, ReservePlayer } from '@/lib/types/friendlies';

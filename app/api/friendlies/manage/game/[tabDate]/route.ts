@@ -2,8 +2,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGameSheet, getEnteredPlayers } from '@/lib/friendlies-sheets';
-import { getFixtureByTabName, getFixtures } from '@/lib/fixtures-supabase';
+import { getGameSheet, getGroupFixtures, fixtureDisplayName } from '@/lib/fixture-groups-supabase';
+import { getFixtureByTabName } from '@/lib/fixtures-supabase';
 import { hasRole } from '@/lib/role-utils';
 
 export async function GET(
@@ -44,19 +44,9 @@ export async function GET(
 
     const players = await getGameSheet(game.tabName);
 
-    // Cross-check: players with 'E' in Players sheet who are missing from the game sheet.
-    // This detects race-condition entries where updatePlayerEntry succeeded but
-    // addPlayerToGameSheet was overwritten by a concurrent entry at the same instant.
-    let orphanedEntries: { userName: string; fullName: string }[] = [];
-    try {
-      const playersSheetEntries = await getEnteredPlayers(game.tabName);
-      const gameSheetNames = new Set(players.map(p => p.name.toLowerCase()));
-      orphanedEntries = playersSheetEntries
-        .filter(p => p.status === 'E' && !gameSheetNames.has(p.userName.toLowerCase()))
-        .map(p => ({ userName: p.userName, fullName: p.fullName }));
-    } catch {
-      // Non-critical — proceed without orphan detection if this fails
-    }
+    // Entries live in one table now, so the old Players-sheet vs game-sheet orphan
+    // check can't find anything — kept in the response shape for the page.
+    const orphanedEntries: { userName: string; fullName: string }[] = [];
 
     // Mark captain from Games sheet (game.captain = userName).
     // If the Games sheet has no captain yet, fall back to game sheet captain field (legacy data).
@@ -93,22 +83,20 @@ export async function GET(
       return a.fullName.localeCompare(b.fullName);
     });
 
-    // Resolve the paired game (the other game on the same date flagged paired),
-    // so the UI can offer "move reserve to the other game" actions. Both 'Y'
-    // (open pair) and 'C' (closed/split pair) count as linked for moves.
-    const isLinked = (p: string | undefined) => p === 'Y' || p === 'C';
-    let pairedTabName = '';
-    let pairedClubName = '';
-    if (isLinked(game.paired)) {
-      const seasonGames = await getFixtures();
-      for (const g of seasonGames) {
-        if (isLinked(g.paired) && g.date === game.date && g.tabName !== game.tabName) {
-          pairedTabName = g.tabName;
-          pairedClubName = g.clubName || g.description || '';
-          break;
-        }
-      }
-    }
+    // The other games in this game's group (linked games / reserve games). Their
+    // reserves are this game's reserves — one shared pool — so there's nothing to move
+    // between them: a reserve picked here simply drops off the other games' lists.
+    const groupGames = game.groupId
+      ? (await getGroupFixtures(game.groupId))
+          .filter(g => g.id !== game.id)
+          .map(g => ({
+            tabName: g.tabName,
+            name: fixtureDisplayName(g),
+            status: g.status,
+            selected: g.selected,
+            isReserve: !!g.reserveOf,
+          }))
+      : [];
 
     return NextResponse.json({
       orphanedEntries,
@@ -127,9 +115,8 @@ export async function GET(
         entered: game.entered,
         selected: game.selected,
         reserves: game.reserves,
-        paired: game.paired || '',
-        pairedTabName,
-        pairedClubName,
+        groupGames,
+        isReserve: game.isReserve, // a reserve game supplies both sides: teams × 2
         pickupInfo: game.pickupInfo || '',
         specialInstructions: game.specialInstructions || '',
       },

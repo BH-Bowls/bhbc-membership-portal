@@ -71,8 +71,26 @@ interface GamesStatsResponse {
   lostClubs: string[];
 }
 import { getButtonClasses } from '@/config/theme-helpers';
-import { groupPairedGames, isPairedGame, type GameOrPair as GameOrPairGeneric } from '@/lib/friendlies-utils';
-type GameOrPair = GameOrPairGeneric<Game>;
+import { groupLinkedGames, isGameGroup } from '@/lib/friendlies-utils';
+
+/**
+ * Manage-list grouping: a linked occasion shares one row while it's Upcoming/Open (one
+ * entry window, opened and closed together). From Selecting on, each game has its own
+ * selection and lifecycle, so it gets its own row again.
+ */
+function groupForManage(games: Game[]): Array<Game | [Game, Game]> {
+  const out: Array<Game | [Game, Game]> = [];
+  for (const item of groupLinkedGames(games)) {
+    if (isGameGroup(item) && item.length === 2 && item.every(g => g.status === '' || g.status === 'O')) {
+      out.push([item[0], item[1]]);
+    } else if (isGameGroup(item)) {
+      out.push(...item);
+    } else {
+      out.push(item);
+    }
+  }
+  return out;
+}
 
 // ============================================================================
 // Main Component
@@ -140,6 +158,8 @@ export default function ManageGamesPage() {
     who: 'Burgess Hill' | 'Opponent' | '';
     sendEmail: boolean;
     sendTeaRotaEmail: boolean;
+    linkedGoingAhead: string;    // linked group: names of other games still going ahead ('' if none)
+    returnToReserves: boolean;   // cancel in a linked group: send this game's players back to the shared reserves
     isSubmitting: boolean;
     result: {
       emailsSent?: number;
@@ -163,6 +183,8 @@ export default function ManageGamesPage() {
     who: '',
     sendEmail: false,
     sendTeaRotaEmail: false,
+    linkedGoingAhead: '',
+    returnToReserves: false,
     isSubmitting: false,
     result: null,
   });
@@ -436,22 +458,20 @@ export default function ManageGamesPage() {
   }
 
   /**
-   * Handle Open for paired games - opens both games together (simple confirm, no instructions)
+   * Open two games together as one linked occasion (simple confirm, no instructions)
    */
   function handleOpenPairedGames(gameA: Game, gameB: Game) {
     setConfirmDialog({
       isOpen: true,
-      title: 'Open Paired Games',
+      title: 'Open Linked Games',
       message: `Open both ${opponentName(gameA)} and ${opponentName(gameB)} games for player entry?`,
       onConfirm: async () => {
         closeConfirmDialog();
         setActionLoading(`paired-${gameA.tabName}-${gameB.tabName}`);
         try {
-          // Open the first; if it fails (e.g. the section-mismatch trap) stop so the
-          // captain only sees one error rather than two.
-          const a = await changeStatus(gameA.tabName, 'open');
-          if (!a.success) return;
-          await changeStatus(gameB.tabName, 'open');
+          // One call opens both as a single linked occasion (one shared entry list).
+          // The server rejects mismatched sections or dates.
+          await changeStatus(gameA.tabName, 'open', { id: gameA.id, link_ids: [gameB.id] });
         } finally {
           setActionLoading(null);
         }
@@ -484,7 +504,7 @@ export default function ManageGamesPage() {
   }
 
   /**
-   * Handle Close for paired games — closes both games O → X (Selecting).
+   * Close a linked occasion — both games O → X (Selecting) in one call.
    * Everyone entered into game 1; the captain moves overflow players into game 2
    * during selection (no allocation step).
    */
@@ -492,41 +512,29 @@ export default function ManageGamesPage() {
     setConfirmDialog({
       isOpen: true,
       title: 'Close Games',
-      message: `Close entries for ${opponentName(gameA)} and ${opponentName(gameB)}? Everyone is entered into the first game — you can move players across to the second game during selection.`,
+      message: `Close entries for ${opponentName(gameA)} and ${opponentName(gameB)}? Everyone who entered is a reserve for both — pick players into either game during selection.`,
       onConfirm: async () => {
         closeConfirmDialog();
         const pairKey = `paired-${gameA.tabName}-${gameB.tabName}`;
         setActionLoading(pairKey);
         try {
-          // Close game A (O → X)
-          const resA = await fetch('/api/friendlies/manage/status', {
+          // Closing one game closes the whole linked occasion (O → X for both)
+          const res = await fetch('/api/friendlies/manage/status', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tab_name: gameA.tabName, action: 'close' }),
+            body: JSON.stringify({ tab_name: gameA.tabName, id: gameA.id, action: 'close' }),
           });
-          if (!resA.ok) {
-            const data = await resA.json();
-            alert(data.error || 'Failed to close first game');
-            return;
-          }
-
-          // Close game B (O → X)
-          const resB = await fetch('/api/friendlies/manage/status', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tab_name: gameB.tabName, action: 'close' }),
-          });
-          if (!resB.ok) {
-            const data = await resB.json();
-            alert(data.error || 'Failed to close second game');
+          if (!res.ok) {
+            const data = await res.json();
+            alert(data.error || 'Failed to close games');
             return;
           }
 
           // Both are now Selecting — refresh the list
           await fetchGames();
         } catch (error) {
-          console.error('Error closing paired games:', error);
-          alert('Failed to close paired games');
+          console.error('Error closing linked games:', error);
+          alert('Failed to close linked games');
         } finally {
           setActionLoading(null);
         }
@@ -565,6 +573,11 @@ export default function ManageGamesPage() {
   function handleGameOutcome(tabName: string, gameStatus: string, homeAway = '', entered = 0) {
     // For non-selected games, auto-select Cancel since it's the only option
     const autoStatus = gameStatus !== 'S' ? 'C' : '';
+    // Other games in the same linked group that are still going ahead
+    const thisGame = games.find(g => g.tabName === tabName);
+    const linkedGoingAhead = thisGame?.groupId
+      ? games.filter(g => g.groupId === thisGame.groupId && g.id !== thisGame.id && !['C', 'A'].includes(g.status)).map(opponentName).join(', ')
+      : '';
 
     setOutcomeDialog({
       isOpen: true,
@@ -580,6 +593,8 @@ export default function ManageGamesPage() {
       who: '',
       sendEmail: false,
       sendTeaRotaEmail: false,
+      linkedGoingAhead,
+      returnToReserves: false,
       isSubmitting: false,
       result: null,
     });
@@ -589,7 +604,7 @@ export default function ManageGamesPage() {
    * Submit game outcome from the dialog
    */
   async function submitOutcome() {
-    const { tabName, status, bhbcScore, opponentScore, noScore, reason, who, sendEmail, sendTeaRotaEmail } = outcomeDialog;
+    const { tabName, status, bhbcScore, opponentScore, noScore, reason, who, sendEmail, sendTeaRotaEmail, returnToReserves } = outcomeDialog;
 
     // Show loading state — keep dialog open while the API call runs
     setOutcomeDialog(prev => ({ ...prev, isSubmitting: true }));
@@ -614,6 +629,7 @@ export default function ManageGamesPage() {
         who,
         send_email: sendEmail,
         send_tea_rota_email: sendTeaRotaEmail,
+        return_to_reserves: returnToReserves,
       });
     } else if (status === 'A') {
       result = await changeStatus(tabName, 'abandon', {
@@ -727,6 +743,10 @@ export default function ManageGamesPage() {
       case '':
         return [
           { value: 'open',   label: 'Open' },
+          // Other Upcoming games that day can be opened together as one linked occasion
+          ...games
+            .filter(g => g.id !== game.id && g.status === '' && g.date === game.date && !g.groupId)
+            .map(g => ({ value: `open-linked:${g.id}`, label: `Open linked with ${opponentName(g)}` })),
           { value: 'cancel', label: 'Cancel Game' },
         ];
       case 'O': {
@@ -775,6 +795,13 @@ export default function ManageGamesPage() {
   async function handleGoAction(game: Game) {
     const action = actionSelections[game.tabName] ?? getDefaultAction(game);
     if (!action) return;
+
+    // "Open linked with <game>" — open two same-date games as one occasion
+    if (action.startsWith('open-linked:')) {
+      const other = games.find(g => g.id === action.slice('open-linked:'.length));
+      if (other) handleOpenPairedGames(game, other);
+      return;
+    }
 
     switch (action) {
       case 'open':
@@ -1459,11 +1486,11 @@ export default function ManageGamesPage() {
                 </tr>
               </thead>
 
-              {/* Table body - list of games (with paired game grouping) */}
+              {/* Table body - list of games (a linked occasion shares a row while Upcoming/Open) */}
               <tbody className="bg-white divide-y divide-gray-200">
-                {groupPairedGames(filteredGames).map((item, index) => {
-                  // Paired game row — combined view for Upcoming/Open status
-                  if (isPairedGame(item)) {
+                {groupForManage(filteredGames).map((item, index) => {
+                  // Linked occasion row — combined view while entries are open
+                  if (Array.isArray(item)) {
                     const [gameA, gameB] = item;
                     const pairKey = `paired-${gameA.tabName}-${gameB.tabName}`;
                     const combinedEntered = Math.max(gameA.entered, gameB.entered);
@@ -1950,6 +1977,25 @@ export default function ManageGamesPage() {
                           </div>
                         )}
                       </>
+                    )}
+
+                    {/* Linked group: the other game still goes ahead — optionally send this
+                        game's selected players back to the shared reserves for it */}
+                    {outcomeDialog.status === 'C' && outcomeDialog.linkedGoingAhead && (
+                      <label className="flex items-start gap-2 cursor-pointer mt-4">
+                        <input
+                          type="checkbox"
+                          checked={outcomeDialog.returnToReserves}
+                          onChange={(e) => setOutcomeDialog({ ...outcomeDialog, returnToReserves: e.target.checked })}
+                          className="mt-0.5 rounded border-gray-300 text-blue-600"
+                        />
+                        <span className="text-sm text-gray-700">
+                          Return this game&apos;s selected players to the reserves
+                          <span className="block text-gray-700">
+                            So they can be picked for {outcomeDialog.linkedGoingAhead}. Leave unticked to keep their selection as it was.
+                          </span>
+                        </span>
+                      </label>
                     )}
                   </div>
 

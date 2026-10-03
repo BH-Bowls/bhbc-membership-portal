@@ -1,16 +1,17 @@
 // app/api/friendlies/manage/add-player/route.ts
-// API endpoint to add an offline player to a game sheet (captain function)
+// API endpoint for a captain to add a player to a game's group (captain function).
+// Capacity is bypassed; eligibility warnings (on teas, wrong section) come back for
+// confirmation first — resend with confirm: true to add anyway.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { addPlayerToGameSheet, updatePlayerEntry } from '@/lib/friendlies-sheets';
+import { addEntries, checkEntryEligibility, getGroupFixtures, appendManageLog } from '@/lib/fixture-groups-supabase';
 import { getFixtureByTabName } from '@/lib/fixtures-supabase';
 import { AddPlayerRequest } from '@/lib/types/friendlies';
 import { hasRole } from '@/lib/role-utils';
-import { clearDiaryCache, clearSheetDataCacheByPrefix } from '@/lib/home-cache';
+import { clearDiaryCache } from '@/lib/home-cache';
 
-// POST handler - Adds an offline player to a game sheet
 export async function POST(request: NextRequest) {
   try {
     // Verify user is authenticated
@@ -27,8 +28,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Parse request body
-    const body: AddPlayerRequest = await request.json();
-    const { tab_name, user_name } = body;
+    const body: AddPlayerRequest & { confirm?: boolean } = await request.json();
+    const { tab_name, user_name, confirm = false } = body;
 
     // Validate required fields
     if (!tab_name || !user_name) {
@@ -38,12 +39,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Fetch the fixture. Postgres reads are always fresh — status gates whether the
-    // player can be added, so no cache layer to worry about here.
     const game = await getFixtureByTabName(tab_name);
 
-    // Return 404 if game doesn't exist
-    if (!game) {
+    if (!game || !game.groupId) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
 
@@ -55,26 +53,43 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Add player to game sheet with Selected='R' (deduplication handled inside)
-    // This silently skips if they're already in the sheet
-    await addPlayerToGameSheet(game.tabName, user_name, 'R');
+    const [check] = await checkEntryEligibility(await getGroupFixtures(game.groupId), [user_name]);
+    if (check.reasons.length > 0 && !confirm) {
+      return NextResponse.json({
+        success: false,
+        needsConfirmation: true,
+        warnings: [{ userName: user_name, fullName: check.fullName, message: `${check.fullName} is ${check.reasons.join(' and ')}` }],
+      });
+    }
 
-    // Add 'M' (manually added) to Players column for this player
-    // updatePlayerEntry skips if they already have a status in that column
-    await updatePlayerEntry(user_name, game.tabName, 'M');
+    // Added to the group's pool — i.e. as a reserve until picked
+    const outcomes = await addEntries({
+      groupId: game.groupId,
+      usernames: [user_name],
+      source: 'manager',
+      enteredBy: session.user.userName,
+      enforceCapacity: false,
+    });
+    const result = outcomes.length > 0 ? outcomes[0].result : null;
 
-    // Invalidate this player's diary cache and the shared Players-sheet cache
-    // their diary recomputes from (see friendlies/enter/route.ts for why both matter).
-    clearDiaryCache(user_name);
-    clearSheetDataCacheByPrefix('friendlies-players:');
+    if (result === 'entered') {
+      await appendManageLog({
+        username: session.user.userName,
+        action: 'add-player',
+        tabName: game.tabName,
+        fixtureId: game.id,
+        groupId: game.groupId,
+        details: { player: user_name, warningsConfirmed: check.reasons.length > 0 },
+      });
+      clearDiaryCache(user_name);
+    }
 
-    // Return success response
     return NextResponse.json({
       success: true,
-      message: `Player ${user_name} added to game`,
+      message: result === 'already' ? `${user_name} is already in this game` : `Player ${user_name} added to game`,
     });
   } catch (error) {
-    // Log error and return 500 response
+    console.error('Error adding player:', error);
     return NextResponse.json(
       { error: 'Failed to add player' },
       { status: 500 }

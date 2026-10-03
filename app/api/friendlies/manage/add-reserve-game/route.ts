@@ -1,13 +1,12 @@
 // app/api/friendlies/manage/add-reserve-game/route.ts
 // POST — create a same-club "reserve game" (<tab>-2) for an oversubscribed
-// standalone game, so the captain can move overflow reserves into it.
+// game. It joins the game's group, so the captain picks reserves straight into it.
 // Auth: Captain or Admin.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
-import { createGameColumn, createGameSheet } from '@/lib/friendlies-sheets';
 import { getFixtureByTabName, createReserveFixture } from '@/lib/fixtures-supabase';
 import { parseNumberRequired } from '@/lib/friendlies-utils';
 
@@ -38,8 +37,8 @@ export async function POST(request: NextRequest) {
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
-    if (game.paired) {
-      return NextResponse.json({ error: 'Game is already part of a pair' }, { status: 400 });
+    if (game.reserveOf) {
+      return NextResponse.json({ error: 'This is already a reserve game' }, { status: 400 });
     }
     if (game.status !== 'X') {
       return NextResponse.json(
@@ -48,7 +47,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Require genuine oversubscription: entered must exceed a full team by the threshold.
+    // Require genuine oversubscription: the group's entries must exceed a full team by the
+    // threshold (entered is the whole group's count).
     // (If the format can't be parsed we skip the check rather than block.)
     const needed = parseNumberRequired(game.format);
     if (needed != null && game.entered < needed + RESERVE_GAME_THRESHOLD) {
@@ -59,9 +59,6 @@ export async function POST(request: NextRequest) {
     }
 
     const result = await createReserveFixture(game.id, { teamName, format });
-    // Players-sheet column + empty game sheet (skip stats — nobody's in it yet)
-    await createGameColumn(result.tabName);
-    await createGameSheet(result.tabName, [], true);
     return NextResponse.json({ success: true, tabName: result.tabName });
   } catch (error) {
     console.error('[POST /api/friendlies/manage/add-reserve-game] Error:', error);

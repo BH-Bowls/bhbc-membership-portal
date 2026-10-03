@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGameSheet, getClubDetails, validateGameToken } from '@/lib/friendlies-sheets';
+import { getGameSheet, getClubDetails, validateGameToken, getGroupFixtures, fixtureDisplayName } from '@/lib/fixture-groups-supabase';
 import { getFixtureByTabName, getTeaRotaList } from '@/lib/fixtures-supabase';
 import { getUserByUsername, getAllUsers } from '@/lib/members-supabase';
 
@@ -268,7 +268,13 @@ export async function GET(
       }
     }
 
+    // Linked games: the other games in this game's group — their reserves are shared
+    const sharedWith = game.groupId
+      ? (await getGroupFixtures(game.groupId)).filter(g => g.id !== game.id).map(fixtureDisplayName)
+      : [];
+
     return NextResponse.json({
+      sharedWith,
       partners,
       game: {
         tabDate: game.tabDate,

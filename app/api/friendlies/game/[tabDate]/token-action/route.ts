@@ -1,7 +1,7 @@
 // POST /api/friendlies/game/[tabDate]/token-action
 // Public endpoint — performs confirm, withdraw, or acknowledge actions via email link token.
 import { NextRequest, NextResponse } from 'next/server';
-import { validateGameToken, updateGameSheet, acknowledgeGameCancellation } from '@/lib/friendlies-sheets';
+import { validateGameToken, setEntryConfirmed, markEntryWithdrawn, acknowledgeGameCancellation, appendManageLog } from '@/lib/fixture-groups-supabase';
 import { getFixtureByTabName } from '@/lib/fixtures-supabase';
 import { sendWithdrawalEmail } from '@/lib/email/friendlies';
 import { getAppUrl } from '@/lib/app-url';
@@ -90,9 +90,10 @@ export async function POST(
     const appUrl = await getAppUrl();
 
     if (action === 'confirm') {
-      await updateGameSheet(tabName, [{ rowNumber: tokenData.rowNumber, status: 'Y' }]);
+      await setEntryConfirmed(game.groupId!, tokenData.userName, true);
     } else if (action === 'withdraw') {
-      await updateGameSheet(tabName, [{ rowNumber: tokenData.rowNumber, status: 'W' }]);
+      await markEntryWithdrawn(game.groupId!, tokenData.userName, tokenData.userName);
+      await appendManageLog({ username: tokenData.userName, action: 'withdraw-email-link', tabName, fixtureId: game.id, groupId: game.groupId, details: { player: tokenData.userName, wasSelected: tokenData.playerSelected } });
       try {
         await sendWithdrawalEmail(
           tokenData.userName,

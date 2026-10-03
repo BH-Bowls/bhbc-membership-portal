@@ -44,9 +44,10 @@ interface GameData {
     entered: number;        // Number of players entered
     selected: number;       // Number of players selected
     reserves: number;       // Number of reserves
-    paired?: string;        // 'Y' if this game is paired with another on the same date
-    pairedTabName?: string; // The paired game's tab name (empty if none)
-    pairedClubName?: string;// The paired game's club name (for button labels)
+    // Other games in this game's group (linked games / reserve games) — they share
+    // this game's reserves
+    groupGames?: Array<{ tabName: string; name: string; status: string; selected: number; isReserve: boolean }>;
+    isReserve?: boolean;    // a reserve game supplies both sides, so it needs twice the teams
     pickupInfo: string;     // Pickup point / time info (away games)
     specialInstructions: string; // Optional special instructions message
   };
@@ -54,9 +55,6 @@ interface GameData {
   // List of players with stats and selection info
   players: GameSheetPlayer[];
 
-  // Players who have 'E' in the Players sheet but are absent from the game sheet
-  // (race-condition entries — captain can repair these with one click)
-  orphanedEntries?: { userName: string; fullName: string }[];
 }
 
 /**
@@ -78,7 +76,7 @@ function opponentName(game: { clubName: string; description?: string | null }): 
  */
 function validateSelection(
   players: GameSheetPlayer[],
-  game: { format: string; homeAway: 'H' | 'A' }
+  game: { format: string; homeAway: 'H' | 'A'; isReserve?: boolean }
 ): string[] {
   const warnings: string[] = [];
   const isAway = game.homeAway === 'A';
@@ -117,7 +115,8 @@ function validateSelection(
   // 4. Team composition
   const formatLower = game.format.toLowerCase();
   const teamCountMatch = game.format.match(/^(\d+)/);
-  const expectedTeamCount = teamCountMatch ? parseInt(teamCountMatch[1]) : 0;
+  // A reserve game is BH v BH — we supply both sides, so twice the teams
+  const expectedTeamCount = (teamCountMatch ? parseInt(teamCountMatch[1]) : 0) * (game.isReserve ? 2 : 1);
 
   let expectedPositions: Position[];
   if (formatLower.includes('pair')) expectedPositions = ['S', '1'];
@@ -192,8 +191,6 @@ export default function TeamSelectionPage() {
 
   // State: Refreshing stats indicator
   const [refreshingStats, setRefreshingStats] = useState(false);
-  // Reserves flagged (by username) to move to the paired game on the next Save
-  const [reservesToMove, setReservesToMove] = useState<Set<string>>(new Set());
 
   // State: Add Players modal visibility
   const [showAddPlayersModal, setShowAddPlayersModal] = useState(false);
@@ -239,8 +236,6 @@ export default function TeamSelectionPage() {
     error: string | null;
   }>({ open: false, teamName: '', format: '', submitting: false, error: null });
 
-  // State: whether the orphan-repair call is in progress
-  const [fixingOrphans, setFixingOrphans] = useState(false);
 
   // Ref to track if initial setup has been done for this tabDate
   const setupDoneRef = useRef<string | null>(null);
@@ -261,7 +256,7 @@ export default function TeamSelectionPage() {
   function saveToCache(data: GameData) {
     try {
       sessionStorage.setItem(cacheKey, JSON.stringify(data));
-      // Record when stats were last refreshed so the picker can skip get-stats
+      // Record when the game data was cached (read by the picker page)
       sessionStorage.setItem(`stats_refreshed_${tabDate}`, String(Date.now()));
     } catch { /* quota / private mode — ignore */ }
   }
@@ -406,15 +401,8 @@ export default function TeamSelectionPage() {
     setRefreshingStats(true);
 
     try {
-      const response = await fetch('/api/friendlies/manage/get-stats', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tab_name: gameData.game.tabName }),
-      });
-
-      const data = await response.json();
-
-      if (response.ok) {
+      // Stats are computed live by the game endpoint — just refetch it
+      {
         // Get fresh game data to find new players
         const gameResponse = await fetch(`/api/friendlies/manage/game/${tabDate}`);
         const gameDataResult = await gameResponse.json();
@@ -436,8 +424,6 @@ export default function TeamSelectionPage() {
             setOriginalPlayers(gameDataResult.players);
           }
         }
-      } else {
-        console.error('Failed to refresh stats:', data.error);
       }
     } catch (error) {
       console.error('Error refreshing stats:', error);
@@ -495,8 +481,8 @@ export default function TeamSelectionPage() {
   }
 
   /**
-   * Create a same-club reserve game for an oversubscribed standalone game,
-   * then refresh so the move-reserve checkboxes appear on the reserve rows.
+   * Create a reserve game for an oversubscribed game (it joins this game's group
+   * and shares its reserves),
    */
   function handleAddReserveGame() {
     if (!gameData) return;
@@ -513,8 +499,8 @@ export default function TeamSelectionPage() {
   }
 
   /**
-   * Create the reserve game with the chosen team name + format, then refresh so the
-   * move-reserve checkboxes appear on the reserve rows.
+   * Create the reserve game with the chosen team name + format, then refresh. Its
+   * players are picked on its own page, from the same reserves.
    */
   async function submitAddReserveGame() {
     if (!gameData) return;
@@ -535,59 +521,12 @@ export default function TeamSelectionPage() {
         setReserveDialog(prev => ({ ...prev, submitting: false, error: data.error || 'Failed to add reserve game' }));
         return;
       }
-      // Close the dialog and reload — this game is now paired, so move-reserve appears
+      // Close the dialog and reload — the reserve game shares this game's reserves
       setReserveDialog({ open: false, teamName: '', format: '', submitting: false, error: null });
       await refreshGameData();
     } catch (error) {
       console.error('Error adding reserve game:', error);
       setReserveDialog(prev => ({ ...prev, submitting: false, error: 'Failed to add reserve game' }));
-    }
-  }
-
-  /**
-   * Toggle whether a reserve is flagged to move to the paired game on Save.
-   */
-  function toggleReserveToMove(userName: string) {
-    setReservesToMove(prev => {
-      const next = new Set(prev);
-      const key = userName.toLowerCase();
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
-        next.add(key);
-      }
-      return next;
-    });
-  }
-
-  /**
-   * Repair orphaned entries — adds players who have 'E' in Players sheet but are
-   * missing from the game sheet (race-condition fix). Does not alter their Players sheet status.
-   */
-  async function fixOrphanedEntries() {
-    if (!gameData?.orphanedEntries?.length) return;
-    setFixingOrphans(true);
-    try {
-      const res = await fetch('/api/friendlies/manage/repair-entries', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tab_name: gameData.game.tabName,
-          user_names: gameData.orphanedEntries.map(e => e.userName),
-        }),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        alert(data.error || 'Failed to repair entries');
-        return;
-      }
-      // Refresh game data so orphanedEntries clears and new players appear
-      await refreshGameData();
-    } catch (err) {
-      console.error('Error fixing orphaned entries:', err);
-      alert('Failed to repair entries. Please try again.');
-    } finally {
-      setFixingOrphans(false);
     }
   }
 
@@ -599,16 +538,26 @@ export default function TeamSelectionPage() {
     if (!gameData) return { success: false, error: 'Game data not loaded' };
 
     try {
-      const response = await fetch('/api/friendlies/add-players', {
+      const post = (confirm: boolean) => fetch('/api/friendlies/add-players', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           gameId: gameData.game.tabName,
           playerUserNames,
+          confirm,
         }),
       });
 
-      const data = await response.json();
+      let data = await (await post(false)).json();
+
+      // On teas / wrong section: the server wrote nothing and asks the captain first
+      if (data.needsConfirmation) {
+        const lines = (data.warnings || []).map((w: { message: string }) => `• ${w.message}`).join('\n');
+        if (!window.confirm(`${lines}\n\nAdd anyway?`)) {
+          return { success: false, error: 'Not added' };
+        }
+        data = await (await post(true)).json();
+      }
 
       if (data.success) {
         await refreshGameData();
@@ -737,56 +686,18 @@ export default function TeamSelectionPage() {
         return;
       }
 
-      // 1b. Move any flagged reserves to the paired game in one batched request.
-      // The server re-reads the sheet and only moves players that are still
-      // reserves, so a player you re-picked above is safely left in place.
-      let movedReserves = false;
-      if (reservesToMove.size > 0 && gameData.game.pairedTabName) {
-        movedReserves = true;
-        try {
-          const moveRes = await fetch('/api/friendlies/manage/move-reserve', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              from_tab: gameData.game.tabName,
-              to_tab: gameData.game.pairedTabName,
-              user_names: Array.from(reservesToMove),
-            }),
-          });
-          if (!moveRes.ok) {
-            const moveData = await moveRes.json();
-            console.error('Failed to move reserves:', moveData.error);
-          }
-        } catch (moveErr) {
-          console.error('Error moving reserves:', moveErr);
-        }
-        setReservesToMove(new Set());
-      }
+      // Stats are computed live and the reserves are one shared pool for the whole
+      // group, so there's nothing else to sync after a save.
+      const updatedPlayers = data.sorted_players;
 
-      // Sync the new selection statuses back to the Players sheet. No display-stat
-      // snapshot here — those are frozen from when the game was closed.
-      let updatedPlayers = data.sorted_players;
-      try {
-        await fetch('/api/friendlies/manage/update-stats', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tab_name: gameData.game.tabName }),
-        });
-
-        // If reserves were moved out, the roster changed, so the selection-save
-        // response is stale — refetch the (frozen-stats) game data to reflect it.
-        if (movedReserves) {
-          const refresh = await fetch(`/api/friendlies/manage/game/${encodeURIComponent(gameData.game.tabName)}`);
-          if (refresh.ok) {
-            const refreshData = await refresh.json();
-            if (refreshData.players) {
-              updatedPlayers = refreshData.players;
-            }
-          }
-        }
-      } catch (statsError) {
-        console.error('Error updating stats:', statsError);
-        // Don't fail the save - just use data from save response
+      // A reserve someone else picked for another game in this group a moment ago
+      // couldn't be picked here — tell the captain who and where.
+      if (Array.isArray(data.conflicts) && data.conflicts.length > 0) {
+        const nameOf = (u: string) => players.find(p => p.name === u)?.fullName || u;
+        alert(
+          'Not saved for these players — they have just been picked for another game:\n\n' +
+          data.conflicts.map((c: { username: string; fixtureName: string }) => `• ${nameOf(c.username)} (${c.fixtureName})`).join('\n')
+        );
       }
 
       // Exit edit mode FIRST — batched with setPlayers so the re-render during the
@@ -810,7 +721,7 @@ export default function TeamSelectionPage() {
     } finally {
       setSaving(false);
     }
-  }, [gameData, players, draftFormName, acquireLock, releaseLock, reservesToMove]);
+  }, [gameData, players, draftFormName, acquireLock, releaseLock]);
 
   /**
    * Validate selection then save — shows a warnings modal if issues are found.
@@ -847,6 +758,12 @@ export default function TeamSelectionPage() {
    * Special handling for captain field - only one player can be captain
    */
   function updatePlayer(rowNumber: number, field: string, value: any) {
+    // Linked games: picking someone who entered "<other game> only" needs a confirm
+    const target = players.find(p => p.rowNumber === rowNumber);
+    const pickingNow = (field === 'selected' && value === 'Y') || (field === 'team' && value && target?.selected === 'R');
+    if (pickingNow && target?.preference && target.preference.kind === 'only' && !target.preference.forThisGame) {
+      if (!window.confirm(`${target.fullName} entered "${target.preference.gameName} only". Select them for this game anyway?`)) return;
+    }
     setPlayers(prev =>
       prev.map(p => {
         if (p.rowNumber === rowNumber) {
@@ -1017,13 +934,16 @@ export default function TeamSelectionPage() {
   const { game } = gameData;
   const isAway = game.homeAway === 'A';
 
-  // Offer "Add Reserve Game" when a standalone game is oversubscribed during
-  // selection — at least 8 players beyond a full team (matches the API guard).
+  // Offer "Add Reserve Game" when a game is oversubscribed during selection — at
+  // least 8 players beyond a full team (matches the API guard). Not on a reserve game
+  // itself, and only once per game.
   const reserveNeeded = parseNumberRequired(game.format);
+  const groupGames = game.groupGames || [];
   const canAddReserveGame =
     !isEditing &&
     game.status === 'X' &&
-    !game.paired &&
+    !game.isReserve &&
+    !groupGames.some(g => g.isReserve) &&
     reserveNeeded != null &&
     game.entered >= reserveNeeded + 8;
 
@@ -1095,29 +1015,24 @@ export default function TeamSelectionPage() {
           )}
         </div>
 
-        {/* Orphaned-entry warning — shown when a race condition left a player with 'E'
-            in the Players sheet but absent from the game sheet */}
-        {(gameData?.orphanedEntries?.length ?? 0) > 0 && (
-          <div className="mb-4 bg-amber-50 border border-amber-300 rounded-lg p-4 flex flex-col sm:flex-row sm:items-center gap-3">
-            <div className="flex-1">
-              <p className="font-semibold text-amber-900">
-                ⚠️ Entry mismatch detected
-              </p>
-              <p className="text-sm text-amber-800 mt-1">
-                {gameData!.orphanedEntries!.length === 1
-                  ? `${gameData!.orphanedEntries![0].fullName} entered the game but is missing from the selection sheet.`
-                  : `${gameData!.orphanedEntries!.length} players entered the game but are missing from the selection sheet: ${gameData!.orphanedEntries!.map(e => e.fullName).join(', ')}.`
-                }
-                {' '}This is usually caused by two players entering at exactly the same moment.
-              </p>
-            </div>
-            <button
-              onClick={fixOrphanedEntries}
-              disabled={fixingOrphans}
-              className="shrink-0 bg-amber-600 text-white px-4 py-2 rounded hover:bg-amber-700 disabled:opacity-50 transition-colors text-sm font-medium"
-            >
-              {fixingOrphans ? 'Fixing…' : 'Add to Sheet'}
-            </button>
+        {/* Linked / reserve games: one shared pool of reserves across the group */}
+        {groupGames.length > 0 && (
+          <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-900">
+            <p className="font-semibold">
+              Shares its reserves with:{' '}
+              {groupGames.map((g, i) => (
+                <span key={g.tabName}>
+                  {i > 0 && ', '}
+                  <Link href={`/friendlies/manage/game/${encodeURIComponent(g.tabName)}`} className="underline hover:text-blue-700">
+                    {g.name}
+                  </Link>
+                  <span className="font-normal text-blue-800"> ({g.isReserve ? 'reserve game, ' : ''}{g.selected} selected)</span>
+                </span>
+              ))}
+            </p>
+            <p className="mt-1 text-blue-800">
+              Reserves listed here can be picked for any of these games. Once picked for one, they drop off the others.
+            </p>
           </div>
         )}
 
@@ -1268,20 +1183,19 @@ export default function TeamSelectionPage() {
                           <option value="" disabled>──</option>
                           <option value="__swap__">Swap…</option>
                         </select>
-                        {/* Flag a reserve to move to the paired game on Save */}
-                        {isEditing && player.selected === 'R' && gameData?.game.pairedTabName ? (
-                          <label
-                            className="flex items-center gap-1 mt-1 text-[10px] text-blue-700 cursor-pointer"
-                            title={`Move to ${gameData.game.pairedClubName} on Save`}
+                        {/* Linked games: the player's preference, relative to this game */}
+                        {player.preference ? (
+                          <div
+                            className={`mt-1 text-[10px] font-medium ${
+                              player.preference.forThisGame
+                                ? 'text-green-700'
+                                : player.preference.kind === 'only' ? 'text-red-700' : 'text-amber-700'
+                            }`}
                           >
-                            <input
-                              type="checkbox"
-                              checked={reservesToMove.has(player.name)}
-                              onChange={() => toggleReserveToMove(player.name)}
-                              className="w-3 h-3"
-                            />
-                            → {gameData.game.pairedClubName}
-                          </label>
+                            {player.preference.forThisGame
+                              ? (player.preference.kind === 'only' ? 'This game only' : 'Prefers this game')
+                              : (player.preference.kind === 'only' ? `${player.preference.gameName} only` : `Prefers ${player.preference.gameName}`)}
+                          </div>
                         ) : null}
                       </td>
 
@@ -1574,8 +1488,8 @@ export default function TeamSelectionPage() {
         onPlayersChanged={refreshGameData}
         onAddPlayers={handleAddPlayers}
         infoBanner={
-          game.paired
-            ? 'This is a linked game. To move players between the two games, don’t add/remove here — go into Edit mode on the game the player is currently in and tick the “→” box on their reserve row to send them to the linked game.'
+          groupGames.length > 0
+            ? `This game shares its entries with . Players added here can be picked for any of them.`
             : undefined
         }
       />

@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGameSheet, getFriendliesSpreadsheetId, getSelectionHelperCache, setSelectionHelperCache } from '@/lib/friendlies-sheets';
+import { getGameSheet } from '@/lib/fixture-groups-supabase';
 import { getFixtureByTabName } from '@/lib/fixtures-supabase';
 import { getAllUsers } from '@/lib/members-supabase';
 import { hasRole } from '@/lib/role-utils';
@@ -74,15 +74,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'tab_name required' }, { status: 400 });
     }
 
-    const forceRefresh = request.nextUrl.searchParams.get('refresh') === 'true';
-
-    // Return cached snapshot if available and not a forced refresh
-    if (!forceRefresh) {
-      const cached = await getSelectionHelperCache(tabName);
-      if (cached) {
-        return NextResponse.json({ ...(cached.data as object), cachedAt: cached.cachedAt, fromCache: true });
-      }
-    }
+    // Computed live every time. Stats exclude this game's own group, so the captain's
+    // picks don't move the numbers — no snapshot/cache needed (the old _SelectionCache tab).
 
     // Load game metadata + game-sheet players in parallel with Members data
     const [game, gamePlayers, allUsers] = await Promise.all([
@@ -260,14 +253,7 @@ export async function GET(request: NextRequest) {
       hasPercentData,
     };
 
-    const cachedAt = new Date().toISOString();
-    try {
-      await setSelectionHelperCache(tabName, result);
-    } catch (cacheErr) {
-      console.warn('[selection-helper] Failed to write cache:', cacheErr);
-    }
-
-    return NextResponse.json({ ...result, cachedAt, fromCache: false });
+    return NextResponse.json({ ...result, cachedAt: new Date().toISOString(), fromCache: false });
   } catch (error) {
     console.error('Error building selection helper:', error);
     return NextResponse.json({ error: 'Failed to build selection helper' }, { status: 500 });

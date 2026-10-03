@@ -89,7 +89,6 @@ interface FixtureFormData {
   format: string;
   ladiesMen: string;
   dress: string;
-  paired: string;
   maxPlayers: string;
   message: string;
   pickupInfo: string;
@@ -106,7 +105,6 @@ const defaultFormData: FixtureFormData = {
   format: '',
   ladiesMen: '',
   dress: '',
-  paired: '',
   maxPlayers: '',
   message: '',
   pickupInfo: '',
@@ -143,7 +141,6 @@ function FixtureModal({ isOpen, editGame, onClose, onSave, saving, error, gameTy
         format: editGame.format || '',
         ladiesMen: editGame.ladiesMen || '',
         dress: editGame.dress || '',
-        paired: editGame.paired || '',
         maxPlayers: editGame.maxPlayers ? String(editGame.maxPlayers) : '',
         message: editGame.specialInstructions || '',
         pickupInfo: editGame.pickupInfo || '',
@@ -326,17 +323,6 @@ function FixtureModal({ isOpen, editGame, onClose, onSave, saving, error, gameTy
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            {/* Paired */}
-            <div className="flex items-center gap-2 pt-5">
-              <input
-                type="checkbox"
-                id="paired"
-                checked={form.paired === 'Y'}
-                onChange={e => setForm(prev => ({ ...prev, paired: e.target.checked ? 'Y' : '' }))}
-                className="rounded border-gray-300"
-              />
-              <label htmlFor="paired" className="text-sm font-medium text-gray-700">Paired game</label>
-            </div>
             {/* Max Capacity */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Max Capacity</label>

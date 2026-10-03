@@ -100,6 +100,7 @@ interface GameDetails {
 
   // Captain of the Day
   captainOfDay: string;           // Full name of captain
+  sharedWith?: string[];          // Linked games: the other games in the group (reserves are shared)
 
   // Tea duty assignments (home games only)
   teaDuty: {
@@ -760,7 +761,7 @@ export default function GameDetailsPage() {
   if (!gameDetails) return null;
 
   // Destructure game details for easier access
-  const { game, teams, reserves, reserveTeams, opposition, withdrawn, captainOfDay, teaDuty } = gameDetails;
+  const { game, teams, reserves, reserveTeams, opposition, withdrawn, captainOfDay, teaDuty, sharedWith } = gameDetails;
 
   // Show no-email indicator only to captains and admins
   const isCaptainOrAdmin = !isGuest && hasRole(session?.user?.role, 'Captain', 'Admin');
@@ -1152,7 +1153,9 @@ export default function GameDetailsPage() {
         {reserves.length > 0 && (
           <div className="bg-white rounded-lg shadow border border-gray-200 p-6 mb-6">
             <h2 className="text-2xl font-bold mb-4 text-gray-900">
-              {['O', 'X'].includes(game.status) ? 'Players Entered' : 'Reserves'}
+              {['O', 'X'].includes(game.status)
+                ? 'Players Entered'
+                : sharedWith && sharedWith.length > 0 ? `Reserves (shared with ${sharedWith.join(' and ')})` : 'Reserves'}
             </h2>
 
             {/* List of reserve players */}

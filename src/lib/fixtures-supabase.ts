@@ -5,10 +5,9 @@
 // Players tab), pickup info, special-instructions message, and tea rota (tea_lead/
 // tea_first/tea_second are also plain fixture-row columns).
 //
-// Deliberately NOT here: anything touching the Players EAV tab or individual
-// per-game sheet tabs (entries, selection, stats, driver/bar info) — those stay on
-// Sheets until Step 4b (game_players) is designed and built, per the plan's own
-// note that this data layer will look very different, not a straight port.
+// Entries, selections and stats (the old Players tab / per-game tabs) live in
+// fixture-groups-supabase.ts. entered/selected/reserves on a grouped fixture come
+// from the fixture_live_counts view, not the stored columns.
 //
 // Only ever reads/writes the currently-active season (seasons.is_active = true) —
 // matches the live Sheets "Games" tab always being the current season; archived
@@ -45,7 +44,6 @@ export interface Fixture {
   who: string;
   lastModifiedBy: string;
   lastModifiedDate: string;
-  paired: string;                // '' | 'Y' (open-linked) | 'C' (closed-linked/split)
   gameType: GameType;
   clubSuffix: string;
   specialInstructions: string;
@@ -56,6 +54,9 @@ export interface Fixture {
   needsPlayers: boolean;
   description: string | null;
   isReserve: boolean;
+  groupId: string | null;         // fixture_groups.id — set when the fixture is opened
+  reserveOf: string | null;       // id of the fixture this reserve game was split from
+  result: 'W' | 'L' | 'D' | null; // squad fixtures (leagues / Club Teams)
 }
 
 export interface TeaRotaEntry {
@@ -94,7 +95,7 @@ function displayDateFromUK(ukDate: string): string {
   return `${DAY_NAMES[dateObj.getDay()]} ${dateObj.getDate()} ${MONTH_NAMES_SHORT[dateObj.getMonth()]}`;
 }
 
-function mapFixtureRow(row: any): Fixture {
+export function mapFixtureRow(row: any): Fixture {
   return {
     id: row.id,
     seasonId: row.season_id,
@@ -111,16 +112,15 @@ function mapFixtureRow(row: any): Fixture {
     status: (row.game_status || '') as GameStatus,
     include: undefined,
     maxPlayers: row.max_capacity ?? 0,
-    entered: row.entered ?? 0,
-    selected: row.selected ?? 0,
-    reserves: row.reserves ?? 0,
+    entered: 0,   // live counts (withLiveCounts) — 0 until the fixture is opened
+    selected: 0,
+    reserves: 0,
     bhbcScore: row.bhbc_score,
     opponentScore: row.opponent_score,
     reason: row.reason || '',
     who: row.who || '',
     lastModifiedBy: row.last_modified_by || '',
     lastModifiedDate: row.last_modified_date || '',
-    paired: row.paired || '',
     gameType: (row.fixture_type || 'Friendly') as GameType,
     clubSuffix: row.club_suffix || '',
     specialInstructions: row.special_instructions || '',
@@ -130,8 +130,33 @@ function mapFixtureRow(row: any): Fixture {
     lockedAt: row.locked_at || '',
     needsPlayers: (row.needs_players || '').trim().toUpperCase() === 'Y',
     description: row.description,
-    isReserve: !!row.is_reserve,
+    isReserve: !!row.reserve_of,
+    groupId: row.group_id || null,
+    reserveOf: row.reserve_of || null,
+    result: row.result || null,
   };
+}
+
+/**
+ * Overwrite entered/selected/reserves with the live counts (fixture_live_counts view,
+ * computed from fixture_entries/fixture_selections) for every grouped fixture. Ungrouped
+ * fixtures (never opened, or historical seasons) keep their stored column values.
+ */
+export async function withLiveCounts(fixtures: Fixture[]): Promise<Fixture[]> {
+  const groupedIds = fixtures.filter((f) => f.groupId).map((f) => f.id);
+  if (groupedIds.length === 0) return fixtures;
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('fixture_live_counts')
+    .select('fixture_id, entered, selected, reserves')
+    .in('fixture_id', groupedIds);
+  if (error) throw new Error(`Failed to fetch fixture counts: ${error.message}`);
+  const byId = new Map<string, { entered: number; selected: number; reserves: number }>();
+  for (const row of data || []) byId.set(row.fixture_id, row);
+  return fixtures.map((f) => {
+    const c = byId.get(f.id);
+    return c ? { ...f, entered: c.entered, selected: c.selected, reserves: c.reserves } : f;
+  });
 }
 
 function mapTeaRotaRow(row: any): TeaRotaEntry {
@@ -191,7 +216,7 @@ export async function getFixtures(statusFilter?: GameStatus, typeFilter?: GameTy
 
   const { data, error } = await query;
   if (error) throw new Error(`Failed to fetch fixtures: ${error.message}`);
-  return (data || []).map(mapFixtureRow);
+  return withLiveCounts((data || []).map(mapFixtureRow));
 }
 
 export async function getFixtureByTabName(tabName: string): Promise<Fixture | null> {
@@ -204,7 +229,7 @@ export async function getFixtureByTabName(tabName: string): Promise<Fixture | nu
     .eq('tab_name', tabName)
     .maybeSingle();
   if (error) throw new Error(`Failed to fetch fixture: ${error.message}`);
-  return data ? mapFixtureRow(data) : null;
+  return data ? (await withLiveCounts([mapFixtureRow(data)]))[0] : null;
 }
 
 /** Looks up a fixture by id without assuming any particular season — needed
@@ -214,7 +239,7 @@ export async function getFixtureById(id: string): Promise<Fixture | null> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase.from('fixtures').select('*').eq('id', id).maybeSingle();
   if (error) throw new Error(`Failed to fetch fixture: ${error.message}`);
-  return data ? mapFixtureRow(data) : null;
+  return data ? (await withLiveCounts([mapFixtureRow(data)]))[0] : null;
 }
 
 export async function createFixture(data: {
@@ -228,7 +253,6 @@ export async function createFixture(data: {
   format?: string;
   ladiesMen?: string;
   dress?: string;
-  paired?: string;
   maxPlayers?: number;
   message?: string;
   pickupInfo?: string;
@@ -255,7 +279,6 @@ export async function createFixture(data: {
     format: data.format || null,
     ladies_men: data.ladiesMen || null,
     dress: data.dress || null,
-    paired: data.paired || '',
     max_capacity: data.maxPlayers ?? null,
     special_instructions: data.message || null,
     pickup_info: data.pickupInfo || null,
@@ -278,7 +301,6 @@ export async function updateFixture(
     format?: string;
     ladiesMen?: string;
     dress?: string;
-    paired?: string;
     maxPlayers?: number;
     message?: string;
     pickupInfo?: string;
@@ -290,9 +312,6 @@ export async function updateFixture(
     who?: string;
     lastModifiedBy?: string;
     needsPlayers?: boolean;
-    entered?: number;
-    selected?: number;
-    reserves?: number;
     captain?: string; // '' clears the captain designation
   }
 ): Promise<void> {
@@ -314,7 +333,6 @@ export async function updateFixture(
   if (fields.format !== undefined) updates.format = fields.format;
   if (fields.ladiesMen !== undefined) updates.ladies_men = fields.ladiesMen;
   if (fields.dress !== undefined) updates.dress = fields.dress;
-  if (fields.paired !== undefined) updates.paired = fields.paired;
   if (fields.maxPlayers !== undefined) updates.max_capacity = fields.maxPlayers;
   if (fields.message !== undefined) updates.special_instructions = fields.message;
   if (fields.pickupInfo !== undefined) updates.pickup_info = fields.pickupInfo;
@@ -329,9 +347,6 @@ export async function updateFixture(
     updates.last_modified_date = new Date().toISOString();
   }
   if (fields.needsPlayers !== undefined) updates.needs_players = fields.needsPlayers ? 'Y' : '';
-  if (fields.entered !== undefined) updates.entered = fields.entered;
-  if (fields.selected !== undefined) updates.selected = fields.selected;
-  if (fields.reserves !== undefined) updates.reserves = fields.reserves;
   if (fields.captain !== undefined) updates.captain_username = fields.captain || null;
 
   if (Object.keys(updates).length === 0) return;
@@ -347,13 +362,15 @@ export async function deleteFixture(id: string): Promise<void> {
 }
 
 /**
- * Create a same-club "reserve game" (<tab>-2) for an oversubscribed standalone game,
- * so the captain can move overflow reserves into it. Copies the original fixture's
- * row, then overrides tab_name/club_name-or-suffix/format/status/counts. Marks the
- * original as paired='C' (closed-linked — see the plan's reasoning on 'Y' vs 'C').
- * Tea duty belongs to the original only, so it's left blank on the reserve.
- * Guards here: original must exist and not already be paired, and the -2 game must
- * not already exist. Status/oversubscription are enforced by the caller (the route).
+ * Create a "reserve game" (<tab>-2) for an oversubscribed game. It joins the original's
+ * fixture group (reserve_of = original), so it shares the group's pool of reserves —
+ * the captain simply picks reserves into it. A reserve game supplies both sides (BH v
+ * BH), so it needs twice the teams its format suggests. Copies the original fixture's
+ * row, then overrides tab_name/club_name-or-suffix/format/status. Tea duty belongs to
+ * the original only, so it's left blank on the reserve.
+ * Guards here: original must exist, be opened (grouped) and not itself a reserve game,
+ * and the -2 game must not already exist. Status/oversubscription are enforced by the
+ * caller (the route).
  */
 export async function createReserveFixture(
   originalId: string,
@@ -368,7 +385,8 @@ export async function createReserveFixture(
     .maybeSingle();
   if (fetchError) throw new Error(fetchError.message);
   if (!original) throw new Error(`Fixture not found: ${originalId}`);
-  if (original.paired) throw new Error('Game is already part of a pair');
+  if (!original.group_id) throw new Error('Game has not been opened');
+  if (original.reserve_of) throw new Error('Cannot add a reserve game to a reserve game');
 
   const newTabName = `${original.tab_name}-2`;
   const { data: existing } = await supabase.from('fixtures').select('id').eq('tab_name', newTabName).maybeSingle();
@@ -390,21 +408,15 @@ export async function createReserveFixture(
     ladies_men: original.ladies_men,
     dress: original.dress,
     tab_name: newTabName,
-    paired: 'C',
     game_status: 'X',
-    is_reserve: true,
-    entered: 0,
-    selected: 0,
-    reserves: 0,
+    group_id: original.group_id,
+    reserve_of: original.id,
     special_instructions: original.special_instructions,
     pickup_info: original.pickup_info,
   };
 
   const { data: inserted, error: insertError } = await supabase.from('fixtures').insert(insertRow).select('id').single();
   if (insertError) throw new Error(insertError.message);
-
-  const { error: updateError } = await supabase.from('fixtures').update({ paired: 'C' }).eq('id', originalId);
-  if (updateError) throw new Error(updateError.message);
 
   return { id: inserted.id, tabName: newTabName };
 }

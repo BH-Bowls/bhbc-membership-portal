@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getAppUrl } from '@/lib/app-url';
-import { getGameSheet } from '@/lib/friendlies-sheets';
+import { getGameSheet } from '@/lib/fixture-groups-supabase';
 import { getFixtureByTabName } from '@/lib/fixtures-supabase';
 import { GameSheetPlayer } from '@/lib/types/friendlies';
 import { sendGamePublishedEmail } from '@/lib/email/friendlies';

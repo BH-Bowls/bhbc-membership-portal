@@ -1,13 +1,13 @@
 // app/admin/cache/page.tsx
 // Admin-only diagnostics ("Cache View") for the in-memory sheet caches — the main
-// members cache, the friendlies members cache, and the Games cache. Shows, for each,
+// members cache and the friendlies members cache. Shows, for each,
 // how many reads the current copy has served, lifetime totals, and a log of recent
 // invalidations (each with the reads it served before being dropped).
 //
 // IMPORTANT: these counters are per serverless instance. In production every API
 // route is a separate lambda with its own memory, so this endpoint's numbers only
 // reflect the lambda that answered THIS request — not the whole app. For an app-wide
-// view, watch the "[users-cache]" / "[friendlies members-cache]" / "[games-cache]"
+// view, watch the "[users-cache]" / "[friendlies members-cache]"
 // console lines in your dev terminal or in Vercel → Logs.
 
 'use client';
@@ -131,7 +131,6 @@ export default function CacheViewPage() {
   const { data: session } = useSession();
 
   const [usersCache, setUsersCache] = useState<CacheStats | null>(null);
-  const [gamesCache, setGamesCache] = useState<CacheStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -144,7 +143,6 @@ export default function CacheViewPage() {
       if (!res.ok) throw new Error('Failed to load cache stats');
       const data = await res.json();
       setUsersCache(data.usersCache);
-      setGamesCache(data.gamesCache);
     } catch (err) {
       console.error('[CacheViewPage] load error:', err);
       setError('Failed to load cache stats. Please try again.');
@@ -183,8 +181,7 @@ export default function CacheViewPage() {
             <span className="font-medium">These numbers are for one server instance</span> — the lambda
             that answered this request. Production runs several, each with its own cache, so this won’t
             show app-wide totals and may read zero if this lambda hasn’t done member reads. For the full
-            picture, watch the <code className="bg-gray-100 px-1 rounded">[users-cache]</code> and{' '}
-            <code className="bg-gray-100 px-1 rounded">[games-cache]</code> lines in your dev terminal or
+            picture, watch the <code className="bg-gray-100 px-1 rounded">[users-cache]</code> lines in your dev terminal or
             in Vercel → Logs.
           </p>
         </div>
@@ -207,20 +204,11 @@ export default function CacheViewPage() {
           />
         )}
 
-        {gamesCache && (
-          <CacheSection
-            title="Games cache"
-            subtitle="Games sheet — friendlies list, tea rota and game detail. TTL 90s; write-gating reads (enter, add-players, lock, selection-save) bypass it."
-            countLabel="Games held"
-            stats={gamesCache}
-          />
-        )}
-
         <div className={getAlertClasses('info')}>
           <p className="text-sm">
             Each <span className="font-medium">read served from cache</span> is one Google Sheets read
-            request avoided. A hit rate near 100% means the cache is doing its job. Browsing friendlies
-            moves the games cache; profile/competitions/leagues/admin move the main members cache.
+            request avoided. A hit rate near 100% means the cache is doing its job. Profile, competitions, leagues and
+            admin pages move the main members cache.
           </p>
         </div>
       </div>
