@@ -133,6 +133,7 @@ export function Navbar() {
   const isLeagueCaptain = roles.includes('LeagueOrganiser');
   const isGMC = roles.includes('GMC');
   const isTesting = roles.includes('Testing'); // Testing role — access to features under evaluation
+  const isDarts = roles.includes('Darts'); // Halve It darts league organiser
   const canAccessBanking = isAdmin || isTreasurer;
   const canAccessCaptainTools = isAdmin || isCaptain;
   // Committee = has at least one committee role (Rowland roles are specialist only, not general committee)
@@ -183,6 +184,9 @@ export function Navbar() {
     }
     if (isAdmin || isRowlandOrganiser) {
       games.push({ name: 'Rowland Admin', href: '/rowland/admin' });
+    }
+    if (isAdmin || isDarts) {
+      games.push({ name: 'Halve It Admin', href: '/halve-it/manage' });
     }
 
     // ── Club ──
@@ -317,6 +321,7 @@ export function Navbar() {
         { name: 'Cleaning Rota', href: '/cleaning-rota' },
         { name: 'Sweeping Rota', href: '/sweeping-rota' },
         { name: '200 Club', href: '/200-club' },
+        { name: 'Halve It (Darts)', href: '/halve-it' },
       ],
     },
   ];
@@ -395,6 +400,7 @@ export function Navbar() {
         { name: 'Cleaning Rota', href: '/cleaning-rota' },
         { name: 'Sweeping Rota', href: '/sweeping-rota' },
         { name: '200 Club', href: '/200-club' },
+        { name: 'Halve It (Darts)', href: '/halve-it' },
       ],
     },
     ...(isRowlandPlayer || isCaptain ? [{
