@@ -19,7 +19,9 @@ import {
   returnSelectionsToPool,
   appendManageLog,
 } from '@/lib/fixture-groups-supabase';
-import { getFixtures, updateFixture, getTeaRotaEntry, type Fixture } from '@/lib/fixtures-supabase';
+import { getFixtures, updateFixture, getTeaRotaEntry, getGameByIdOrTab, type Fixture } from '@/lib/fixtures-supabase';
+import { canManageGame, getSquadForFixture } from '@/lib/squads-supabase';
+import { sendSquadTeamPublishedEmails } from '@/lib/email/squads';
 import { sendGamePublishedEmail, sendTeaRotaEmail, sendGameCancelledEmail, sendTeaRotaCancelledEmail } from '@/lib/email/friendlies';
 import { getAllUsers } from '@/lib/members-supabase';
 import { clearAllDiaryCaches, clearSheetDataCacheByPrefix } from '@/lib/home-cache';
@@ -40,11 +42,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Only Captains and Admins can change game status
-    if (!hasRole(session.user.role, 'Captain', 'Admin')) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-
     // Parse request body
     const body: ChangeStatusRequest = await request.json();
     const { tab_name, id, action, expected_status, bhbc_score, opponent_score, no_score, reason, who, send_email, email_player_names, send_tea_rota_email, publish_message } = body;
@@ -63,10 +60,25 @@ export async function POST(request: NextRequest) {
     if (!game && tab_name && tab_name.trim() !== '') {
       game = games.find(g => g.tabName === tab_name) || null;
     }
+    // Club Team games aren't in the general fixture list — look them up directly
+    if (!game) {
+      game = await getGameByIdOrTab(id, tab_name);
+    }
 
     // Return 404 if game doesn't exist
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
+    }
+
+    // Captains and Admins can change any game's status. A league / Club Team game's
+    // squad organisers can publish it from the selection page (results and cancelling
+    // are on the squad page).
+    const squad = await getSquadForFixture(game);
+    if (!hasRole(session.user.role, 'Captain', 'Admin')) {
+      const organiserAction = ['publish', 'republish', 'unpublish'].includes(action);
+      if (!squad || !organiserAction || !(await canManageGame(game, session.user.userName, session.user.role))) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      }
     }
 
     const statusLabel = (s: string) => ({ '': 'Upcoming', O: 'Open', X: 'Selecting', S: 'Selected', P: 'Played', C: 'Cancelled', A: 'Abandoned' }[s] ?? s);
@@ -94,7 +106,14 @@ export async function POST(request: NextRequest) {
       appendManageLog({ username: actor, action: `status:${to}`, tabName: fixture.tabName, fixtureId: fixture.id, groupId: fixture.groupId, oldStatus: from, newStatus: to, details });
 
     // Other games in this game's group (linked games / reserve games)
-    const groupMates = game.groupId ? games.filter(g => g.groupId === game!.groupId && g.id !== game!.id) : [];
+    // Emails name a squad game by its league (or Club Team) and opponent, e.g.
+    // "N/S A v Newick" — a Club Team opponent may be free text rather than a club.
+    const emailGame: Fixture = squad
+      ? { ...game, clubName: `${squad.squadType === 'league' ? game.gameType : squad.label} v ${game.clubName || game.description || 'TBC'}` }
+      : game;
+
+    // (A squad's other fixtures are separate games, not linked ones.)
+    const groupMates = game.groupId && !squad ? games.filter(g => g.groupId === game!.groupId && g.id !== game!.id) : [];
 
     // Handle different status transition actions with validation
     switch (action) {
@@ -173,17 +192,52 @@ export async function POST(request: NextRequest) {
             // game of the group to be published, so nobody gets the same news twice.
             const otherMainGamesPending = groupMates.some(g => !g.reserveOf && !PAST_SELECTING.includes(g.status));
             const roster = await getFixtureRoster(game);
-            const recipients = roster.filter(p => !(otherMainGamesPending && p.selected === 'R'));
+            // A league / Club Team game: just the picked team (the rest of the squad are
+            // "reserves" only in the sense of who could be picked — don't email them weekly)
+            const recipients = roster.filter(p => squad ? p.selected !== 'R' : !(otherMainGamesPending && p.selected === 'R'));
             emailResult = await emailPlayers(recipients, async (players, appUrl) =>
-              sendGamePublishedEmail(game!, players, appUrl, false, publish_message), email_player_names);
+              sendGamePublishedEmail(emailGame, players, appUrl, false, publish_message), email_player_names);
           } catch (emailError) {
             console.error('Error sending publish notification emails:', emailError);
             emailResult.emailError = emailError instanceof Error ? emailError.message : 'Failed to send emails';
           }
         }
 
-        // If tea rota email requested and this is a home game, email those on duty
-        if (send_tea_rota_email && game.homeAway === 'H') {
+        // League / Club Team home game: the two squad members on teas get the squad's teas
+        // email ("arrive early to set up… light snack after the game")
+        if (send_tea_rota_email && game.homeAway === 'H' && squad) {
+          try {
+            const teaEntry = await getTeaRotaEntry(game.id);
+            const teas = teaEntry ? [teaEntry.teaLead, teaEntry.teaFirst].filter(Boolean) : [];
+            if (teas.length > 0) {
+              const appUrl = await getAppUrl();
+              const result = await sendSquadTeamPublishedEmails(
+                {
+                  id: game.id,
+                  tabName: game.tabName,
+                  squadLabel: squad.label,
+                  fixtureType: game.gameType,
+                  date: game.date,
+                  time: (game.time || '').slice(0, 5),
+                  opponent: game.clubName || game.description || 'TBC',
+                  homeAway: game.homeAway,
+                  format: game.format,
+                },
+                [],
+                teas,
+                appUrl,
+                publish_message
+              );
+              teaRotaEmailResult = { emailsSent: result.emailsSent, membersWithoutEmail: result.withoutEmail };
+            }
+          } catch (teaEmailError) {
+            console.error('Error sending squad teas email:', teaEmailError);
+            teaRotaEmailResult.emailError = teaEmailError instanceof Error ? teaEmailError.message : 'Failed to send teas email';
+          }
+        }
+
+        // If tea rota email requested and this is a home friendly, email those on duty
+        if (send_tea_rota_email && game.homeAway === 'H' && !squad) {
           try {
             const teaEntry = await getTeaRotaEntry(game.id);
 
@@ -247,7 +301,7 @@ export async function POST(request: NextRequest) {
           try {
             const roster = await getFixtureRoster(game);
             emailResult = await emailPlayers(roster, async (players, appUrl) =>
-              sendGamePublishedEmail(game!, players, appUrl, true, publish_message), email_player_names);
+              sendGamePublishedEmail(emailGame, players, appUrl, true, publish_message), email_player_names);
           } catch (emailError) {
             console.error('Error sending republish notification emails:', emailError);
             emailResult.emailError = emailError instanceof Error ? emailError.message : 'Failed to send emails';

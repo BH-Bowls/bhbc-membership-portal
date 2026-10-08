@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Fetch all groups visible to this user
-    const groups = await getGroups(session.user.userName);
+    const groups = await getGroups(session.user.userName, session.user.role || '');
 
     return NextResponse.json({ groups });
   } catch (error) {

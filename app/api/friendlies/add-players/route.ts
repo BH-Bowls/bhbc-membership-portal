@@ -10,8 +10,8 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getAppUrl } from '@/lib/app-url';
 import { addEntries, checkEntryEligibility, appendManageLog } from '@/lib/fixture-groups-supabase';
-import { getFixtures } from '@/lib/fixtures-supabase';
-import { hasRole } from '@/lib/role-utils';
+import { getFixtures, getGameByIdOrTab } from '@/lib/fixtures-supabase';
+import { canManageGame } from '@/lib/squads-supabase';
 import { getAllUsers } from '@/lib/members-supabase';
 import { sendEntryConfirmedEmail, sendLinkedEntryConfirmedEmail } from '@/lib/email/friendlies';
 import { clearDiaryCache } from '@/lib/home-cache';
@@ -38,14 +38,17 @@ export async function POST(request: NextRequest) {
     }
 
     const allGames = await getFixtures();
-    const game = allGames.find(g => g.tabName === gameId);
+    let game = allGames.find(g => g.tabName === gameId) || null;
+    if (!game) game = await getGameByIdOrTab(null, gameId); // Club Team games
 
     if (!game || !game.groupId) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
     const groupId = game.groupId;
 
-    const isCaptainOrAdmin = hasRole(session.user.role, 'Captain', 'Admin');
+    // Captain/Admin — or, for a league / Club Team game, the squad's organisers (who add
+    // people to the squad from the game page)
+    const isCaptainOrAdmin = await canManageGame(game, session.user.userName, session.user.role);
 
     // Only allow adding to open games, or Selecting/Selected games for captains/admins
     if (game.status !== 'O') {

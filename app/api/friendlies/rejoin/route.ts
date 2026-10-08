@@ -9,13 +9,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getAppUrl } from '@/lib/app-url';
-import { getGameSheet, rejoinEntry, appendManageLog } from '@/lib/fixture-groups-supabase';
-import { getFixtures } from '@/lib/fixtures-supabase';
+import { getGameSheet, rejoinFixture, appendManageLog } from '@/lib/fixture-groups-supabase';
+import { getGameByIdOrTab } from '@/lib/fixtures-supabase';
+import { canManageGame } from '@/lib/squads-supabase';
 import { clearDiaryCache } from '@/lib/home-cache';
 import { sendRejoinEmail, sendRejoinNoticeEmail } from '@/lib/email/friendlies';
 import type { WithdrawRequest } from '@/lib/types/friendlies';
 import { getUserByUsername } from '@/lib/members-supabase';
-import { hasRole } from '@/lib/role-utils';
 
 // POST handler - Re-joins a player who had withdrawn from a Selecting/Selected game.
 // Self-service: a member re-joins themselves (from the game page) — captains notified.
@@ -40,22 +40,16 @@ export async function POST(request: NextRequest) {
     const target = explicitTarget ?? session.user.userName;
     const sendPlayerEmail = body.sendPlayerEmail !== false; // default true
 
-    // Only Captains/Admins may restore someone other than themselves.
-    if (isCaptainAction && target !== session.user.userName && !hasRole(session.user.role, 'Captain', 'Admin')) {
-      return NextResponse.json({ error: 'Only captains can restore another player' }, { status: 403 });
-    }
-
-    // Find the game
-    const games = await getFixtures();
-    let game = null;
-    for (const g of games) {
-      if (g.tabName === tab_name) {
-        game = g;
-        break;
-      }
-    }
+    // Find the game (Club Team games included)
+    const game = await getGameByIdOrTab(null, tab_name);
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
+    }
+
+    // Only Captains/Admins (or a league / Club Team game's organisers) may restore
+    // someone other than themselves.
+    if (isCaptainAction && target !== session.user.userName && !(await canManageGame(game, session.user.userName, session.user.role))) {
+      return NextResponse.json({ error: 'Only captains can restore another player' }, { status: 403 });
     }
 
     // Re-join / restore applies while the game is Selecting or Selected (the states
@@ -88,7 +82,7 @@ export async function POST(request: NextRequest) {
     // Clear the withdrawal. Their selection was kept when they withdrew, so they come
     // back exactly as they were (playing, or a reserve if a captain had since
     // returned them to the reserves) — selected-but-unconfirmed.
-    await rejoinEntry(game.groupId!, target);
+    await rejoinFixture(game, target);
     await appendManageLog({
       username: session.user.userName,
       action: isCaptainAction ? 'restore' : 'rejoin',

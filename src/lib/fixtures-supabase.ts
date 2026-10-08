@@ -216,7 +216,11 @@ export async function getFixtures(statusFilter?: GameStatus, typeFilter?: GameTy
 
   const { data, error } = await query;
   if (error) throw new Error(`Failed to fetch fixtures: ${error.message}`);
-  return withLiveCounts((data || []).map(mapFixtureRow));
+  // Club Team fixtures (Squads) are created ad hoc and may have no date yet — they're
+  // left out of general fixture lists unless a caller asks for them by type.
+  const wantClubTeams = !!typeFilter && typeFilter.includes('Club Team');
+  const rows = (data || []).filter((row: any) => wantClubTeams || row.fixture_type !== 'Club Team');
+  return withLiveCounts(rows.map(mapFixtureRow));
 }
 
 export async function getFixtureByTabName(tabName: string): Promise<Fixture | null> {
@@ -610,4 +614,18 @@ export async function swapTeaAssignment(
   const updated = await getTeaRotaEntry(id);
   if (!updated) throw new Error('Fixture disappeared during swap');
   return updated;
+}
+
+/**
+ * One game by id or tab name — including squad Club Team fixtures, which getFixtures
+ * leaves out of general lists. Routes that find a game in a getFixtures() list fall back
+ * to this so Club Team games work on the friendlies pages too.
+ */
+export async function getGameByIdOrTab(id?: string | null, tabName?: string | null): Promise<Fixture | null> {
+  if (id) {
+    const byId = await getFixtureById(id);
+    if (byId) return byId;
+  }
+  if (tabName && tabName.trim()) return getFixtureByTabName(tabName.trim());
+  return null;
 }

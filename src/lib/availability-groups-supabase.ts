@@ -47,6 +47,7 @@ function mapGroupRow(row: any): AvailabilityGroup {
     createdByUsername: row.created_by_username || '',
     allowMemberManagement: !!row.allow_member_management,
     teamId: row.team_id || '',
+    fixtureGroupId: row.fixture_group_id || '',
     status: row.status || 'active',
     createdAt: row.created_at || '',
     updatedAt: row.updated_at || '',
@@ -64,6 +65,7 @@ function mapMemberRow(row: any): AvailabilityGroupMember {
     addedByUsername: row.added_by_username || '',
     createdAt: row.created_at || '',
     token: row.token || '',
+    active: row.active !== false,
   };
 }
 
@@ -74,7 +76,7 @@ function mapMemberRow(row: any): AvailabilityGroupMember {
  * they appear as a member-type row. Only status='active'. Resolves memberCount and
  * openEventCount for each group.
  */
-export async function getGroups(userName: string): Promise<AvailabilityGroupSummary[]> {
+export async function getGroups(userName: string, userRole: string = ''): Promise<AvailabilityGroupSummary[]> {
   const supabase = getSupabaseClient();
 
   const [groupsResp, membersResp, eventsResp] = await Promise.all([
@@ -110,8 +112,10 @@ export async function getGroups(userName: string): Promise<AvailabilityGroupSumm
   for (const row of groupsResp.data || []) {
     const groupId = row.id;
     const createdByUsername = row.created_by_username || '';
-    const isCreator = createdByUsername === userName;
     const isMember = memberGroupIds.has(groupId);
+    // A squad's group: its organisers (and Captain/Admin) run its polls, whoever created it
+    const runsLinkedSquad = !!row.fixture_group_id && (await isLinkedSquadManager(row.fixture_group_id, userName, userRole));
+    const isCreator = createdByUsername === userName || runsLinkedSquad;
     if (!isCreator && !isMember) continue;
 
     const allowMemberManagement = !!row.allow_member_management;
@@ -124,11 +128,96 @@ export async function getGroups(userName: string): Promise<AvailabilityGroupSumm
       memberCount: memberCountMap[groupId] || 0,
       openEventCount: openEventCountMap[groupId] || 0,
       isCreator,
-      canManageMembers: isCreator || (allowMemberManagement && isMember),
+      // Membership of a squad's group follows the squad — never managed here
+      canManageMembers: !row.fixture_group_id && (isCreator || (allowMemberManagement && isMember)),
     });
   }
 
   return results;
+}
+
+// ─── Squad-linked groups (Club Teams "Ask squad") ───────────────────────────────
+
+/** Is this user an organiser of the squad (or Captain/Admin)? */
+async function isLinkedSquadManager(fixtureGroupId: string, userName: string, userRole: string): Promise<boolean> {
+  if (hasRole(userRole, 'Captain', 'Admin')) return true;
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('fixture_group_managers')
+    .select('username')
+    .eq('group_id', fixtureGroupId)
+    .eq('username', userName)
+    .maybeSingle();
+  if (error) throw new Error(`Failed to check squad organisers: ${error.message}`);
+  return !!data;
+}
+
+/**
+ * Can this user open the group and run its polls? Creator, Admin, an active member, or —
+ * for a squad's group — one of the squad's organisers (or Captain).
+ */
+export async function canAccessGroup(group: AvailabilityGroup, userName: string, userRole: string): Promise<boolean> {
+  if (group.createdByUsername === userName) return true;
+  if (hasRole(userRole, 'Admin')) return true;
+  if (group.fixtureGroupId && (await isLinkedSquadManager(group.fixtureGroupId, userName, userRole))) return true;
+  return isGroupMember(group.groupId, userName);
+}
+
+/**
+ * "Ask squad": the availability group for a squad — created on first use (named after the
+ * squad), then kept in step with the squad on every use. New squad members are added;
+ * leavers are marked inactive (never deleted, so their answers to past polls stay);
+ * rejoiners are made active again. Returns the availability group id.
+ */
+export async function syncSquadAvailabilityGroup(
+  fixtureGroupId: string,
+  squadLabel: string,
+  squadUsernames: string[],
+  byUsername: string
+): Promise<string> {
+  const supabase = getSupabaseClient();
+  const { data: existing, error } = await supabase
+    .from('availability_groups')
+    .select('id')
+    .eq('fixture_group_id', fixtureGroupId)
+    .maybeSingle();
+  if (error) throw new Error(`Failed to look up squad group: ${error.message}`);
+
+  let groupId: string;
+  if (existing) {
+    groupId = existing.id;
+  } else {
+    groupId = await generateGroupId();
+    const { error: insertError } = await supabase.from('availability_groups').insert({
+      id: groupId,
+      name: squadLabel,
+      description: 'Squad availability — members follow the squad and are kept up to date automatically.',
+      created_by_username: byUsername,
+      allow_member_management: false,
+      fixture_group_id: fixtureGroupId,
+      status: 'active',
+    });
+    if (insertError) throw new Error(`Failed to create squad group: ${insertError.message}`);
+  }
+
+  const members = await getGroupMembers(groupId);
+  const inSquad = new Set(squadUsernames.map((u) => u.toLowerCase()));
+  const already = new Set<string>();
+  for (const m of members) {
+    if (m.memberType !== 'member' || !m.userName) continue;
+    already.add(m.userName.toLowerCase());
+    const shouldBeActive = inSquad.has(m.userName.toLowerCase());
+    if (shouldBeActive !== m.active) {
+      const { error: upError } = await supabase
+        .from('availability_group_members')
+        .update({ active: shouldBeActive })
+        .eq('id', m.memberId);
+      if (upError) throw new Error(`Failed to update squad group member: ${upError.message}`);
+    }
+  }
+  const toAdd = squadUsernames.filter((u) => !already.has(u.toLowerCase()));
+  if (toAdd.length > 0) await addGroupMembers(groupId, byUsername, toAdd, []);
+  return groupId;
 }
 
 /** Fetch a single group by id. Does NOT check access — caller is responsible. */
@@ -146,7 +235,8 @@ export async function getGroupById(groupId: string): Promise<AvailabilityGroup |
  */
 export async function getGroupDetail(
   groupId: string,
-  callerUserName: string
+  callerUserName: string,
+  callerRole: string = ''
 ): Promise<AvailabilityGroupDetail | null> {
   const group = await getGroupById(groupId);
   if (!group) return null;
@@ -171,9 +261,20 @@ export async function getGroupDetail(
   const { getGroupEvents } = await import('./availability-events-supabase');
   const events: AvailabilityEventSummary[] = await getGroupEvents(groupId, callerUserName);
 
-  const isCreator = group.createdByUsername === callerUserName;
+  // A squad's group: its organisers run the polls; membership follows the squad, so
+  // nobody manages members (or edits/deletes the group) here
+  let linkedSquad: { id: string; label: string } | null = null;
+  let runsLinkedSquad = false;
+  if (group.fixtureGroupId) {
+    const supabase = getSupabaseClient();
+    const { data: squad } = await supabase.from('fixture_groups').select('id, label').eq('id', group.fixtureGroupId).maybeSingle();
+    if (squad) linkedSquad = { id: squad.id, label: squad.label };
+    runsLinkedSquad = await isLinkedSquadManager(group.fixtureGroupId, callerUserName, callerRole);
+  }
+
+  const isCreator = group.createdByUsername === callerUserName || runsLinkedSquad;
   const isMemberResult = await isGroupMember(groupId, callerUserName);
-  const canManage = isCreator || (group.allowMemberManagement && isMemberResult);
+  const canManage = !group.fixtureGroupId && (isCreator || (group.allowMemberManagement && isMemberResult));
 
   return {
     group,
@@ -182,6 +283,7 @@ export async function getGroupDetail(
     events,
     isCreator,
     canManageMembers: canManage,
+    linkedSquad,
   };
 }
 
@@ -258,6 +360,8 @@ export async function canManageGroupMembers(
   userName: string,
   userRole: string
 ): Promise<boolean> {
+  // A squad's group: membership follows the squad, never managed by hand
+  if (group.fixtureGroupId) return false;
   if (group.createdByUsername === userName) return true;
   if (hasRole(userRole, 'Admin')) return true;
   if (group.allowMemberManagement) {

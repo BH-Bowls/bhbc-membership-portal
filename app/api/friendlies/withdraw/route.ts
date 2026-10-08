@@ -7,10 +7,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getAppUrl } from '@/lib/app-url';
-import { getGameSheet, deleteEntry, markEntryWithdrawn, appendManageLog } from '@/lib/fixture-groups-supabase';
-import { getFixtures } from '@/lib/fixtures-supabase';
+import { getGameSheet, deleteEntry, withdrawFromFixture, appendManageLog } from '@/lib/fixture-groups-supabase';
+import { getFixtures, getGameByIdOrTab } from '@/lib/fixtures-supabase';
 import { clearDiaryCache } from '@/lib/home-cache';
 import { sendWithdrawalEmail, sendWithdrawalNoticeEmail, sendLinkedWithdrawalNoticeEmail } from '@/lib/email/friendlies';
+import { notifySquadOrganisersOfDropOut } from '@/lib/email/squads';
 import type { WithdrawRequest } from '@/lib/types/friendlies';
 import { getUserByUsername } from '@/lib/members-supabase';
 import { canManageUser } from '@/lib/buddies-supabase';
@@ -45,6 +46,8 @@ export async function POST(request: NextRequest) {
         break;
       }
     }
+    // Club Team games aren't in the general fixture list — look them up directly
+    if (!game) game = await getGameByIdOrTab(null, tab_name);
 
     // Return 404 if game doesn't exist
     if (!game) {
@@ -137,14 +140,16 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Mark the entry withdrawn. Their selection (if any) is kept, so the game card can
-      // still say what they had been picked as.
-      await markEntryWithdrawn(game.groupId!, userName, userName);
+      // Friendlies: the entry is withdrawn (their selection, if any, is kept so the game
+      // card can say what they had been picked as). League / Club Team: they drop out of
+      // this game only — a reserve is marked not available that day.
+      await withdrawFromFixture(game, userName, userName);
       await appendManageLog({ username: userName, action: 'withdraw', tabName: game.tabName, fixtureId: game.id, groupId: game.groupId, details: { player: userName, wasSelected: userPlayer.selected } });
 
       // Send email notification to captains if game is Selected or Played
       // (No email for Selecting status as team not finalized yet)
-      if (game.status === 'S' || game.status === 'P') {
+      // (A league / Club Team game tells its squad organisers instead of the Captains.)
+      if ((game.status === 'S' || game.status === 'P') && !(await notifySquadOrganisersOfDropOut(game, userName, appUrl, userPlayer.selected === 'Y'))) {
         await sendWithdrawalEmail(
           userName,
           game,

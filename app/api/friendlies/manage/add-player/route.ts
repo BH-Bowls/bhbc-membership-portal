@@ -9,7 +9,7 @@ import { authOptions } from '@/lib/auth';
 import { addEntries, checkEntryEligibility, getGroupFixtures, appendManageLog } from '@/lib/fixture-groups-supabase';
 import { getFixtureByTabName } from '@/lib/fixtures-supabase';
 import { AddPlayerRequest } from '@/lib/types/friendlies';
-import { hasRole } from '@/lib/role-utils';
+import { canManageGame } from '@/lib/squads-supabase';
 import { clearDiaryCache } from '@/lib/home-cache';
 
 export async function POST(request: NextRequest) {
@@ -20,11 +20,6 @@ export async function POST(request: NextRequest) {
     // Reject if not logged in
     if (!session || !session.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    // Only Captains and Admins can add players
-    if (!hasRole(session.user.role, 'Captain', 'Admin')) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     // Parse request body
@@ -43,6 +38,11 @@ export async function POST(request: NextRequest) {
 
     if (!game || !game.groupId) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
+    }
+
+    // Captain/Admin, or — for a league / Club Team game — the squad's organisers
+    if (!(await canManageGame(game, session.user.userName, session.user.role))) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     // Allow adding players to Open (O), Selecting (X), or Selected (S) games

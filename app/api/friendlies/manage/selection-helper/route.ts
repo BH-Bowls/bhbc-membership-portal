@@ -8,7 +8,7 @@ import { authOptions } from '@/lib/auth';
 import { getGameSheet } from '@/lib/fixture-groups-supabase';
 import { getFixtureByTabName } from '@/lib/fixtures-supabase';
 import { getAllUsers } from '@/lib/members-supabase';
-import { hasRole } from '@/lib/role-utils';
+import { canManageGame } from '@/lib/squads-supabase';
 
 export interface SelectionHelperPlayer {
   userName: string;
@@ -65,9 +65,6 @@ export async function GET(request: NextRequest) {
     if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    if (!hasRole(session.user.role, 'Captain', 'Admin')) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
 
     const tabName = request.nextUrl.searchParams.get('tab_name');
     if (!tabName) {
@@ -86,6 +83,11 @@ export async function GET(request: NextRequest) {
 
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
+    }
+
+    // Captain/Admin, or — for a league / Club Team game — the squad's organisers
+    if (!(await canManageGame(game, session.user.userName, session.user.role))) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     // Build lookups from Members sheet

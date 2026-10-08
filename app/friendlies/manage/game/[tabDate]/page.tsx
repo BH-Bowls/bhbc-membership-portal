@@ -48,6 +48,9 @@ interface GameData {
     // this game's reserves
     groupGames?: Array<{ tabName: string; name: string; status: string; selected: number; isReserve: boolean }>;
     isReserve?: boolean;    // a reserve game supplies both sides, so it needs twice the teams
+    // League / Club Team game: its squad, and (home games) the two tea people
+    squad?: { id: string; label: string; squadType: 'league' | 'club_team' | null } | null;
+    teas?: { lead: string; first: string } | null;
     pickupInfo: string;     // Pickup point / time info (away games)
     specialInstructions: string; // Optional special instructions message
   };
@@ -172,6 +175,12 @@ export default function TeamSelectionPage() {
 
   // State: Game data including game details and all players
   const [gameData, setGameData] = useState<GameData | null>(null);
+
+  // League / Club Team home game: the two tea people (saved with the selection)
+  const [teaDraft, setTeaDraft] = useState<{ lead: string; first: string } | null>(null);
+  useEffect(() => {
+    if (gameData && gameData.game.teas) setTeaDraft(gameData.game.teas);
+  }, [gameData]);
 
   // State: Players list (separate from gameData for easier updates)
   const [players, setPlayers] = useState<GameSheetPlayer[]>([]);
@@ -662,6 +671,8 @@ export default function TeamSelectionPage() {
           tab_name: gameData.game.tabName,
           captain_username: captainUserName,
           selections,
+          // League / Club Team home game: the tea people
+          ...(gameData.game.squad && teaDraft ? { teas: teaDraft } : {}),
         }),
       });
 
@@ -721,7 +732,7 @@ export default function TeamSelectionPage() {
     } finally {
       setSaving(false);
     }
-  }, [gameData, players, draftFormName, acquireLock, releaseLock]);
+  }, [gameData, players, draftFormName, acquireLock, releaseLock, teaDraft]);
 
   /**
    * Validate selection then save — shows a warnings modal if issues are found.
@@ -941,6 +952,7 @@ export default function TeamSelectionPage() {
   const groupGames = game.groupGames || [];
   const canAddReserveGame =
     !isEditing &&
+    !game.squad &&
     game.status === 'X' &&
     !game.isReserve &&
     !groupGames.some(g => g.isReserve) &&
@@ -964,7 +976,9 @@ export default function TeamSelectionPage() {
         {/* Header with back link and game details */}
         <div className="mb-6">
           <div className="flex items-center justify-between mb-2">
-            <Link href="/friendlies/manage" className="text-blue-600 hover:text-blue-800">← Back to Manage Games</Link>
+            {game.squad
+              ? <Link href={`/squads/${game.squad.id}`} className="text-blue-600 hover:text-blue-800">← Back to {game.squad.label}</Link>
+              : <Link href="/friendlies/manage" className="text-blue-600 hover:text-blue-800">← Back to Manage Games</Link>}
             <div className="flex gap-2 items-center">
               <Link
                 href={`/friendlies/game/${tabDate}`}
@@ -1015,6 +1029,33 @@ export default function TeamSelectionPage() {
           )}
         </div>
 
+        {/* League / Club Team home game: teas — any two squad members, playing or not */}
+        {game.squad && game.homeAway === 'H' && teaDraft && (
+          <div className="mb-4 bg-white rounded-lg shadow p-4 text-sm text-gray-900">
+            <p className="font-semibold">Teas</p>
+            <p className="text-gray-700 mb-2">
+              Two squad members provide the light snack after the game — they don&apos;t have to be playing.
+              {!isEditing && ' Click Edit Selection to change.'}
+            </p>
+            <div className="flex flex-wrap gap-3">
+              {(['lead', 'first'] as const).map((slot, i) => (
+                <label key={slot}>
+                  Teas {i + 1}
+                  <select
+                    value={teaDraft[slot]}
+                    disabled={!isEditing}
+                    onChange={e => setTeaDraft({ ...teaDraft, [slot]: e.target.value })}
+                    className={`block mt-1 border border-gray-300 rounded px-2 py-1.5 ${!isEditing ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+                  >
+                    <option value="">—</option>
+                    {players.map(p => <option key={p.name} value={p.name}>{p.fullName}</option>)}
+                  </select>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Linked / reserve games: one shared pool of reserves across the group */}
         {groupGames.length > 0 && (
           <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-900">
@@ -1038,7 +1079,9 @@ export default function TeamSelectionPage() {
 
         {/* Action buttons panel */}
         <div className="bg-white rounded-lg shadow p-4 mb-6 flex flex-wrap gap-3 items-center">
-          {/* Manage Players button — always visible; opens add/remove/withdraw modal */}
+          {/* Manage Players button — opens add/remove/withdraw modal. Not for a league / Club
+              Team game: its squad is managed on the squad page. */}
+          {!game.squad && (
           <button
             onClick={() => setShowAddPlayersModal(true)}
             className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition-colors flex items-center gap-2"
@@ -1048,6 +1091,7 @@ export default function TeamSelectionPage() {
             </svg>
             Manage Players
           </button>
+          )}
 
           {/* Instructions button — opens dialog to edit special instructions and pickup info */}
           {!isEditing && (
@@ -1152,6 +1196,9 @@ export default function TeamSelectionPage() {
                         >
                           {player.fullName}
                         </span>
+                        {player.squadNote && (
+                          <div className="text-[11px] font-medium text-amber-800">{player.squadNote}</div>
+                        )}
                       </td>
 
                       <td className="px-2 py-2 text-sm text-gray-900">

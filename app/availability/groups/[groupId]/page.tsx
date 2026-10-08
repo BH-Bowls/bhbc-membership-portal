@@ -472,9 +472,19 @@ export default function GroupPage({
                 <p className="text-sm text-gray-700 mb-2">{detail.group.description}</p>
               )}
 
-              {/* Member count */}
+              {/* A squad's group: membership follows the squad */}
+              {detail.linkedSquad && (
+                <div className={getAlertClasses('info') + ' mb-3 text-sm'}>
+                  This group belongs to the{' '}
+                  <Link href={`/squads/${detail.linkedSquad.id}`} className="font-medium underline">{detail.linkedSquad.label}</Link>{' '}
+                  squad. Its members are kept in step with the squad automatically, so they
+                  can&apos;t be changed here — add or remove people on the squad page.
+                </div>
+              )}
+
+              {/* Member count (people who have left a linked squad don't count) */}
               <p className="text-sm text-gray-700 mb-3">
-                {detail.members.length} {detail.members.length === 1 ? 'member' : 'members'}
+                {detail.members.filter(m => m.active).length} {detail.members.filter(m => m.active).length === 1 ? 'member' : 'members'}
               </p>
 
               {/* Action buttons */}
@@ -489,8 +499,8 @@ export default function GroupPage({
                   </button>
                 )}
 
-                {/* Edit group — shown to creator only */}
-                {detail.isCreator && detail.group.status === 'active' && (
+                {/* Edit group — shown to creator only (not for a squad's group) */}
+                {detail.isCreator && !detail.linkedSquad && detail.group.status === 'active' && (
                   <button
                     onClick={handleOpenEditForm}
                     className={getButtonClasses('secondary', 'sm')}
@@ -519,8 +529,8 @@ export default function GroupPage({
                   </Link>
                 )}
 
-                {/* Delete — shown to creator or admin */}
-                {(detail.isCreator || currentUserRole.indexOf('Admin') !== -1) && detail.group.status === 'active' && (
+                {/* Delete — shown to creator or admin (not for a squad's group) */}
+                {(detail.isCreator || currentUserRole.indexOf('Admin') !== -1) && !detail.linkedSquad && detail.group.status === 'active' && (
                   <button
                     onClick={() => setShowArchiveConfirm(true)}
                     className={getButtonClasses('danger', 'sm')}

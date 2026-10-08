@@ -9,7 +9,7 @@ import { authOptions } from '@/lib/auth';
 import { getGameSheet, saveSelections, appendManageLog } from '@/lib/fixture-groups-supabase';
 import { getFixtureByTabName, updateFixture } from '@/lib/fixtures-supabase';
 import { UpdateSelectionRequest, UpdateSelectionResponse } from '@/lib/types/friendlies';
-import { hasRole } from '@/lib/role-utils';
+import { canManageGame, getSquadForFixture, setSquadFixtureTeas } from '@/lib/squads-supabase';
 
 // POST handler - Updates player selections and team assignments for a game
 export async function POST(request: NextRequest) {
@@ -20,11 +20,6 @@ export async function POST(request: NextRequest) {
     // Reject if not logged in
     if (!session || !session.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    // Only Captains and Admins can update team selections
-    if (!hasRole(session.user.role, 'Captain', 'Admin')) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     // Parse request body to get game identifier and selection updates
@@ -39,6 +34,11 @@ export async function POST(request: NextRequest) {
     // Return 404 if game doesn't exist
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
+    }
+
+    // Captain/Admin, or — for a league / Club Team game — the squad's organisers
+    if (!(await canManageGame(game, session.user.userName, session.user.role))) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     // Lock guard: only the captain who holds the lock may save selections.
@@ -88,6 +88,12 @@ export async function POST(request: NextRequest) {
     }
 
     const { conflicts } = await saveSelections(game, changes);
+
+    // League / Club Team home game: the two tea people (any squad members, playing or not)
+    const teas = (body as { teas?: { lead?: string; first?: string } }).teas;
+    if (teas && (await getSquadForFixture(game))) {
+      await setSquadFixtureTeas(game.id, teas.lead || '', teas.first || '');
+    }
     await appendManageLog({ username: session.user.userName, action: 'save-selection', tabName: game.tabName, fixtureId: game.id, groupId: game.groupId, details: { changes: changes.length, conflicts } });
 
     // Write captain of the day to the fixture (captain_username = '' clears the field)

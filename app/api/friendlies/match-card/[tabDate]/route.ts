@@ -7,7 +7,7 @@ import {
   getClubDetails,
   getClubContacts,
 } from '@/lib/fixture-groups-supabase';
-import { getFixtureByTabName, getTeaRotaList } from '@/lib/fixtures-supabase';
+import { getFixtureByTabName, getTeaRotaEntry } from '@/lib/fixtures-supabase';
 import { getAllUsers } from '@/lib/members-supabase';
 import { MatchCardData, Team, ReservePlayer } from '@/lib/types/friendlies';
 
@@ -210,8 +210,8 @@ export async function GET(
     if (game.homeAway === 'H') {
       try {
         console.log('[match-card] Fetching tea rota for HOME game:', { tabName: game.tabName });
-        const teaRotaList = await getTeaRotaList();
-        const teaRotaEntry = teaRotaList.find(t => t.tabName === game.tabName);
+        // The game's own tea fields — covers league teas too (the tea rota list is friendlies only)
+        const teaRotaEntry = await getTeaRotaEntry(game.id);
         if (teaRotaEntry && (teaRotaEntry.teaLead || teaRotaEntry.teaFirst || teaRotaEntry.teaSecond)) {
           // Build full name lookup from Postgres members
           const allUsers = await getAllUsers();

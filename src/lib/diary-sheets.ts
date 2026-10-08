@@ -6,6 +6,7 @@
 // Availability events.
 
 import { getPlayerEntries } from './fixture-groups-supabase';
+import { getSquadDiaryEntries } from './squads-supabase';
 import { getActiveSeasonId } from './fixtures-supabase';
 import { getAllUsers } from './members-supabase';
 import { getCleaningRotaList } from './cleaning-rota-supabase';
@@ -647,15 +648,31 @@ export async function getDiaryItems(userName: string): Promise<DiaryItem[]> {
   const nameMap = buildNameMap(allUsers);
 
   // Run all data-source fetches in parallel, capturing results and errors separately
-  const [membersResult, friendliesResult, compsResult, leaguesResult, availabilityResult] = await Promise.allSettled([
+  const [membersResult, friendliesResult, compsResult, leaguesResult, availabilityResult, squadsResult] = await Promise.allSettled([
     fetchMembersRotaItems(userName, todayStr),
     fetchFriendliesItems(userName, todayStr),
     fetchCompetitionsItems(userName, todayStr, nameMap),
     fetchLeagueItems(userName, todayStr),
     fetchAvailabilityItems(userName, todayStr),
+    getSquadDiaryEntries(userName, todayStr),
   ]);
 
   const items: DiaryItem[] = [];
+
+  // Collect items from SQUADS (external leagues): published fixtures you're playing in
+  // or on teas for
+  if (squadsResult.status === 'fulfilled') {
+    for (const s of squadsResult.value) {
+      items.push({
+        type: s.kind === 'teas' ? 'tea' : 'league',
+        date: s.date,
+        displayDate: formatDiaryDate(s.date),
+        label: s.label,
+        subLabel: s.kind === 'teas' ? `${s.squadLabel} — teas` : `${s.squadLabel} — selected`,
+        linkUrl: `/friendlies/game/${encodeURIComponent(s.tabName)}`,
+      });
+    }
+  }
 
   // Collect items from MEMBERS rota (cleaning + sweeping)
   if (membersResult.status === 'fulfilled') {

@@ -474,3 +474,76 @@ source of truth:
   `manage/repair-entries`, `manage/move-reserve`; the Games-cache diagnostics.
 - **Import**: `scripts/import-friendlies-2026.ts` (dry run by default; `--apply --as=<username>`).
   `migrate-members.ts` now wipes the new tables before users, so re-run the import after it.
+
+## 14. Phase 3 implementation notes — external leagues (2026-10-03)
+
+- **Squads** menu item → `/squads` (list, join/leave, Captain/Admin create), `/squads/[groupId]`
+  (fixtures, published teams, squad list with appearances, organiser tools),
+  `/squads/fixture/[fixtureId]` (organiser's team picker; members see the published team).
+  Data layer `src/lib/squads-supabase.ts`; emails `src/lib/email/squads.ts`; APIs under `/api/squads`.
+- **One shared N/S squad** feeds both N/S A and N/S B fixtures (`league_type = 'N/S'`). A player
+  can't be picked for two of the squad's fixtures on the same date — the save reports a conflict.
+- **Creating** a league squad (Captain/Admin) attaches every active-season fixture of its type(s);
+  fixtures added later in Season Planning are attached automatically whenever the squad loads.
+- **Organisers** = `fixture_group_managers`; any organiser, Captain or Admin can change them.
+- **Lifecycle per fixture**: Not picked (`''`) → Picking (`X`, set on first save) → Published (`S`)
+  → Played (`P`, W/L/D + optional scores) or Cancelled (`C`); Unpublish and Reinstate undo.
+- **Availability**: "Can't make this one" writes a busy `availability_overrides` row for that date
+  and session (from the fixture time); the picker shows any busy override (incl. holidays entered on
+  the availability page) as "Away — <label>".
+- **Dropping out** of a published fixture sets `fixture_selections.withdrawn_at` and emails the
+  organisers. **Leaving the squad** clears picks and tea slots on upcoming fixtures and emails the
+  organisers what needs replacing.
+- **Teas** (home): two squad members in `tea_lead_username`/`tea_first_username`; publish refuses a
+  tea person no longer in the squad. Non-playing tea people get their own email.
+- **Diary**: published upcoming fixtures you're playing in (`league` item) or on teas for (`tea`).
+- Not done: magic-link tokens in squad emails (links go to the logged-in pages); league stats
+  beyond per-squad appearances; "Ask squad" (Phase 4).
+
+## 15. Phase 4 implementation notes — Club Teams (2026-10-03)
+
+- **Start a Club Team** on `/squads` (any member; they become its organiser, optional
+  co-organisers). `squad_type = 'club_team'`, `entry_mode = 'manager'`: no Join button — the
+  organiser adds/removes squad members. `/squads` lists League squads and Club Teams separately.
+- **Fixtures** are added on the squad page as rounds come up (`fixture_type = 'Club Team'`):
+  opponent from the club directory or free text, home/away, format, Ladies/Men, and a date that
+  can stay blank ("Date TBC") until agreed. Edit details / Delete per fixture. Publishing needs a
+  date; picking the team doesn't. Undated fixtures sort last and count as upcoming.
+- **`getFixtures` leaves Club Team fixtures out** unless a caller asks for that type, so undated
+  fixtures never reach the fixtures/clubs/friendlies pages.
+- **Ask squad** (organisers, Captain, Admin — shown on league squads too) calls
+  `syncSquadAvailabilityGroup`: creates the squad's availability group on first use
+  (`availability_groups.fixture_group_id`), then each time adds new squad members, marks leavers
+  `active = false` and reactivates rejoiners, and opens it in the planner.
+- **Planner rules for a squad's group**: squad organisers/Captain/Admin can open it, create polls
+  and see the heatmap (`canAccessGroup`); it can't be edited or deleted, and members can't be
+  added/removed there (banner links back to the squad). Inactive members are left out of new poll
+  invites, nudges and the heatmap, and appear on a poll's roster only if they'd already answered it.
+- Poll-level actions (edit/conclude a poll) stay with the poll's creator and Admin, as before.
+
+## 16. Squads use the friendlies picker (2026-10-07)
+
+Replaces the separate squad picker (`/squads/fixture/...`, removed) — squad games are picked
+and played through exactly the same pages as friendlies:
+
+- **Selection**: `/friendlies/manage/game/[tabName]` (helper, swap, print picker, match card,
+  lock, drafts, captain, driving). Squad fixtures get a stable `tab_name` and start as Selecting
+  when they join their squad (`ensureSquadFixtureKeys`). Everyone in the squad is on the roster —
+  picked players Y, the rest R. Stats column = this squad's games since joining (picked / games);
+  `squadNote` shows "Away — <label>" (availability override) or "Playing <other N/S team> that day".
+  Home league games show the two **Teas** selectors (saved with the selection).
+- **Permissions**: `canManageGame` — Captain/Admin, or the squad's organisers — on the selection,
+  lock, helper, message, pickup, add/remove player and publish routes. The proxy lets any logged-in
+  member reach the game and print-picker pages; the APIs enforce it. Organisers who aren't Captains
+  can only publish / republish / unpublish via the friendlies status route.
+- **Publish**: the friendlies publish email (with Confirm/Withdraw links) to the **picked players
+  only** (not the whole squad as reserves); teas get the squad teas email. Emails name the game
+  "N/S A v Newick" / "<Club Team> v <opponent>".
+- **Player actions** branch on the group kind (`confirmForFixture`, `withdrawFromFixture`,
+  `rejoinFixture`): for squads they act on that fixture's selection only — withdrawing never takes
+  anyone out of the squad; a squad reserve who withdraws is marked unavailable that day. Drop-outs
+  email the squad's organisers (`notifySquadOrganisersOfDropOut`), not the Captains.
+- **Squad page** keeps: fixture list with View game / Pick team links, Record result (W/L/D),
+  Cancel, Reinstate, Club Team fixture add/edit/delete, Ask squad, squad + organiser management.
+  "Remove completely" from a squad game's player list takes them out of the squad.
+- **Game lookup**: `getGameByIdOrTab` finds Club Team games, which `getFixtures` leaves out.

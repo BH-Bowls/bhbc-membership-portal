@@ -270,6 +270,8 @@ export async function openFixtures(fixtureIds: string[], openedBy: string): Prom
   if (existingGroupIds.length === 1) {
     const g = await getGroup(existingGroupIds[0]);
     if (!g) throw new Error('Fixture group not found');
+    // League / Club Team fixtures belong to a squad and are managed on the Squads pages
+    if (g.kind !== 'occasion') throw new Error('This fixture belongs to a squad — manage it from Squads');
     group = g;
   } else {
     const label = fixtures.map(fixtureDisplayName).join(' + ');
@@ -573,7 +575,14 @@ export async function saveSelections(
       continue;
     }
 
-    const elsewhere = isOccasion ? selections.find((s) => s.entryId === entry.id && s.fixtureId !== fixture.id) : undefined;
+    // Friendlies: one game per occasion. Squads: one game per day (the shared N/S squad
+    // can't put someone in both N/S A and N/S B that night).
+    const elsewhere = selections.find((s) => {
+      if (s.entryId !== entry.id || s.fixtureId === fixture.id) return false;
+      if (isOccasion) return true;
+      const other = fixtures.find((f) => f.id === s.fixtureId);
+      return !s.withdrawnAt && !!other && !!fixture.date && other.date === fixture.date;
+    });
     if (elsewhere) {
       const other = fixtures.find((f) => f.id === elsewhere.fixtureId);
       conflicts.push({ username: entry.username, fixtureName: other ? fixtureDisplayName(other) : 'another game' });
@@ -859,29 +868,20 @@ export async function getGameSheet(tabName: string): Promise<GameSheetPlayer[]> 
 
 export async function getFixtureRoster(fixture: Fixture): Promise<GameSheetPlayer[]> {
   if (!fixture.groupId) return [];
-  const [state, seasonData, allUsers] = await Promise.all([
-    getGroupState(fixture.groupId),
-    loadSeasonOccasionData(fixture.seasonId),
-    getAllUsers(),
-  ]);
+  const state = await getGroupState(fixture.groupId);
+  if (state.group.kind === 'squad') return getSquadFixtureRoster(fixture, state);
+
+  const [seasonData, allUsers] = await Promise.all([loadSeasonOccasionData(fixture.seasonId), getAllUsers()]);
   const users = usersByName(allUsers);
-  const isOccasion = state.group.kind === 'occasion';
   const players: GameSheetPlayer[] = [];
 
   for (const entry of state.entries) {
     const mine = state.selections.find((s) => s.entryId === entry.id && s.fixtureId === fixture.id) || null;
     const elsewhere = state.selections.some((s) => s.entryId === entry.id && s.fixtureId !== fixture.id);
-    if (!mine && elsewhere && isOccasion) continue;
+    if (!mine && elsewhere) continue;
 
     const u = users.get(entry.username.toLowerCase());
     const stats = computeStats(entry.username, seasonData, fixture.groupId);
-    // Friendlies withdraw/confirm per entry; squads per fixture (on the selection)
-    let withdrawn = entry.status === 'withdrawn';
-    let confirmed = !!entry.confirmedAt;
-    if (!isOccasion) {
-      withdrawn = withdrawn || !!(mine && mine.withdrawnAt);
-      confirmed = !!(mine && mine.confirmedAt);
-    }
 
     players.push({
       rowNumber: players.length + 2,
@@ -893,18 +893,127 @@ export async function getFixtureRoster(fixture: Fixture): Promise<GameSheetPlaye
       percentPlayed: stats.percentPlayed,
       futureEntered: stats.futureEntered,
       driverBar: driverBarCode(u).code,
-      selected: (mine ? mine.selection : isOccasion ? 'R' : '') as SelectionStatus,
+      selected: (mine ? mine.selection : 'R') as SelectionStatus,
       team: mine ? mine.team : null,
       position: (mine ? mine.position : '') as Position,
       driving: mine ? mine.driving : '',
       carNumber: (mine && mine.carNumber) || entry.carNumber || '',
-      status: (withdrawn ? 'W' : confirmed ? 'Y' : '') as ConfirmationStatus,
+      // Friendlies withdraw and confirm per entry (reserves confirm too)
+      status: (entry.status === 'withdrawn' ? 'W' : entry.confirmedAt ? 'Y' : '') as ConfirmationStatus,
       captain: fixture.captain && fixture.captain === entry.username ? 'Y' : '',
       last8Games: stats.last6Games,
       acknowledgedCancellation: entry.cancellationAcknowledgedAt ? 'Y' : '',
       preference: preferenceFor(entry, fixture, state.fixtures),
       enteredBy: entry.enteredBy || '',
       entrySource: entry.entrySource,
+    });
+  }
+  return players;
+}
+
+/**
+ * A squad fixture's roster (league squads, Club Teams) in the same shape the friendlies
+ * selection page uses. Everyone in the squad is on it: picked players as Y, the rest as
+ * R (the squad is effectively the reserves). Confirm/withdraw are per fixture (on the
+ * selection). Stats are this squad's games: of the published/played fixtures since they
+ * joined, how many they were picked for. squadNote flags "Away — Holiday" (an
+ * availability override for that date/session) and, for the shared N/S squad, being
+ * picked for the other team that night.
+ */
+async function getSquadFixtureRoster(
+  fixture: Fixture,
+  state: { group: FixtureGroup; fixtures: Fixture[]; entries: FixtureEntry[]; selections: FixtureSelection[] }
+): Promise<GameSheetPlayer[]> {
+  const users = usersByName(await getAllUsers());
+  const fixtureById = new Map(state.fixtures.map((f) => [f.id, f]));
+  const isoOf = (uk: string) => {
+    const [d, m, y] = uk.split('/');
+    return d && m && y ? `${y}-${m}-${d}` : '';
+  };
+  const thisIso = isoOf(fixture.date);
+
+  // Away notes: busy availability overrides on this date covering the fixture's session
+  const away = new Map<string, string>();
+  if (thisIso) {
+    const hour = parseInt((fixture.time || '').split(':')[0], 10);
+    const session = isNaN(hour) ? 'evening' : hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from('availability_overrides')
+      .select('username, session, label')
+      .eq('date', thisIso)
+      .eq('status', 'busy')
+      .in('username', state.entries.map((e) => e.username));
+    if (error) throw new Error(`Failed to fetch availability: ${error.message}`);
+    for (const o of data || []) {
+      if (o.session === 'all' || o.session === session) away.set(o.username, o.label || 'Away');
+    }
+  }
+
+  // The squad's settled fixtures (published/played), newest first, excluding this one
+  const settled = state.fixtures
+    .filter((f) => f.id !== fixture.id && (f.status === 'S' || f.status === 'P') && !!f.date)
+    .sort((a, b) => isoOf(b.date).localeCompare(isoOf(a.date)));
+
+  const players: GameSheetPlayer[] = [];
+  for (const entry of state.entries) {
+    const mine = state.selections.find((s) => s.entryId === entry.id && s.fixtureId === fixture.id) || null;
+    // Someone who has left the squad only stays on a team sheet they're already on
+    if (entry.status === 'withdrawn' && !mine) continue;
+
+    // Games since they joined: picked (and didn't drop out) vs available
+    const joinedIso = (entry.enteredAt || '').slice(0, 10);
+    let nameDown = 0;
+    let picked = 0;
+    const history: string[] = [];
+    for (const f of settled) {
+      if (joinedIso && isoOf(f.date) < joinedIso) continue;
+      nameDown++;
+      const sel = state.selections.find((s) => s.entryId === entry.id && s.fixtureId === f.id);
+      let code = 'R';
+      if (sel && sel.selection === 'Y') {
+        code = sel.withdrawnAt ? 'PW' : 'P';
+        if (!sel.withdrawnAt) picked++;
+      }
+      if (history.length < 6) history.push(`${f.tabName}    ${code}`);
+    }
+
+    // Shared squad (N/S): already picked for another of the squad's fixtures that night
+    let note = away.has(entry.username) ? `Away — ${away.get(entry.username)}` : '';
+    if (thisIso) {
+      for (const s of state.selections) {
+        if (s.entryId !== entry.id || s.fixtureId === fixture.id || s.withdrawnAt) continue;
+        const other = fixtureById.get(s.fixtureId);
+        if (other && isoOf(other.date) === thisIso) {
+          note = `Playing ${fixtureDisplayName(other)}${other.gameType ? ` (${other.gameType})` : ''} that day`;
+        }
+      }
+    }
+
+    const u = users.get(entry.username.toLowerCase());
+    players.push({
+      rowNumber: players.length + 2,
+      name: entry.username,
+      fullName: u && u.fullName ? u.fullName : entry.username,
+      lastName: u && u.lastName ? u.lastName : '',
+      nameDown,
+      picked,
+      percentPlayed: nameDown > 0 ? Math.round((picked / nameDown) * 100) / 100 : 0,
+      futureEntered: 0,
+      driverBar: driverBarCode(u).code,
+      selected: (mine ? mine.selection : 'R') as SelectionStatus,
+      team: mine ? mine.team : null,
+      position: (mine ? mine.position : '') as Position,
+      driving: mine ? mine.driving : '',
+      carNumber: mine ? mine.carNumber : '',
+      status: (mine && mine.withdrawnAt ? 'W' : mine && mine.confirmedAt ? 'Y' : '') as ConfirmationStatus,
+      captain: fixture.captain && fixture.captain === entry.username ? 'Y' : '',
+      last8Games: history,
+      acknowledgedCancellation: entry.cancellationAcknowledgedAt ? 'Y' : '',
+      preference: null,
+      enteredBy: entry.enteredBy || '',
+      entrySource: entry.entrySource,
+      squadNote: note,
     });
   }
   return players;
@@ -951,6 +1060,18 @@ export async function getEnteredPlayers(tabName: string): Promise<Array<{ userNa
   const [state, allUsers] = await Promise.all([getGroupState(fixture.groupId), getAllUsers()]);
   const users = usersByName(allUsers);
   const out: Array<{ userName: string; fullName: string; status: string }> = [];
+
+  // League / Club Team: just the picked team (the rest of the squad are reserves only in
+  // the sense of who could be picked — they aren't emailed or listed as the game's players)
+  if (state.group.kind === 'squad') {
+    for (const p of await getSquadFixtureRoster(fixture, state)) {
+      if (p.selected === 'R') continue;
+      const base = p.selected === 'Y' ? 'P' : p.selected === 'O' ? 'D' : 'R';
+      out.push({ userName: p.name, fullName: p.fullName, status: p.status === 'W' ? `${base}W` : base });
+    }
+    return out;
+  }
+
   for (const entry of state.entries) {
     const mine = state.selections.find((s) => s.entryId === entry.id && s.fixtureId === fixture.id) || null;
     const elsewhere = state.selections.some((s) => s.entryId === entry.id && s.fixtureId !== fixture.id);
@@ -1161,4 +1282,98 @@ export async function appendManageLog(entry: {
   } catch {
     // Never let logging failure propagate
   }
+}
+
+// ============================================================================
+// PLAYER ACTIONS ON ONE FIXTURE — friendlies act on the entry, squads on the selection
+// ============================================================================
+// Friendlies: a player is in one game of the occasion, so confirm/withdraw/rejoin are on
+// their entry. Squads (league / Club Team): the entry is squad membership for the whole
+// season, so these act on that fixture's selection only — withdrawing from a game never
+// takes anyone out of the squad.
+
+async function squadEntryAndSelection(fixture: Fixture, username: string): Promise<{ entry: FixtureEntry | null; selection: FixtureSelection | null }> {
+  const entry = fixture.groupId ? await getEntry(fixture.groupId, username) : null;
+  if (!entry) return { entry: null, selection: null };
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('fixture_selections')
+    .select('*')
+    .eq('fixture_id', fixture.id)
+    .eq('entry_id', entry.id)
+    .maybeSingle();
+  if (error) throw new Error(`Failed to fetch selection: ${error.message}`);
+  return { entry, selection: data ? mapSelection(data) : null };
+}
+
+async function isSquadFixture(fixture: Fixture): Promise<boolean> {
+  if (!fixture.groupId) return false;
+  const group = await getGroup(fixture.groupId);
+  return !!group && group.kind === 'squad';
+}
+
+/** Confirm (or un-confirm) a player for a fixture. */
+export async function confirmForFixture(fixture: Fixture, username: string, confirmed: boolean): Promise<void> {
+  if (!fixture.groupId) throw new Error('Game has not been opened');
+  if (!(await isSquadFixture(fixture))) {
+    await setEntryConfirmed(fixture.groupId, username, confirmed);
+    return;
+  }
+  const { selection } = await squadEntryAndSelection(fixture, username);
+  if (!selection) return; // squad reserves have nothing to confirm
+  const supabase = getSupabaseClient();
+  const { error } = await supabase
+    .from('fixture_selections')
+    .update({ confirmed_at: confirmed ? new Date().toISOString() : null })
+    .eq('id', selection.id);
+  if (error) throw new Error(`Failed to update confirmation: ${error.message}`);
+}
+
+/**
+ * Withdraw a player from a fixture after selection. Friendlies: the entry is withdrawn.
+ * Squads: a picked player drops out of this game ('withdrawn'); a squad reserve is marked
+ * as not available that day instead ('unavailable') — they stay in the squad either way.
+ */
+export async function withdrawFromFixture(fixture: Fixture, username: string, by: string): Promise<'withdrawn' | 'unavailable' | 'none'> {
+  if (!fixture.groupId) return 'none';
+  if (!(await isSquadFixture(fixture))) {
+    const entry = await markEntryWithdrawn(fixture.groupId, username, by);
+    return entry ? 'withdrawn' : 'none';
+  }
+  const { entry, selection } = await squadEntryAndSelection(fixture, username);
+  if (!entry) return 'none';
+  if (selection) {
+    const supabase = getSupabaseClient();
+    const { error } = await supabase
+      .from('fixture_selections')
+      .update({ withdrawn_at: new Date().toISOString(), withdrawn_by: by })
+      .eq('id', selection.id);
+    if (error) throw new Error(`Failed to withdraw: ${error.message}`);
+    return 'withdrawn';
+  }
+  if (fixture.date) {
+    const hour = parseInt((fixture.time || '').split(':')[0], 10);
+    const session = isNaN(hour) ? 'evening' : hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
+    const { addOverride } = await import('./member-availability');
+    await addOverride(username, fixture.date, session, 'busy', `Can't make ${fixtureDisplayName(fixture)}`);
+    return 'unavailable';
+  }
+  return 'none';
+}
+
+/** Undo a withdrawal: friendlies rejoin the occasion; squads rejoin this one game. */
+export async function rejoinFixture(fixture: Fixture, username: string): Promise<void> {
+  if (!fixture.groupId) return;
+  if (!(await isSquadFixture(fixture))) {
+    await rejoinEntry(fixture.groupId, username);
+    return;
+  }
+  const { selection } = await squadEntryAndSelection(fixture, username);
+  if (!selection) return;
+  const supabase = getSupabaseClient();
+  const { error } = await supabase
+    .from('fixture_selections')
+    .update({ withdrawn_at: null, withdrawn_by: null, confirmed_at: null })
+    .eq('id', selection.id);
+  if (error) throw new Error(`Failed to rejoin: ${error.message}`);
 }

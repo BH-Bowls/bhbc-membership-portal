@@ -10,8 +10,7 @@ import {
   getGroupDetail,
   updateGroup,
   deleteGroup,
-  isGroupMember,
-  canManageGroupMembers,
+  canAccessGroup,
 } from '@/lib/availability-groups-supabase';
 
 // GET /api/availability/groups/[groupId]
@@ -39,20 +38,13 @@ export async function GET(
     const userName = session.user.userName;
     const userRole = session.user.role || '';
 
-    // Access check: must be group creator, Admin, or group member
-    const isAdmin = hasRole(userRole, 'Admin');
-    const isCreator = group.createdByUsername === userName;
-
-    if (!isCreator && !isAdmin) {
-      // Check if they are a group member
-      const memberStatus = await isGroupMember(groupId, userName);
-      if (!memberStatus) {
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-      }
+    // Access check: creator, Admin, group member, or (a squad's group) its organisers
+    if (!(await canAccessGroup(group, userName, userRole))) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     // Fetch full group detail including members and events
-    const detail = await getGroupDetail(groupId, userName);
+    const detail = await getGroupDetail(groupId, userName, userRole);
     if (!detail) {
       return NextResponse.json({ error: 'Group not found' }, { status: 404 });
     }
@@ -84,6 +76,11 @@ export async function PUT(
     const group = await getGroupById(groupId);
     if (!group) {
       return NextResponse.json({ error: 'Group not found' }, { status: 404 });
+    }
+
+    // A squad's group follows the squad — it can't be edited or deleted here
+    if (group.fixtureGroupId) {
+      return NextResponse.json({ error: 'This group belongs to a squad and is managed from Squads' }, { status: 400 });
     }
 
     // Access check: only group creator or Admin can update
@@ -154,6 +151,11 @@ export async function DELETE(
     const group = await getGroupById(groupId);
     if (!group) {
       return NextResponse.json({ error: 'Group not found' }, { status: 404 });
+    }
+
+    // A squad's group follows the squad — it can't be edited or deleted here
+    if (group.fixtureGroupId) {
+      return NextResponse.json({ error: 'This group belongs to a squad and is managed from Squads' }, { status: 400 });
     }
 
     // Access check: only group creator or Admin can delete

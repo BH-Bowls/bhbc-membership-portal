@@ -19,6 +19,7 @@ export interface AvailabilityGroup {
   createdByUsername: string;
   allowMemberManagement: boolean;
   teamId: string;               // optional FK to teams — blank by default
+  fixtureGroupId: string;       // set when this group belongs to a squad (Club Teams "Ask squad") — '' otherwise
   status: AvailabilityGroupStatus;
   createdAt: string;            // ISO timestamp
   updatedAt: string;            // ISO timestamp
@@ -35,6 +36,7 @@ export interface AvailabilityGroupMember {
   addedByUsername: string;
   createdAt: string;
   token: string;                // per-member response token (generated lazily on email send)
+  active: boolean;              // false = left the linked squad: kept for past answers, left out of new polls
 }
 
 // Summary returned to the groups list / hub page
@@ -59,6 +61,9 @@ export interface AvailabilityGroupDetail {
   events: AvailabilityEventSummary[];
   isCreator: boolean;
   canManageMembers: boolean;
+  // Set when the group belongs to a squad: membership follows the squad, and the group
+  // can't be edited or deleted here — only polls run from it
+  linkedSquad: { id: string; label: string } | null;
 }
 
 // Body for creating a group

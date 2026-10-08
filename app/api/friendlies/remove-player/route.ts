@@ -6,9 +6,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getAppUrl } from '@/lib/app-url';
-import { getEntry, deleteEntry, markEntryWithdrawn, appendManageLog } from '@/lib/fixture-groups-supabase';
-import { getFixtures } from '@/lib/fixtures-supabase';
-import { hasRole } from '@/lib/role-utils';
+import { getEntry, deleteEntry, withdrawFromFixture, appendManageLog } from '@/lib/fixture-groups-supabase';
+import { getFixtures, getGameByIdOrTab } from '@/lib/fixtures-supabase';
+import { canManageGame, getSquadForFixture, leaveSquad } from '@/lib/squads-supabase';
 import { getUserByUsername } from '@/lib/members-supabase';
 import { sendWithdrawnByAdminNoticeEmail, sendRemovedNoticeEmail, sendLinkedWithdrawalNoticeEmail } from '@/lib/email/friendlies';
 import { clearDiaryCache } from '@/lib/home-cache';
@@ -37,21 +37,25 @@ export async function POST(request: NextRequest) {
     }
 
     const currentUser = session.user.userName;
-    const isCaptainOrAdmin = hasRole(session.user.role, 'Captain', 'Admin');
 
-    // Non-captains can only remove themselves
-    if (!isCaptainOrAdmin && playerUserName !== currentUser) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-
-    // Fetch all fixtures to verify game exists
+    // Fetch all fixtures to verify game exists (Club Team games looked up directly)
     const allGames = await getFixtures();
-    const game = allGames.find(g => g.tabName === gameId);
+    let game = allGames.find(g => g.tabName === gameId) || null;
+    if (!game) game = await getGameByIdOrTab(null, gameId);
 
     if (!game || !game.groupId) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
     const groupId = game.groupId;
+
+    // Captain/Admin — or a league / Club Team game's organisers — can remove others
+    const isCaptainOrAdmin = await canManageGame(game, currentUser, session.user.role);
+    const squad = await getSquadForFixture(game);
+
+    // Non-captains can only remove themselves
+    if (!isCaptainOrAdmin && playerUserName !== currentUser) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
 
     // Non-captains can only remove from Open games
     if (!isCaptainOrAdmin && game.status !== 'O') {
@@ -71,9 +75,10 @@ export async function POST(request: NextRequest) {
     if (['X', 'S'].includes(game.status) && !forceRemove) {
       // Selecting/Published game — mark as withdrawn (by the captain) rather than
       // delete, so the captain can still see who dropped out.
+      // (League / Club Team: they drop out of this game only, and stay in the squad.)
       const entry = await getEntry(groupId, playerUserName);
       if (entry) {
-        await markEntryWithdrawn(groupId, playerUserName, currentUser);
+        await withdrawFromFixture(game, playerUserName, currentUser);
         await appendManageLog({ username: currentUser, action: 'withdraw-by-captain', tabName: game.tabName, fixtureId: game.id, groupId, details: { player: playerUserName } });
       }
 
@@ -92,6 +97,15 @@ export async function POST(request: NextRequest) {
 
       clearDiaryCache(playerUserName);
       return NextResponse.json({ success: true, withdrawn: true });
+    }
+
+    // League / Club Team: "remove completely" takes them out of the squad (their picks
+    // and tea slots on upcoming games are cleared; past games are kept)
+    if (squad) {
+      await leaveSquad(groupId, playerUserName, currentUser);
+      await appendManageLog({ username: currentUser, action: 'squad-remove', tabName: game.tabName, fixtureId: game.id, groupId, details: { player: playerUserName } });
+      clearDiaryCache(playerUserName);
+      return NextResponse.json({ success: true });
     }
 
     // Open, or a forced full removal — delete the entry entirely (as if they never

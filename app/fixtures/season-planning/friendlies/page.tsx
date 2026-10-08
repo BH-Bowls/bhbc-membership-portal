@@ -366,6 +366,19 @@ export default function SeasonPlanningFriendliesPage() {
       )
     : [];
   const capacityByDate = computeDayCapacity(friendlies, capacityEvents, reservationOccurrences);
+  // Fixtures and distinct opponents per status — a club with A/B sides or a
+  // home-and-away pair counts once (suffix ignored); a non-club opponent
+  // counts by its description.
+  function statusStats(status: string) {
+    const rows = friendlies.filter((f) => f.planningStatus === status);
+    const clubs = new Set(rows.map((f) => (f.clubName || f.description || '').trim().toLowerCase()).filter(Boolean));
+    return { fixtures: rows.length, clubs: clubs.size };
+  }
+  const statusCounts = {
+    projected: statusStats('Projected'),
+    emailSent: statusStats('Email Sent'),
+    confirmed: statusStats('Confirmed'),
+  };
   const dateGroups: string[] = [];
   const seenDates = new Set<string>();
   for (const f of sortedFriendlies) {
@@ -507,6 +520,24 @@ export default function SeasonPlanningFriendliesPage() {
                   <button className={getButtonClasses('primary')} onClick={submitAddFriendly}>Add</button>
                   <button className={getButtonClasses('secondary')} onClick={() => setAddingFriendly(false)}>Cancel</button>
                 </div>
+              </div>
+            )}
+
+            {friendlies.length > 0 && (
+              <div className="grid grid-cols-3 gap-3 mb-4">
+                {[
+                  { label: 'Projected', stats: statusCounts.projected, classes: 'border-amber-200 bg-amber-50 text-amber-800' },
+                  { label: 'Email Sent', stats: statusCounts.emailSent, classes: 'border-emerald-200 bg-emerald-50 text-emerald-800' },
+                  { label: 'Confirmed', stats: statusCounts.confirmed, classes: 'border-green-200 bg-green-50 text-green-800' },
+                ].map((stat) => (
+                  <div key={stat.label} className={`rounded-lg border px-4 py-3 ${stat.classes}`}>
+                    <div className="text-2xl font-bold">{stat.stats.fixtures}</div>
+                    <div className="text-xs font-medium">{stat.label}</div>
+                    <div className="text-xs mt-1 opacity-80">
+                      {stat.stats.clubs} club{stat.stats.clubs === 1 ? '' : 's'}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
 

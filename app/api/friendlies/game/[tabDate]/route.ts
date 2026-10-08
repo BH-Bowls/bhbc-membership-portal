@@ -3,8 +3,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getGameSheet, getClubDetails, validateGameToken, getGroupFixtures, fixtureDisplayName } from '@/lib/fixture-groups-supabase';
-import { getFixtureByTabName, getTeaRotaList } from '@/lib/fixtures-supabase';
+import { getFixtureByTabName, getTeaRotaEntry } from '@/lib/fixtures-supabase';
 import { getUserByUsername, getAllUsers } from '@/lib/members-supabase';
+import { getSquadForFixture } from '@/lib/squads-supabase';
 
 export async function GET(
   request: NextRequest,
@@ -63,7 +64,8 @@ export async function GET(
     const [allPlayers, clubDetailsResult, teaRotaList, allUsers] = await Promise.all([
       getGameSheet(game.tabName),
       game.homeAway === 'A' ? getClubDetails(game.clubName).catch(() => null) : Promise.resolve(null),
-      game.homeAway === 'H' ? getTeaRotaList({ includeCancelled: true }).catch(() => null) : Promise.resolve(null),
+      // The game's own tea fields — covers league teas too (the tea rota list is friendlies only)
+      game.homeAway === 'H' ? getTeaRotaEntry(game.id).catch(() => null) : Promise.resolve(null),
       getAllUsers(),
     ]);
 
@@ -232,8 +234,8 @@ export async function GET(
     // Resolve tea duty for home games
     let teaDuty = null;
     if (teaRotaList) {
-      const teaEntry = teaRotaList.find(e => e.tabName === game.tabName);
-      if (teaEntry) {
+      const teaEntry = teaRotaList;
+      if (teaEntry.teaLead || teaEntry.teaFirst || teaEntry.teaSecond) {
         const [leadUser, firstUser, secondUser] = await Promise.all([
           teaEntry.teaLead ? getUserByUsername(teaEntry.teaLead) : Promise.resolve(null),
           teaEntry.teaFirst ? getUserByUsername(teaEntry.teaFirst) : Promise.resolve(null),
@@ -269,12 +271,16 @@ export async function GET(
     }
 
     // Linked games: the other games in this game's group — their reserves are shared
-    const sharedWith = game.groupId
+    // A league / Club Team game belongs to a squad: no shared reserves, and the page links
+    // back to the squad rather than Friendlies
+    const squad = await getSquadForFixture(game);
+    const sharedWith = game.groupId && !squad
       ? (await getGroupFixtures(game.groupId)).filter(g => g.id !== game.id).map(fixtureDisplayName)
       : [];
 
     return NextResponse.json({
       sharedWith,
+      squad: squad ? { id: squad.id, label: squad.label } : null,
       partners,
       game: {
         tabDate: game.tabDate,
@@ -301,7 +307,8 @@ export async function GET(
         travelTime: clubDetailsResult?.travelTime || '',
       },
       teams,
-      reserves: reserves.map(r => ({
+      // Squad games list only the picked team — the rest of the squad aren't "reserves" for it
+      reserves: (squad ? [] : reserves).map(r => ({
         name: displayName(r.fullName, r.name),
         userName: r.name,
         team: r.team,

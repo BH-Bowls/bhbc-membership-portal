@@ -3,8 +3,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getGameSheet, getGroupFixtures, fixtureDisplayName } from '@/lib/fixture-groups-supabase';
-import { getFixtureByTabName } from '@/lib/fixtures-supabase';
-import { hasRole } from '@/lib/role-utils';
+import { getFixtureByTabName, getTeaRotaEntry } from '@/lib/fixtures-supabase';
+import { canManageGame, getSquadForFixture } from '@/lib/squads-supabase';
 
 export async function GET(
   request: NextRequest,
@@ -18,11 +18,6 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Verify user is Captain or Admin
-    if (!hasRole(session.user.role, 'Captain', 'Admin')) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-
     const { tabDate } = await params;
     // Note: Despite the param name, this is actually the tabName (sheet name)
     const tabName = decodeURIComponent(tabDate);
@@ -33,6 +28,12 @@ export async function GET(
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
+
+    // Captain/Admin, or — for a league / Club Team game — the squad's organisers
+    if (!(await canManageGame(game, session.user.userName, session.user.role))) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    const squad = await getSquadForFixture(game);
 
     // Verify game status is X, S, or C (Selecting, Selected, or Cancelled)
     if (!['X', 'S', 'C'].includes(game.status)) {
@@ -86,7 +87,8 @@ export async function GET(
     // The other games in this game's group (linked games / reserve games). Their
     // reserves are this game's reserves — one shared pool — so there's nothing to move
     // between them: a reserve picked here simply drops off the other games' lists.
-    const groupGames = game.groupId
+    // (A squad's other fixtures are separate games, not linked ones — nothing shared.)
+    const groupGames = game.groupId && !squad
       ? (await getGroupFixtures(game.groupId))
           .filter(g => g.id !== game.id)
           .map(g => ({
@@ -117,6 +119,9 @@ export async function GET(
         reserves: game.reserves,
         groupGames,
         isReserve: game.isReserve, // a reserve game supplies both sides: teams × 2
+        // League / Club Team game: the squad, and its teas (home games — any two squad members)
+        squad: squad ? { id: squad.id, label: squad.label, squadType: squad.squadType } : null,
+        teas: squad && game.homeAway === 'H' ? await squadTeas(game.id) : null,
         pickupInfo: game.pickupInfo || '',
         specialInstructions: game.specialInstructions || '',
       },
@@ -128,4 +133,10 @@ export async function GET(
       { status: 500 }
     );
   }
+}
+
+/** League teas for a home squad game: the two tea usernames ('' when not set). */
+async function squadTeas(fixtureId: string): Promise<{ lead: string; first: string }> {
+  const entry = await getTeaRotaEntry(fixtureId);
+  return { lead: entry ? entry.teaLead : '', first: entry ? entry.teaFirst : '' };
 }

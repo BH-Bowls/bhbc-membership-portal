@@ -81,7 +81,7 @@ export type HomeAway = 'H' | 'A';
  * Game type - distinguishes friendlies from league fixtures and events
  * Used to filter games on different pages and in different management workflows
  */
-export type GameType = 'Friendly' | 'N/S A' | 'N/S B' | 'MSL' | 'JSL' | 'BL' | 'Event' | 'Test';
+export type GameType = 'Friendly' | 'N/S A' | 'N/S B' | 'MSL' | 'JSL' | 'BL' | 'Event' | 'Test' | 'Club Team';
 export const ALL_GAME_TYPES: GameType[] = ['Friendly', 'N/S A', 'N/S B', 'MSL', 'JSL', 'BL', 'Event'];
 // Test type is intentionally excluded from ALL_GAME_TYPES — it is only shown to Admin role
 
@@ -190,6 +190,7 @@ export interface GameSheetPlayer {
   } | null;
   enteredBy?: string;                // who created the entry ('' / own username = self)
   entrySource?: 'self' | 'buddy' | 'manager';
+  squadNote?: string;                // squad fixtures: "Away — Holiday" or "Playing N/S B that day"
 }
 
 /**

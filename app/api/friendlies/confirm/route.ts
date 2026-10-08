@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGameSheet, setEntryConfirmed } from '@/lib/fixture-groups-supabase';
+import { getGameSheet, confirmForFixture } from '@/lib/fixture-groups-supabase';
 import { getFixtureByTabName } from '@/lib/fixtures-supabase';
 import { ConfirmParticipationRequest } from '@/lib/types/friendlies';
 import { getUserByUsername } from '@/lib/members-supabase';
@@ -99,7 +99,7 @@ export async function POST(request: NextRequest) {
 
     // Confirm the caller + any buddies (on the entry — reserves confirm too)
     for (const name of toConfirm) {
-      await setEntryConfirmed(game.groupId!, name, true);
+      await confirmForFixture(game, name, true);
     }
 
     // Send ICS confirmation email (fire-and-forget — failure does not affect the response)
