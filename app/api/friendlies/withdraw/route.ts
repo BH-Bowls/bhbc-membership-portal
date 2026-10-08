@@ -7,10 +7,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getAppUrl } from '@/lib/app-url';
-import { getGameSheet, updateGameSheet, updatePlayerEntry, removePlayerFromGameSheet, getActiveEnteredCount } from '@/lib/friendlies-sheets';
-import { getFixtures, updateFixture } from '@/lib/fixtures-supabase';
-import { clearDiaryCache, clearSheetDataCacheByPrefix } from '@/lib/home-cache';
+import { getGameSheet, deleteEntry, withdrawFromFixture, appendManageLog } from '@/lib/fixture-groups-supabase';
+import { getFixtures, getGameByIdOrTab } from '@/lib/fixtures-supabase';
+import { clearDiaryCache } from '@/lib/home-cache';
 import { sendWithdrawalEmail, sendWithdrawalNoticeEmail, sendLinkedWithdrawalNoticeEmail } from '@/lib/email/friendlies';
+import { notifySquadOrganisersOfDropOut } from '@/lib/email/squads';
 import type { WithdrawRequest } from '@/lib/types/friendlies';
 import { getUserByUsername } from '@/lib/members-supabase';
 import { canManageUser } from '@/lib/buddies-supabase';
@@ -45,6 +46,8 @@ export async function POST(request: NextRequest) {
         break;
       }
     }
+    // Club Team games aren't in the general fixture list — look them up directly
+    if (!game) game = await getGameByIdOrTab(null, tab_name);
 
     // Return 404 if game doesn't exist
     if (!game) {
@@ -72,57 +75,22 @@ export async function POST(request: NextRequest) {
         removeTargets.push(other);
       }
 
-      // Remove each target's entry from the Players sheet and their row from the game
-      // sheet. A joint-game entry only ever lives on the lead game, so this removes
-      // only that game — no partner writes (keeps quota use down).
+      // Withdrawing while entries are open removes the entry outright (no withdrawn
+      // stat) — it's as if they never entered. The entry is to the whole group, so a
+      // linked occasion is left in one go.
+      const groupId = game.groupId;
+      if (!groupId) {
+        return NextResponse.json({ error: 'Game not open for entry' }, { status: 400 });
+      }
       for (const target of removeTargets) {
-        await updatePlayerEntry(target, game.tabName, '');
-        await removePlayerFromGameSheet(game.tabName, target);
-      }
-
-      // Recalculate entered count from the Players sheet (player-roster data stays on Sheets)
-      const { getGoogleSheetsClient } = await import('@/lib/sheets');
-      const sheets = getGoogleSheetsClient();
-      const spreadsheetId = process.env.FRIENDLIES_SPREADSHEET_ID!;
-
-      // Fetch Players sheet to count remaining entries
-      const playersResponse = await sheets.spreadsheets.values.get({
-        spreadsheetId,
-        range: 'Players!A:ZZ',
-      });
-
-      const rows = playersResponse.data.values || [];
-      const headers = rows[0] || [];
-
-      // Find which column corresponds to this game
-      let gameColIndex = -1;
-      for (let i = 0; i < headers.length; i++) {
-        if (headers[i] === game.tabName) {
-          gameColIndex = i;
-          break;
+        const removed = await deleteEntry(groupId, target);
+        if (removed) {
+          await appendManageLog({ username: userName, action: 'withdraw-open', tabName: game.tabName, fixtureId: game.id, groupId, details: { player: target } });
         }
       }
 
-      // Count remaining entries and update Games sheet
-      if (gameColIndex !== -1) {
-        // Count non-empty cells in this game's column (skip header)
-        let enteredCount = 0;
-        for (let i = 1; i < rows.length; i++) {
-          if (rows[i][gameColIndex]) {
-            enteredCount++;
-          }
-        }
-
-        // Update the entered count on the fixture
-        await updateFixture(game.id, { entered: enteredCount });
-      }
-
-      // Joint game: pair the removal email with both games (mirror of the entry
-      // email). The partner is found in the already-loaded games list — no extra
-      // reads, so no quota cost.
-      const emailPartner = (game.paired === 'Y' || game.paired === 'C')
-        ? games.find(g => g.tabName !== game.tabName && (g.paired === 'Y' || g.paired === 'C') && g.date === game.date)
-        : undefined;
+      // Linked occasion: pair the removal email with both games (mirror of the entry email)
+      const emailPartner = games.find(g => g.groupId === groupId && g.id !== game.id && !g.reserveOf);
 
       // Send a removal notice to each removed player (fire-and-forget)
       for (const target of removeTargets) {
@@ -142,9 +110,6 @@ export async function POST(request: NextRequest) {
         // Invalidate each removed user's diary cache so their home page updates
         clearDiaryCache(target);
       }
-      // Bust the shared Players-sheet cache too — otherwise the diary recomputes
-      // fresh but off a stale pre-withdrawal snapshot for up to 24h (see enter/route.ts).
-      clearSheetDataCacheByPrefix('friendlies-players:');
 
       // Return success for Open game removal
       return NextResponse.json({
@@ -175,40 +140,16 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Mark player as withdrawn in game sheet (Status column = 'W')
-      await updateGameSheet(game.tabName, [
-        {
-          rowNumber: userPlayer.rowNumber,
-          status: 'W',
-        },
-      ]);
-
-      // Update Players sheet status with "W" suffix to indicate withdrawal
-      // PW = Picked+Withdrawn, RW = Reserve+Withdrawn, etc.
-      let newStatus;
-      if (userPlayer.selected === 'Y') {
-        newStatus = 'PW'; // Was picked to play
-      } else if (userPlayer.selected === 'R') {
-        newStatus = 'RW'; // Was reserve
-      } else if (userPlayer.selected === 'T') {
-        newStatus = 'TW'; // Was reserve team
-      } else {
-        newStatus = 'EW'; // Was just entered
-      }
-
-      await updatePlayerEntry(userName, game.tabName, newStatus as any);
-
-      // Recalculate entered count, excluding the player who just withdrew
-      try {
-        const activeCount = await getActiveEnteredCount(game.tabName);
-        await updateFixture(game.id, { entered: activeCount });
-      } catch (countError) {
-        console.error('[withdraw] Error updating entered count:', countError);
-      }
+      // Friendlies: the entry is withdrawn (their selection, if any, is kept so the game
+      // card can say what they had been picked as). League / Club Team: they drop out of
+      // this game only — a reserve is marked not available that day.
+      await withdrawFromFixture(game, userName, userName);
+      await appendManageLog({ username: userName, action: 'withdraw', tabName: game.tabName, fixtureId: game.id, groupId: game.groupId, details: { player: userName, wasSelected: userPlayer.selected } });
 
       // Send email notification to captains if game is Selected or Played
       // (No email for Selecting status as team not finalized yet)
-      if (game.status === 'S' || game.status === 'P') {
+      // (A league / Club Team game tells its squad organisers instead of the Captains.)
+      if ((game.status === 'S' || game.status === 'P') && !(await notifySquadOrganisersOfDropOut(game, userName, appUrl, userPlayer.selected === 'Y'))) {
         await sendWithdrawalEmail(
           userName,
           game,
@@ -234,8 +175,6 @@ export async function POST(request: NextRequest) {
 
       // Invalidate the diary cache so the home page reflects the withdrawal
       clearDiaryCache(userName);
-      // Bust the shared Players-sheet cache too — see the other withdrawal scenario above.
-      clearSheetDataCacheByPrefix('friendlies-players:');
 
       // Return success for closed game withdrawal
       return NextResponse.json({

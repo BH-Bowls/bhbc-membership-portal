@@ -6,12 +6,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getAppUrl } from '@/lib/app-url';
-import { getGameSheet } from '@/lib/friendlies-sheets';
+import { getGameSheet } from '@/lib/fixture-groups-supabase';
 import { getFixtureByTabName } from '@/lib/fixtures-supabase';
 import { GameSheetPlayer } from '@/lib/types/friendlies';
 import { sendGamePublishedEmail } from '@/lib/email/friendlies';
 import { getAllUsers } from '@/lib/members-supabase';
-import { hasRole } from '@/lib/role-utils';
+import { canManageGame } from '@/lib/squads-supabase';
 
 export async function POST(request: NextRequest) {
   try {
@@ -21,9 +21,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    if (!hasRole(session.user.role, 'Captain', 'Admin')) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
 
     const userEmail = session.user.email;
     if (!userEmail) {
@@ -35,6 +32,11 @@ export async function POST(request: NextRequest) {
     const game = await getFixtureByTabName(tab_name);
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
+    }
+
+    // Captain/Admin, or — for a league / Club Team game — the squad's organisers
+    if (!(await canManageGame(game, session.user.userName, session.user.role))) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     // Get game sheet players so we can use real selection data if the sender is in the game

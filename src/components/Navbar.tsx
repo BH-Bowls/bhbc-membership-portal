@@ -133,6 +133,7 @@ export function Navbar() {
   const isLeagueCaptain = roles.includes('LeagueOrganiser');
   const isGMC = roles.includes('GMC');
   const isTesting = roles.includes('Testing'); // Testing role — access to features under evaluation
+  const isDarts = roles.includes('Darts'); // Halve It darts league organiser
   const canAccessBanking = isAdmin || isTreasurer;
   const canAccessCaptainTools = isAdmin || isCaptain;
   // Committee = has at least one committee role (Rowland roles are specialist only, not general committee)
@@ -183,6 +184,9 @@ export function Navbar() {
     }
     if (isAdmin || isRowlandOrganiser) {
       games.push({ name: 'Rowland Admin', href: '/rowland/admin' });
+    }
+    if (isAdmin || isDarts) {
+      games.push({ name: 'Halve It Admin', href: '/halve-it/manage' });
     }
 
     // ── Club ──
@@ -317,6 +321,7 @@ export function Navbar() {
         { name: 'Cleaning Rota', href: '/cleaning-rota' },
         { name: 'Sweeping Rota', href: '/sweeping-rota' },
         { name: '200 Club', href: '/200-club' },
+        { name: 'Halve It (Darts)', href: '/halve-it' },
       ],
     },
   ];
@@ -361,6 +366,16 @@ export function Navbar() {
       ),
     },
     {
+      // External-league squads (MSL, BL, JSL, N/S) — and Club Teams later
+      name: 'Squads',
+      href: '/squads',
+      icon: (
+        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+      ),
+    },
+    {
       name: 'Friendlies',
       href: '/friendlies',
       icon: (
@@ -395,6 +410,7 @@ export function Navbar() {
         { name: 'Cleaning Rota', href: '/cleaning-rota' },
         { name: 'Sweeping Rota', href: '/sweeping-rota' },
         { name: '200 Club', href: '/200-club' },
+        { name: 'Halve It (Darts)', href: '/halve-it' },
       ],
     },
     ...(isRowlandPlayer || isCaptain ? [{

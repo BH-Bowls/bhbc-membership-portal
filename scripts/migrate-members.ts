@@ -195,14 +195,28 @@ async function main() {
   // populating their username FK columns (added_by on invite_game_attachments,
   // created_by/updated_by on invite_games) — same reasoning, child-to-parent order,
   // migrate-invite-games.ts MUST be re-run after this script.
-  // game_players/handicap_history still aren't cleared since nothing populates them
-  // yet; extend this list if that changes.
+  // fixture_selections/fixture_entries/fixture_group_managers/fixture_groups and
+  // friendlies_manage_log joined once the friendlies roster moved to Postgres (0072) —
+  // all have username FKs. Selections/entries/managers go before fixtures, groups after
+  // (fixtures.group_id points at them); import-friendlies-2026.ts MUST be re-run after
+  // this script (and after migrate-fixtures.ts). friendlies_manage_log has a bigint id,
+  // so it's cleared separately just below rather than with the uuid sentinel.
+  // handicap_history still isn't cleared since nothing populates it yet; extend this
+  // list if that changes.
+  {
+    const { error } = await supabase.from('friendlies_manage_log').delete().gte('id', 0);
+    if (error) throw new Error(`Failed to wipe friendlies_manage_log: ${error.message}`);
+  }
   const wipeSteps: { table: string; column: string }[] = [
     { table: 'login_attempts', column: 'id' },
     { table: 'impersonation_log', column: 'id' },
     { table: 'password_reset_requests', column: 'id' },
     { table: 'applications', column: 'id' },
+    { table: 'fixture_selections', column: 'id' },
+    { table: 'fixture_entries', column: 'id' },
+    { table: 'fixture_group_managers', column: 'group_id' },
     { table: 'fixtures', column: 'id' },
+    { table: 'fixture_groups', column: 'id' },
     { table: 'cleaning_rota', column: 'id' },
     { table: 'sweeping_rota', column: 'id' },
     { table: 'availability_responses', column: 'id' },

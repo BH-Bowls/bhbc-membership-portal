@@ -235,8 +235,12 @@ export default withAuth(
       }
     }
 
-    // Protect /friendlies/manage routes - Captain or Admin only
-    if (pathname.startsWith('/friendlies/manage')) {
+    // Protect /friendlies/manage routes - Captain or Admin only. Except one game's
+    // selection and print-picker pages: squad organisers (who needn't be Captains) pick
+    // their league / Club Team games there too — the page's API checks they may manage
+    // that particular game (canManageGame).
+    const isGamePage = pathname.startsWith('/friendlies/manage/game/') || pathname.startsWith('/friendlies/manage/picker/');
+    if (pathname.startsWith('/friendlies/manage') && !isGamePage) {
       if (!token || !hasRole(token.role as string, 'Captain', 'Admin')) {
         return NextResponse.redirect(new URL('/friendlies', req.url));
       }

@@ -40,7 +40,7 @@
  *   npx dotenv -e .env.local -- npx tsx scripts/migrate-fixtures.ts
  */
 
-import { getFriendliesSpreadsheetId, getSheetsClient } from '../src/lib/friendlies-sheets';
+import { getGoogleSheetsClient } from '../src/lib/sheets';
 import { getSupabaseClient } from '../src/lib/supabase';
 
 interface RawFixture {
@@ -107,7 +107,7 @@ function toInt(raw: string): number | null {
 }
 
 async function readSheetRows(spreadsheetId: string, tab: string): Promise<{ headers: string[]; rows: any[][] }> {
-  const sheets = getSheetsClient();
+  const sheets = getGoogleSheetsClient();
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
     range: `'${tab}'!A:AZ`,
@@ -220,7 +220,8 @@ async function fetchArchiveFixtures(spreadsheetId: string, tab: string, year: nu
 }
 
 async function main() {
-  const spreadsheetId = getFriendliesSpreadsheetId();
+  const spreadsheetId = process.env.FRIENDLIES_SPREADSHEET_ID;
+  if (!spreadsheetId) throw new Error('FRIENDLIES_SPREADSHEET_ID environment variable is not set');
   const supabase = getSupabaseClient();
 
   console.log('1. Reading fixture data from Google Sheets...');
@@ -307,16 +308,14 @@ async function main() {
       club_suffix: f.clubSuffix || null,
       game_status: f.gameStatus,
       max_capacity: f.maxCapacity,
-      entered: f.entered ?? 0,
-      selected: f.selected ?? 0,
-      reserves: f.reserves ?? 0,
+      // paired / entered / selected / reserves were dropped in 0073 — linking and counts now
+      // come from fixture groups (import-friendlies-2026.ts rebuilds them from the sheet)
       bhbc_score: f.bhbcScore,
       opponent_score: f.opponentScore,
       reason: f.reason || null,
       who: f.who || null,
       special_instructions: f.specialInstructions || null,
       pickup_info: f.pickupInfo || null,
-      paired: f.paired,
       needs_players: f.needsPlayers || null,
       last_modified_date: f.lastModifiedDate,
       locked_at: f.lockedAt,

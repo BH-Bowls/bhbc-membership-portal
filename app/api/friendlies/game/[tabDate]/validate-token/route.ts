@@ -2,7 +2,7 @@
 // Public endpoint — validates a player token for a specific game.
 // Returns { valid: false } on invalid/expired token; never returns 401 (avoids brute-force signal).
 import { NextRequest, NextResponse } from 'next/server';
-import { validateGameToken } from '@/lib/friendlies-sheets';
+import { validateGameToken } from '@/lib/fixture-groups-supabase';
 import { getFixtureByTabName } from '@/lib/fixtures-supabase';
 
 // In-memory rate limit: 30 requests per minute per IP

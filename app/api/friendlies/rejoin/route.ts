@@ -9,13 +9,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getAppUrl } from '@/lib/app-url';
-import { getGameSheet, updateGameSheet, updatePlayerEntry, getActiveEnteredCount } from '@/lib/friendlies-sheets';
-import { getFixtures, updateFixture } from '@/lib/fixtures-supabase';
-import { clearDiaryCache, clearSheetDataCacheByPrefix } from '@/lib/home-cache';
+import { getGameSheet, rejoinFixture, appendManageLog } from '@/lib/fixture-groups-supabase';
+import { getGameByIdOrTab } from '@/lib/fixtures-supabase';
+import { canManageGame } from '@/lib/squads-supabase';
+import { clearDiaryCache } from '@/lib/home-cache';
 import { sendRejoinEmail, sendRejoinNoticeEmail } from '@/lib/email/friendlies';
 import type { WithdrawRequest } from '@/lib/types/friendlies';
 import { getUserByUsername } from '@/lib/members-supabase';
-import { hasRole } from '@/lib/role-utils';
 
 // POST handler - Re-joins a player who had withdrawn from a Selecting/Selected game.
 // Self-service: a member re-joins themselves (from the game page) — captains notified.
@@ -40,22 +40,16 @@ export async function POST(request: NextRequest) {
     const target = explicitTarget ?? session.user.userName;
     const sendPlayerEmail = body.sendPlayerEmail !== false; // default true
 
-    // Only Captains/Admins may restore someone other than themselves.
-    if (isCaptainAction && target !== session.user.userName && !hasRole(session.user.role, 'Captain', 'Admin')) {
-      return NextResponse.json({ error: 'Only captains can restore another player' }, { status: 403 });
-    }
-
-    // Find the game
-    const games = await getFixtures();
-    let game = null;
-    for (const g of games) {
-      if (g.tabName === tab_name) {
-        game = g;
-        break;
-      }
-    }
+    // Find the game (Club Team games included)
+    const game = await getGameByIdOrTab(null, tab_name);
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
+    }
+
+    // Only Captains/Admins (or a league / Club Team game's organisers) may restore
+    // someone other than themselves.
+    if (isCaptainAction && target !== session.user.userName && !(await canManageGame(game, session.user.userName, session.user.role))) {
+      return NextResponse.json({ error: 'Only captains can restore another player' }, { status: 403 });
     }
 
     // Re-join / restore applies while the game is Selecting or Selected (the states
@@ -85,40 +79,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Player has not withdrawn from this game' }, { status: 400 });
     }
 
-    // Restore their selection role. Normally it was preserved on withdrawal (Y/R/T),
-    // but a captain's save can blank it — in that case default to Reserve so they
-    // return as an available reserve rather than nothing.
-    const role = userPlayer.selected || 'R';
-
-    // Clear the withdrawal in the game sheet (status 'W' → '') and write the restored
-    // role back into the selected column.
-    await updateGameSheet(game.tabName, [
-      {
-        rowNumber: userPlayer.rowNumber,
-        status: '',
-        selected: role,
-      },
-    ]);
-
-    // Players-sheet status mirrors the role (the inverse of the withdraw route's
-    // PW/RW/TW mapping): Y→P (playing), T→T (reserve team), otherwise R (reserve).
-    let restoredStatus;
-    if (role === 'Y') {
-      restoredStatus = 'P';
-    } else if (role === 'T') {
-      restoredStatus = 'T';
-    } else {
-      restoredStatus = 'R';
-    }
-    await updatePlayerEntry(target, game.tabName, restoredStatus as any);
-
-    // Recalculate entered count now that this player is active again
-    try {
-      const activeCount = await getActiveEnteredCount(game.tabName);
-      await updateFixture(game.id, { entered: activeCount });
-    } catch (countError) {
-      console.error('[rejoin] Error updating entered count:', countError);
-    }
+    // Clear the withdrawal. Their selection was kept when they withdrew, so they come
+    // back exactly as they were (playing, or a reserve if a captain had since
+    // returned them to the reserves) — selected-but-unconfirmed.
+    await rejoinFixture(game, target);
+    await appendManageLog({
+      username: session.user.userName,
+      action: isCaptainAction ? 'restore' : 'rejoin',
+      tabName: game.tabName,
+      fixtureId: game.id,
+      groupId: game.groupId,
+      details: { player: target },
+    });
 
     const appUrl = await getAppUrl();
 
@@ -157,8 +129,6 @@ export async function POST(request: NextRequest) {
 
     // Invalidate the diary cache so the home page reflects the re-join
     clearDiaryCache(target);
-    // Bust the shared Players-sheet cache too — see enter/route.ts for why.
-    clearSheetDataCacheByPrefix('friendlies-players:');
 
     return NextResponse.json({
       success: true,

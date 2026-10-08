@@ -6,10 +6,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGameSheet, updateGameSheet } from '@/lib/friendlies-sheets';
+import { getGameSheet, saveSelections, appendManageLog } from '@/lib/fixture-groups-supabase';
 import { getFixtureByTabName, updateFixture } from '@/lib/fixtures-supabase';
 import { UpdateSelectionRequest, UpdateSelectionResponse } from '@/lib/types/friendlies';
-import { hasRole } from '@/lib/role-utils';
+import { canManageGame, getSquadForFixture, setSquadFixtureTeas } from '@/lib/squads-supabase';
 
 // POST handler - Updates player selections and team assignments for a game
 export async function POST(request: NextRequest) {
@@ -20,11 +20,6 @@ export async function POST(request: NextRequest) {
     // Reject if not logged in
     if (!session || !session.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    // Only Captains and Admins can update team selections
-    if (!hasRole(session.user.role, 'Captain', 'Admin')) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     // Parse request body to get game identifier and selection updates
@@ -39,6 +34,11 @@ export async function POST(request: NextRequest) {
     // Return 404 if game doesn't exist
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
+    }
+
+    // Captain/Admin, or — for a league / Club Team game — the squad's organisers
+    if (!(await canManageGame(game, session.user.userName, session.user.role))) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     // Lock guard: only the captain who holds the lock may save selections.
@@ -59,54 +59,42 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Reconcile the save against a FRESH read of the game sheet. The captain's page
-    // may have been open while things changed underneath it — a player withdrew, or
-    // the captain used the manage-users tools to add/remove/withdraw someone. We key
-    // by player name (not the client's row_number, which shifts when a row is deleted):
-    //   - Player no longer on the sheet (removed via manage-users) → skip; don't recreate.
-    //   - Player now Withdrawn ('W') → keep them withdrawn (FORCE status='W'; a save can
-    //     never un-withdraw them). A withdrawn Reserve ('R') is cleared to blank (they no
-    //     longer hold a reserve slot); a withdrawn Playing player keeps 'Y' so the captain
-    //     still sees the vacancy to fill.
-    //   - Otherwise apply the captain's change at the player's CURRENT row number.
-    // Players added via manage-users after the page loaded aren't in the payload, so
-    // they're simply left untouched.
+    // Reconcile the save against a FRESH read of the roster, keyed by player name. The
+    // captain's page may have been open while things changed underneath it:
+    //   - Player no longer in the group (removed) → skipped; never recreated.
+    //   - Withdrawal is on the entry, not the selection, so a save can never
+    //     un-withdraw anyone (that's what Re-join is for).
+    //   - Picking someone (Y/O) creates their selection for this game; Reserve (R) or
+    //     blank deletes it, which clears team/position/driving with it.
+    //   - A reserve just picked for ANOTHER game in the group comes back as a conflict.
+    // Players added after the page loaded aren't in the payload, so they're untouched.
     const livePlayers = await getGameSheet(game.tabName);
-    const liveByName = new Map(livePlayers.map(p => [p.name.toLowerCase(), p]));
+    const liveByRow = new Map(livePlayers.map(p => [p.rowNumber, p]));
 
-    const mappedSelections: Array<{
-      rowNumber: number;
-      selected?: string;
-      team?: number | null;
-      position?: string;
-      driving?: string;
-      carNumber?: string;
-      status?: string;
-    }> = [];
+    const changes = [];
     for (const s of selections) {
-      // Prefer name (robust to row shifts); fall back to row number for an older client.
-      const live = s.user_name
-        ? liveByName.get(s.user_name.toLowerCase())
-        : livePlayers.find(p => p.rowNumber === s.row_number);
-      if (!live) continue;              // removed via manage-users — don't recreate
-      const isWithdrawn = live.status === 'W';
-      mappedSelections.push({
-        rowNumber: live.rowNumber,       // current row (survives deletes shifting rows up)
-        // A withdrawn Reserve is cleared to blank; a withdrawn Playing player keeps 'Y'
-        // so the captain still sees the vacancy to fill.
-        selected: (isWithdrawn && s.selected === 'R') ? '' : s.selected,
+      // Prefer name; fall back to row number for an older client.
+      const byRow = liveByRow.get(s.row_number);
+      const userName = s.user_name || (byRow ? byRow.name : '');
+      if (!userName) continue;
+      changes.push({
+        username: userName,
+        selected: s.selected === 'T' ? 'R' : s.selected, // reserve teams are separate games now
         team: s.team,
         position: s.position,
         driving: s.driving,
         carNumber: s.car_number,
-        // A withdrawn player stays withdrawn — a selection save can never un-withdraw
-        // them (that's what the player's Re-join action is for).
-        status: isWithdrawn ? 'W' : s.status,
       });
     }
 
-    // Update the game sheet with all reconciled selection changes in a single batch
-    await updateGameSheet(game.tabName, mappedSelections);
+    const { conflicts } = await saveSelections(game, changes);
+
+    // League / Club Team home game: the two tea people (any squad members, playing or not)
+    const teas = (body as { teas?: { lead?: string; first?: string } }).teas;
+    if (teas && (await getSquadForFixture(game))) {
+      await setSquadFixtureTeas(game.id, teas.lead || '', teas.first || '');
+    }
+    await appendManageLog({ username: session.user.userName, action: 'save-selection', tabName: game.tabName, fixtureId: game.id, groupId: game.groupId, details: { changes: changes.length, conflicts } });
 
     // Write captain of the day to the fixture (captain_username = '' clears the field)
     if (captain_username !== undefined) {
@@ -162,24 +150,11 @@ export async function POST(request: NextRequest) {
       return a.fullName.localeCompare(b.fullName);
     });
 
-    // Calculate updated counts for Games sheet summary columns. Withdrawn players keep
-    // their role now, so exclude status 'W' from both counts.
-    // Count players marked as 'Y' (selected to play)
-    const selectedCount = allPlayers.filter(p => p.selected === 'Y' && p.status !== 'W').length;
-
-    // Count players marked as 'R' (reserve) or 'T' (reserve team)
-    const reservesCount = allPlayers.filter(p => ['R', 'T'].includes(p.selected) && p.status !== 'W').length;
-
-    // Update the selected and reserves counts on the fixture
-    await updateFixture(game.id, {
-      selected: selectedCount,
-      reserves: reservesCount,
-    });
-
-    // Build success response with sorted player list for immediate UI update
-    const response: UpdateSelectionResponse = {
+    // Counts are live (fixture_live_counts) — nothing to write back.
+    const response: UpdateSelectionResponse & { conflicts?: typeof conflicts } = {
       success: true,
       sorted_players: sortedPlayers, // Sorted list ready for display
+      ...(conflicts.length > 0 ? { conflicts } : {}),
     };
 
     // Return success response to client

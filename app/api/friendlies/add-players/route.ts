@@ -1,20 +1,21 @@
 // app/api/friendlies/add-players/route.ts
-// API endpoint for players to manually add other players to a game
-// Optimized to add players to both Players sheet AND game sheet in one call
+// API endpoint to add other players to a game (the "View / Add" modal).
+// Captains/Admins can add to Open, Selecting or Selected games, bypassing capacity;
+// warnings (on teas, wrong section) come back for confirmation before anything is
+// written — resend with confirm: true to add anyway. Anyone else can add only to an
+// Open game, within capacity, and ineligible players are refused.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getAppUrl } from '@/lib/app-url';
-import { batchUpdatePlayerEntries, addPlayersToGameSheetDirect, getActiveEnteredCount } from '@/lib/friendlies-sheets';
-import { getFixtures, updateFixture } from '@/lib/fixtures-supabase';
-import { canEnterGame } from '@/lib/game-management/capacity';
-import { hasRole } from '@/lib/role-utils';
+import { addEntries, checkEntryEligibility, appendManageLog } from '@/lib/fixture-groups-supabase';
+import { getFixtures, getGameByIdOrTab } from '@/lib/fixtures-supabase';
+import { canManageGame } from '@/lib/squads-supabase';
 import { getAllUsers } from '@/lib/members-supabase';
 import { sendEntryConfirmedEmail, sendLinkedEntryConfirmedEmail } from '@/lib/email/friendlies';
-import { clearDiaryCache, clearSheetDataCacheByPrefix } from '@/lib/home-cache';
+import { clearDiaryCache } from '@/lib/home-cache';
 
-// POST handler - Adds players with M (manually added) status
 export async function POST(request: NextRequest) {
   try {
     // Verify user is authenticated
@@ -26,7 +27,7 @@ export async function POST(request: NextRequest) {
 
     // Parse request body
     const body = await request.json();
-    const { gameId, playerUserNames } = body;
+    const { gameId, playerUserNames, confirm = false } = body as { gameId: string; playerUserNames: string[]; confirm?: boolean };
 
     // Validate input
     if (!gameId || !Array.isArray(playerUserNames) || playerUserNames.length === 0) {
@@ -36,17 +37,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Fetch all fixtures to verify game exists and is open. Postgres reads are
-    // always fresh, unlike the old Sheets Games cache this used to need bypassing.
     const allGames = await getFixtures();
-    const game = allGames.find(g => g.tabName === gameId);
+    let game = allGames.find(g => g.tabName === gameId) || null;
+    if (!game) game = await getGameByIdOrTab(null, gameId); // Club Team games
 
-    if (!game) {
+    if (!game || !game.groupId) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
+    const groupId = game.groupId;
 
-    // Check capacity limits (captains/admins bypass capacity)
-    const isCaptainOrAdmin = hasRole(session.user.role, 'Captain', 'Admin');
+    // Captain/Admin — or, for a league / Club Team game, the squad's organisers (who add
+    // people to the squad from the game page)
+    const isCaptainOrAdmin = await canManageGame(game, session.user.userName, session.user.role);
 
     // Only allow adding to open games, or Selecting/Selected games for captains/admins
     if (game.status !== 'O') {
@@ -55,105 +57,81 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (!isCaptainOrAdmin && game.maxPlayers && game.maxPlayers > 0) {
-      const capacityCheck = canEnterGame(game, false);
-      if (!capacityCheck.canEnter) {
-        // Check if adding these players would exceed capacity significantly
-        const availableSpots = game.maxPlayers - game.entered;
-        if (playerUserNames.length > availableSpots && availableSpots > 0) {
-          return NextResponse.json({
-            error: `Only ${availableSpots} spot${availableSpots === 1 ? '' : 's'} available`
-          }, { status: 400 });
-        }
-      }
-    }
+    // Eligibility for every game in the group: on teas, wrong section
+    const groupGames = allGames.filter(g => g.groupId === groupId);
+    const eligibility = await checkEntryEligibility(groupGames, playerUserNames);
+    const withReasons = eligibility.filter(e => e.reasons.length > 0);
 
-    // Add all players with M (manually added) status to Players sheet
-    const entries = playerUserNames.map(userName => ({ userName, status: 'M' as const }));
-    const batchResults = await batchUpdatePlayerEntries(game.tabName, entries);
-    const results = batchResults.map(r => ({
-      userName: r.userName,
-      added: r.success,
-      error: r.error,
-    }));
-
-    // Check if any failed
-    const failed = results.filter(r => !r.added);
-    if (failed.length > 0 && failed.length === results.length) {
-      // All failed
+    if (isCaptainOrAdmin && withReasons.length > 0 && !confirm) {
+      // Nothing written yet — ask the captain to confirm
       return NextResponse.json({
         success: false,
-        error: 'Failed to add players',
-        results
-      }, { status: 500 });
+        needsConfirmation: true,
+        warnings: withReasons.map(w => ({ userName: w.username, fullName: w.fullName, message: `${w.fullName} is ${w.reasons.join(' and ')}` })),
+      });
     }
 
-    // For Open/Selecting/Selected games, also add players to the individual game sheet
-    if (['O', 'X', 'S'].includes(game.status)) {
-      try {
-        const successfulPlayers = results.filter(r => r.added).map(r => r.userName);
-        await addPlayersToGameSheetDirect(game.tabName, successfulPlayers);
-      } catch (gameSheetError) {
-        console.error('[Friendlies API] Error adding to game sheet:', gameSheetError);
-        // Don't fail - players were added to Players sheet
-      }
+    const refused = isCaptainOrAdmin ? [] : withReasons;
+    const toAdd = playerUserNames.filter(u => !refused.some(r => r.username === u));
+
+    const outcome = await addEntries({
+      groupId,
+      usernames: toAdd,
+      source: isCaptainOrAdmin ? 'manager' : 'buddy',
+      enteredBy: session.user.userName,
+      enforceCapacity: !isCaptainOrAdmin,
+    });
+
+    const results = [
+      ...refused.map(r => ({ userName: r.username, added: false, error: `${r.fullName} is ${r.reasons.join(' and ')}` })),
+      ...outcome.map(r => ({
+        userName: r.username,
+        added: r.result === 'entered',
+        error: r.result === 'full' ? 'Game is full' : r.result === 'already' ? 'Already entered' : undefined,
+      })),
+    ];
+
+    const addedUserNames = results.filter(r => r.added).map(r => r.userName);
+    if (addedUserNames.length === 0) {
+      return NextResponse.json({ success: false, error: (results.length > 0 && results[0].error) || 'Failed to add players', results }, { status: 400 });
     }
 
-    // Recalculate entered count from the Players sheet (excludes any withdrawn
-    // entries) rather than adding a delta onto the possibly-stale prior count
-    const addedCount = results.filter(r => r.added).length;
-    if (addedCount > 0) {
-      try {
-        const activeCount = await getActiveEnteredCount(game.tabName);
-        await updateFixture(game.id, { entered: activeCount });
-      } catch (countError) {
-        console.error('[Friendlies API] Error updating entered count:', countError);
-      }
-
-      // Invalidate the diary cache for every added player, plus the shared
-      // Players-sheet cache their diaries recompute from (24h TTL, otherwise
-      // never invalidated by writes — see enter/route.ts for the full story).
-      // This route (reached via the Friendlies page's "View / Add" modal) had
-      // never invalidated either cache at all, unlike enter/withdraw/rejoin.
-      for (const r of results.filter(r => r.added)) {
-        clearDiaryCache(r.userName);
-      }
-      clearSheetDataCacheByPrefix('friendlies-players:');
-    }
+    await appendManageLog({
+      username: session.user.userName,
+      action: 'add-players',
+      tabName: game.tabName,
+      fixtureId: game.id,
+      groupId,
+      details: { players: addedUserNames, warningsConfirmed: withReasons.length > 0 && isCaptainOrAdmin },
+    });
+    for (const userName of addedUserNames) clearDiaryCache(userName);
 
     // Send entry confirmation emails to each successfully added player (fire-and-forget)
-    if (addedCount > 0) {
-      (async () => {
-        try {
-          const addedUserNames = results.filter(r => r.added).map(r => r.userName);
-          const allUsers = await getAllUsers();
-          const appUrl = await getAppUrl();
+    (async () => {
+      try {
+        const allUsers = await getAllUsers();
+        const appUrl = await getAppUrl();
+        // A linked occasion still open for entry: confirm both games, allocation to follow
+        const partner = game.status === 'O'
+          ? allGames.find(g => g.groupId === groupId && g.id !== game.id && !g.reserveOf)
+          : undefined;
 
-          // For a joint game still open for combined entry (paired='Y'), the added
-          // player is really entering the joint game — confirm both Game A (the lead,
-          // which they were added to) and Game B, with allocation to follow. Once the
-          // pair is split (X/S onward), the games are independent, so a single email.
-          const partner = game.paired === 'Y'
-            ? allGames.find(g => g.tabName !== game.tabName && g.paired === 'Y' && g.date === game.date)
-            : undefined;
-
-          for (const userName of addedUserNames) {
-            const user = allUsers.find(u => u.userName.toLowerCase() === userName.toLowerCase());
-            if (!user?.emailAddress) continue;
-            const fullName = user.fullName || (user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : userName);
-            if (partner) {
-              await sendLinkedEntryConfirmedEmail(user.emailAddress, userName, fullName, game, partner, appUrl);
-            } else {
-              await sendEntryConfirmedEmail(user.emailAddress, userName, fullName, game, appUrl, true);
-            }
+        for (const userName of addedUserNames) {
+          const user = allUsers.find(u => u.userName.toLowerCase() === userName.toLowerCase());
+          if (!user?.emailAddress) continue;
+          const fullName = user.fullName || (user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : userName);
+          if (partner) {
+            await sendLinkedEntryConfirmedEmail(user.emailAddress, userName, fullName, game, partner, appUrl);
+          } else {
+            await sendEntryConfirmedEmail(user.emailAddress, userName, fullName, game, appUrl, true);
           }
-        } catch (emailError) {
-          console.error('[add-players] Error sending entry confirmation emails:', emailError);
         }
-      })();
-    }
+      } catch (emailError) {
+        console.error('[add-players] Error sending entry confirmation emails:', emailError);
+      }
+    })();
 
-    return NextResponse.json({ success: true, results, addedToGameSheet: ['O', 'X', 'S'].includes(game.status) });
+    return NextResponse.json({ success: true, results, addedToGameSheet: true });
   } catch (error) {
     console.error('[Friendlies API] Error adding players:', error);
     return NextResponse.json(

@@ -1,16 +1,16 @@
 // app/api/friendlies/enter/route.ts
-// API endpoint for players to enter one or more games
-// Updates Players sheet with 'E' status and recalculates entered counts in Games sheet
+// API endpoint for players to enter one or more games (and optionally their buddies).
+// An entry is into the game's group — for linked games that's the shared occasion,
+// and the captains pick players into the individual games at selection time.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getAppUrl } from '@/lib/app-url';
-import { updatePlayerEntry, addPlayerToGameSheet } from '@/lib/friendlies-sheets';
-import { getFixtures, updateFixture } from '@/lib/fixtures-supabase';
-import { clearDiaryCache, clearSheetDataCacheByPrefix } from '@/lib/home-cache';
+import { addEntries, checkEntryEligibility, type EntryPreference } from '@/lib/fixture-groups-supabase';
+import { getFixtures, type Fixture } from '@/lib/fixtures-supabase';
+import { clearDiaryCache } from '@/lib/home-cache';
 import { EnterGamesRequest, EnterGamesResponse } from '@/lib/types/friendlies';
-import { canEnterGame } from '@/lib/game-management/capacity';
 import { getUserByUsername } from '@/lib/members-supabase';
 import { canManageUser } from '@/lib/buddies-supabase';
 import { sendEntryConfirmedEmail, sendLinkedEntryConfirmedEmail } from '@/lib/email/friendlies';
@@ -59,163 +59,92 @@ export async function POST(request: NextRequest) {
 
     // Every user to enter into each game: the caller first, then any authorised buddies.
     const targets: string[] = [userName, ...buddyTargets];
+    const userLabel = (t: string) => (t === userName ? undefined : t);
 
-    // Fetch all fixtures to verify each game exists and is open. Postgres reads are
-    // always fresh — no cache layer to bypass here (unlike the old Sheets Games
-    // cache, which forceFresh used to skip so a member couldn't enter a game the
-    // captain just closed).
     const allGames = await getFixtures();
+    const results: EnterGamesResponse['results'] = [];
+    const enteredGroups = new Set<string>();
+    const enteredGames: Array<{ who: string; game: Fixture }> = [];
 
-    // Process every (game × target) entry. Games write to different columns/tabs so
-    // they run in parallel; targets within a game run in sequence to keep each game
-    // sheet's writes ordered. A joint-game entry always sends only the lead game's
-    // tabName (the client enters game 1), so no partner is entered here.
-    const nested = await Promise.all(
-      game_ids.map(async (tabName) => {
-        const gameResults: EnterGamesResponse['results'] = [];
-        try {
-          const game = allGames.find(g => g.tabName === tabName);
+    for (const tabName of game_ids) {
+      const game = allGames.find(g => g.tabName === tabName);
+      const fail = (error: string, who: string[] = targets) => {
+        for (const t of who) results.push({ game_id: tabName, entered: false, error, user_name: userLabel(t) });
+      };
 
-          if (!game) {
-            for (const t of targets) gameResults.push({ game_id: tabName, entered: false, error: 'Game not found', user_name: t === userName ? undefined : t });
-            return gameResults;
-          }
-          if (game.status !== 'O') {
-            for (const t of targets) gameResults.push({ game_id: tabName, entered: false, error: 'Game not open for entry', user_name: t === userName ? undefined : t });
-            return gameResults;
-          }
+      if (!game) { fail('Game not found'); continue; }
+      if (game.status !== 'O' || !game.groupId) { fail('Game not open for entry'); continue; }
+      // Both games of a linked pair may be sent — the entry is into the group, once.
+      if (enteredGroups.has(game.groupId)) continue;
+      enteredGroups.add(game.groupId);
 
-          if (game.maxPlayers && game.maxPlayers > 0) {
-            const capacityCheck = canEnterGame(game, false); // Friendlies don't allow waitlist
-            if (!capacityCheck.canEnter) {
-              for (const t of targets) gameResults.push({ game_id: tabName, entered: false, error: capacityCheck.reason || 'Cannot enter game', user_name: t === userName ? undefined : t });
-              return gameResults;
-            }
-          }
+      const groupGames = allGames.filter(g => g.groupId === game.groupId);
 
-          const gameCarNumber = car_numbers?.[tabName];
-          for (const target of targets) {
-            try {
-              await updatePlayerEntry(target, game.tabName, 'E');
-              // Open-game entry — skip stat computation (stats are snapshotted at close)
-              await addPlayerToGameSheet(game.tabName, target, 'R', gameCarNumber, false);
-              gameResults.push({ game_id: tabName, entered: true, user_name: target === userName ? undefined : target });
-            } catch (updateError: any) {
-              gameResults.push({ game_id: tabName, entered: false, error: updateError.message || 'Update failed', user_name: target === userName ? undefined : target });
-            }
-          }
-          return gameResults;
-        } catch {
-          for (const t of targets) gameResults.push({ game_id: tabName, entered: false, error: 'Processing failed', user_name: t === userName ? undefined : t });
-          return gameResults;
-        }
-      })
-    );
-    const results: EnterGamesResponse['results'] = nested.flat();
-
-    // Update entered counts in Games sheet for all successfully entered games
-    // This requires counting actual entries in Players sheet to get accurate totals
-    const successfulEntries = results.filter(r => r.entered);
-
-    if (successfulEntries.length > 0) {
-      const { getGoogleSheetsClient } = await import('@/lib/sheets');
-
-      // Get Sheets client and spreadsheet ID
-      const sheets = getGoogleSheetsClient();
-      const spreadsheetId = process.env.FRIENDLIES_SPREADSHEET_ID!;
-
-      // Fetch all Players sheet data once for efficiency
-      const playersResponse = await sheets.spreadsheets.values.get({
-        spreadsheetId,
-        range: 'Players!A:ZZ',
-      });
-
-      // Extract rows and headers from Players sheet
-      const rows = playersResponse.data.values || [];
-      const headers = rows[0] || [];
-
-      // Collect all count updates
-      const countUpdates: { id: string; entered: number }[] = [];
-
-      // A game may have several successful entries (caller + buddies) — only recount once.
-      const countedGames = new Set<string>();
-      for (const result of successfulEntries) {
-        if (countedGames.has(result.game_id)) continue;
-        countedGames.add(result.game_id);
-
-        // Find the game object for this entry
-        const game = allGames.find(g => g.tabName === result.game_id);
-
-        if (game) {
-          // Find which column in Players sheet corresponds to this game
-          const gameColIndex = headers.findIndex((h: string) => h === game.tabName);
-
-          if (gameColIndex !== -1) {
-            // Count active entries only — exclude withdrawn (ending in W) and empty cells.
-            // A game reopened from X/S status may have PW/RW/EW entries in the Players
-            // sheet for players who withdrew before the reopen; they must not inflate the count.
-            let enteredCount = 0;
-            for (let i = 1; i < rows.length; i++) {
-              const status = (rows[i][gameColIndex] || '').toString();
-              if (status && !status.endsWith('W')) {
-                enteredCount++;
-              }
-            }
-
-            countUpdates.push({ id: game.id, entered: enteredCount });
-          }
+      // Server-side eligibility: on teas for any game in the group, or the wrong section.
+      // (This used to be checked only on the friendlies page.)
+      const eligibility = await checkEntryEligibility(groupGames, targets);
+      const eligible: string[] = [];
+      for (const item of eligibility) {
+        if (item.reasons.length > 0) {
+          const who = item.username === userName ? 'You are' : `${item.fullName} is`;
+          fail(`${who} ${item.reasons.join(' and ')}`, [item.username]);
+        } else {
+          eligible.push(item.username);
         }
       }
+      if (eligible.length === 0) continue;
 
-      // Update all counts on the fixtures
-      if (countUpdates.length > 0) {
-        await Promise.all(countUpdates.map(u => updateFixture(u.id, { entered: u.entered })));
+      // Optional preference for one game of a linked group
+      const pref = body.preferences ? body.preferences[tabName] : undefined;
+      let preferredFixtureId: string | null = null;
+      let preference: EntryPreference | null = null;
+      if (pref && pref.fixture_id && groupGames.some(g => g.id === pref.fixture_id) && groupGames.filter(g => !g.reserveOf).length > 1) {
+        preferredFixtureId = pref.fixture_id;
+        preference = pref.preference === 'only' ? 'only' : 'preferred';
+      }
+
+      try {
+        const outcome = await addEntries({
+          groupId: game.groupId,
+          usernames: eligible,
+          source: 'self',
+          enteredBy: userName,
+          enforceCapacity: true, // friendlies don't allow a waitlist
+          preferredFixtureId,
+          preference,
+          carNumber: car_numbers && car_numbers[tabName] ? car_numbers[tabName] : null,
+        });
+        for (const r of outcome) {
+          if (r.result === 'entered') {
+            results.push({ game_id: tabName, entered: true, user_name: userLabel(r.username) });
+            enteredGames.push({ who: r.username, game });
+          } else {
+            fail(r.result === 'full' ? 'Game is full' : 'Already entered', [r.username]);
+          }
+        }
+      } catch (enterError) {
+        console.error('[enter] Failed to enter group:', enterError);
+        fail('Processing failed', eligible);
       }
     }
 
     // Send entry confirmation emails (fire-and-forget — failures do not affect the response).
     // Each entered user (caller and any buddies) gets their own confirmation to their address.
-    if (successfulEntries.length > 0) {
+    if (enteredGames.length > 0) {
       try {
         const appUrl = await getAppUrl();
-
-        // Group the games each user was successfully entered into (caller uses their own username)
-        const gamesByUser = new Map<string, string[]>();
-        for (const r of successfulEntries) {
-          const who = r.user_name ?? userName;
-          const list = gamesByUser.get(who) ?? [];
-          list.push(r.game_id);
-          gamesByUser.set(who, list);
-        }
-
-        for (const [who, tabNames] of gamesByUser) {
+        for (const { who, game } of enteredGames) {
           const user = await getUserByUsername(who);
           if (!user?.emailAddress) continue;
           const fullName = user.fullName || (user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : who);
 
-          const successfulGames = tabNames
-            .map(t => allGames.find(g => g.tabName === t))
-            .filter((g): g is typeof allGames[0] => !!g);
-
-          // The entry itself only lands on the lead of a linked pair (see resolveLeadTab),
-          // but for a joint game the confirmation should tell the player they've entered
-          // BOTH games — the captains allocate them to one nearer the time. Look up the
-          // partner from all games (it isn't entered, so it isn't in successfulGames).
-          const emailed = new Set<string>();
-          for (const game of successfulGames) {
-            if (emailed.has(game.tabName)) continue;
-            if (game.paired === 'Y') {
-              const partner = allGames.find(g =>
-                g.tabName !== game.tabName && g.paired === 'Y' && g.date === game.date
-              );
-              if (partner) {
-                await sendLinkedEntryConfirmedEmail(user.emailAddress, who, fullName, game, partner, appUrl);
-                emailed.add(game.tabName);
-                continue;
-              }
-            }
+          // A linked occasion: tell the player they've entered both games — the captains
+          // pick them into one nearer the time.
+          const partner = allGames.find(g => g.groupId === game.groupId && g.id !== game.id && !g.reserveOf);
+          if (partner) {
+            await sendLinkedEntryConfirmedEmail(user.emailAddress, who, fullName, game, partner, appUrl);
+          } else {
             await sendEntryConfirmedEmail(user.emailAddress, who, fullName, game, appUrl);
-            emailed.add(game.tabName);
           }
         }
       } catch (emailError) {
@@ -224,18 +153,14 @@ export async function POST(request: NextRequest) {
     }
 
     // Invalidate the diary cache so the home page reflects the new entry — for every entered user.
-    // Also bust the shared Players-sheet cache diary-sheets.ts's fetchFriendliesItems reads from
-    // (24h TTL, otherwise never invalidated by writes — without this, the diary keeps computing
-    // fresh but off a stale pre-entry snapshot of who's in each game, for up to 24h).
-    for (const who of new Set(successfulEntries.map(r => r.user_name ?? userName))) {
+    for (const who of new Set(enteredGames.map(e => e.who))) {
       clearDiaryCache(who);
     }
-    clearSheetDataCacheByPrefix('friendlies-players:');
 
     // Return success response with results for each game
     return NextResponse.json({ success: true, results });
   } catch (error) {
-    // Log error and return 500 response
+    console.error('Error entering games:', error);
     return NextResponse.json(
       { error: 'Failed to enter games' },
       { status: 500 }

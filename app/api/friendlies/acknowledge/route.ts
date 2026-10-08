@@ -3,7 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGameSheet, acknowledgeGameCancellation } from '@/lib/friendlies-sheets';
+import { getGameSheet, acknowledgeGameCancellation } from '@/lib/fixture-groups-supabase';
 import { getFixtureByTabName } from '@/lib/fixtures-supabase';
 
 export async function POST(request: NextRequest) {

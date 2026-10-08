@@ -69,7 +69,8 @@ export async function POST(
     if (!event.groupId) {
       return NextResponse.json({ success: true, sentCount: 0 });
     }
-    const members = await ensureGroupMemberTokens(event.groupId);
+    // Inactive members (left a linked squad) aren't chased
+    const members = (await ensureGroupMemberTokens(event.groupId)).filter((m) => m.active);
     const responses = await getResponsesForEvent(eventId);
 
     // Who has already responded (members keyed by userName, visitors by visitor email)
