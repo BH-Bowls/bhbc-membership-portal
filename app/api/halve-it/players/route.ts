@@ -13,10 +13,13 @@ export async function GET() {
   if (denied) return denied;
   try {
     const users = await getAllUsers();
-    const members = users
-      .filter((u) => u.memberType) // skip shared accounts (Kiosk/Captain)
-      .map((u) => ({ value: u.userName, label: `${u.knownAs || u.firstName} ${u.lastName}`.trim() }))
-      .sort((a, b) => a.label.localeCompare(b.label));
+    const members: { value: string; label: string }[] = [];
+    for (const u of users) {
+      // Shared accounts (Kiosk/Captain) have no member type — they can't play
+      if (!u.memberType) continue;
+      members.push({ value: u.userName, label: `${u.knownAs || u.firstName} ${u.lastName}`.trim() });
+    }
+    members.sort((a, b) => a.label.localeCompare(b.label));
     return NextResponse.json({ members });
   } catch (error) {
     console.error('[GET /api/halve-it/players]', error);

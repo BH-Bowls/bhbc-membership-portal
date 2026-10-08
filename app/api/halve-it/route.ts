@@ -13,19 +13,21 @@ export async function GET(request: NextRequest) {
   if ('denied' in auth) return auth.denied;
   try {
     const params = request.nextUrl.searchParams;
-    let season: number | null = null;
+    // No season, player or night asked for = the current season
+    let season = currentSeason();
     if (params.get('season')) {
       season = parseInt(params.get('season') as string);
       if (!Number.isInteger(season)) return NextResponse.json({ error: 'Invalid season' }, { status: 400 });
     } else if (params.get('player')) {
-      season = await getPlayerSeason(params.get('player') as string);
-      if (season === null) return NextResponse.json({ error: 'Player not found' }, { status: 404 });
+      const playerSeason = await getPlayerSeason(params.get('player') as string);
+      if (playerSeason === null) return NextResponse.json({ error: 'Player not found' }, { status: 404 });
+      season = playerSeason;
     } else if (params.get('night')) {
       const night = await getNight(params.get('night') as string);
       if (!night || (night.status !== 'final' && !auth.canManage)) return NextResponse.json({ error: 'Night not found' }, { status: 404 });
       season = night.season;
     }
-    const data = await getSeasonData(season ?? currentSeason(), auth.canManage);
+    const data = await getSeasonData(season, auth.canManage);
     return NextResponse.json({ ...data, canManage: auth.canManage });
   } catch (error) {
     console.error('[GET /api/halve-it]', error);

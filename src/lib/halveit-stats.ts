@@ -24,12 +24,18 @@ export interface GameResult {
   winners: string[]; // player ids
 }
 
+export interface NightTotal {
+  playerId: string;
+  total: number;
+  games: number;
+}
+
 export interface NightSummary {
   night: HalveItNight;
   players: number;
   games: GameResult[];
   topScore: { playerIds: string[]; score: number } | null;
-  totals: { playerId: string; total: number; games: number }[]; // highest total first
+  totals: NightTotal[]; // highest total first
 }
 
 export interface Ranked<T> {
@@ -39,97 +45,195 @@ export interface Ranked<T> {
 
 /** Final nights only, oldest first. */
 export function finalNights(data: HalveItSeasonData): HalveItNight[] {
-  return data.nights.filter((n) => n.status === 'final').sort((a, b) => a.date.localeCompare(b.date));
+  const nights: HalveItNight[] = [];
+  for (const night of data.nights) {
+    if (night.status === 'final') nights.push(night);
+  }
+  nights.sort((a, b) => a.date.localeCompare(b.date));
+  return nights;
 }
 
+/** Scores from final nights only. */
 function finalScores(data: HalveItSeasonData): HalveItScore[] {
-  const ids = new Set(finalNights(data).map((n) => n.id));
-  return data.scores.filter((s) => ids.has(s.nightId));
+  const finalIds = new Set<string>();
+  for (const night of finalNights(data)) finalIds.add(night.id);
+
+  const scores: HalveItScore[] = [];
+  for (const score of data.scores) {
+    if (finalIds.has(score.nightId)) scores.push(score);
+  }
+  return scores;
 }
 
-export function summariseNight(night: HalveItNight, scores: HalveItScore[]): NightSummary {
-  const own = scores.filter((s) => s.nightId === night.id);
-  const gameNos = Array.from(new Set(own.map((s) => s.gameNo))).sort((a, b) => a - b);
-  const games: GameResult[] = gameNos.map((gameNo) => {
-    const gs = own.filter((s) => s.gameNo === gameNo).map((s) => ({ playerId: s.playerId, score: s.score })).sort((a, b) => b.score - a.score);
-    const top = gs[0]?.score;
-    return { gameNo, scores: gs, winners: gs.filter((s) => s.score === top).map((s) => s.playerId) };
-  });
-  const byPlayer = new Map<string, { total: number; games: number }>();
-  for (const s of own) {
-    const t = byPlayer.get(s.playerId) || { total: 0, games: 0 };
-    t.total += s.score;
-    t.games++;
-    byPlayer.set(s.playerId, t);
+export function summariseNight(night: HalveItNight, allScores: HalveItScore[]): NightSummary {
+  // Just this night's scores
+  const nightScores: HalveItScore[] = [];
+  for (const score of allScores) {
+    if (score.nightId === night.id) nightScores.push(score);
   }
-  const totals = Array.from(byPlayer.entries()).map(([playerId, t]) => ({ playerId, ...t })).sort((a, b) => b.total - a.total);
+
+  // Group scores by game number
+  const byGame = new Map<number, { playerId: string; score: number }[]>();
+  for (const s of nightScores) {
+    if (!byGame.has(s.gameNo)) byGame.set(s.gameNo, []);
+    byGame.get(s.gameNo)!.push({ playerId: s.playerId, score: s.score });
+  }
+  const gameNos = Array.from(byGame.keys()).sort((a, b) => a - b);
+
+  // Each game's scores, highest first, and its winner(s) — everyone on the top score
+  const games: GameResult[] = [];
+  for (const gameNo of gameNos) {
+    const gameScores = byGame.get(gameNo)!;
+    gameScores.sort((a, b) => b.score - a.score);
+    const winners: string[] = [];
+    for (const gs of gameScores) {
+      if (gs.score === gameScores[0].score) winners.push(gs.playerId);
+    }
+    games.push({ gameNo, scores: gameScores, winners });
+  }
+
+  // Each player's total and games played on the night
+  const byPlayer = new Map<string, NightTotal>();
+  for (const s of nightScores) {
+    let entry = byPlayer.get(s.playerId);
+    if (!entry) {
+      entry = { playerId: s.playerId, total: 0, games: 0 };
+      byPlayer.set(s.playerId, entry);
+    }
+    entry.total += s.score;
+    entry.games++;
+  }
+  const totals = Array.from(byPlayer.values());
+  totals.sort((a, b) => b.total - a.total);
+
+  // The night's single highest game score, and who scored it
   let topScore: NightSummary['topScore'] = null;
-  if (own.length > 0) {
-    const max = Math.max(...own.map((s) => s.score));
-    topScore = { score: max, playerIds: Array.from(new Set(own.filter((s) => s.score === max).map((s) => s.playerId))) };
+  for (const s of nightScores) {
+    if (topScore === null || s.score > topScore.score) {
+      topScore = { score: s.score, playerIds: [s.playerId] };
+    } else if (s.score === topScore.score && !topScore.playerIds.includes(s.playerId)) {
+      topScore.playerIds.push(s.playerId);
+    }
   }
+
   return { night, players: byPlayer.size, games, topScore, totals };
 }
 
 export function computePlayerStats(data: HalveItSeasonData): PlayerStats[] {
   const nights = finalNights(data);
   const scores = finalScores(data);
+
+  // Count game wins per player across every final night
   const wins = new Map<string, number>();
   for (const night of nights) {
-    for (const g of summariseNight(night, scores).games) {
-      for (const id of g.winners) wins.set(id, (wins.get(id) || 0) + 1);
+    const summary = summariseNight(night, scores);
+    for (const game of summary.games) {
+      for (const playerId of game.winners) {
+        wins.set(playerId, (wins.get(playerId) || 0) + 1);
+      }
     }
   }
-  const n = data.settings.bestNGames;
-  return data.players.map((player) => {
-    const own = scores.filter((s) => s.playerId === player.id);
-    const values = own.map((s) => s.score).sort((a, b) => b - a);
-    const total = values.reduce((sum, v) => sum + v, 0);
-    const top = values.slice(0, n);
-    return {
+
+  const bestNGames = data.settings.bestNGames;
+  const result: PlayerStats[] = [];
+
+  for (const player of data.players) {
+    // This player's scores, and the nights they played
+    const values: number[] = [];
+    const nightIds = new Set<string>();
+    for (const s of scores) {
+      if (s.playerId === player.id) {
+        values.push(s.score);
+        nightIds.add(s.nightId);
+      }
+    }
+    values.sort((a, b) => b - a); // highest first
+
+    let total = 0;
+    let bestN = 0;
+    for (let i = 0; i < values.length; i++) {
+      total += values[i];
+      if (i < bestNGames) bestN += values[i];
+    }
+
+    const played = values.length > 0;
+    result.push({
       player,
-      nights: new Set(own.map((s) => s.nightId)).size,
+      nights: nightIds.size,
       games: values.length,
       total,
-      average: values.length ? total / values.length : null,
-      best: values.length ? values[0] : null,
-      worst: values.length ? values[values.length - 1] : null,
-      bestN: top.reduce((sum, v) => sum + v, 0),
-      bestNCount: top.length,
+      average: played ? total / values.length : null,
+      best: played ? values[0] : null,
+      worst: played ? values[values.length - 1] : null,
+      bestN,
+      bestNCount: Math.min(values.length, bestNGames),
       gameWins: wins.get(player.id) || 0,
-    };
-  });
+    });
+  }
+  return result;
 }
 
 /** Sorts descending by value and assigns shared positions to equal values. */
 export function rank<T>(items: T[], value: (item: T) => number, tiebreak?: (a: T, b: T) => number): Ranked<T>[] {
-  const sorted = [...items].sort((a, b) => value(b) - value(a) || (tiebreak ? tiebreak(a, b) : 0));
-  const result: Ranked<T>[] = [];
-  sorted.forEach((item, i) => {
-    const prev = result[i - 1];
-    const position = prev && value(prev.item) === value(item) ? prev.position : i + 1;
-    result.push({ position, item });
+  const sorted = [...items];
+  sorted.sort((a, b) => {
+    const diff = value(b) - value(a);
+    if (diff !== 0 || !tiebreak) return diff;
+    return tiebreak(a, b);
   });
+
+  const result: Ranked<T>[] = [];
+  for (let i = 0; i < sorted.length; i++) {
+    let position = i + 1;
+    // Same value as the row above = same position
+    if (i > 0 && value(sorted[i - 1]) === value(sorted[i])) {
+      position = result[i - 1].position;
+    }
+    result.push({ position, item: sorted[i] });
+  }
   return result;
 }
 
 const byName = (a: PlayerStats, b: PlayerStats) => a.player.name.localeCompare(b.player.name);
 
+/** Players who've played at least one game. */
+function withGames(stats: PlayerStats[]): PlayerStats[] {
+  const played: PlayerStats[] = [];
+  for (const s of stats) {
+    if (s.games > 0) played.push(s);
+  }
+  return played;
+}
+
 export function totalTable(stats: PlayerStats[]): Ranked<PlayerStats>[] {
-  return rank(stats.filter((s) => s.games > 0), (s) => s.total, byName);
+  return rank(withGames(stats), (s) => s.total, byName);
 }
 
 /** Qualified players ranked by average; the rest listed separately, most games first. */
 export function averageTable(stats: PlayerStats[], minGames: number): { qualified: Ranked<PlayerStats>[]; unqualified: PlayerStats[] } {
-  const played = stats.filter((s) => s.games > 0);
+  const qualified: PlayerStats[] = [];
+  const unqualified: PlayerStats[] = [];
+  for (const s of withGames(stats)) {
+    if (s.games >= minGames) qualified.push(s);
+    else unqualified.push(s);
+  }
+  unqualified.sort((a, b) => b.games - a.games || byName(a, b));
   return {
-    qualified: rank(played.filter((s) => s.games >= minGames), (s) => s.average ?? 0, byName),
-    unqualified: played.filter((s) => s.games < minGames).sort((a, b) => b.games - a.games || byName(a, b)),
+    qualified: rank(qualified, (s) => (s.average === null ? 0 : s.average), byName),
+    unqualified,
   };
 }
 
 export function bestNTable(stats: PlayerStats[]): Ranked<PlayerStats>[] {
-  return rank(stats.filter((s) => s.games > 0), (s) => s.bestN, byName);
+  return rank(withGames(stats), (s) => s.bestN, byName);
+}
+
+/** The position of a player in a ranked table, or null if they're not in it. */
+export function positionOf(rows: Ranked<PlayerStats>[], playerId: string): number | null {
+  for (const row of rows) {
+    if (row.item.player.id === playerId) return row.position;
+  }
+  return null;
 }
 
 export interface SeasonRecords {
@@ -142,47 +246,65 @@ export interface SeasonRecords {
   games: number;
 }
 
+/** The highest value above zero, and every player id on it; null if nobody is above zero. */
+function topPlayers(stats: PlayerStats[], value: (s: PlayerStats) => number): { max: number; ids: string[] } | null {
+  let best: { max: number; ids: string[] } | null = null;
+  for (const s of stats) {
+    const v = value(s);
+    if (v <= 0) continue;
+    if (best === null || v > best.max) best = { max: v, ids: [s.player.id] };
+    else if (v === best.max) best.ids.push(s.player.id);
+  }
+  return best;
+}
+
 export function computeRecords(data: HalveItSeasonData, stats: PlayerStats[]): SeasonRecords {
   const nights = finalNights(data);
   const scores = finalScores(data);
-  const summaries = nights.map((n) => summariseNight(n, scores));
 
+  // Highest single game score
   let highestGame: SeasonRecords['highestGame'] = null;
-  if (scores.length) {
-    const max = Math.max(...scores.map((s) => s.score));
-    highestGame = { score: max, entries: scores.filter((s) => s.score === max).map((s) => ({ playerId: s.playerId, nightId: s.nightId })) };
+  for (const s of scores) {
+    const entry = { playerId: s.playerId, nightId: s.nightId };
+    if (highestGame === null || s.score > highestGame.score) highestGame = { score: s.score, entries: [entry] };
+    else if (s.score === highestGame.score) highestGame.entries.push(entry);
   }
 
+  // Highest total on a single night, and count the games played
   let highestNightTotal: SeasonRecords['highestNightTotal'] = null;
-  const allTotals = summaries.flatMap((s) => s.totals.map((t) => ({ ...t, nightId: s.night.id })));
-  if (allTotals.length) {
-    const max = Math.max(...allTotals.map((t) => t.total));
-    highestNightTotal = { total: max, entries: allTotals.filter((t) => t.total === max).map((t) => ({ playerId: t.playerId, nightId: t.nightId, games: t.games })) };
+  let gamesPlayed = 0;
+  for (const night of nights) {
+    const summary = summariseNight(night, scores);
+    gamesPlayed += summary.games.length;
+    for (const t of summary.totals) {
+      const entry = { playerId: t.playerId, nightId: night.id, games: t.games };
+      if (highestNightTotal === null || t.total > highestNightTotal.total) highestNightTotal = { total: t.total, entries: [entry] };
+      else if (t.total === highestNightTotal.total) highestNightTotal.entries.push(entry);
+    }
   }
 
-  const top = (values: { id: string; v: number }[]) => {
-    const live = values.filter((x) => x.v > 0);
-    if (!live.length) return null;
-    const max = Math.max(...live.map((x) => x.v));
-    return { max, ids: live.filter((x) => x.v === max).map((x) => x.id) };
-  };
+  // Best average only counts players who've qualified
+  const qualified: PlayerStats[] = [];
+  for (const s of stats) {
+    if (s.average !== null && s.games >= data.settings.minGamesForAverage) qualified.push(s);
+  }
 
-  const wins = top(stats.map((s) => ({ id: s.player.id, v: s.gameWins })));
-  const played = top(stats.map((s) => ({ id: s.player.id, v: s.games })));
-  const qualified = stats.filter((s) => s.average !== null && s.games >= data.settings.minGamesForAverage);
-  const avg = top(qualified.map((s) => ({ id: s.player.id, v: s.average as number })));
+  const wins = topPlayers(stats, (s) => s.gameWins);
+  const played = topPlayers(stats, (s) => s.games);
+  const avg = topPlayers(qualified, (s) => (s.average === null ? 0 : s.average));
 
   return {
     highestGame,
     highestNightTotal,
-    mostGameWins: wins && { wins: wins.max, playerIds: wins.ids },
-    highestAverage: avg && { average: avg.max, playerIds: avg.ids },
-    mostGamesPlayed: played && { games: played.max, playerIds: played.ids },
+    mostGameWins: wins === null ? null : { wins: wins.max, playerIds: wins.ids },
+    highestAverage: avg === null ? null : { average: avg.max, playerIds: avg.ids },
+    mostGamesPlayed: played === null ? null : { games: played.max, playerIds: played.ids },
     nights: nights.length,
-    games: summaries.reduce((sum, s) => sum + s.games.length, 0),
+    games: gamesPlayed,
   };
 }
 
 export function formatAverage(avg: number | null): string {
-  return avg === null ? '—' : avg.toFixed(1);
+  if (avg === null) return '—';
+  return avg.toFixed(1);
 }

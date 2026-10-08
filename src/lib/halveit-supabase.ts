@@ -11,13 +11,20 @@ import type { HalveItNight, HalveItNightStatus, HalveItPlayer, HalveItScore, Hal
 const PLAYER_SELECT = '*, users(username, member_profiles!user_id(first_name, known_as, last_name))';
 
 function mapPlayer(row: any): HalveItPlayer {
-  const profile = row.users?.member_profiles ?? null;
-  const firstName = profile?.known_as || profile?.first_name || '';
+  // Display name from the member's profile: known-as (or first name) + last name,
+  // falling back to the username if the profile is missing
+  let name = row.username;
+  if (row.users && row.users.member_profiles) {
+    const profile = row.users.member_profiles;
+    const firstName = profile.known_as || profile.first_name || '';
+    const fullName = `${firstName} ${profile.last_name || ''}`.trim();
+    if (fullName) name = fullName;
+  }
   return {
     id: row.id,
     season: row.season,
     userName: row.username,
-    name: `${firstName} ${profile?.last_name || ''}`.trim() || row.username,
+    name,
     active: row.active,
   };
 }
@@ -59,39 +66,57 @@ export async function getSeasonData(season: number, includeDrafts: boolean): Pro
     if (r.error) throw new Error(`Failed to fetch Halve It data: ${r.error.message}`);
   }
 
-  const mappedNights = (nights.data ?? []).map(mapNight);
-  let scores: HalveItScore[] = [];
-  if (mappedNights.length) {
-    const { data, error } = await supabase.from('halveit_scores').select('*').in('night_id', mappedNights.map((n) => n.id));
+  const mappedNights: HalveItNight[] = [];
+  for (const row of nights.data || []) mappedNights.push(mapNight(row));
+
+  // Scores for the nights being returned
+  const scores: HalveItScore[] = [];
+  if (mappedNights.length > 0) {
+    const nightIds: string[] = [];
+    for (const night of mappedNights) nightIds.push(night.id);
+    const { data, error } = await supabase.from('halveit_scores').select('*').in('night_id', nightIds);
     if (error) throw new Error(`Failed to fetch Halve It scores: ${error.message}`);
-    scores = (data ?? []).map(mapScore);
+    for (const row of data || []) scores.push(mapScore(row));
   }
 
+  // Every season that has a team or nights, plus the current and requested ones
   const seasons = new Set<number>([currentSeason(), season]);
-  for (const r of [...(playerSeasons.data ?? []), ...(nightSeasons.data ?? [])]) seasons.add(r.season);
+  for (const row of playerSeasons.data || []) seasons.add(row.season);
+  for (const row of nightSeasons.data || []) seasons.add(row.season);
+
+  // Settings fall back to the defaults when this season has none saved
+  let seasonSettings: HalveItSettings = HALVEIT_DEFAULT_SETTINGS;
+  if (settings.data) {
+    seasonSettings = { minGamesForAverage: settings.data.min_games_for_average, bestNGames: settings.data.best_n_games };
+  }
+
+  const mappedPlayers: HalveItPlayer[] = [];
+  for (const row of players.data || []) mappedPlayers.push(mapPlayer(row));
+  mappedPlayers.sort((a, b) => a.name.localeCompare(b.name));
 
   return {
     season,
     seasons: Array.from(seasons).sort((a, b) => b - a),
-    settings: settings.data
-      ? { minGamesForAverage: settings.data.min_games_for_average, bestNGames: settings.data.best_n_games }
-      : HALVEIT_DEFAULT_SETTINGS,
-    players: (players.data ?? []).map(mapPlayer).sort((a, b) => a.name.localeCompare(b.name)),
+    settings: seasonSettings,
+    players: mappedPlayers,
     nights: mappedNights,
     scores,
   };
 }
 
+/** The season a team player belongs to, or null if there's no such player. */
 export async function getPlayerSeason(playerId: string): Promise<number | null> {
   const { data, error } = await getSupabaseClient().from('halveit_players').select('season').eq('id', playerId).maybeSingle();
   if (error) throw new Error(`Failed to fetch Halve It player: ${error.message}`);
-  return data?.season ?? null;
+  if (!data) return null;
+  return data.season;
 }
 
 export async function getNight(nightId: string): Promise<HalveItNight | null> {
   const { data, error } = await getSupabaseClient().from('halveit_nights').select('*').eq('id', nightId).maybeSingle();
   if (error) throw new Error(`Failed to fetch Halve It night: ${error.message}`);
-  return data ? mapNight(data) : null;
+  if (!data) return null;
+  return mapNight(data);
 }
 
 // ── Team ──
@@ -104,6 +129,7 @@ export async function addPlayer(season: number, userName: string): Promise<{ pla
     .select(PLAYER_SELECT)
     .single();
   if (error) {
+    // Unique (season, username) — they're already on this season's team
     if (error.message.includes('halveit_players_season_username_key')) return { error: 'That member is already in the team' };
     return { error: error.message };
   }
@@ -123,7 +149,7 @@ export async function removePlayer(playerId: string): Promise<{ error?: string }
     .select('*', { count: 'exact', head: true })
     .eq('player_id', playerId);
   if (countError) throw new Error(`Failed to check Halve It scores: ${countError.message}`);
-  if ((count ?? 0) > 0) return { error: 'This player has scores — make them inactive instead' };
+  if (count && count > 0) return { error: 'This player has scores — make them inactive instead' };
   const { error } = await supabase.from('halveit_players').delete().eq('id', playerId);
   if (error) throw new Error(`Failed to remove Halve It player: ${error.message}`);
   return {};
@@ -155,6 +181,7 @@ export async function createNight(date: string): Promise<{ night?: HalveItNight;
     .select('*')
     .single();
   if (error) {
+    // night_date is unique — one night per date
     if (error.message.includes('halveit_nights_night_date_key')) return { error: 'There is already a night on that date' };
     return { error: error.message };
   }
@@ -177,10 +204,14 @@ export async function saveNight(nightId: string, update: NightUpdate): Promise<{
   if (status !== 'draft' && status !== 'final') return { error: 'Invalid status' };
 
   const supabase = getSupabaseClient();
+
+  // Scores may only be for players in this night's season team
   const { data: seasonPlayers, error: playersError } = await supabase.from('halveit_players').select('id').eq('season', night.season);
   if (playersError) throw new Error(`Failed to fetch Halve It players: ${playersError.message}`);
-  const validPlayers = new Set((seasonPlayers ?? []).map((p) => p.id));
+  const validPlayers = new Set<string>();
+  for (const p of seasonPlayers || []) validPlayers.add(p.id);
 
+  // Validate every score; `seen` also becomes the set of player:game keys being kept
   const seen = new Set<string>();
   for (const s of scores) {
     if (!validPlayers.has(s.playerId)) return { error: 'A score is for a player who isn\'t in this season\'s team' };
@@ -195,30 +226,31 @@ export async function saveNight(nightId: string, update: NightUpdate): Promise<{
   if (existingError) throw new Error(`Failed to fetch Halve It scores: ${existingError.message}`);
 
   // Upsert first, then remove whatever was cleared — a failure part-way never loses entered scores
-  if (scores.length) {
-    const { error } = await supabase
-      .from('halveit_scores')
-      .upsert(scores.map((s) => ({ night_id: nightId, player_id: s.playerId, game_no: s.gameNo, score: s.score })));
+  if (scores.length > 0) {
+    const rows: Record<string, unknown>[] = [];
+    for (const s of scores) rows.push({ night_id: nightId, player_id: s.playerId, game_no: s.gameNo, score: s.score });
+    const { error } = await supabase.from('halveit_scores').upsert(rows);
     if (error) throw new Error(`Failed to save Halve It scores: ${error.message}`);
   }
+
+  // Saved scores that are no longer in the grid, grouped by player
   const removed = new Map<string, number[]>();
-  for (const row of existing ?? []) {
+  for (const row of existing || []) {
     if (seen.has(`${row.player_id}:${row.game_no}`)) continue;
-    removed.set(row.player_id, [...(removed.get(row.player_id) || []), row.game_no]);
+    if (!removed.has(row.player_id)) removed.set(row.player_id, []);
+    removed.get(row.player_id)!.push(row.game_no);
   }
   for (const [playerId, gameNos] of removed) {
     const { error } = await supabase.from('halveit_scores').delete().eq('night_id', nightId).eq('player_id', playerId).in('game_no', gameNos);
     if (error) throw new Error(`Failed to remove Halve It scores: ${error.message}`);
   }
 
+  let notes: string | null = null;
+  if (update.notes && update.notes.trim()) notes = update.notes.trim();
+
   const { data, error } = await supabase
     .from('halveit_nights')
-    .update({
-      games_count: gamesCount,
-      status,
-      notes: update.notes && update.notes.trim() ? update.notes.trim() : null,
-      updated_at: new Date().toISOString(),
-    })
+    .update({ games_count: gamesCount, status, notes, updated_at: new Date().toISOString() })
     .eq('id', nightId)
     .select('*')
     .single();
