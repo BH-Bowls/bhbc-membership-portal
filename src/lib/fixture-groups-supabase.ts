@@ -233,6 +233,64 @@ export async function getGroupFixtures(groupId: string): Promise<Fixture[]> {
 }
 
 /**
+ * Who is already picked (and hasn't dropped out) for another squad game — any league
+ * squad or Club Team — on the same date as this fixture. Keyed by lower-case username.
+ * Used to warn on the roster and to stop someone being picked for, say, N/S A and N/S B
+ * on the same night. Friendlies are not counted (an afternoon friendly and an evening
+ * league game is fine).
+ */
+export async function getSquadPicksOnDate(fixture: Pick<Fixture, 'id' | 'date'>): Promise<Map<string, Fixture>> {
+  const picks = new Map<string, Fixture>();
+  const [d, m, y] = (fixture.date || '').split('/');
+  if (!d || !m || !y) return picks;
+  const iso = `${y}-${m}-${d}`;
+  const supabase = getSupabaseClient();
+
+  const { data: fixtureRows, error: fixturesError } = await supabase
+    .from('fixtures')
+    .select('*')
+    .eq('date', iso)
+    .neq('id', fixture.id)
+    .not('group_id', 'is', null);
+  if (fixturesError) throw new Error(`Failed to fetch same-day games: ${fixturesError.message}`);
+  const sameDay = (fixtureRows || []).map(mapFixtureRow);
+  if (sameDay.length === 0) return picks;
+
+  const groupIds = Array.from(new Set(sameDay.map((f) => f.groupId as string)));
+  const { data: groupRows, error: groupsError } = await supabase.from('fixture_groups').select('id').in('id', groupIds).eq('kind', 'squad');
+  if (groupsError) throw new Error(`Failed to fetch squads: ${groupsError.message}`);
+  const squadIds = new Set((groupRows || []).map((g) => g.id as string));
+  const squadFixtures = new Map<string, Fixture>();
+  for (const f of sameDay) {
+    if (f.groupId && squadIds.has(f.groupId)) squadFixtures.set(f.id, f);
+  }
+  if (squadFixtures.size === 0) return picks;
+
+  const { data: selectionRows, error: selectionsError } = await supabase
+    .from('fixture_selections')
+    .select('fixture_id, entry_id')
+    .in('fixture_id', Array.from(squadFixtures.keys()))
+    .is('withdrawn_at', null);
+  if (selectionsError) throw new Error(`Failed to fetch same-day picks: ${selectionsError.message}`);
+  if (!selectionRows || selectionRows.length === 0) return picks;
+
+  const { data: entryRows, error: entriesError } = await supabase
+    .from('fixture_entries')
+    .select('id, username')
+    .in('id', selectionRows.map((s) => s.entry_id));
+  if (entriesError) throw new Error(`Failed to fetch squad players: ${entriesError.message}`);
+  const usernameByEntry = new Map<string, string>();
+  for (const e of entryRows || []) usernameByEntry.set(e.id, e.username);
+
+  for (const s of selectionRows) {
+    const username = usernameByEntry.get(s.entry_id);
+    const other = squadFixtures.get(s.fixture_id);
+    if (username && other) picks.set(username.toLowerCase(), other);
+  }
+  return picks;
+}
+
+/**
  * Open one fixture, or several as a linked occasion. Creates the occasion group,
  * assigns tab names, and moves every fixture to 'O'. A fixture that already has a
  * group (opened before, then reverted to Upcoming) reopens its existing group.
@@ -538,6 +596,7 @@ export async function saveSelections(
   const entryByName = new Map(entries.map((e) => [e.username.toLowerCase(), e]));
   const conflicts: Array<{ username: string; fixtureName: string }> = [];
   const isOccasion = group.kind === 'occasion';
+  const sameDayPicks = isOccasion ? new Map<string, Fixture>() : await getSquadPicksOnDate(fixture);
 
   // A friendly player's confirmation is for what they were told; moving them between
   // reserve and playing means they need to confirm again (as the old sheet did).
@@ -575,18 +634,21 @@ export async function saveSelections(
       continue;
     }
 
-    // Friendlies: one game per occasion. Squads: one game per day (the shared N/S squad
-    // can't put someone in both N/S A and N/S B that night).
-    const elsewhere = selections.find((s) => {
-      if (s.entryId !== entry.id || s.fixtureId === fixture.id) return false;
-      if (isOccasion) return true;
-      const other = fixtures.find((f) => f.id === s.fixtureId);
-      return !s.withdrawnAt && !!other && !!fixture.date && other.date === fixture.date;
-    });
-    if (elsewhere) {
-      const other = fixtures.find((f) => f.id === elsewhere.fixtureId);
-      conflicts.push({ username: entry.username, fixtureName: other ? fixtureDisplayName(other) : 'another game' });
-      continue;
+    // Friendlies: one game per occasion. Squads: one squad game per day, across all
+    // squads (someone in both N/S A and N/S B can't play both that night).
+    if (isOccasion) {
+      const elsewhere = selections.find((s) => s.entryId === entry.id && s.fixtureId !== fixture.id);
+      if (elsewhere) {
+        const other = fixtures.find((f) => f.id === elsewhere.fixtureId);
+        conflicts.push({ username: entry.username, fixtureName: other ? fixtureDisplayName(other) : 'another game' });
+        continue;
+      }
+    } else {
+      const other = sameDayPicks.get(entry.username.toLowerCase());
+      if (other) {
+        conflicts.push({ username: entry.username, fixtureName: `${fixtureDisplayName(other)}${other.gameType ? ` (${other.gameType})` : ''}` });
+        continue;
+      }
     }
 
     const { error } = await supabase.from('fixture_selections').insert({
@@ -917,15 +979,14 @@ export async function getFixtureRoster(fixture: Fixture): Promise<GameSheetPlaye
  * R (the squad is effectively the reserves). Confirm/withdraw are per fixture (on the
  * selection). Stats are this squad's games: of the published/played fixtures since they
  * joined, how many they were picked for. squadNote flags "Away — Holiday" (an
- * availability override for that date/session) and, for the shared N/S squad, being
- * picked for the other team that night.
+ * availability override for that date/session) and being picked for another squad's
+ * game that day (e.g. N/S A and N/S B).
  */
 async function getSquadFixtureRoster(
   fixture: Fixture,
   state: { group: FixtureGroup; fixtures: Fixture[]; entries: FixtureEntry[]; selections: FixtureSelection[] }
 ): Promise<GameSheetPlayer[]> {
   const users = usersByName(await getAllUsers());
-  const fixtureById = new Map(state.fixtures.map((f) => [f.id, f]));
   const isoOf = (uk: string) => {
     const [d, m, y] = uk.split('/');
     return d && m && y ? `${y}-${m}-${d}` : '';
@@ -949,6 +1010,8 @@ async function getSquadFixtureRoster(
       if (o.session === 'all' || o.session === session) away.set(o.username, o.label || 'Away');
     }
   }
+
+  const sameDayPicks = await getSquadPicksOnDate(fixture);
 
   // The squad's settled fixtures (published/played), newest first, excluding this one
   const settled = state.fixtures
@@ -978,16 +1041,11 @@ async function getSquadFixtureRoster(
       if (history.length < 6) history.push(`${f.tabName}    ${code}`);
     }
 
-    // Shared squad (N/S): already picked for another of the squad's fixtures that night
+    // Already picked for another squad's game that day (e.g. N/S A and N/S B)
     let note = away.has(entry.username) ? `Away — ${away.get(entry.username)}` : '';
-    if (thisIso) {
-      for (const s of state.selections) {
-        if (s.entryId !== entry.id || s.fixtureId === fixture.id || s.withdrawnAt) continue;
-        const other = fixtureById.get(s.fixtureId);
-        if (other && isoOf(other.date) === thisIso) {
-          note = `Playing ${fixtureDisplayName(other)}${other.gameType ? ` (${other.gameType})` : ''} that day`;
-        }
-      }
+    const other = sameDayPicks.get(entry.username.toLowerCase());
+    if (other) {
+      note = `Playing ${fixtureDisplayName(other)}${other.gameType ? ` (${other.gameType})` : ''} that day`;
     }
 
     const u = users.get(entry.username.toLowerCase());

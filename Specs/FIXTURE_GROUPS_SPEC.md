@@ -481,8 +481,10 @@ source of truth:
   (fixtures, published teams, squad list with appearances, organiser tools),
   `/squads/fixture/[fixtureId]` (organiser's team picker; members see the published team).
   Data layer `src/lib/squads-supabase.ts`; emails `src/lib/email/squads.ts`; APIs under `/api/squads`.
-- **One shared N/S squad** feeds both N/S A and N/S B fixtures (`league_type = 'N/S'`). A player
-  can't be picked for two of the squad's fixtures on the same date — the save reports a conflict.
+- **N/S A and N/S B are separate squads** (`league_type = 'N/S A'` / `'N/S B'`), each with its own
+  players and organisers (changed 2026-10-09; first built as one shared N/S squad). A player can't
+  be picked for two squad games (any squads) on the same date — the save reports a conflict and
+  the roster notes "Playing … that day". Friendlies don't count.
 - **Creating** a league squad (Captain/Admin) attaches every active-season fixture of its type(s);
   fixtures added later in Season Planning are attached automatically whenever the squad loads.
 - **Organisers** = `fixture_group_managers`; any organiser, Captain or Admin can change them.
