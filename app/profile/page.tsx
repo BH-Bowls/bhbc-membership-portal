@@ -11,7 +11,7 @@ import { SearchableSelect } from '@/components/SearchableSelect';
 import { getMemberTypeDisplay, getMemberTypeOptions } from '@/lib/member-type-utils';
 import { saveDraft, restoreDraft, clearDraft } from '@/lib/form-draft-utils';
 import { useSessionRefresh } from '@/hooks/useSessionRefresh';
-import { hasRole } from '@/lib/role-utils';
+import { hasRole, ASSIGNABLE_ROLES } from '@/lib/role-utils';
 
 interface ProfileData {
   title: string;
@@ -537,7 +537,7 @@ export default function ProfilePage() {
                       const currentRole = isEditing ? (editedProfile.role ?? '') : (profile.role ?? '');
                       const isKiosk = currentRole === 'Kiosk';
                       const activeRoles = isKiosk ? [] : currentRole.split(',').map(r => r.trim()).filter(Boolean);
-                      const availableRoles = ['Captain', 'LeagueOrganiser', 'Treasurer', 'GMC', 'RowlandOrganiser', 'RowlandPlayer', 'SweepingAdmin', 'Darts', 'Testing', 'Admin'];
+                      const availableRoles = ASSIGNABLE_ROLES;
 
                       if (isKiosk) {
                         return <p className="mt-1 text-sm text-gray-500 italic">Kiosk (managed in sheet)</p>;
