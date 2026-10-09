@@ -483,6 +483,44 @@ export function Navbar() {
     return name.substring(0, 2).toUpperCase();
   };
 
+  // Close an open nav dropdown when clicking anywhere outside it, or pressing Escape.
+  // Clicks inside a dropdown (its button or its items) are left to their own handlers.
+  useEffect(() => {
+    if (!openDropdown) return;
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (target.closest && target.closest('[data-nav-dropdown]')) return;
+      setOpenDropdown(null);
+      setOpenAdminCategory(null);
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setOpenDropdown(null);
+        setOpenAdminCategory(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [openDropdown]);
+
+  // Same for the guest "Members Area Active" menu
+  useEffect(() => {
+    if (!showMembersMenu) return;
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (target.closest && target.closest('[data-members-menu]')) return;
+      setShowMembersMenu(false);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showMembersMenu]);
+
   // Close profile dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -727,7 +765,7 @@ export function Navbar() {
             <div className="flex items-center gap-2">
               {/* Members-area indicator — shown when a guest has entered the access PIN */}
               {pinActive && (
-                <div className="relative">
+                <div className="relative" data-members-menu>
                   <button
                     onClick={() => setShowMembersMenu(v => !v)}
                     className="flex items-center gap-1.5 rounded-md bg-green-100 px-3 py-1.5 text-sm font-medium text-green-800 hover:bg-green-200 transition-colors"
@@ -771,7 +809,7 @@ export function Navbar() {
               navigationItems.map((item) => (
               item.subItems || item.subItemGroups ? (
                 // Dropdown menu item
-                <div key={item.name} className="relative">
+                <div key={item.name} className="relative" data-nav-dropdown>
                   <button
                     onClick={() => toggleDropdown(item.name)}
                     className={getNavItemClasses(isDropdownActive(item.subItems, item.subItemGroups))}
@@ -1115,7 +1153,7 @@ export function Navbar() {
               {navigationItems.map((item) => (
                 item.subItems || item.subItemGroups ? (
                   // Dropdown menu item in mobile
-                  <div key={item.name}>
+                  <div key={item.name} data-nav-dropdown>
                     <button
                       onClick={() => toggleDropdown(item.name)}
                       className={`flex items-center justify-between w-full px-3 py-2 rounded-md text-base font-medium ${
