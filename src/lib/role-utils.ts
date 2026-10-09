@@ -2,6 +2,10 @@
 // Helpers for parsing and checking user roles (comma-separated multi-role support)
 // Empty role string = regular member. "Member" is treated as empty for backwards compat.
 
+/** Roles an admin can tick on a member (Profile and Admin › Members). Kiosk is set in the
+ *  database only and is never offered here. */
+export const ASSIGNABLE_ROLES = ['Captain', 'LeagueOrganiser', 'Treasurer', 'GMC', 'RowlandOrganiser', 'RowlandPlayer', 'SweepingAdmin', 'Darts', 'Testing', 'Admin'];
+
 /** Parse a raw role string (e.g. "Captain,RowlandOrganiser") into an array of role names. */
 export function parseRoles(role: string | undefined | null): string[] {
   if (!role || role === 'Member') return [];

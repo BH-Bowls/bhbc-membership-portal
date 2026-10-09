@@ -31,13 +31,14 @@ export interface LeagueDefinition {
   fixtureTypes: string[];  // fixtures.fixture_type values this squad plays
 }
 
-// One squad per league per season. N/S A and N/S B share one squad: players enter "N/S"
-// once and the organiser picks them for A or B each week.
+// One squad per league per season. N/S A and N/S B are separate squads, each with its
+// own players and organisers.
 export const LEAGUES: LeagueDefinition[] = [
   { leagueType: 'MSL', label: 'MSL', fixtureTypes: ['MSL'] },
   { leagueType: 'BL', label: 'BL', fixtureTypes: ['BL'] },
   { leagueType: 'JSL', label: 'JSL', fixtureTypes: ['JSL'] },
-  { leagueType: 'N/S', label: 'N/S', fixtureTypes: ['N/S A', 'N/S B'] },
+  { leagueType: 'N/S A', label: 'N/S A', fixtureTypes: ['N/S A'] },
+  { leagueType: 'N/S B', label: 'N/S B', fixtureTypes: ['N/S B'] },
 ];
 
 export function getLeague(leagueType: string | null): LeagueDefinition | null {
