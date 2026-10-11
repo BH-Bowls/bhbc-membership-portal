@@ -3,13 +3,14 @@
 // app/halve-it/nights/[nightId]/page.tsx
 // One Halve It night: every player's score in every game, their night totals,
 // and the winner of each game (highlighted). A dash = didn't play that game.
+// Also the night's money (brought forward, in, out, carried forward).
 
 import { use, useMemo } from 'react';
 import Link from 'next/link';
 import { getButtonClasses } from '@/config/theme-helpers';
 import { RouterBackLink } from '@/components/RouterBackLink';
 import { usePhoneBackNavigation } from '@/hooks/usePhoneBackNavigation';
-import { useHalveItData, playerNames, Spinner } from '@/components/halveit/shared';
+import { useHalveItData, playerNames, Spinner, NightMoney } from '@/components/halveit/shared';
 import { summariseNight, formatAverage } from '@/lib/halveit-stats';
 import { formatNightDate } from '@/types/halveit';
 import type { HalveItNight } from '@/types/halveit';
@@ -63,6 +64,10 @@ export default function HalveItNightPage({ params }: { params: Promise<{ nightId
           {data.canManage && (
             <Link href={`/halve-it/manage/nights/${night.id}`} className={getButtonClasses('secondary', 'md')}>Edit scores</Link>
           )}
+        </div>
+
+        <div className="bg-white rounded-lg shadow px-4 pb-3 pt-1 max-w-md">
+          <NightMoney night={night} />
         </div>
 
         {night.notes && <p className="text-sm text-gray-900 bg-white rounded-lg shadow px-4 py-3 whitespace-pre-line">{night.notes}</p>}

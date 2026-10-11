@@ -2,10 +2,11 @@
 
 // src/components/halveit/shared.tsx
 // Bits shared by the Halve It pages: the season data hook, member-options hook,
-// loading spinner, season picker and position badge.
+// loading spinner, season picker, position badge and a night's money line.
 
 import { useCallback, useEffect, useState } from 'react';
-import type { HalveItPlayer, HalveItSeasonData } from '@/types/halveit';
+import { formatMoney } from '@/types/halveit';
+import type { HalveItNight, HalveItPlayer, HalveItSeasonData } from '@/types/halveit';
 import { getInputClasses } from '@/config/theme-helpers';
 
 /** Loads GET /api/halve-it with the given query (e.g. "season=2026", "player=ID"); null query = wait. */
@@ -120,4 +121,25 @@ export function isTied<T>(rows: { position: number; item: T }[], index: number):
   if (index > 0 && rows[index - 1].position === position) return true;
   if (index < rows.length - 1 && rows[index + 1].position === position) return true;
   return false;
+}
+
+/** A night's money: brought forward, in, out and carried forward. */
+export function NightMoney({ night }: { night: HalveItNight }) {
+  const carriedForward = night.broughtForward + night.moneyIn - night.moneyOut;
+  const items: { label: string; title: string; pence: number; bold?: boolean }[] = [
+    { label: 'B/F', title: 'Brought forward', pence: night.broughtForward },
+    { label: 'In', title: 'Money in', pence: night.moneyIn },
+    { label: 'Out', title: 'Money out', pence: night.moneyOut },
+    { label: 'C/F', title: 'Carried forward', pence: carriedForward, bold: true },
+  ];
+  return (
+    <div className="mt-2 grid grid-cols-4 gap-2 text-sm">
+      {items.map((item) => (
+        <div key={item.label} title={item.title}>
+          <div className="text-xs font-medium text-gray-700 uppercase tracking-wider">{item.label}</div>
+          <div className={item.bold ? 'font-semibold text-gray-900' : 'text-gray-900'}>{formatMoney(item.pence)}</div>
+        </div>
+      ))}
+    </div>
+  );
 }
