@@ -51,7 +51,7 @@ There is currently **no backup developer**. If Liam is unavailable, see Section 
 |---|---|---|
 | GitHub | Free | £0 |
 | Vercel | Pro (covers both Portal and Website) | $24 USD/month ($20 + VAT). Downgrades to the Free plan during the closed season (roughly October–March) each year to save cost. |
-| Supabase | Hobby (free) — two projects | £0. **Does not include automatic backups** — see Section 6. |
+| Supabase | Hobby (free) — two projects | £0. Doesn't include backups, so the database is backed up nightly to the club's Google Drive instead. See the **BHBC Database Backup Overview**. |
 | Google Cloud / Gmail | Free, within Google's normal usage limits | £0 |
 | Domain — Wix | Renewed every 3 years. Currently registered until May 2029. | £61.56 (last renewed April 2026). Cost has risen sharply each renewal: £21.60 (2020) → £32.40 (2023) → £61.56 (2026). Plan is to transfer to Cloudflare at the 2029 renewal, at roughly £10/year. |
 
@@ -62,7 +62,7 @@ There is currently **no backup developer**. If Liam is unavailable, see Section 
 ## 6. Known risks
 
 - **No backup developer.** If Liam is unavailable long-term, the Committee will need to find a developer familiar with Next.js and Supabase/Postgres, or brief someone new using the Developer Technical Runbook.
-- **No database backups.** The Membership Portal's database (Supabase) is on the free "Hobby" plan, which does not include automatic backups. If the database were lost or corrupted, there is currently no built-in way to restore it. Worth discussing whether to upgrade to a paid plan (which includes backups) or set up a manual backup routine.
+- **Database backups — resolved October 2026.** Supabase's free plan keeps no backups, so the Membership Portal's database is now backed up automatically every night to the club's Google Drive, with 90 days kept and an email if a backup fails. Restoring has been tested for real, including on the live portal. Restoring still needs a developer, which ties in with the risk above. See the **BHBC Database Backup Overview**.
 - **Single shared login.** Nearly every account uses the same Club Google login (burgesshillbc@gmail.com). If that account were ever lost or locked out, most of the Club's digital systems would be affected at once.
 - **Domain ownership.** The domain is still registered with Wix under a Committee member's personal email address (anneprice57@hotmail.com), not the Club's shared account — though both Anne Barnes and Liam currently hold the login. Renewal cost has nearly tripled since 2020, which is why the plan is to move to Cloudflare (a much cheaper registrar) at the May 2029 renewal.
 

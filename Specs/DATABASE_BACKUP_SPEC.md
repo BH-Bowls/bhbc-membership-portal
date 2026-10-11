@@ -3,11 +3,12 @@
 Automated nightly backups of production Postgres to Google Drive, plus two tested
 restore scripts (a dev drill and a genuine production restore). Based on the system
 built for the sister TDC-Payroll Portal, adapted for this project. Revised
-2026-10-10 after review. Not yet built.
+2026-10-10 after review. **Built and fully tested 2026-10-11.** For day-to-day use,
+see `BHBC_Database_Backup_Technical_Runbook.md` (developers) and
+`BHBC_Database_Backup_Overview.md` (Committee). This file keeps the design reasoning.
 
 **Why this matters:** production is on Supabase's **free plan, which keeps no
-backups at all**. Until this is built, there is no copy of the database anywhere
-except the occasional manual `npm run db-dump`.
+backups at all**. This is the only backup.
 
 ---
 
@@ -22,7 +23,7 @@ except the occasional manual `npm run db-dump`.
 | Retention | **90 days.** Size is well within the 15GB quota. Deleted files skip the Drive bin (§5). |
 | Encryption | **Not in v1.** The folder is unshared and the account is the club's own. Can be added later (gpg with a passphrase secret) without changing anything else. |
 | Failure alert | **Yes** — the workflow emails on failure using the club's existing Gmail SMTP login (§5). |
-| Restore scripts | Two new scripts, each **hardcoded** to its own env file (dev → `.env.local`, production → `.env.prod.local`), separate from the existing data-only `db-restore.ts`. |
+| Restore scripts | Two new scripts, each **hardcoded** to its own env file (dev → `.env.dev.local`, production → `.env.prod.local`), separate from the existing data-only `db-restore.ts`. |
 
 ---
 
@@ -259,6 +260,15 @@ database by running the wrong npm script. Both print the target
   `availability_events.concluded_slot_id` ↔ `availability_slots.event_id` loop that
   the data-only `db-restore.ts` works around doesn't arise. Confirmed for real by
   Step 6.
+- **Skipped lines (found in the first drill):** the dump contains
+  `ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin …` lines, which fail with
+  "permission denied to change default privileges" because the postgres login can't
+  change another role's defaults. The restore filters them out and logs how many it
+  skipped. They only affect objects that supabase_admin creates; postgres's own
+  defaults are restored.
+- **Target check:** each script pins its env file to a hardcoded project ref, taken
+  from the pooler URL's `postgres.<ref>` username. It reads the file with dotenv
+  `parse`, not `process.env`.
 - **After restore:** `NOTIFY pgrst, 'reload schema';` so the app's Supabase API sees
   the rebuilt tables; then print row counts for key tables (members/profiles,
   fixtures, fixture_entries, fixture_selections, availability_events, …).
@@ -267,8 +277,12 @@ database by running the wrong npm script. Both print the target
   `backups/restore-<target>-<stamp>.log`; the terminal shows progress and the
   summary only.
 
-**`db-drill-restore-dev.ts`** — hardcoded to `.env.local`. Refuses to run if that
-file's database name/host matches `.env.prod.local`'s. Confirmation: type `DEV`.
+**`db-drill-restore-dev.ts`**:
+
+- Hardcoded to `.env.dev.local`, which was renamed from `.env.local` on 2026-10-11.
+- Refuses to run unless that file's project ref is the dev ref, and refuses outright if it is production's.
+- Confirmation: type `RESTORE DEV`.
+- Before wiping, it takes a full backup of dev as it is, to `backups/dev-before-drill-<stamp>.sql.gz`. To put dev's test data back, run the drill again and choose that file.
 
 **`db-restore-production-full.ts`** — hardcoded to `.env.prod.local`.
 
@@ -287,6 +301,12 @@ stay as they are.
 ---
 
 ## 7. Notes
+
+- **After a production restore, redeploy in Vercel.** This was found in the Step 7
+  test: the database was restored, but the app kept showing the old data.
+  `members-supabase.ts` caches data in server memory for 24 hours and `home-cache.ts`
+  for up to 48, and a restore bypasses the app's cache clearing. Redeploying starts
+  fresh servers.
 
 - `website` is the only extra schema today; if a migration ever adds another, add a
   `--schema=` for it to the workflow and restore drop list.
