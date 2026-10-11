@@ -81,7 +81,7 @@ export type HomeAway = 'H' | 'A';
  * Game type - distinguishes friendlies from league fixtures and events
  * Used to filter games on different pages and in different management workflows
  */
-export type GameType = 'Friendly' | 'N/S A' | 'N/S B' | 'MSL' | 'JSL' | 'BL' | 'Event' | 'Test';
+export type GameType = 'Friendly' | 'N/S A' | 'N/S B' | 'MSL' | 'JSL' | 'BL' | 'Event' | 'Test' | 'Club Team';
 export const ALL_GAME_TYPES: GameType[] = ['Friendly', 'N/S A', 'N/S B', 'MSL', 'JSL', 'BL', 'Event'];
 // Test type is intentionally excluded from ALL_GAME_TYPES — it is only shown to Admin role
 
@@ -123,7 +123,6 @@ export interface Game {
   who: string;                  // Who cancelled the game
   lastModifiedBy: string;       // Username of last person to modify
   lastModifiedDate: string;     // Date of last modification
-  paired?: string;              // 'Y' if this game is paired with another game on the same date
   gameType: GameType;           // Type of game: Friendly, N/S A, N/S B, MSL, JSL, BL, or Event
   clubSuffix: string;           // Suffix appended to clubName in UI (e.g. 'A' → 'Henfield A')
   specialInstructions: string;  // Optional special instructions message shown on the game card
@@ -133,6 +132,8 @@ export interface Game {
   lockedBy: string;             // Username of captain currently editing the selection ('' if unlocked)
   lockedAt: string;             // ISO timestamp when lock was acquired ('' if unlocked)
   needsPlayers?: boolean;       // true when captain has flagged this game as needing players
+  groupId?: string | null;      // fixture group (the occasion people enter) — set when opened
+  reserveOf?: string | null;    // reserve game: id of the game it was split from
   description?: string | null;  // Free-text label for fixtures with no real club opponent (internal Events, ad-hoc games) — see 0023_rename_games_to_fixtures.sql
 }
 
@@ -182,6 +183,14 @@ export interface GameSheetPlayer {
   captain: string;                   // Captain of the day: 'Y' or ''
   last8Games?: string[];             // Last 8 games history (for backward compatibility - use last6Games in PlayerStats)
   acknowledgedCancellation?: string; // 'Y' if player acknowledged cancellation, blank otherwise
+  preference?: {                     // Linked games: the player's preference at entry, relative to THIS game
+    gameName: string;                // the game they named, e.g. "Arundel"
+    kind: 'preferred' | 'only';
+    forThisGame: boolean;            // true when they named this game (or the game this reserve game came from)
+  } | null;
+  enteredBy?: string;                // who created the entry ('' / own username = self)
+  entrySource?: 'self' | 'buddy' | 'manager';
+  squadNote?: string;                // squad fixtures: "Away — Holiday" or "Playing N/S B that day"
 }
 
 /**
@@ -381,6 +390,7 @@ export interface EnterGamesRequest {
   game_ids: string[];  // Array of game tabNames to enter (e.g., ["West Hoathly 25-Sep", "Lindfield 2-Oct"])
   car_numbers?: Record<string, string>;  // Optional per-game car number ('O' = own transport)
   on_behalf_of?: string[];  // Optional buddy usernames to enter into the same game(s) alongside the caller
+  preferences?: Record<string, { fixture_id: string; preference: 'preferred' | 'only' }>; // Linked games: keyed by the tabName sent in game_ids
 }
 
 /**
@@ -453,6 +463,8 @@ export interface ChangeStatusRequest {
   email_player_names?: string[]; // When set, only email these specific players (subset of all entered players)
   send_tea_rota_email?: boolean; // Whether to send email notification to tea rota members (for 'publish' action, home games only)
   publish_message?: string;     // Custom intro message in the publish/republish notification email
+  link_ids?: string[];          // 'open': further fixture ids to open with this one as a linked occasion
+  return_to_reserves?: boolean; // 'cancel' in a linked group: send this game's selected players back to the shared reserves
 }
 
 /**
@@ -508,31 +520,3 @@ export interface UpdateSelectionResponse {
   sorted_players: GameSheetPlayer[]; // All players sorted for display (Playing → Reserves → Unselected)
 }
 
-/**
- * UpdateStatsRequest - Request to sync player stats from game sheet to Players sheet
- * POST /api/friendlies/manage/update-stats
- * Captains use this after making selection changes to keep Players sheet in sync
- * Updates the Players sheet column for this game with selection status codes
- */
-export interface UpdateStatsRequest {
-  tab_name: string;   // Game tabName to sync stats for
-}
-
-/**
- * UpdateStatsResponse - Response after syncing player stats
- * Confirms how many player entries were updated in Players sheet
- */
-export interface UpdateStatsResponse {
-  success: boolean;       // True if stats sync completed
-  stats_updated: number;  // Number of player entries updated in Players sheet
-}
-
-/**
- * GetStatsRequest - Request to fetch and update player stats in game sheet
- * POST /api/friendlies/manage/get-stats
- * Captains use this before making selections to see current player statistics
- * Populates nameDown, picked, percentPlayed, and driverBar columns in game sheet
- */
-export interface GetStatsRequest {
-  tab_name: string;   // Game tabName to fetch stats for
-}

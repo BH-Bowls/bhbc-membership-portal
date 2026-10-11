@@ -100,6 +100,8 @@ interface GameDetails {
 
   // Captain of the Day
   captainOfDay: string;           // Full name of captain
+  sharedWith?: string[];          // Linked games: the other games in the group (reserves are shared)
+  squad?: { id: string; label: string } | null; // League / Club Team game: its squad
 
   // Tea duty assignments (home games only)
   teaDuty: {
@@ -149,12 +151,14 @@ export default function GameDetailsPage() {
 
   // Extract tabDate from URL parameter
   const tabDate = params.tabDate as string;
-  usePhoneBackNavigation('/friendlies');
 
   const searchParams = useSearchParams();
 
   // State: Game details including teams and user status
   const [gameDetails, setGameDetails] = useState<GameDetails | null>(null);
+  // A league / Club Team game goes back to its squad page; a friendly to Friendlies
+  const backHref = gameDetails && gameDetails.squad ? `/squads/${gameDetails.squad.id}` : '/friendlies';
+  usePhoneBackNavigation(backHref);
 
   // State: Loading indicator while fetching game details
   const [loading, setLoading] = useState(true);
@@ -437,13 +441,13 @@ export default function GameDetailsPage() {
       // Check if withdrawal was successful
       if (response.ok) {
         // Show success message briefly before redirecting
-        setFlashMessage({ type: 'success', text: 'You have withdrawn from this game. Captains have been notified.' });
+        setFlashMessage({ type: 'success', text: gameDetails && gameDetails.squad ? 'You have withdrawn from this game. The organisers have been notified.' : 'You have withdrawn from this game. Captains have been notified.' });
 
         // Invalidate the friendlies games cache so the list re-fetches on return
         sessionStorage.removeItem('friendlies_games_cache');
 
         // Redirect back to friendlies list after a short delay
-        setTimeout(() => router.push('/friendlies'), 1500);
+        setTimeout(() => router.push(backHref), 1500);
       } else {
         // Show error message
         setFlashMessage({ type: 'error', text: data.error || 'Failed to withdraw' });
@@ -760,7 +764,7 @@ export default function GameDetailsPage() {
   if (!gameDetails) return null;
 
   // Destructure game details for easier access
-  const { game, teams, reserves, reserveTeams, opposition, withdrawn, captainOfDay, teaDuty } = gameDetails;
+  const { game, teams, reserves, reserveTeams, opposition, withdrawn, captainOfDay, teaDuty, sharedWith } = gameDetails;
 
   // Show no-email indicator only to captains and admins
   const isCaptainOrAdmin = !isGuest && hasRole(session?.user?.role, 'Captain', 'Admin');
@@ -824,7 +828,9 @@ export default function GameDetailsPage() {
                 ← Sign In
               </Link>
             ) : (
-              <Link href="/friendlies" className="text-blue-600 hover:text-blue-800">← Back to Games</Link>
+              <Link href={backHref} className="text-blue-600 hover:text-blue-800">
+                {gameDetails && gameDetails.squad ? `← Back to ${gameDetails.squad.label}` : '← Back to Games'}
+              </Link>
             )}
             {!isGuest && hasRole(session?.user?.role, 'Captain', 'Admin') && (
               <Link
@@ -1152,7 +1158,9 @@ export default function GameDetailsPage() {
         {reserves.length > 0 && (
           <div className="bg-white rounded-lg shadow border border-gray-200 p-6 mb-6">
             <h2 className="text-2xl font-bold mb-4 text-gray-900">
-              {['O', 'X'].includes(game.status) ? 'Players Entered' : 'Reserves'}
+              {['O', 'X'].includes(game.status)
+                ? 'Players Entered'
+                : sharedWith && sharedWith.length > 0 ? `Reserves (shared with ${sharedWith.join(' and ')})` : 'Reserves'}
             </h2>
 
             {/* List of reserve players */}

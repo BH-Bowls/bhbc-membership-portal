@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const {
       date, time, type, clubSuffix,
-      homeAway, format, ladiesMen, dress, paired, maxPlayers, message, pickupInfo,
+      homeAway, format, ladiesMen, dress, maxPlayers, message, pickupInfo,
       year,
     } = body;
     // Trim so a whitespace-only value (e.g. a leftover space after clearing the
@@ -126,7 +126,6 @@ export async function POST(request: NextRequest) {
       format,
       ladiesMen,
       dress,
-      paired,
       maxPlayers: maxPlayers ? parseInt(maxPlayers) : undefined,
       message,
       pickupInfo,

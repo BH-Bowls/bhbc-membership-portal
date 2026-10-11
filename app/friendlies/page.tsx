@@ -21,7 +21,7 @@ import { canEnterGame, type GameGender } from '@/lib/member-type-utils';
 import { calculateCapacity, formatCapacity, getCapacityBadgeColor } from '@/lib/game-management/capacity';
 import { EnteredPlayersModal } from '@/components/game-management/EnteredPlayersModal';
 import { parseUKDate } from '@/lib/date-utils';
-import { groupPairedGames, isPairedGame, type GameOrPair } from '@/lib/friendlies-utils';
+import { groupLinkedGames, isGameGroup } from '@/lib/friendlies-utils';
 import { hasRole } from '@/lib/role-utils';
 
 // ============================================================================
@@ -109,12 +109,14 @@ export default function FriendliesPage() {
   const [buddies, setBuddies] = useState<FriendliesBuddy[]>([]);
 
   // State: Enter-game confirm dialog. When set, the dialog is open for this game.
-  // For a paired-game card this is game 1 of the pair (entry always goes into game 1).
+  // For a linked card this is the first game of the group (the entry is to the whole group).
   const [enterDialogGame, setEnterDialogGame] = useState<GameWithUserStatus | null>(null);
   // Buddy usernames ticked inside the enter dialog (opt-in, cleared each open)
   const [enterBuddySelected, setEnterBuddySelected] = useState<Set<string>>(new Set());
   // Whether "Making my own way" is ticked inside the enter dialog (away games only)
   const [enterOwnTransport, setEnterOwnTransport] = useState(false);
+  // Linked games: "<fixtureId>|preferred" or "<fixtureId>|only", or '' for no preference
+  const [enterPreference, setEnterPreference] = useState('');
 
   // State: Remove confirm dialog — the open game the user is removing themselves from.
   // (Removal from an open game is distinct from a post-selection "withdrawal".)
@@ -145,8 +147,9 @@ export default function FriendliesPage() {
   const [selectedGameForModal, setSelectedGameForModal] = useState<GameWithUserStatus | null>(null);
   const [modalGameName, setModalGameName] = useState('');
 
-  // State: Dates (YYYY-MM-DD) where the current user has tea duty
-  const [teaDutyDates, setTeaDutyDates] = useState<Set<string>>(new Set());
+  // State: games (tab names) the current user is on tea duty for — they can't enter a
+  // group containing one, but other games that day are fine
+  const [teaDutyTabs, setTeaDutyTabs] = useState<Set<string>>(new Set());
 
   // State: My Stats tab
   const [statsSubView, setStatsSubView] = useState<'summary' | 'detail'>('summary');
@@ -259,8 +262,8 @@ export default function FriendliesPage() {
       }
       // Tea-duty dates now come back with the games response (same Games read), so
       // there's no separate /api/tea-rota fetch on this page.
-      if (Array.isArray(data.teaDutyDates)) {
-        setTeaDutyDates(new Set<string>(data.teaDutyDates));
+      if (Array.isArray(data.teaDutyTabNames)) {
+        setTeaDutyTabs(new Set<string>(data.teaDutyTabNames));
       }
       // Buddies the user may enter alongside themselves (drives the enter dialog option)
       if (Array.isArray(data.buddies)) {
@@ -302,6 +305,7 @@ export default function FriendliesPage() {
   function openEnterDialog(game: GameWithUserStatus) {
     setEnterBuddySelected(new Set());   // buddy is opt-in each time
     setEnterOwnTransport(false);
+    setEnterPreference('');
     setEnterDialogGame(game);
   }
 
@@ -322,8 +326,14 @@ export default function FriendliesPage() {
     setEntering(true);
     try {
       const onBehalfOf = Array.from(enterBuddySelected);
-      const carNumbers = (game.homeAway === 'A' && enterOwnTransport)
+      // Own transport applies when any game in the occasion is away
+      const anyAway = game.homeAway === 'A' || games.some(x => !!game.groupId && x.groupId === game.groupId && x.homeAway === 'A');
+      const carNumbers = (anyAway && enterOwnTransport)
         ? { [game.tabName]: 'O' }
+        : undefined;
+      const [prefFixtureId, prefKind] = enterPreference.split('|');
+      const preferences = prefFixtureId
+        ? { [game.tabName]: { fixture_id: prefFixtureId, preference: prefKind === 'only' ? 'only' : 'preferred' } }
         : undefined;
 
       const response = await fetch('/api/friendlies/enter', {
@@ -333,6 +343,7 @@ export default function FriendliesPage() {
           game_ids: [game.tabName],
           ...(onBehalfOf.length > 0 ? { on_behalf_of: onBehalfOf } : {}),
           ...(carNumbers ? { car_numbers: carNumbers } : {}),
+          ...(preferences ? { preferences } : {}),
         }),
       });
 
@@ -432,13 +443,11 @@ export default function FriendliesPage() {
     }
 
     if (primaryTab === 'mine') {
-      // My Games → games the user is in. Paired entry only lands on game 1, so also
-      // include a game whose paired partner is entered, otherwise the pair can't
-      // render together here.
-      const partnerEntered = game.paired === 'Y' && games.some(g =>
-        g.paired === 'Y' && g.date === game.date && g.tabName !== game.tabName && g.userEntered
-      );
-      const isMine = !!game.userEntered || partnerEntered;
+      // My Games → games the user is in. Once picked for one game of a linked group
+      // they aren't "in" the others, so include the whole group whenever they're in any
+      // of it — the group card then says which game is theirs.
+      const groupEntered = !!game.groupId && games.some(g => g.groupId === game.groupId && g.userEntered);
+      const isMine = !!game.userEntered || groupEntered;
       if (!isMine) return false;
       return mineSub === 'played'
         ? ['P', 'C', 'A'].includes(game.status)   // Played (incl. cancelled/abandoned)
@@ -808,108 +817,104 @@ export default function FriendliesPage() {
             <p className="text-gray-700">No games found for this filter.</p>
           </div>
         ) : (
-          // Game cards grid - group paired games then render
+          // Game cards grid - linked games share one card
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {groupPairedGames(filteredGames as GameWithUserStatus[]).map((item, index) => {
-              // Paired game card — combined view for two games on the same date
-              if (isPairedGame(item)) {
-                const [gameA, gameB] = item as [GameWithUserStatus, GameWithUserStatus];
-                const userEnteredEither = gameA.userEntered || gameB.userEntered;
-                const combinedEntered = Math.max(gameA.entered, gameB.entered);
-                const pairedIsOnTeaDuty = teaDutyDates.has(gameA.date);
+            {groupLinkedGames(filteredGames as GameWithUserStatus[]).map((item, index) => {
+              // Linked occasion — one card for every game in the group (linked games
+              // and/or a reserve game). People enter the occasion; captains pick them
+              // into a game; the reserves are shared.
+              if (isGameGroup(item)) {
+                const groupGames = item as GameWithUserStatus[];
+                const lead = groupGames[0];
+                const mainGames = groupGames.filter(g => !g.reserveOf);
+                const userInGroup = groupGames.some(g => g.userEntered);
+                const isOpen = lead.status === 'O';
+                const isUpcoming = groupGames.every(g => g.status === '');
+                const sameStatus = groupGames.every(g => g.status === lead.status);
+                const groupOnTeaDuty = groupGames.some(g => teaDutyTabs.has(g.tabName));
+                const eligibleForAny = !!memberType && mainGames.some(g => canEnterGame(memberType, g.ladiesMen as GameGender));
+                const required = mainGames.reduce<number | null>((sum, g) => {
+                  const n = parseNumberRequired(g.format);
+                  return sum == null || n == null ? null : sum + n;
+                }, 0);
+                const groupLabel = mainGames.map(opponentName).filter((n, i, all) => all.indexOf(n) === i).join(' + ');
+
+                // The player's place, once teams are published: their game, or the shared reserves
+                const published = groupGames.some(g => ['S', 'P'].includes(g.status));
+                const myGame = groupGames.find(g => g.userStatus === 'P');
+                const myWithdrawn = groupGames.some(g => g.userStatus?.endsWith('W'));
+                const myReserve = !myGame && groupGames.some(g => g.userStatus === 'R');
 
                 return (
                   <div
-                    key={`paired-${index}-${gameA.tabName}-${gameB.tabName}`}
+                    key={`group-${index}-${lead.groupId || lead.tabName}`}
                     className={`bg-white rounded-lg shadow border ${
-                      userEnteredEither ? 'border-blue-200' : 'border-gray-200'
+                      userInGroup ? 'border-blue-200' : 'border-gray-200'
                     } p-4`}
                   >
-                    {/* Paired badge */}
+                    {/* Header: the games' opponents, date, status */}
                     <div className="flex justify-between items-start mb-3">
                       <div>
                         <h3 className="font-bold text-lg text-gray-900">
-                          {gameA.clubName ? (
-                            <Link
-                              href={`/clubs/${encodeURIComponent(gameA.clubName)}?from=friendlies`}
-                              className="text-blue-600 hover:text-blue-800 hover:underline"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              {gameA.clubName}
-                            </Link>
-                          ) : (
-                            opponentName(gameA)
-                          )}
-                          {opponentName(gameA) !== opponentName(gameB) && (
-                            <>
-                              {' + '}
-                              {gameB.clubName ? (
+                          {mainGames.map((g, i) => (
+                            <span key={g.tabName || i}>
+                              {i > 0 && ' + '}
+                              {g.clubName ? (
                                 <Link
-                                  href={`/clubs/${encodeURIComponent(gameB.clubName)}?from=friendlies`}
+                                  href={`/clubs/${encodeURIComponent(g.clubName)}?from=friendlies`}
                                   className="text-blue-600 hover:text-blue-800 hover:underline"
                                   onClick={(e) => e.stopPropagation()}
                                 >
-                                  {gameB.clubName}
+                                  {[g.clubName, g.clubSuffix].filter(Boolean).join(' ')}
                                 </Link>
                               ) : (
-                                opponentName(gameB)
+                                opponentName(g)
                               )}
-                            </>
-                          )}
+                            </span>
+                          ))}
                         </h3>
-                        <p className="text-xs text-gray-700 mt-0.5">
-                          {gameA.ladiesMen} + {gameB.ladiesMen}
-                        </p>
                         <p className="text-sm text-gray-700">
-                          {parseUKDate(gameA.date).toLocaleDateString('en-GB', {
+                          {parseUKDate(lead.date).toLocaleDateString('en-GB', {
                             weekday: 'short',
                             day: 'numeric',
                             month: 'short',
                           })}
                           {' at '}
-                          {gameA.time}
+                          {lead.time}
                         </p>
                       </div>
                       <div className="flex flex-col items-end gap-1">
-                        {getStatusBadge(gameA.status)}
+                        {sameStatus && getStatusBadge(lead.status)}
                         <span className="inline-block px-2 py-0.5 text-xs font-medium text-purple-700 bg-purple-100 rounded">
-                          Paired
+                          Linked
                         </span>
                       </div>
                     </div>
 
                     <div className="space-y-1 text-sm text-gray-900 mb-4">
-                      <p>
-                        <span className="font-medium">Venue:</span>{' '}
-                        {gameA.homeAway === gameB.homeAway
-                          ? (gameA.homeAway === 'H' ? 'Home' : 'Away')
-                          : `${opponentName(gameA)}: ${gameA.homeAway === 'H' ? 'Home' : 'Away'} / ${opponentName(gameB)}: ${gameB.homeAway === 'H' ? 'Home' : 'Away'}`
-                        }
-                      </p>
-                      <p>
-                        <span className="font-medium">Format:</span> {gameA.format} ({gameA.ladiesMen}) / {gameB.format} ({gameB.ladiesMen})
-                      </p>
+                      {/* Before selection: what each game is */}
+                      {(isOpen || isUpcoming) && mainGames.map(g => (
+                        <p key={g.tabName || g.id}>
+                          <span className="font-medium">{opponentName(g)}:</span>{' '}
+                          {g.homeAway === 'H' ? 'Home' : 'Away'}
+                          {g.homeAway === 'A' && g.petrolCost ? ` (petrol £${g.petrolCost.toFixed(2)})` : ''}
+                          {' · '}{g.format}{g.ladiesMen ? ` · ${g.ladiesMen}` : ''}
+                        </p>
+                      ))}
 
-                      {/* For open paired games, show combined player count */}
-                      {gameA.status === 'O' && (
+                      {/* Open: one shared entry list for the occasion */}
+                      {isOpen && (
                         <div className="mt-2 pt-2 border-t border-gray-100">
                           <p className="font-medium text-gray-900">
-                            {combinedEntered} Player{combinedEntered !== 1 ? 's' : ''} Entered{(() => {
-                              const reqA = parseNumberRequired(gameA.format);
-                              const reqB = parseNumberRequired(gameB.format);
-                              const combinedReq = reqA != null && reqB != null ? reqA + reqB : null;
-                              return combinedReq != null ? ` / ${combinedReq} Required` : '';
-                            })()}
+                            {lead.entered} Player{lead.entered !== 1 ? 's' : ''} Entered
+                            {required != null ? ` / ${required} Required` : ''}
                           </p>
+                          <p className="text-xs text-gray-700">You enter both — the captains pick you into one.</p>
                           {!isGuest && (
                             <button
                               onClick={() => {
-                                setSelectedGameForModal(gameA);
-                                setModalGameName(
-                                  opponentName(gameA) !== opponentName(gameB)
-                                    ? `${opponentName(gameA)} + ${opponentName(gameB)} - ${gameA.date}`
-                                    : `${opponentName(gameA)} - ${gameA.date}`
-                                );
+                                setSelectedGameForModal(lead);
+                                setModalGameName(`${groupLabel} - ${lead.date}`);
                                 setIsModalOpen(true);
                               }}
                               className="mt-2 inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-white rounded bg-green-500 hover:opacity-90 transition-opacity"
@@ -924,11 +929,52 @@ export default function FriendliesPage() {
                         </div>
                       )}
 
+                      {/* From selection on: a line per game (each links to its own page) and
+                          the shared reserves */}
+                      {!isOpen && !isUpcoming && (
+                        <ul className="mt-1 space-y-1">
+                          {groupGames.map(g => {
+                            const viewable = ['S', 'P', 'C', 'A'].includes(g.status);
+                            return (
+                              <li key={g.tabName} className="flex justify-between items-center gap-2">
+                                <span>
+                                  <span className="font-medium">{opponentName(g)}</span>
+                                  {g.reserveOf && <span className="text-gray-700"> (reserve game)</span>}
+                                  <span className="text-xs text-gray-700"> · {g.homeAway === 'H' ? 'Home' : 'Away'}</span>
+                                </span>
+                                <span className="flex items-center gap-2 shrink-0">
+                                  {!sameStatus && getStatusBadge(g.status)}
+                                  {viewable ? (
+                                    <Link
+                                      href={`/friendlies/game/${g.tabName}`}
+                                      className="text-blue-600 hover:text-blue-800 hover:underline"
+                                      onClick={() => sessionStorage.setItem('friendlies_back_nav', 'true')}
+                                    >
+                                      {g.status === 'P' || g.status === 'A'
+                                        ? (g.bhbcScore != null && g.opponentScore != null ? `${g.bhbcScore}-${g.opponentScore}` : 'View')
+                                        : `${g.selected} selected`} ›
+                                    </Link>
+                                  ) : (
+                                    <span className="text-gray-700">{g.selected} selected</span>
+                                  )}
+                                </span>
+                              </li>
+                            );
+                          })}
+                          {lead.reserves > 0 && (
+                            <li className="flex justify-between text-gray-700">
+                              <span>Reserves (shared)</span>
+                              <span>{lead.reserves}</span>
+                            </li>
+                          )}
+                        </ul>
+                      )}
+
                       {/* Special instructions link */}
-                      {gameA.specialInstructions && (
+                      {lead.specialInstructions && (
                         <div className="mt-3 pt-2 border-t border-gray-100">
                           <button
-                            onClick={() => setInstructionsMessage(gameA.specialInstructions)}
+                            onClick={() => setInstructionsMessage(lead.specialInstructions)}
                             className="text-sm text-amber-700 font-medium hover:text-amber-900 hover:underline"
                           >
                             See Special Instructions
@@ -937,26 +983,34 @@ export default function FriendliesPage() {
                       )}
                     </div>
 
-                    {/* Tea duty note for paired games */}
-                    {!isLimitedView && gameA.status === 'O' && memberType && pairedIsOnTeaDuty && (
-                      canEnterGame(memberType, gameA.ladiesMen as GameGender) ||
-                      canEnterGame(memberType, gameB.ladiesMen as GameGender)
-                    ) && (
+                    {/* The player's place in the occasion, once published */}
+                    {!isLimitedView && published && userInGroup && (
+                      <div className="mb-2 text-sm">
+                        {myWithdrawn ? (
+                          <p className="font-semibold text-red-600">✗ Withdrawn</p>
+                        ) : myGame ? (
+                          <Link href={`/friendlies/game/${myGame.tabName}`} className="font-semibold text-green-700 hover:underline">
+                            You: playing for {opponentName(myGame)} ›
+                          </Link>
+                        ) : myReserve ? (
+                          <p className="font-semibold text-amber-700">You: reserve for {groupLabel}</p>
+                        ) : null}
+                      </div>
+                    )}
+
+                    {/* Tea duty note */}
+                    {!isLimitedView && isOpen && eligibleForAny && groupOnTeaDuty && (
                       <p className="text-sm text-gray-700 italic">
                         You are on tea duty for this game — not eligible to play
                       </p>
                     )}
 
-                    {/* Single button enters game 1 of the pair (captain moves overflow into
-                        game 2 during selection). Opens the same confirm dialog as single games. */}
-                    {!isLimitedView && gameA.status === 'O' && memberType && !pairedIsOnTeaDuty && (
-                      canEnterGame(memberType, gameA.ladiesMen as GameGender) ||
-                      canEnterGame(memberType, gameB.ladiesMen as GameGender)
-                    ) && (
-                      gameA.userEntered ? (
+                    {/* One button enters the whole occasion (with an optional preference) */}
+                    {!isLimitedView && isOpen && eligibleForAny && !groupOnTeaDuty && (
+                      userInGroup ? (
                         <button
                           type="button"
-                          onClick={() => openRemoveDialog(gameA)}
+                          onClick={() => openRemoveDialog(lead)}
                           className="text-sm font-medium text-green-700 hover:text-red-600"
                         >
                           Entered <span className="text-gray-400">— tap to remove</span>
@@ -964,7 +1018,7 @@ export default function FriendliesPage() {
                       ) : (
                         <button
                           type="button"
-                          onClick={() => openEnterDialog(gameA)}
+                          onClick={() => openEnterDialog(lead)}
                           className={`${getButtonClasses('primary', 'sm')}`}
                         >
                           Enter this game
@@ -977,7 +1031,7 @@ export default function FriendliesPage() {
 
               // Standard single game card
               const game = item as GameWithUserStatus;
-              const isOnTeaDuty = teaDutyDates.has(game.date);
+              const isOnTeaDuty = teaDutyTabs.has(game.tabName);
               const cardPickupInfo = game.homeAway === 'A' ? (game.pickupInfo || '') : '';
               return (
                 <div
@@ -1202,12 +1256,37 @@ export default function FriendliesPage() {
         {enterDialogGame && (() => {
           const g = enterDialogGame;
           const eligibleBuddies = eligibleBuddiesForGame(g);
-          const isAway = g.homeAway === 'A';
+          // A linked occasion: every main game in the group (reserve games excluded)
+          const linkedGames = g.groupId ? games.filter(x => x.groupId === g.groupId && !x.reserveOf) : [g];
+          const isAway = linkedGames.some(x => x.homeAway === 'A');
+          const isLinked = linkedGames.length > 1;
+          // Preference options in a natural scale for two games: A only, A preferred,
+          // no preference, B preferred, B only. For 3+ games: none, then each game.
+          const prefOptions: Array<{ value: string; label: string }> = [];
+          if (isLinked && linkedGames.length === 2) {
+            const [a, b] = linkedGames;
+            const tag = (x: GameWithUserStatus) => `${opponentName(x)} (${x.homeAway === 'H' ? 'home' : 'away'})`;
+            prefOptions.push(
+              { value: `${a.id}|only`, label: `${tag(a)} only` },
+              { value: `${a.id}|preferred`, label: `${tag(a)} preferred` },
+              { value: '', label: 'No preference' },
+              { value: `${b.id}|preferred`, label: `${tag(b)} preferred` },
+              { value: `${b.id}|only`, label: `${tag(b)} only` },
+            );
+          } else if (isLinked) {
+            prefOptions.push({ value: '', label: 'No preference' });
+            for (const x of linkedGames) {
+              prefOptions.push({ value: `${x.id}|preferred`, label: `${opponentName(x)} preferred` });
+              prefOptions.push({ value: `${x.id}|only`, label: `${opponentName(x)} only` });
+            }
+          }
           return (
             <ConfirmDialog
               isOpen={true}
               title="Enter this game"
-              message={`Enter ${opponentName(g)} on ${g.date}?`}
+              message={isLinked
+                ? `Enter ${linkedGames.map(opponentName).join(' + ')} on ${g.date}? The captains will pick you into one of them.`
+                : `Enter ${opponentName(g)} on ${g.date}?`}
               confirmLabel={entering ? 'Entering…' : 'Enter'}
               cancelLabel="Cancel"
               confirmVariant="primary"
@@ -1216,6 +1295,27 @@ export default function FriendliesPage() {
               onCancel={() => { if (!entering) setEnterDialogGame(null); }}
             >
               <div className="mb-6 space-y-2 text-left">
+                {/* Linked games: which game would you rather play? */}
+                {isLinked && (
+                  <fieldset className="mb-3">
+                    <legend className="text-sm font-medium text-gray-900 mb-1">Which game?</legend>
+                    <div className="space-y-1">
+                      {prefOptions.map(opt => (
+                        <label key={opt.value || 'none'} className="flex items-center space-x-2 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="enter-preference"
+                            checked={enterPreference === opt.value}
+                            onChange={() => setEnterPreference(opt.value)}
+                            className="w-4 h-4 text-blue-500 focus:ring-blue-500"
+                          />
+                          <span className="text-sm text-gray-700">{opt.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                )}
+
                 {/* Buddy opt-in — only eligible buddies for this game */}
                 {eligibleBuddies.map((b) => (
                   <label key={b.userName} className="flex items-center space-x-2 cursor-pointer">

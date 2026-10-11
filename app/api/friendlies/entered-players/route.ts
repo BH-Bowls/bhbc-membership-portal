@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getEnteredPlayers } from '@/lib/friendlies-sheets';
+import { getEnteredPlayers } from '@/lib/fixture-groups-supabase';
 
 // GET handler - Returns list of entered players with their status
 export async function GET(request: NextRequest) {

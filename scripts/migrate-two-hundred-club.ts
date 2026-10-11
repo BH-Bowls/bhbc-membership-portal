@@ -24,7 +24,7 @@
  * case legacy sheet data accumulated any before that logic existed.
  *
  * Run with:
- *   npx dotenv -e .env.local -- npx tsx scripts/migrate-two-hundred-club.ts
+ *   npx dotenv -e .env.dev.local -- npx tsx scripts/migrate-two-hundred-club.ts
  */
 
 import { getGoogleSheetsClient, getSpreadsheetId, getColumnMap } from '../src/lib/sheets';

@@ -1,21 +1,17 @@
 // src/lib/diary-sheets.ts
 // Data layer for the home-page Diary Panel.
 // Aggregates upcoming duties and game entries for a single member across
-// CleaningRota, SweepingRota, Fixtures/Postgres (tea duty + friendlies) +
-// the still-Sheets-native Players roster, competition match sheets, and
+// CleaningRota, SweepingRota, Fixtures/Postgres (tea duty + friendlies entries),
+// competition matches, and
 // Availability events.
 
-import {
-  getGoogleSheetsClient,
-  getColumnMap,
-} from './sheets';
-import { getFriendliesSpreadsheetId } from './friendlies-sheets';
+import { getPlayerEntries } from './fixture-groups-supabase';
+import { getSquadDiaryEntries } from './squads-supabase';
 import { getActiveSeasonId } from './fixtures-supabase';
 import { getAllUsers } from './members-supabase';
 import { getCleaningRotaList } from './cleaning-rota-supabase';
 import { getSweepingRotaList } from './sweeping-rota-supabase';
 import { parseUKDate } from './date-utils';
-import { getSheetDataCache, setSheetDataCache } from './home-cache';
 import { hasRole } from './role-utils';
 import { getPendingApplicationsCount } from './applications-supabase';
 import { getCommitments } from './member-availability';
@@ -258,70 +254,22 @@ async function fetchDiaryFixtures(): Promise<DiaryFixtureRow[]> {
   }));
 }
 
-// Fetch this member's Players-sheet entry row (still genuinely Sheets-native —
-// unlike Games, nothing has moved this to Postgres) from the 24-hour shared
-// cache when available, then build tea-duty and friendly-entry diary items by
-// cross-referencing against the fixtures fetched from Postgres above.
+// Build tea-duty and friendly-entry diary items: this member's entries (Postgres,
+// fixture-groups-supabase.ts) cross-referenced against the fixtures fetched above.
 async function fetchFriendliesItems(userName: string, todayStr: string): Promise<FriendliesResult> {
-  const spreadsheetId = getFriendliesSpreadsheetId();
-
-  const [fixtures, playersColMap] = await Promise.all([
+  const [fixtures, entries] = await Promise.all([
     fetchDiaryFixtures(),
-    getColumnMap('Players', spreadsheetId),
+    getPlayerEntries(userName),
   ]);
-
-  // Determine which column index holds usernames in the Players sheet
-  // (mirrors the priority used by getPlayerEntries in friendlies-sheets.ts)
-  let playersUserNameColIdx = playersColMap['user_name'];
-  if (playersUserNameColIdx === undefined) {
-    playersUserNameColIdx = playersColMap['full_name'];
-  }
-  if (playersUserNameColIdx === undefined) {
-    playersUserNameColIdx = playersColMap['name'];
-  }
-  if (playersUserNameColIdx === undefined) {
-    playersUserNameColIdx = 0;
-  }
-
-  const playersCacheKey = `friendlies-players:${spreadsheetId}`;
-  let playersRows = getSheetDataCache(playersCacheKey);
-  if (!playersRows) {
-    const sheets = getGoogleSheetsClient();
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: 'Players!A:ZZ',
-    });
-    playersRows = (response.data.values ?? []) as string[][];
-    setSheetDataCache(playersCacheKey, playersRows);
-  }
 
   const teaItems: DiaryItem[] = [];
   const friendlyItems: DiaryItem[] = [];
 
-  // ── Find the member's row in the cached Players data ──
-  // playersRows[0] is the header row; data starts at index 1
-  const playersHeaderRow: string[] = playersRows.length > 0 ? (playersRows[0] as string[]) : [];
-  let memberPlayerRow: string[] = [];
-
-  for (let i = 1; i < playersRows.length; i++) {
-    const cellValue = playersRows[i][playersUserNameColIdx] ? String(playersRows[i][playersUserNameColIdx]).trim() : '';
-    if (cellValue === userName) {
-      memberPlayerRow = playersRows[i] as string[];
-      break;
-    }
-  }
-
-  // Build a map from game tab_name → member's entry status
+  // game tab_name → member's derived entry code. A reserve in a linked occasion is
+  // listed against each of its games; the diary shows that occasion once (below).
   const playerEntryMap: Map<string, string> = new Map();
-  if (memberPlayerRow.length > 0) {
-    for (let i = 0; i < playersHeaderRow.length; i++) {
-      const header = playersHeaderRow[i] ? String(playersHeaderRow[i]).trim() : '';
-      const value  = memberPlayerRow[i]  ? String(memberPlayerRow[i]).trim()  : '';
-      if (header && value) {
-        playerEntryMap.set(header, value);
-      }
-    }
-  }
+  for (const e of entries) playerEntryMap.set(e.tabName, e.status);
+  const shownUnallocatedDates = new Set<string>();
 
   // ── Process fixtures ──
   for (const fx of fixtures) {
@@ -372,7 +320,12 @@ async function fetchFriendliesItems(userName: string, todayStr: string): Promise
           entryStatus === 'E' || entryStatus === 'M' || entryStatus === 'D' ||
           entryStatus === 'P' || entryStatus === 'R' || entryStatus === 'T'
         );
-        if (isActiveEntry) {
+        // A reserve/entrant in a linked occasion appears against every game in it —
+        // show that day once rather than once per game.
+        const unallocated = entryStatus !== 'P';
+        const alreadyShown = unallocated && shownUnallocatedDates.has(fx.date);
+        if (unallocated) shownUnallocatedDates.add(fx.date);
+        if (isActiveEntry && !alreadyShown) {
           friendlyItems.push({
             type: 'friendly',
             date: fx.date,
@@ -695,15 +648,31 @@ export async function getDiaryItems(userName: string): Promise<DiaryItem[]> {
   const nameMap = buildNameMap(allUsers);
 
   // Run all data-source fetches in parallel, capturing results and errors separately
-  const [membersResult, friendliesResult, compsResult, leaguesResult, availabilityResult] = await Promise.allSettled([
+  const [membersResult, friendliesResult, compsResult, leaguesResult, availabilityResult, squadsResult] = await Promise.allSettled([
     fetchMembersRotaItems(userName, todayStr),
     fetchFriendliesItems(userName, todayStr),
     fetchCompetitionsItems(userName, todayStr, nameMap),
     fetchLeagueItems(userName, todayStr),
     fetchAvailabilityItems(userName, todayStr),
+    getSquadDiaryEntries(userName, todayStr),
   ]);
 
   const items: DiaryItem[] = [];
+
+  // Collect items from SQUADS (external leagues): published fixtures you're playing in
+  // or on teas for
+  if (squadsResult.status === 'fulfilled') {
+    for (const s of squadsResult.value) {
+      items.push({
+        type: s.kind === 'teas' ? 'tea' : 'league',
+        date: s.date,
+        displayDate: formatDiaryDate(s.date),
+        label: s.label,
+        subLabel: s.kind === 'teas' ? `${s.squadLabel} — teas` : `${s.squadLabel} — selected`,
+        linkUrl: `/friendlies/game/${encodeURIComponent(s.tabName)}`,
+      });
+    }
+  }
 
   // Collect items from MEMBERS rota (cleaning + sweeping)
   if (membersResult.status === 'fulfilled') {

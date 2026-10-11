@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getPlayerEntries, getGameSheet } from '@/lib/friendlies-sheets';
+import { getPlayerEntries, getUserEntriesByGroup } from '@/lib/fixture-groups-supabase';
 import { getFixtures, getTeaRotaList } from '@/lib/fixtures-supabase';
 import { getClubs } from '@/lib/clubs-supabase';
 import { GameStatus, GameType, FriendliesBuddy } from '@/lib/types/friendlies';
@@ -43,14 +43,20 @@ export async function GET(request: NextRequest) {
 
     // Tea rota is merged into this response so the friendlies page gets its tea-duty
     // info here instead of a separate /api/tea-rota call.
+    // teaDutyTabNames is what the page checks: you can't enter a group containing a game
+    // you're on teas for (but an evening game on the same day is fine). teaDutyDates is
+    // kept for older cached clients.
     const userName = session?.user?.userName ?? '';
     const teaDutyDates: string[] = [];
+    const teaDutyTabNames: string[] = [];
     if (userName) {
       const teaEntries = await getTeaRotaList({ includeCancelled: true });
       const seen = new Set<string>();
       for (const e of teaEntries) {
         const onDuty = e.teaLead === userName || e.teaFirst === userName || e.teaSecond === userName;
-        if (onDuty && !seen.has(e.date)) {
+        if (!onDuty) continue;
+        if (e.tabName) teaDutyTabNames.push(e.tabName);
+        if (!seen.has(e.date)) {
           seen.add(e.date);
           teaDutyDates.push(e.date);
         }
@@ -66,11 +72,14 @@ export async function GET(request: NextRequest) {
         userStatus: null,
         userConfirmed: null,
       }));
-      return NextResponse.json({ games: gamesWithUserStatus, teaDutyDates });
+      return NextResponse.json({ games: gamesWithUserStatus, teaDutyDates, teaDutyTabNames });
     }
 
-    // Fetch all entries for this user from Players sheet
-    const userEntries = await getPlayerEntries(session.user.userName);
+    // This user's entries (with derived status codes) and their raw entry rows (for confirmation)
+    const [userEntries, entriesByGroup] = await Promise.all([
+      getPlayerEntries(session.user.userName),
+      getUserEntriesByGroup(session.user.userName),
+    ]);
 
     // Combine game data with user's entry status
     const gamesWithEntry = games.map(game => {
@@ -81,20 +90,14 @@ export async function GET(request: NextRequest) {
       return { game, entry };
     });
 
-    // For S-status games where user is selected (P/R/T), read the game sheet to check confirmation
+    // For S-status games where user is selected (P/R), confirmation is on their entry
     const confirmationMap = new Map<string, boolean>();
-    const selectedStatusGames = gamesWithEntry.filter(
-      ({ game, entry }) => game.status === 'S' && entry && ['P', 'R', 'T'].includes(entry.status)
-    );
-    await Promise.all(selectedStatusGames.map(async ({ game }) => {
-      try {
-        const gameSheet = await getGameSheet(game.tabName);
-        const userPlayer = gameSheet.find(p => p.name === session.user.userName);
-        confirmationMap.set(game.tabName, userPlayer?.status === 'Y' || false);
-      } catch {
-        // If game sheet read fails, leave confirmation as null
+    for (const { game, entry } of gamesWithEntry) {
+      if (game.status === 'S' && entry && ['P', 'R', 'T'].includes(entry.status) && game.groupId) {
+        const myEntry = entriesByGroup.get(game.groupId);
+        confirmationMap.set(game.tabName, !!(myEntry && myEntry.confirmedAt));
       }
-    }));
+    }
 
     const gamesWithUserStatus = gamesWithEntry.map(({ game, entry }) => ({
       ...game,
@@ -135,7 +138,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Return success response with games array + the user's tea-duty dates + buddies
-    return NextResponse.json({ games: gamesWithUserStatus, teaDutyDates, buddies });
+    return NextResponse.json({ games: gamesWithUserStatus, teaDutyDates, teaDutyTabNames, buddies });
   } catch (error) {
     // Log error and return 500 response
     return NextResponse.json(

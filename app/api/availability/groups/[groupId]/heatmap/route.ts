@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getGroupById, getGroupMembers } from '@/lib/availability-groups-supabase';
+import { getGroupById, getGroupMembers, canAccessGroup } from '@/lib/availability-groups-supabase';
 import { resolveAvailability, Session } from '@/lib/member-availability';
 import { hasRole } from '@/lib/role-utils';
 
@@ -37,7 +37,9 @@ export async function GET(
 
     const isCreator = group.createdByUsername === session.user.userName;
     const isAdmin = hasRole(session.user.role, 'Admin');
-    if (!isCreator && !isAdmin) {
+    // A squad's group: its organisers (and Captain) can see the heatmap too
+    const runsSquad = !!group.fixtureGroupId && (await canAccessGroup(group, session.user.userName, session.user.role || ''));
+    if (!isCreator && !isAdmin && !runsSquad) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -49,7 +51,7 @@ export async function GET(
 
     const members = await getGroupMembers(groupId);
     // Only member-type rows have a substrate presence — visitors have no username to key on.
-    const usernames = members.filter((m) => m.memberType === 'member' && m.userName).map((m) => m.userName);
+    const usernames = members.filter((m) => m.memberType === 'member' && m.userName && m.active).map((m) => m.userName);
 
     const resolved = await resolveAvailability(usernames, startDate, endDate);
 

@@ -10,6 +10,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { getButtonClasses, getInputClasses, getCardClasses } from '@/config/theme-helpers';
+import { ASSIGNABLE_ROLES } from '@/lib/role-utils';
 
 // The editable fields we send on save (must match the API whitelist).
 interface MemberForm {
@@ -319,7 +320,48 @@ export default function MemberDetailPage() {
             <div className={`${getCardClasses('md')} mb-4`}>
               <h2 className="text-base font-semibold text-gray-900 mb-3">Admin</h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {textField('Role (comma-separated)', 'role')}
+                {/* Role — tick boxes, as on Profile. Kiosk is set in the database only. */}
+                <div className="sm:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
+                  {form.role.trim() === 'Kiosk' ? (
+                    <p className="text-sm text-gray-700 italic py-2">Kiosk (set in the database)</p>
+                  ) : (
+                    (() => {
+                      const activeRoles: string[] = [];
+                      for (const r of form.role.split(',')) {
+                        const name = r.trim();
+                        if (name && name !== 'Member') activeRoles.push(name);
+                      }
+                      // Show any role not in the standard list too, so it can't be lost unseen
+                      const shownRoles = [...ASSIGNABLE_ROLES];
+                      for (const r of activeRoles) {
+                        if (!shownRoles.includes(r)) shownRoles.push(r);
+                      }
+                      const toggleRole = (role: string, checked: boolean) => {
+                        const updated = checked ? [...activeRoles, role] : activeRoles.filter((r) => r !== role);
+                        set('role', updated.join(','));
+                      };
+                      return (
+                        <>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                            {shownRoles.map((r) => (
+                              <label key={r} className="flex items-center gap-2 text-sm text-gray-900">
+                                <input
+                                  type="checkbox"
+                                  checked={activeRoles.includes(r)}
+                                  onChange={(e) => toggleRole(r, e.target.checked)}
+                                  className="h-4 w-4 text-blue-500 border-gray-300 rounded"
+                                />
+                                {r}
+                              </label>
+                            ))}
+                          </div>
+                          <p className="mt-1 text-xs text-gray-700">No roles ticked = regular member</p>
+                        </>
+                      );
+                    })()
+                  )}
+                </div>
                 {textField('Handicap (0–10)', 'handicap', 'number')}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Honorary</label>

@@ -12,7 +12,7 @@
  * skipping the whole row, since it's optional.
  *
  * Run with:
- *   npx dotenv -e .env.local -- npx tsx scripts/migrate-announcements.ts
+ *   npx dotenv -e .env.dev.local -- npx tsx scripts/migrate-announcements.ts
  */
 
 import { getGoogleSheetsClient, getColumnMap } from '../src/lib/sheets';

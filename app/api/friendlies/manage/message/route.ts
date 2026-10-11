@@ -8,18 +8,16 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { updateFixtureMessage, getFixtures } from '@/lib/fixtures-supabase';
-import { hasRole } from '@/lib/role-utils';
+import { updateFixtureMessage, getGameByIdOrTab } from '@/lib/fixtures-supabase';
+import { canManageGame } from '@/lib/squads-supabase';
 
 export async function PUT(req: Request) {
   const session = await getServerSession(authOptions);
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  const role = session.user?.role ?? '';
-  if (!hasRole(role, 'Captain', 'Admin')) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
+  const role = session.user && session.user.role ? session.user.role : '';
+  const userName = session.user && session.user.userName ? session.user.userName : '';
 
   const body = await req.json();
   let id = typeof body.id === 'string' ? body.id : '';
@@ -31,12 +29,13 @@ export async function PUT(req: Request) {
   }
 
   try {
-    if (!id) {
-      const games = await getFixtures();
-      const game = games.find(g => g.tabName === tabName);
-      if (!game) return NextResponse.json({ error: 'Fixture not found' }, { status: 404 });
-      id = game.id;
+    // Captain/Admin, or — for a league / Club Team game — the squad's organisers
+    const game = await getGameByIdOrTab(id, tabName);
+    if (!game) return NextResponse.json({ error: 'Fixture not found' }, { status: 404 });
+    if (!(await canManageGame(game, userName, role))) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
+    id = game.id;
 
     await updateFixtureMessage(id, message);
     return NextResponse.json({ ok: true });

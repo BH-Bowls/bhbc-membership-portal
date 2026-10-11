@@ -4,10 +4,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { hasRole } from '@/lib/role-utils';
 import {
   getGroupById,
-  isGroupMember,
+  canAccessGroup,
   ensureGroupMemberTokens,
 } from '@/lib/availability-groups-supabase';
 import {
@@ -41,15 +40,9 @@ export async function GET(
 
     const userName = session.user.userName;
     const userRole = session.user.role || '';
-    const isAdmin = hasRole(userRole, 'Admin');
-    const isCreator = group.createdByUsername === userName;
-
-    // Access check: must be member, creator, or Admin
-    if (!isCreator && !isAdmin) {
-      const memberStatus = await isGroupMember(groupId, userName);
-      if (!memberStatus) {
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-      }
+    // Access check: member, creator, Admin, or (a squad's group) its organisers
+    if (!(await canAccessGroup(group, userName, userRole))) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     // Fetch all group events with response metadata resolved for the caller
@@ -91,15 +84,9 @@ export async function POST(
 
     const userName = session.user.userName;
     const userRole = session.user.role || '';
-    const isAdmin = hasRole(userRole, 'Admin');
-    const isCreator = group.createdByUsername === userName;
-
-    // Access check: any group member, creator, or Admin can create events
-    if (!isCreator && !isAdmin) {
-      const memberStatus = await isGroupMember(groupId, userName);
-      if (!memberStatus) {
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-      }
+    // Access check: any group member, creator, Admin, or (a squad's group) its organisers
+    if (!(await canAccessGroup(group, userName, userRole))) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     // Parse the request body
@@ -210,7 +197,8 @@ export async function POST(
     if (sendEmailNow) {
       // Ensure every member has a token, then filter to the chosen recipients. Visitors are
       // always emailed; a member subset can be selected.
-      const membersWithTokens = await ensureGroupMemberTokens(groupId);
+      // Inactive members (left a linked squad) are left out of new polls
+      const membersWithTokens = (await ensureGroupMemberTokens(groupId)).filter((m) => m.active);
       let recipients = membersWithTokens;
       if (recipientUsernames.length > 0) {
         const recipientSet = new Set(recipientUsernames);

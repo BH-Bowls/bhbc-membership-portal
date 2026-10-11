@@ -18,7 +18,7 @@
  * doesn't resolve, is skipped too.
  *
  * Run with:
- *   npx dotenv -e .env.local -- npx tsx scripts/migrate-invite-games.ts
+ *   npx dotenv -e .env.dev.local -- npx tsx scripts/migrate-invite-games.ts
  */
 
 import { getGoogleSheetsClient, getSpreadsheetId, getColumnMap } from '../src/lib/sheets';

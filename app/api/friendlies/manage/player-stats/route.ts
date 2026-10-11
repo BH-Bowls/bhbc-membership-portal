@@ -5,12 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import {
-  getColumnMap,
-  getSheetsClient,
-  getFriendliesSpreadsheetId,
-} from '@/lib/friendlies-sheets';
-import { getFixtures } from '@/lib/fixtures-supabase';
+import { getSeasonEntryCodes } from '@/lib/fixture-groups-supabase';
 import { getAllUsers } from '@/lib/members-supabase';
 import { hasRole } from '@/lib/role-utils';
 
@@ -38,108 +33,62 @@ export async function GET(_request: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const spreadsheetId = getFriendliesSpreadsheetId();
-    const sheets = getSheetsClient();
+    // Every season entry (one per entry, anchored to the game it sits on)
+    const seasonEntries = await getSeasonEntryCodes();
 
-    // Read Players sheet and Games sheet in parallel
-    const [playersResponse, games, colMap] = await Promise.all([
-      sheets.spreadsheets.values.get({ spreadsheetId, range: 'Players!A:ZZ' }),
-      getFixtures(),
-      getColumnMap(spreadsheetId, 'Players'),
-    ]);
-
-    const rows = playersResponse.data.values || [];
-    const headers = rows[0] || [];
-
-    // Build sets for quick game-status lookup
-    const cancelledTabNames = new Set(games.filter(g => g.status === 'C').map(g => g.tabName));
-    const abandonedTabNames = new Set(games.filter(g => g.status === 'A').map(g => g.tabName));
-
-    // Build a set of all known game tab names — only these columns are game entries.
-    // Any column whose header is NOT a game tab name (e.g. Name Down, Picked, %) is ignored.
-    const gameTabNames = new Set(games.map(g => g.tabName));
-
-    // Determine identifier column
-    const userNameColIndex = colMap['user_name'] ?? colMap['full_name'] ?? colMap['name'] ?? 0;
-    const usesUserName = colMap['user_name'] !== undefined;
-
-    // Build fullName lookup from Members sheet when Players sheet uses userName
-    const fullNameLookup = new Map<string, string>();
     // All playing members (PL / PM) — used to find who hasn't played
+    const fullNameLookup = new Map<string, string>();
     const playingMembers: { userName: string; fullName: string }[] = [];
-
     {
       const allUsers = await getAllUsers();
       for (const u of allUsers) {
         if (!u.userName || !u.fullName) continue;
-        fullNameLookup.set(u.userName, u.fullName);
+        fullNameLookup.set(u.userName.toLowerCase(), u.fullName);
         if (u.memberType === 'Playing Lady' || u.memberType === 'Playing Man') {
           playingMembers.push({ userName: u.userName, fullName: u.fullName });
         }
       }
     }
 
-    const playerStats: PlayerStatRow[] = [];
-
-    for (let i = 1; i < rows.length; i++) {
-      const row = rows[i];
-      const identifier = row[userNameColIndex];
-      if (!identifier) continue;
-
-      const userName = identifier;
-      const fullName = usesUserName
-        ? (fullNameLookup.get(identifier) || identifier)
-        : identifier;
-
-      const stats: PlayerStatRow = {
-        userName,
-        fullName,
-        selected: 0,
-        reserve: 0,
-        reserveTeam: 0,
-        opposition: 0,
-        withdrawn: 0,
-        cancelled: 0,
-        abandoned: 0,
-        entered: 0,
-        total: 0,
-      };
-
-      let hasAnyEntry = false;
-
-      for (let j = 0; j < headers.length; j++) {
-        const tabName = headers[j];
-        if (!tabName || !gameTabNames.has(tabName)) continue;  // only count known game columns
-        const cellValue = row[j];
-        if (!cellValue) continue;
-
-        hasAnyEntry = true;
-
-        if (cancelledTabNames.has(tabName)) {
-          stats.cancelled++;
-          stats.total++;
-        } else if (abandonedTabNames.has(tabName)) {
-          stats.abandoned++;
-          stats.total++;
-        } else if ((cellValue as string).endsWith('W')) {
-          // Withdrawals are tracked but excluded from the total
-          stats.withdrawn++;
-        } else {
-          switch (cellValue) {
-            case 'P': stats.selected++;    break;
-            case 'R': stats.reserve++;     break;
-            case 'T': stats.reserveTeam++; break;
-            case 'O': stats.opposition++;  break;
-            default:  stats.entered++;     break; // E, M, D, etc.
-          }
-          stats.total++;
-        }
+    const byUser = new Map<string, PlayerStatRow>();
+    for (const e of seasonEntries) {
+      const key = e.username.toLowerCase();
+      let stats = byUser.get(key);
+      if (!stats) {
+        stats = {
+          userName: e.username,
+          fullName: fullNameLookup.get(key) || e.username,
+          selected: 0,
+          reserve: 0,
+          reserveTeam: 0,
+          opposition: 0,
+          withdrawn: 0,
+          cancelled: 0,
+          abandoned: 0,
+          entered: 0,
+          total: 0,
+        };
+        byUser.set(key, stats);
       }
 
-      if (hasAnyEntry) {
-        playerStats.push(stats);
+      if (e.status === 'C') {
+        stats.cancelled++;
+        stats.total++;
+      } else if (e.status === 'A') {
+        stats.abandoned++;
+        stats.total++;
+      } else if (e.withdrawn) {
+        // Withdrawals are tracked but excluded from the total
+        stats.withdrawn++;
+      } else {
+        if (e.status === 'O' || e.status === '') stats.entered++;        // entries still open
+        else if (e.selection === 'Y') stats.selected++;
+        else if (e.selection === 'O') stats.opposition++;
+        else stats.reserve++;                                              // unselected after close = reserve
+        stats.total++;
       }
     }
+    const playerStats = Array.from(byUser.values());
 
     // Default sort: alphabetical by fullName
     playerStats.sort((a, b) => a.fullName.localeCompare(b.fullName));

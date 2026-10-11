@@ -7,12 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import {
-  getPlayerEntries,
-  getColumnMap,
-  getSheetsClient,
-  getFriendliesSpreadsheetId,
-} from '@/lib/friendlies-sheets';
+import { getSeasonEntryCodes } from '@/lib/fixture-groups-supabase';
 import { getFixtures } from '@/lib/fixtures-supabase';
 import { getAllUsers } from '@/lib/members-supabase';
 import { hasRole } from '@/lib/role-utils';
@@ -28,18 +23,22 @@ type DisplayStatus =
   | 'Abandoned'
   | 'Entered';
 
+type SeasonEntry = Awaited<ReturnType<typeof getSeasonEntryCodes>>[number];
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Derive a human-readable status label for a (playerStatus, gameStatus) pair */
-function getDisplayStatus(playerStatus: string, gameStatus: string): DisplayStatus {
-  if (gameStatus === 'C') return 'Cancelled';
-  if (gameStatus === 'A') return 'Abandoned';
-  if (playerStatus.endsWith('W')) return 'Withdrawn';
-  if (playerStatus === 'P') return 'Selected';
-  if (playerStatus === 'R') return 'Reserve';
-  if (playerStatus === 'T') return 'Reserve Team';
-  if (playerStatus === 'O') return 'Opposition';
-  return 'Entered'; // E, M, D, or any other code
+/**
+ * Human-readable status for one entry. Selection outcomes only show once the team is
+ * published (S/P) — before that a player is just "Entered", as before.
+ */
+function getDisplayStatus(e: SeasonEntry): DisplayStatus {
+  if (e.status === 'C') return 'Cancelled';
+  if (e.status === 'A') return 'Abandoned';
+  if (e.withdrawn) return 'Withdrawn';
+  if (e.status !== 'S' && e.status !== 'P') return 'Entered';
+  if (e.selection === 'Y') return 'Selected';
+  if (e.selection === 'O') return 'Opposition';
+  return 'Reserve';
 }
 
 /** Parse DD/MM/YYYY → timestamp for sorting */
@@ -70,29 +69,26 @@ export async function GET(request: NextRequest) {
       targetUser = requestedUser;
     }
 
-    // Fetch player entries and games in parallel
-    const [entries, games] = await Promise.all([
-      getPlayerEntries(targetUser),
-      getFixtures(),
-    ]);
-
-    // Build a fast tabName → game lookup
-    const gameMap = new Map(games.map(g => [g.tabName, g]));
+    // Every season entry (one per entry, anchored to its game) and the fixtures
+    const [seasonEntries, games] = await Promise.all([getSeasonEntryCodes(), getFixtures()]);
+    const gameById = new Map(games.map(g => [g.id, g]));
+    const target = targetUser.toLowerCase();
 
     // Build the per-game detail list
-    const detail = entries
-      .map(entry => {
-        const game = gameMap.get(entry.tabName);
-        if (!game) return null; // orphaned column (game deleted from sheet)
+    const detail = seasonEntries
+      .filter(e => e.username.toLowerCase() === target)
+      .map(e => {
+        const game = gameById.get(e.fixtureId);
+        if (!game) return null;
         return {
-          tabName: entry.tabName,
+          tabName: e.tabName,
           date: game.date,
           clubName: game.clubName,
           format: game.format,
           homeAway: game.homeAway as string,
           gameStatus: game.status,
-          playerStatus: entry.status as string,
-          displayStatus: getDisplayStatus(entry.status, game.status),
+          playerStatus: e.code as string,
+          displayStatus: getDisplayStatus(e),
         };
       })
       .filter((x): x is NonNullable<typeof x> => x !== null)
@@ -122,12 +118,17 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // For Captain/Admin: also return a list of all players who have entries
-    // so the UI can render a player selector dropdown
+    // For Captain/Admin: also return everyone with at least one entry this season so
+    // the UI can render a player selector dropdown
     let playerList: { userName: string; fullName: string }[] | null = null;
-
     if (isCaptainOrAdmin) {
-      playerList = await buildPlayerList();
+      const allUsers = await getAllUsers();
+      const fullNames = new Map(allUsers.filter(u => u.userName).map(u => [u.userName.toLowerCase(), u.fullName || u.userName]));
+      const seen = new Map<string, string>();
+      for (const e of seasonEntries) seen.set(e.username.toLowerCase(), e.username);
+      playerList = Array.from(seen.values())
+        .map(userName => ({ userName, fullName: fullNames.get(userName.toLowerCase()) || userName }))
+        .sort((a, b) => a.fullName.localeCompare(b.fullName));
     }
 
     return NextResponse.json({ detail, summary, targetUser, playerList });
@@ -135,53 +136,4 @@ export async function GET(request: NextRequest) {
     console.error('GET /api/friendlies/stats error:', error);
     return NextResponse.json({ error: 'Failed to fetch stats' }, { status: 500 });
   }
-}
-
-// ── Helper: build player list from Players sheet ──────────────────────────────
-
-/**
- * Return { userName, fullName } for every player who has at least one entry
- * in the Players sheet, sorted by fullName.
- */
-async function buildPlayerList(): Promise<{ userName: string; fullName: string }[]> {
-  const spreadsheetId = getFriendliesSpreadsheetId();
-  const sheets = getSheetsClient();
-  const colMap = await getColumnMap(spreadsheetId, 'Players');
-
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: 'Players!A:ZZ',
-  });
-
-  const rows = response.data.values || [];
-
-  const userNameColIndex = colMap['user_name'] ?? colMap['full_name'] ?? colMap['name'] ?? 0;
-  const usesUserName = colMap['user_name'] !== undefined;
-
-  // Build fullName lookup from Postgres members when Players sheet uses userName
-  const fullNameLookup = new Map<string, string>();
-  if (usesUserName) {
-    const allUsers = await getAllUsers();
-    for (const u of allUsers) {
-      if (u.userName && u.fullName) fullNameLookup.set(u.userName, u.fullName);
-    }
-  }
-
-  const result: { userName: string; fullName: string }[] = [];
-
-  for (let i = 1; i < rows.length; i++) {
-    const row = rows[i];
-    const identifier = row[userNameColIndex];
-    if (!identifier) continue;
-
-    const userName = identifier;
-    const fullName = usesUserName
-      ? (fullNameLookup.get(identifier) || identifier)
-      : identifier;
-
-    result.push({ userName, fullName });
-  }
-
-  result.sort((a, b) => a.fullName.localeCompare(b.fullName));
-  return result;
 }

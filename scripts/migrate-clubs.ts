@@ -28,8 +28,8 @@
  * "ERowland A Contact,Mens Captain") is kept with just the Rowland role(s) stripped.
  *
  * Run with:
- *   npx dotenv -e .env.local -- npx tsx scripts/migrate-clubs.ts          (redacted, Dev)
- *   npx dotenv -e .env.local -- npx tsx scripts/migrate-clubs.ts --no-redact  (real cutover, Prod only)
+ *   npx dotenv -e .env.dev.local -- npx tsx scripts/migrate-clubs.ts          (redacted, Dev)
+ *   npx dotenv -e .env.dev.local -- npx tsx scripts/migrate-clubs.ts --no-redact  (real cutover, Prod only)
  */
 
 import { getClubs, getMatchDayContactsSpreadsheetId } from '../src/lib/clubs-sheets';

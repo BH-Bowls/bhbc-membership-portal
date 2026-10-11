@@ -51,6 +51,9 @@ export default function FriendliesClubsPage() {
     <div className="min-h-screen bg-gray-50">
 
       <div className="container mx-auto px-4 py-8 max-w-3xl">
+        <Link href="/fixtures/season-planning/friendlies" className="text-sm text-blue-600 hover:text-blue-800 inline-block mb-2">
+          ← Friendlies
+        </Link>
         <h1 className="text-2xl font-bold text-gray-900 mb-1">Season Planning</h1>
         <p className="text-sm text-gray-700 mb-4">
           Clubs — last year's fixture count against each club, and a way in to contacts, outreach, and fixture history.

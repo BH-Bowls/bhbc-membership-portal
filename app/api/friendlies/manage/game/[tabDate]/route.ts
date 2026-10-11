@@ -2,9 +2,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGameSheet, getEnteredPlayers } from '@/lib/friendlies-sheets';
-import { getFixtureByTabName, getFixtures } from '@/lib/fixtures-supabase';
-import { hasRole } from '@/lib/role-utils';
+import { getGameSheet, getGroupFixtures, fixtureDisplayName } from '@/lib/fixture-groups-supabase';
+import { getFixtureByTabName, getTeaRotaEntry } from '@/lib/fixtures-supabase';
+import { canManageGame, getSquadForFixture } from '@/lib/squads-supabase';
 
 export async function GET(
   request: NextRequest,
@@ -18,11 +18,6 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Verify user is Captain or Admin
-    if (!hasRole(session.user.role, 'Captain', 'Admin')) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-
     const { tabDate } = await params;
     // Note: Despite the param name, this is actually the tabName (sheet name)
     const tabName = decodeURIComponent(tabDate);
@@ -34,6 +29,12 @@ export async function GET(
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
 
+    // Captain/Admin, or — for a league / Club Team game — the squad's organisers
+    if (!(await canManageGame(game, session.user.userName, session.user.role))) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    const squad = await getSquadForFixture(game);
+
     // Verify game status is X, S, or C (Selecting, Selected, or Cancelled)
     if (!['X', 'S', 'C'].includes(game.status)) {
       return NextResponse.json(
@@ -44,19 +45,9 @@ export async function GET(
 
     const players = await getGameSheet(game.tabName);
 
-    // Cross-check: players with 'E' in Players sheet who are missing from the game sheet.
-    // This detects race-condition entries where updatePlayerEntry succeeded but
-    // addPlayerToGameSheet was overwritten by a concurrent entry at the same instant.
-    let orphanedEntries: { userName: string; fullName: string }[] = [];
-    try {
-      const playersSheetEntries = await getEnteredPlayers(game.tabName);
-      const gameSheetNames = new Set(players.map(p => p.name.toLowerCase()));
-      orphanedEntries = playersSheetEntries
-        .filter(p => p.status === 'E' && !gameSheetNames.has(p.userName.toLowerCase()))
-        .map(p => ({ userName: p.userName, fullName: p.fullName }));
-    } catch {
-      // Non-critical — proceed without orphan detection if this fails
-    }
+    // Entries live in one table now, so the old Players-sheet vs game-sheet orphan
+    // check can't find anything — kept in the response shape for the page.
+    const orphanedEntries: { userName: string; fullName: string }[] = [];
 
     // Mark captain from Games sheet (game.captain = userName).
     // If the Games sheet has no captain yet, fall back to game sheet captain field (legacy data).
@@ -93,22 +84,21 @@ export async function GET(
       return a.fullName.localeCompare(b.fullName);
     });
 
-    // Resolve the paired game (the other game on the same date flagged paired),
-    // so the UI can offer "move reserve to the other game" actions. Both 'Y'
-    // (open pair) and 'C' (closed/split pair) count as linked for moves.
-    const isLinked = (p: string | undefined) => p === 'Y' || p === 'C';
-    let pairedTabName = '';
-    let pairedClubName = '';
-    if (isLinked(game.paired)) {
-      const seasonGames = await getFixtures();
-      for (const g of seasonGames) {
-        if (isLinked(g.paired) && g.date === game.date && g.tabName !== game.tabName) {
-          pairedTabName = g.tabName;
-          pairedClubName = g.clubName || g.description || '';
-          break;
-        }
-      }
-    }
+    // The other games in this game's group (linked games / reserve games). Their
+    // reserves are this game's reserves — one shared pool — so there's nothing to move
+    // between them: a reserve picked here simply drops off the other games' lists.
+    // (A squad's other fixtures are separate games, not linked ones — nothing shared.)
+    const groupGames = game.groupId && !squad
+      ? (await getGroupFixtures(game.groupId))
+          .filter(g => g.id !== game.id)
+          .map(g => ({
+            tabName: g.tabName,
+            name: fixtureDisplayName(g),
+            status: g.status,
+            selected: g.selected,
+            isReserve: !!g.reserveOf,
+          }))
+      : [];
 
     return NextResponse.json({
       orphanedEntries,
@@ -127,9 +117,11 @@ export async function GET(
         entered: game.entered,
         selected: game.selected,
         reserves: game.reserves,
-        paired: game.paired || '',
-        pairedTabName,
-        pairedClubName,
+        groupGames,
+        isReserve: game.isReserve, // a reserve game supplies both sides: teams × 2
+        // League / Club Team game: the squad, and its teas (home games — any two squad members)
+        squad: squad ? { id: squad.id, label: squad.label, squadType: squad.squadType } : null,
+        teas: squad && game.homeAway === 'H' ? await squadTeas(game.id) : null,
         pickupInfo: game.pickupInfo || '',
         specialInstructions: game.specialInstructions || '',
       },
@@ -141,4 +133,10 @@ export async function GET(
       { status: 500 }
     );
   }
+}
+
+/** League teas for a home squad game: the two tea usernames ('' when not set). */
+async function squadTeas(fixtureId: string): Promise<{ lead: string; first: string }> {
+  const entry = await getTeaRotaEntry(fixtureId);
+  return { lead: entry ? entry.teaLead : '', first: entry ? entry.teaFirst : '' };
 }

@@ -288,7 +288,6 @@ async function fetchGamesRows(): Promise<ReportRow[]> {
     who: f.who,
     last_modified_by: f.lastModifiedBy,
     last_modified_date: f.lastModifiedDate,
-    paired: f.paired,
     game_type: f.gameType,
     club_suffix: f.clubSuffix,
     special_instructions: f.specialInstructions,
@@ -305,7 +304,7 @@ const GAMES_COLUMNS: SchemaColumn[] = [
   col('status', 'Status'), col('max_players', 'Max Players'), col('entered', 'Entered'), col('selected', 'Selected'),
   col('reserves', 'Reserves'), col('bhbc_score', 'BHBC Score'), col('opponent_score', 'Opponent Score'),
   col('reason', 'Reason'), col('who', 'Who'), col('last_modified_by', 'Last Modified By'), col('last_modified_date', 'Last Modified Date'),
-  col('paired', 'Paired'), col('game_type', 'Game Type'), col('club_suffix', 'Club Suffix'),
+  col('game_type', 'Game Type'), col('club_suffix', 'Club Suffix'),
   col('special_instructions', 'Special Instructions'), col('pickup_info', 'Pickup Info'), col('captain', 'Captain'),
   col('needs_players', 'Needs Players'), col('description', 'Description'),
 ];

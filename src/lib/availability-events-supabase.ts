@@ -507,7 +507,26 @@ export async function upsertVisitorResponse(
  */
 export async function getEventRoster(event: AvailabilityEvent): Promise<AvailabilityInvitee[]> {
   if (!event.groupId) return [];
-  const members = await getGroupMembers(event.groupId);
+  const allMembers = await getGroupMembers(event.groupId);
+
+  // Inactive members (left a linked squad) stay on a poll only if they'd already
+  // answered it — so past answers still show, but they aren't on polls they never saw
+  const inactiveNames = allMembers.filter((m) => !m.active && m.userName).map((m) => m.userName);
+  const answered = new Set<string>();
+  if (inactiveNames.length > 0) {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from('availability_responses')
+      .select('username')
+      .eq('event_id', event.eventId)
+      .in('username', inactiveNames);
+    if (error) throw new Error(`Failed to fetch responses: ${error.message}`);
+    for (const r of data || []) {
+      if (r.username) answered.add(r.username);
+    }
+  }
+  const members = allMembers.filter((m) => m.active || answered.has(m.userName));
+
   return members.map((m) => ({
     inviteeId: m.memberId,
     eventId: event.eventId,

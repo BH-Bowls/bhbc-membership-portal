@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGameSheet, updateGameSheet } from '@/lib/friendlies-sheets';
+import { getGameSheet, confirmForFixture } from '@/lib/fixture-groups-supabase';
 import { getFixtureByTabName } from '@/lib/fixtures-supabase';
 import { ConfirmParticipationRequest } from '@/lib/types/friendlies';
 import { getUserByUsername } from '@/lib/members-supabase';
@@ -73,7 +73,7 @@ export async function POST(request: NextRequest) {
     // Resolve each target to a selected game-sheet row. A target who isn't a selected
     // player is skipped. For a plain self-confirm (no buddies) preserve the clear
     // "not in game / not selected" errors.
-    const updates: { rowNumber: number; status: string }[] = [];
+    const toConfirm: string[] = [];
     for (const target of targets) {
       let player = null;
       for (const p of players) {
@@ -89,16 +89,18 @@ export async function POST(request: NextRequest) {
         }
       }
       if (player && selected) {
-        updates.push({ rowNumber: player.rowNumber, status: 'Y' });
+        toConfirm.push(player.name);
       }
     }
 
-    if (updates.length === 0) {
+    if (toConfirm.length === 0) {
       return NextResponse.json({ error: 'No selected players to confirm' }, { status: 400 });
     }
 
-    // Update confirmation status to 'Y' (confirmed) for the caller + any buddies
-    await updateGameSheet(game.tabName, updates);
+    // Confirm the caller + any buddies (on the entry — reserves confirm too)
+    for (const name of toConfirm) {
+      await confirmForFixture(game, name, true);
+    }
 
     // Send ICS confirmation email (fire-and-forget — failure does not affect the response)
     // Gated by ICS_UPDATE_EMAILS flag; Gmail users always skipped

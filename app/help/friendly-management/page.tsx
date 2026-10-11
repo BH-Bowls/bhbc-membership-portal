@@ -103,8 +103,8 @@ export default function HelpFriendlyManagementPage() {
               after the game has been published, you will be asked whether to{' '}
               <strong>Withdraw</strong> them (marks them as withdrawn in the stats) or{' '}
               <strong>Remove</strong> them completely (no trace in the stats — for example a
-              player added in error). To move a player between paired games, use the{' '}
-              <strong>→</strong> reserve checkboxes instead (see Paired games below).
+              player added in error). In linked games the reserves are shared, so there&apos;s
+              nothing to move — just pick a reserve on the other game&apos;s page (see Linked games below).
             </Note>
           </HelpSection>
 
@@ -349,52 +349,48 @@ export default function HelpFriendlyManagementPage() {
             </Body>
           </HelpSection>
 
-          <HelpSection title="Paired games">
+          <HelpSection title="Linked games">
             <Body>
-              A paired game is when two separate games take place on the same date — for example
-              a fixture against two different clubs, or a Ladies game and a Men&apos;s game.
-              Members enter a single combined pool; the captain picks one game, then moves the
-              players who aren&apos;t needed across to the other game.
+              Linked games are two (or more) games on the same date that share one list of
+              entries — for example a home and an away game, or two home games filling the green.
+              Members enter the <em>occasion</em> once, and the captains pick each player into one
+              of the games. A player can only ever be picked for one game of the occasion.
             </Body>
             <Body>
-              Paired games appear as a single combined row in the Manage table, highlighted in
-              purple. The workflow is:
+              While entries are open, linked games appear as a single row in the Manage table. The
+              workflow is:
             </Body>
-            <Step n={1}><strong>Open Both</strong> — opens both games together for entries. Members see one combined card and enter as normal; every entry goes into the <em>first</em> game of the pair (the second starts empty).</Step>
-            <Step n={2}><strong>Close</strong> — closes both games for entry and moves them straight to Selecting. There is no separate allocation step.</Step>
-            <Step n={3}>Open the <strong>first</strong> game and pick its team as usual. Everyone who entered is here; anyone you don&apos;t pick becomes a reserve.</Step>
-            <Step n={4}>Move the overflow into the second game: while editing, tick the <strong>→ [other club]</strong> box on each reserve you want to move, then <strong>Save</strong>. They move across as reserves (see below).</Step>
-            <Step n={5}>Open the <strong>second</strong> game and pick its team from the players you moved over.</Step>
+            <Step n={1}><strong>Open them together</strong> — on an Upcoming game, choose <strong>Open linked with [other game]</strong> from the actions menu. Members see one card and enter once. If the games are home and away (or otherwise different), they can say which they&apos;d rather play: <em>only</em> one, <em>prefer</em> one, or no preference.</Step>
+            <Step n={2}><strong>Close</strong> — closes entries for all the linked games at once and moves them to Selecting. Everyone who entered is a reserve for all of them.</Step>
+            <Step n={3}>Open either game and pick its team. The other games of the occasion are listed at the top of the page with links.</Step>
+            <Step n={4}>Open the other game and pick its team. Anyone already picked for the first game no longer appears; everyone not yet picked is still there as a reserve.</Step>
             <Body>
-              <strong>Setting up a paired game:</strong> tick the <strong>Paired game</strong>{' '}
-              checkbox on both games when adding or editing them in Fixtures Admin
-              (Admin → Fixtures Management). Both games on that date must be ticked — the system
-              then groups them together automatically in the Manage view.
+              Each player&apos;s preference shows under their selection: green when they chose this
+              game, amber when they prefer the other one, red when they entered &quot;other game
+              only&quot; — selecting a red player asks you to confirm first.
             </Body>
             <Note>
-              Paired games must be the same <strong>section</strong> (the Ladies/Men field) —
-              usually both Mixed. You can&apos;t pair a Mixed game with a Ladies (or Men) game: the
-              system blocks it both when you tick <strong>Paired game</strong> and again at{' '}
-              <strong>Open Both</strong>. If two games were paired by mistake, untick{' '}
-              <strong>Paired game</strong> on one of them in Fixtures Admin to separate them.
+              Linked games must be the same <strong>section</strong> (the Ladies/Men field) —
+              usually both Mixed. The system blocks opening a Mixed game linked with a Ladies (or
+              Men) game.
             </Note>
             <Note>
-              The Message button on a paired row sets the message for the first game. If you need
-              separate messages, set the second game&apos;s message on its own selection page.
+              Cancelling one game of a linked occasion asks whether to return its selected players
+              to the reserves, so they can be picked for the game that&apos;s still on. Leave it
+              unticked to keep their selection as it was.
             </Note>
           </HelpSection>
 
-          <HelpSection title="Moving reserves between paired games">
+          <HelpSection title="Shared reserves">
             <Body>
-              On the selection page of a paired game, each <strong>reserve</strong> row shows a{' '}
-              <strong>→ [other club]</strong> checkbox while you are editing. Tick the reserves you
-              want to send to the paired game and click <strong>Save</strong> — they are removed
-              here and added as reserves to the other game in a single step.
+              The reserves of a linked occasion belong to the whole occasion, not to one game. They
+              appear on every game&apos;s selection page (and on each game&apos;s match card as
+              &quot;Reserves (shared with …)&quot;) until they are picked for one of them.
             </Body>
             <Note>
-              Only reserves can be moved, so a player you have already picked is never disturbed —
-              and if you re-pick someone you had ticked, they are safely left in place. The usual
-              approach is to pick the larger team first, then move the rest across to the other game.
+              If two captains happen to pick the same reserve for different games at the same time,
+              the second save tells you that player has just been picked for the other game. Changing
+              a picked player back to <strong>R</strong> returns them to the shared reserves.
             </Note>
           </HelpSection>
 
@@ -405,16 +401,16 @@ export default function HelpFriendlyManagementPage() {
               players away.
             </Body>
             <Step n={1}><strong>Close entries</strong> so the game moves to <strong>Selecting</strong>, then open its selection page.</Step>
-            <Step n={2}>Click <strong>Add Reserve Game</strong>. A dialog asks for the reserve team&apos;s <strong>name</strong> (defaults to &quot;[Club] BH Reserves&quot;) and its <strong>format</strong> (defaults to the original game&apos;s). Adjust if needed and confirm — this creates the second game with that name and pairs the two together.</Step>
-            <Step n={3}>The two now behave exactly like a paired game: pick the first, move the overflow reserves into the second with the <strong>→</strong> checkboxes, then pick the second.</Step>
+            <Step n={2}>Click <strong>Add Reserve Game</strong>. A dialog asks for the reserve team&apos;s <strong>name</strong> (defaults to &quot;[Club] BH Reserves&quot;) and its <strong>format</strong> (defaults to the original game&apos;s). Adjust if needed and confirm — this creates the reserve game, linked to the original so the two share their reserves.</Step>
+            <Step n={3}>Open the reserve game (it&apos;s listed at the top of the original&apos;s selection page) and pick its teams from the shared reserves. A reserve game is Burgess Hill v Burgess Hill, so it needs <strong>twice</strong> the teams its format suggests — &quot;2 Triples&quot; means four teams.</Step>
             <Step n={4}><strong>Recording the result:</strong> a reserve team is usually Burgess Hill players against other Burgess Hill players, so there is often no real score. When marking it Played, tick <strong>No score (e.g. reserve team)</strong> and enter a reason — it defaults to &quot;Reserve Team&quot;.</Step>
             <Note>
               The <strong>Add Reserve Game</strong> button only appears while the game is{' '}
               <strong>Selecting</strong> — i.e. entries are closed but the team has not yet been
               published. It is <strong>not</strong> shown once the team is{' '}
               <strong>Selected/Published</strong> (take it back to Selecting first), nor on an Open
-              game, nor while you are editing the selection, nor once the game is already paired, and
-              only when at least eight players over a full team.
+              game, nor while you are editing the selection, nor on a reserve game itself, nor once the
+              game already has one, and only when at least eight players over a full team.
             </Note>
           </HelpSection>
 

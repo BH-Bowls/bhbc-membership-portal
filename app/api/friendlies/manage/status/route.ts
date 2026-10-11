@@ -1,37 +1,37 @@
 // app/api/friendlies/manage/status/route.ts
 // API endpoint for captains to change game status through the full lifecycle
 // Status flow: blank → O (Open) → X (Selecting) → S (Selected) → P (Played)
-// Paired games use L status for allocation before game sheets are created
 // Alternative endings: C (Cancelled) or A (Abandoned)
-// Each transition creates necessary Google Sheets structures and enforces business rules
 //
-// Fixture-row concerns (status, scores, reason/who, needs-players flag, paired flag,
-// captain-of-the-day, tea rota) live in Postgres (fixtures-supabase.ts). Player/roster
-// concerns (the Players EAV tab, individual per-game sheet tabs) stay on Sheets, keyed
-// by tabName — those functions never required the fixture to exist as a Sheets row.
+// Opening creates the fixture's group (fixture-groups-supabase.ts) — a group of one, or
+// several games opened together as a linked occasion. Open/close and their undos act
+// on the whole group (one shared entry window); from Selecting onward each game moves
+// on its own.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getAppUrl } from '@/lib/app-url';
 import {
-  createGameColumn,
-  createGameSheet,
-  getGameSheet,
-  markGamePlayerEntriesAs,
-  updateGameSheetStats,
-  markBlankSelectionsAsReserve,
+  openFixtures,
+  setGroupFixturesStatus,
+  getFixtureRoster,
+  returnSelectionsToPool,
   appendManageLog,
-} from '@/lib/friendlies-sheets';
-import { getFixtures, updateFixture, getTeaRotaEntry, type Fixture } from '@/lib/fixtures-supabase';
-// addPlayerToGameSheet / removePlayerFromGameSheet imported below in enter/withdraw routes
+} from '@/lib/fixture-groups-supabase';
+import { getFixtures, updateFixture, getTeaRotaEntry, getGameByIdOrTab, type Fixture } from '@/lib/fixtures-supabase';
+import { canManageGame, getSquadForFixture } from '@/lib/squads-supabase';
+import { sendSquadTeamPublishedEmails } from '@/lib/email/squads';
 import { sendGamePublishedEmail, sendTeaRotaEmail, sendGameCancelledEmail, sendTeaRotaCancelledEmail } from '@/lib/email/friendlies';
 import { getAllUsers } from '@/lib/members-supabase';
 import { clearAllDiaryCaches, clearSheetDataCacheByPrefix } from '@/lib/home-cache';
-import { ChangeStatusRequest, ChangeStatusResponse, GameStatus } from '@/lib/types/friendlies';
+import { ChangeStatusRequest, ChangeStatusResponse, GameStatus, GameSheetPlayer } from '@/lib/types/friendlies';
 import { hasRole } from '@/lib/role-utils';
 
-// POST handler - Changes game status with validation and sheet creation
+// Statuses after which a game's outcome is settled (for "is this the last game in the group?")
+const PAST_SELECTING = ['S', 'P', 'C', 'A'];
+
+// POST handler - Changes game status with validation
 export async function POST(request: NextRequest) {
   try {
     // Verify user is authenticated
@@ -42,14 +42,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Only Captains and Admins can change game status
-    if (!hasRole(session.user.role, 'Captain', 'Admin')) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-
     // Parse request body
     const body: ChangeStatusRequest = await request.json();
     const { tab_name, id, action, expected_status, bhbc_score, opponent_score, no_score, reason, who, send_email, email_player_names, send_tea_rota_email, publish_message } = body;
+    const actor = session.user.userName;
 
     // Fetch all fixtures for the active season
     const games = await getFixtures();
@@ -64,10 +60,25 @@ export async function POST(request: NextRequest) {
     if (!game && tab_name && tab_name.trim() !== '') {
       game = games.find(g => g.tabName === tab_name) || null;
     }
+    // Club Team games aren't in the general fixture list — look them up directly
+    if (!game) {
+      game = await getGameByIdOrTab(id, tab_name);
+    }
 
     // Return 404 if game doesn't exist
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
+    }
+
+    // Captains and Admins can change any game's status. A league / Club Team game's
+    // squad organisers can publish it from the selection page (results and cancelling
+    // are on the squad page).
+    const squad = await getSquadForFixture(game);
+    if (!hasRole(session.user.role, 'Captain', 'Admin')) {
+      const organiserAction = ['publish', 'republish', 'unpublish'].includes(action);
+      if (!squad || !organiserAction || !(await canManageGame(game, session.user.userName, session.user.role))) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      }
     }
 
     const statusLabel = (s: string) => ({ '': 'Upcoming', O: 'Open', X: 'Selecting', S: 'Selected', P: 'Played', C: 'Cancelled', A: 'Abandoned' }[s] ?? s);
@@ -83,86 +94,32 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Generate effectiveTabName - this will be used for all operations
-    // Format: "ClubName DD MMM YY" (e.g., "West Hoathly 13 Jan 25")
-
-    // Use tabDate field if available, otherwise format the date field
-    let tabDatePart = game.tabDate || '';
-
-    if (!tabDatePart || tabDatePart.trim() === '') {
-      // Parse date from various formats
-      const formatTabDate = (dateStr: string): string => {
-        if (!dateStr) return '';
-
-        // Try format: "Day, DD Month" (e.g., "Sun, 26 April")
-        const dayMonthMatch = dateStr.match(/(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),?\s+(\d{1,2})\s+(\w+)/i);
-        if (dayMonthMatch) {
-          const day = dayMonthMatch[1].padStart(2, '0');
-          const monthName = dayMonthMatch[2];
-
-          // Get current year or next year based on month
-          const now = new Date();
-          const currentMonth = now.getMonth();
-          const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-          const monthIndex = monthNames.findIndex(m => monthName.toLowerCase().startsWith(m.toLowerCase()));
-
-          // If month has passed this year, assume next year
-          let year = now.getFullYear();
-          if (monthIndex !== -1 && monthIndex < currentMonth - 1) {
-            year++;
-          }
-
-          const shortYear = year.toString().slice(-2);
-          const shortMonth = monthNames[monthIndex] || monthName.slice(0, 3);
-          return `${day} ${shortMonth} ${shortYear}`;
-        }
-
-        // Try format: "DD/MM/YYYY" or "DD/MM/YY"
-        const parts = dateStr.split('/');
-        if (parts.length === 3) {
-          const day = parts[0].padStart(2, '0');
-          const month = parts[1];
-          let year = parts[2];
-          if (year.length === 4) {
-            year = year.slice(-2);
-          }
-          const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-          const monthIndex = parseInt(month, 10) - 1;
-          const monthName = monthNames[monthIndex] || month;
-          return `${day} ${monthName} ${year}`;
-        }
-
-        return '';
-      };
-
-      tabDatePart = formatTabDate(game.date);
-    }
-
-    // Prefer the fixture's stored tab name — it is the canonical Players-tab/sheet key.
-    // Reconstruct from club name + date only for a game being opened for the first time
-    // (no tab name yet). This keeps reserve games (tab "<orig>-2") and any game whose
-    // club_name differs from its tab (e.g. a renamed reserve team) resolving correctly.
-    const effectiveTabName = (game.tabName && game.tabName.trim() !== '')
-      ? game.tabName.trim()
-      : `${game.clubName} ${tabDatePart}`.trim();
-
     // Get current status (empty string if not set)
-    let currentStatus = game.status;
-    if (!currentStatus) {
-      currentStatus = '';
-    }
+    const currentStatus: GameStatus = game.status || '';
 
-    // Track new status and whether game sheet was created
+    // Track new status
     let newStatus: GameStatus = currentStatus;
-    let gameSheetCreated = false;
-    let statusAlreadyUpdated = false; // set true when a case calls updateFixture early
+    let statusAlreadyUpdated = false; // set true when a case writes the status itself
     let emailResult: { emailsSent?: number; playersWithoutEmail?: string[]; emailError?: string } = {};
     let teaRotaEmailResult: { emailsSent?: number; membersWithoutEmail?: string[]; emailError?: string } = {};
+    const log = (fixture: Fixture, from: string, to: string, details?: Record<string, unknown>) =>
+      appendManageLog({ username: actor, action: `status:${to}`, tabName: fixture.tabName, fixtureId: fixture.id, groupId: fixture.groupId, oldStatus: from, newStatus: to, details });
 
-    // Handle different status transition actions with validation and sheet operations
+    // Other games in this game's group (linked games / reserve games)
+    // Emails name a squad game by its league (or Club Team) and opponent, e.g.
+    // "N/S A v Newick" — a Club Team opponent may be free text rather than a club.
+    const emailGame: Fixture = squad
+      ? { ...game, clubName: `${squad.squadType === 'league' ? game.gameType : squad.label} v ${game.clubName || game.description || 'TBC'}` }
+      : game;
+
+    // (A squad's other fixtures are separate games, not linked ones.)
+    const groupMates = game.groupId && !squad ? games.filter(g => g.groupId === game!.groupId && g.id !== game!.id) : [];
+
+    // Handle different status transition actions with validation
     switch (action) {
-      // OPEN: Transition from blank to 'O' (Open for player entries)
-      case 'open':
+      // OPEN: blank → 'O'. Creates the group; link_ids ("Open linked with …") open
+      // several same-date games together as one linked occasion.
+      case 'open': {
         if (currentStatus !== '') {
           return NextResponse.json(
             { error: `Can only open Upcoming games — this game is ${statusLabel(currentStatus)}. Refresh the game list.` },
@@ -170,51 +127,33 @@ export async function POST(request: NextRequest) {
           );
         }
 
-        // Trap a mismatched pair before opening: paired games must be the same section
-        // (Ladies/Men — usually both Mixed). Catches games paired together by mistake.
-        if (game.paired === 'Y' || game.paired === 'C') {
-          const thisSection = (game.ladiesMen || '').trim().toLowerCase();
-          for (let i = 0; i < games.length; i++) {
-            const other = games[i];
-            if (other.id === game.id) continue;
-            const otherPaired = other.paired === 'Y' || other.paired === 'C';
-            if (otherPaired && other.date === game.date) {
-              const otherSection = (other.ladiesMen || '').trim().toLowerCase();
-              if (thisSection && otherSection && thisSection !== otherSection) {
-                return NextResponse.json(
-                  {
-                    error: `These paired games are different sections — "${game.ladiesMen}" vs "${other.ladiesMen}". Unpair them (or fix the section) before opening. Paired games must be the same section, usually both Mixed.`,
-                  },
-                  { status: 400 }
-                );
-              }
-            }
-          }
+        let ids: string[];
+        if (game.groupId) {
+          // Re-opening after a revert to Upcoming: the whole existing group reopens
+          ids = [game.id, ...groupMates.filter(g => g.status === '').map(g => g.id)];
+        } else {
+          // Linked occasion: the other games named by the caller ("Open linked with …")
+          const linkIds = Array.isArray(body.link_ids) ? body.link_ids.filter(x => x && x !== game!.id) : [];
+          ids = [game.id, ...linkIds];
         }
 
-        // Set new status to Open
+        try {
+          const opened = await openFixtures(ids, actor);
+          for (const f of opened.fixtures) {
+            if (ids.includes(f.id)) await log(f, '', 'O');
+          }
+        } catch (openError) {
+          return NextResponse.json(
+            { error: openError instanceof Error ? openError.message : 'Failed to open game' },
+            { status: 400 }
+          );
+        }
         newStatus = 'O';
-
-        // Write the tabName and status to the fixture FIRST so that createGameColumn
-        // and createGameSheet can find/create the right Sheets structures.
-        await updateFixture(game.id, { status: newStatus, tabName: effectiveTabName, lastModifiedBy: session.user.userName });
-        await appendManageLog({ username: session.user.userName, action: `status:${newStatus}`, tabName: effectiveTabName, oldStatus: currentStatus, newStatus });
         statusAlreadyUpdated = true;
-
-        // Create column in Players sheet (skipped if it already exists)
-        await createGameColumn(effectiveTabName);
-
-        // Create the individual game sheet now (moved from Close)
-        // createGameSheet skips if sheet already exists, and deduplicates players on re-open.
-        // Skip stat computation here — stats are snapshotted for everyone at close.
-        // createGameSheet also tries to write the entered count back to a Games sheet row
-        // (best-effort, swallowed if there isn't one) — persist it to the fixture here instead.
-        const { enteredCount } = await createGameSheet(effectiveTabName, undefined, true);
-        await updateFixture(game.id, { entered: enteredCount });
-        gameSheetCreated = true;
         break;
+      }
 
-      // CLOSE: Transition from 'O' (Open) to 'X' (Selecting/Closed for entries)
+      // CLOSE: 'O' → 'X' for every game in the group (entries close together)
       case 'close':
         if (currentStatus !== 'O') {
           return NextResponse.json(
@@ -222,24 +161,16 @@ export async function POST(request: NextRequest) {
             { status: 400 }
           );
         }
-
-        // Set new status to Selecting (closed for new entries)
         newStatus = 'X';
-        // Game sheet was already created at Open time — no sheet work needed here
-        // Clear needs-players flag — entries are now closed
-        await updateFixture(game.id, { needsPlayers: false });
-        // If this is a linked game, mark the pair as closed ('Y' → 'C'). Moves
-        // still work ('C' is treated as linked), but the pair will no longer
-        // re-group for combined entry, so reopening leaves them independent.
-        if (game.paired === 'Y') {
-          await updateFixture(game.id, { paired: 'C' });
+        if (game.groupId) {
+          // Clear the needs-players flag too — entries are now closed. Unselected
+          // entrants are reserves by definition, so there's nothing to default.
+          const closedIds = await setGroupFixturesStatus(game.groupId, 'O', 'X', actor, { needs_players: '' });
+          for (const f of games.filter(g => closedIds.includes(g.id))) await log(f, 'O', 'X');
+          statusAlreadyUpdated = true;
+        } else {
+          await updateFixture(game.id, { needsPlayers: false });
         }
-        // Default any blank selections to Reserve so every active entrant is at
-        // least a reserve (captain then promotes); covers manually-added rows.
-        await markBlankSelectionsAsReserve(effectiveTabName);
-        // Snapshot every player's display stats + last-6 hover note now, at close.
-        // These are frozen from here on (the selection page no longer re-refreshes).
-        await updateGameSheetStats(effectiveTabName);
         break;
 
       // PUBLISH: Transition from 'X' (Selecting) to 'S' (Selected/Published team)
@@ -254,58 +185,59 @@ export async function POST(request: NextRequest) {
         // Set new status to Selected (team has been picked and published)
         newStatus = 'S';
 
-        // If email notification requested, send emails to all entered players
+        // If email notification requested, send emails to the game's players
         if (send_email) {
           try {
-            // Get all players from the game sheet (all entered players)
-            const gamePlayers = await getGameSheet(effectiveTabName);
-
-            // Get all users to find email addresses
-            const allUsers = await getAllUsers();
-            const userEmailMap = new Map<string, string>();
-            for (const user of allUsers) {
-              if (user.userName && user.emailAddress) {
-                userEmailMap.set(user.userName.toLowerCase(), user.emailAddress);
-              }
-            }
-
-            // Build player list with email addresses and selection status
-            let playersWithEmails = gamePlayers.map(player => ({
-              userName: player.name,
-              fullName: player.fullName || player.name,
-              email: userEmailMap.get(player.name.toLowerCase()) || null,
-              selected: player.selected,
-              team: player.team,
-              position: player.position,
-              driving: player.driving,
-              carNumber: player.carNumber,
-            }));
-
-            // If specific players requested, filter to just those usernames
-            if (email_player_names && email_player_names.length > 0) {
-              const targetSet = new Set(email_player_names.map(n => n.toLowerCase()));
-              playersWithEmails = playersWithEmails.filter(p => targetSet.has(p.userName.toLowerCase()));
-            }
-
-            // Derive app URL from the incoming request so custom domains work correctly
-            const appUrl = await getAppUrl();
-
-            // Send the email
-            const result = await sendGamePublishedEmail(game, playersWithEmails, appUrl, false, publish_message);
-
-            emailResult = {
-              emailsSent: result.emailsSent,
-              playersWithoutEmail: result.playersWithoutEmail,
-              emailError: result.error,
-            };
+            // In a linked group the reserves are shared — email them only with the last
+            // game of the group to be published, so nobody gets the same news twice.
+            const otherMainGamesPending = groupMates.some(g => !g.reserveOf && !PAST_SELECTING.includes(g.status));
+            const roster = await getFixtureRoster(game);
+            // A league / Club Team game: just the picked team (the rest of the squad are
+            // "reserves" only in the sense of who could be picked — don't email them weekly)
+            const recipients = roster.filter(p => squad ? p.selected !== 'R' : !(otherMainGamesPending && p.selected === 'R'));
+            emailResult = await emailPlayers(recipients, async (players, appUrl) =>
+              sendGamePublishedEmail(emailGame, players, appUrl, false, publish_message), email_player_names);
           } catch (emailError) {
             console.error('Error sending publish notification emails:', emailError);
             emailResult.emailError = emailError instanceof Error ? emailError.message : 'Failed to send emails';
           }
         }
 
-        // If tea rota email requested and this is a home game, email those on duty
-        if (send_tea_rota_email && game.homeAway === 'H') {
+        // League / Club Team home game: the two squad members on teas get the squad's teas
+        // email ("arrive early to set up… light snack after the game")
+        if (send_tea_rota_email && game.homeAway === 'H' && squad) {
+          try {
+            const teaEntry = await getTeaRotaEntry(game.id);
+            const teas = teaEntry ? [teaEntry.teaLead, teaEntry.teaFirst].filter(Boolean) : [];
+            if (teas.length > 0) {
+              const appUrl = await getAppUrl();
+              const result = await sendSquadTeamPublishedEmails(
+                {
+                  id: game.id,
+                  tabName: game.tabName,
+                  squadLabel: squad.label,
+                  fixtureType: game.gameType,
+                  date: game.date,
+                  time: (game.time || '').slice(0, 5),
+                  opponent: game.clubName || game.description || 'TBC',
+                  homeAway: game.homeAway,
+                  format: game.format,
+                },
+                [],
+                teas,
+                appUrl,
+                publish_message
+              );
+              teaRotaEmailResult = { emailsSent: result.emailsSent, membersWithoutEmail: result.withoutEmail };
+            }
+          } catch (teaEmailError) {
+            console.error('Error sending squad teas email:', teaEmailError);
+            teaRotaEmailResult.emailError = teaEmailError instanceof Error ? teaEmailError.message : 'Failed to send teas email';
+          }
+        }
+
+        // If tea rota email requested and this is a home friendly, email those on duty
+        if (send_tea_rota_email && game.homeAway === 'H' && !squad) {
           try {
             const teaEntry = await getTeaRotaEntry(game.id);
 
@@ -367,35 +299,9 @@ export async function POST(request: NextRequest) {
 
         if (send_email) {
           try {
-            const gamePlayers = await getGameSheet(effectiveTabName);
-            const allUsers = await getAllUsers();
-            const userEmailMap = new Map<string, string>();
-            for (const user of allUsers) {
-              if (user.userName && user.emailAddress) {
-                userEmailMap.set(user.userName.toLowerCase(), user.emailAddress);
-              }
-            }
-            let playersWithEmails = gamePlayers.map(player => ({
-              userName: player.name,
-              fullName: player.fullName || player.name,
-              email: userEmailMap.get(player.name.toLowerCase()) || null,
-              selected: player.selected,
-              team: player.team,
-              position: player.position,
-              driving: player.driving,
-              carNumber: player.carNumber,
-            }));
-            if (email_player_names && email_player_names.length > 0) {
-              const targetSet = new Set(email_player_names.map(n => n.toLowerCase()));
-              playersWithEmails = playersWithEmails.filter(p => targetSet.has(p.userName.toLowerCase()));
-            }
-            const appUrl = await getAppUrl();
-            const result = await sendGamePublishedEmail(game, playersWithEmails, appUrl, true, publish_message);
-            emailResult = {
-              emailsSent: result.emailsSent,
-              playersWithoutEmail: result.playersWithoutEmail,
-              emailError: result.error,
-            };
+            const roster = await getFixtureRoster(game);
+            emailResult = await emailPlayers(roster, async (players, appUrl) =>
+              sendGamePublishedEmail(emailGame, players, appUrl, true, publish_message), email_player_names);
           } catch (emailError) {
             console.error('Error sending republish notification emails:', emailError);
             emailResult.emailError = emailError instanceof Error ? emailError.message : 'Failed to send emails';
@@ -434,7 +340,7 @@ export async function POST(request: NextRequest) {
         break;
 
       // CANCEL: Transition to 'C' (Cancelled) - can happen from any status
-      case 'cancel':
+      case 'cancel': {
         // Validate that cancellation reason and who cancelled are provided
         if (!reason || !who) {
           return NextResponse.json(
@@ -446,48 +352,26 @@ export async function POST(request: NextRequest) {
         // Set new status to Cancelled
         newStatus = 'C';
 
-        // Email all entered players with a METHOD:CANCEL ICS
-        if (send_email) {
+        // Does another main game in the group still go ahead? Then the shared reserves
+        // aren't affected by this cancellation.
+        const otherGamesGoAhead = groupMates.some(g => !['C', 'A'].includes(g.status));
+
+        // Email the affected players with a METHOD:CANCEL ICS — read the roster BEFORE
+        // any return-to-reserves so the selected players still show against this game.
+        if (send_email && game.groupId) {
           try {
+            const roster = await getFixtureRoster(game);
+            const affected = roster.filter(p => !(otherGamesGoAhead && p.selected === 'R'));
             const allUsers = await getAllUsers();
             const userEmailMap = new Map<string, string>();
-            const userNameMap = new Map<string, string>();
             for (const user of allUsers) {
-              if (user.userName) {
-                if (user.emailAddress) userEmailMap.set(user.userName.toLowerCase(), user.emailAddress);
-                userNameMap.set(user.userName.toLowerCase(), user.fullName || user.userName);
-              }
+              if (user.userName && user.emailAddress) userEmailMap.set(user.userName.toLowerCase(), user.emailAddress);
             }
-
-            // Fetch Players sheet to find everyone who entered this game
-            const { getGoogleSheetsClient } = await import('@/lib/sheets');
-            const sheets = getGoogleSheetsClient();
-            const playersResponse = await sheets.spreadsheets.values.get({
-              spreadsheetId: process.env.FRIENDLIES_SPREADSHEET_ID!,
-              range: 'Players!A:ZZ',
-            });
-            const rows = playersResponse.data.values || [];
-            const headers = rows[0] || [];
-            const gameColIndex = headers.findIndex((h: string) => h === effectiveTabName);
-            const userNameColIndex = headers.findIndex((h: string) =>
-              h.toLowerCase().replace(/\s+/g, '_') === 'user_name'
-            );
-
-            const enteredPlayers: Array<{ userName: string; fullName: string; email: string | null }> = [];
-            if (gameColIndex !== -1 && userNameColIndex !== -1) {
-              for (let i = 1; i < rows.length; i++) {
-                const row = rows[i];
-                const entry = row[gameColIndex];
-                const uName = row[userNameColIndex];
-                if (entry && uName) {
-                  enteredPlayers.push({
-                    userName: uName,
-                    fullName: userNameMap.get(uName.toLowerCase()) || uName,
-                    email: userEmailMap.get(uName.toLowerCase()) || null,
-                  });
-                }
-              }
-            }
+            const enteredPlayers = affected.map(p => ({
+              userName: p.name,
+              fullName: p.fullName || p.name,
+              email: userEmailMap.get(p.name.toLowerCase()) || null,
+            }));
 
             const appUrl = await getAppUrl();
             const cancelResult = await sendGameCancelledEmail(game, enteredPlayers, appUrl, reason);
@@ -541,17 +425,18 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        // Mark all player entries as 'C' so stale P/R/T values don't inflate
-        // percent_played the next time update-stats runs
-        try {
-          await markGamePlayerEntriesAs(effectiveTabName, 'C');
-        } catch (e) {
-          console.error('[cancel] Failed to mark player entries as C:', e);
+        // Linked group, captain chose to: this game's selected players go back into the
+        // shared reserves so they can be picked for the game that's still on. Otherwise
+        // their selections are kept as they were.
+        if (body.return_to_reserves && otherGamesGoAhead) {
+          const returned = await returnSelectionsToPool(game.id);
+          await appendManageLog({ username: actor, action: 'return-to-reserves', tabName: game.tabName, fixtureId: game.id, groupId: game.groupId, details: { players: returned } });
         }
 
         // Clear needs-players flag
         await updateFixture(game.id, { needsPlayers: false });
         break;
+      }
 
       // ABANDON: Transition from 'S' (Selected) to 'A' (Abandoned)
       case 'abandon':
@@ -572,18 +457,13 @@ export async function POST(request: NextRequest) {
           );
         }
 
-        // Set new status to Abandoned
+        // Set new status to Abandoned (stats derive C/A from the fixture status — no
+        // per-player rewrite needed)
         newStatus = 'A';
-
-        // Mark all player entries as 'A' so they don't pollute stats
-        try {
-          await markGamePlayerEntriesAs(effectiveTabName, 'A');
-        } catch (e) {
-          console.error('[abandon] Failed to mark player entries as A:', e);
-        }
         break;
 
-      // REOPEN: Transition from 'O' (Open) back to '' (Upcoming) — undo an accidental open
+      // REOPEN: 'O' → '' (Upcoming) for the whole group — undo an accidental open.
+      // Entries are kept; opening again brings the same group back.
       case 'reopen':
         if (currentStatus !== 'O') {
           return NextResponse.json(
@@ -592,11 +472,16 @@ export async function POST(request: NextRequest) {
           );
         }
         newStatus = '';
-        // Clear needs-players flag — game is no longer open
-        await updateFixture(game.id, { needsPlayers: false });
+        if (game.groupId) {
+          const ids = await setGroupFixturesStatus(game.groupId, 'O', '', actor, { needs_players: '' });
+          for (const f of games.filter(g => ids.includes(g.id))) await log(f, 'O', '');
+          statusAlreadyUpdated = true;
+        } else {
+          await updateFixture(game.id, { needsPlayers: false });
+        }
         break;
 
-      // REOPEN-ENTRIES: Transition from 'X' (Selecting) back to 'O' (Open) — re-open entries
+      // REOPEN-ENTRIES: 'X' → 'O' for the group's games still Selecting — re-open entries
       case 'reopen-entries':
         if (currentStatus !== 'X') {
           return NextResponse.json(
@@ -605,6 +490,11 @@ export async function POST(request: NextRequest) {
           );
         }
         newStatus = 'O';
+        if (game.groupId) {
+          const ids = await setGroupFixturesStatus(game.groupId, 'X', 'O', actor);
+          for (const f of games.filter(g => ids.includes(g.id))) await log(f, 'X', 'O');
+          statusAlreadyUpdated = true;
+        }
         break;
 
       // UNPUBLISH: Transition from 'S' (Selected) back to 'X' (Selecting) — undo a publish
@@ -656,7 +546,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Update the fixture's status in Postgres (skip for republish — status unchanged,
-    // or if already updated earlier in the switch e.g. 'open' action)
+    // or if a group-level case already wrote it)
     if (action !== 'republish' && !statusAlreadyUpdated) {
       await updateFixture(game.id, {
         status: newStatus,
@@ -664,12 +554,14 @@ export async function POST(request: NextRequest) {
         opponentScore: opponent_score, // Opponent score (for played/abandoned games)
         reason,                        // Reason for cancellation/abandonment
         who,                           // Who initiated cancellation
-        lastModifiedBy: session.user.userName, // Track who made this status change
+        lastModifiedBy: actor,         // Track who made this status change
       });
-      await appendManageLog({ username: session.user.userName, action: `status:${newStatus}`, tabName: effectiveTabName, oldStatus: currentStatus, newStatus });
+      await log(game, currentStatus, newStatus);
     }
 
-    // Build success response with new status and whether game sheet was created
+    // Status changes alter what every member's diary shows
+    clearAllDiaryCaches();
+
     const response: ChangeStatusResponse & {
       emails_sent?: number;
       players_without_email?: string[];
@@ -679,8 +571,7 @@ export async function POST(request: NextRequest) {
       tea_rota_email_error?: string;
     } = {
       success: true,
-      new_status: newStatus,            // The new status code (O, X, S, P, C, or A)
-      game_sheet_created: gameSheetCreated, // True if game sheet was created (close action)
+      new_status: newStatus,
     };
 
     // Add email results if applicable
@@ -705,16 +596,53 @@ export async function POST(request: NextRequest) {
       response.tea_rota_email_error = teaRotaEmailResult.emailError;
     }
 
-    // Return success response to client
     return NextResponse.json(response);
   } catch (error) {
     // Log error details for debugging
     console.error('Error updating game status:', error);
 
-    // Return 500 error response to client
     return NextResponse.json(
       { error: 'Failed to update game status' },
       { status: 500 }
     );
   }
+}
+
+/**
+ * Build the publish-email recipient list from a roster (optionally limited to named
+ * players) and send it. Shared by publish and republish.
+ */
+async function emailPlayers(
+  roster: GameSheetPlayer[],
+  send: (
+    players: Array<{ userName: string; fullName: string; email: string | null; selected: string; team: number | null; position: string; driving: string; carNumber: string }>,
+    appUrl: string
+  ) => Promise<{ emailsSent: number; playersWithoutEmail: string[]; error?: string }>,
+  onlyNames?: string[]
+): Promise<{ emailsSent?: number; playersWithoutEmail?: string[]; emailError?: string }> {
+  const allUsers = await getAllUsers();
+  const userEmailMap = new Map<string, string>();
+  for (const user of allUsers) {
+    if (user.userName && user.emailAddress) userEmailMap.set(user.userName.toLowerCase(), user.emailAddress);
+  }
+
+  let players = roster.map(player => ({
+    userName: player.name,
+    fullName: player.fullName || player.name,
+    email: userEmailMap.get(player.name.toLowerCase()) || null,
+    selected: player.selected,
+    team: player.team,
+    position: player.position,
+    driving: player.driving,
+    carNumber: player.carNumber,
+  }));
+
+  if (onlyNames && onlyNames.length > 0) {
+    const targetSet = new Set(onlyNames.map(n => n.toLowerCase()));
+    players = players.filter(p => targetSet.has(p.userName.toLowerCase()));
+  }
+
+  const appUrl = await getAppUrl();
+  const result = await send(players, appUrl);
+  return { emailsSent: result.emailsSent, playersWithoutEmail: result.playersWithoutEmail, emailError: result.error };
 }

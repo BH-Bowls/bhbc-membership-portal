@@ -4,18 +4,13 @@
 import { GameStatus } from './types/friendlies';
 
 /**
- * Represents either a standalone game/fixture or a paired tuple.
- * Paired games share the same date and both have paired='Y'.
- * Generic so it works for both the Sheets-backed Game type and the Postgres-backed
- * Fixture type (fixtures-supabase.ts) — they share the fields this needs (paired,
- * status, date) but have different identifier fields (rowNumber vs id).
+ * Either a standalone game, or the games of one linked occasion (2+ fixtures in the
+ * same fixture group — linked games and/or a reserve game) shown as a single card.
  */
-export type GameOrPair<T> = T | [T, T];
+export type GameOrGroup<T> = T | T[];
 
-/**
- * Check if a GameOrPair is a paired tuple
- */
-export function isPairedGame<T>(item: GameOrPair<T>): item is [T, T] {
+/** True when the item is a linked group (rendered as one card). */
+export function isGameGroup<T>(item: GameOrGroup<T>): item is T[] {
   return Array.isArray(item);
 }
 
@@ -48,50 +43,43 @@ export function parseNumberRequired(format: string): number | null {
 }
 
 /**
- * Group games/fixtures that are paired (same date, both paired='Y') into tuples.
- * Only groups games in Upcoming ('') or Open ('O') status — once closed
- * (Selecting onward) the two games are managed/selected individually.
- * Preserves date ordering.
- *
- * @param games Array of Game or Fixture objects
- * @returns Array of standalone items and [A, B] tuples
+ * Group games into linked occasions for display. Games group by their fixture group
+ * (groupId) whatever their status — main games first, reserve games after. Games not
+ * yet opened have no group and always show on their own (they're linked at opening).
+ * Order follows the first game of each group in the input.
  */
-export function groupPairedGames<T extends { paired?: string; status: GameStatus; date: string }>(
-  games: T[]
-): GameOrPair<T>[] {
-  const result: GameOrPair<T>[] = [];
-  const paired = new Set<T>(); // Track items already paired (by object identity)
-
-  for (let i = 0; i < games.length; i++) {
-    const game = games[i];
-
-    // Skip if already grouped into a pair
-    if (paired.has(game)) continue;
-
-    // Only group if this game is marked as paired and in Upcoming/Open status
-    if (game.paired === 'Y' && (game.status === '' || game.status === 'O')) {
-      // Find its partner: same date, also paired='Y', also Upcoming/Open
-      const partner = games.find(
-        (g, j) =>
-          j !== i &&
-          !paired.has(g) &&
-          g.paired === 'Y' &&
-          g.date === game.date &&
-          (g.status === '' || g.status === 'O')
-      );
-
-      if (partner) {
-        paired.add(game);
-        paired.add(partner);
-        result.push([game, partner]);
-        continue;
-      }
-    }
-
-    // Standalone game
-    result.push(game);
+export function groupLinkedGames<T extends {
+  groupId?: string | null;
+  reserveOf?: string | null;
+  status: GameStatus;
+  date: string;
+}>(games: T[]): GameOrGroup<T>[] {
+  const buckets = new Map<string, T[]>();
+  const keyOf = (g: T): string | null => {
+    if (g.groupId) return g.groupId;
+    return null;
+  };
+  for (const g of games) {
+    const key = keyOf(g);
+    if (!key) continue;
+    const list = buckets.get(key) || [];
+    list.push(g);
+    buckets.set(key, list);
   }
 
+  const result: GameOrGroup<T>[] = [];
+  const emitted = new Set<string>();
+  for (const g of games) {
+    const key = keyOf(g);
+    const bucket = key ? buckets.get(key)! : null;
+    if (!key || !bucket || bucket.length < 2) {
+      result.push(g);
+      continue;
+    }
+    if (emitted.has(key)) continue;
+    emitted.add(key);
+    result.push([...bucket].sort((a, b) => (a.reserveOf ? 1 : 0) - (b.reserveOf ? 1 : 0)));
+  }
   return result;
 }
 

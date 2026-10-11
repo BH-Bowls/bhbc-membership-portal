@@ -4,7 +4,7 @@
  * and prints structured output for comparison against SCHEMA.md.
  *
  * Run with:
- *   npx dotenv -e .env.local -- npx tsx scripts/verify-schema.ts
+ *   npx dotenv -e .env.dev.local -- npx tsx scripts/verify-schema.ts
  */
 
 import { google } from 'googleapis';

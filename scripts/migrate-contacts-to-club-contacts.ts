@@ -7,7 +7,7 @@
 //     comma-separated roles.
 //
 // Run with:
-//   npx dotenv -e .env.local -- npx tsx scripts/migrate-contacts-to-club-contacts.ts
+//   npx dotenv -e .env.dev.local -- npx tsx scripts/migrate-contacts-to-club-contacts.ts
 //
 // The original "Contacts" sheet is NOT modified. Run this once, then verify
 // "Club Contacts" looks correct before switching the app to read from it.

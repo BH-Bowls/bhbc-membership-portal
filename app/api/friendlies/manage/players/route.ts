@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getAllPlayers } from '@/lib/friendlies-sheets';
+import { getAllPlayers } from '@/lib/fixture-groups-supabase';
 
 // GET handler - Returns sorted list of all players for dropdown selection
 export async function GET(request: NextRequest) {

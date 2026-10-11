@@ -33,7 +33,7 @@ Settings → Environment Variables — once scoped to **Production** (prod proje
 once scoped to **Preview** (dev project). No code changes needed; Vercel injects the
 right pair per deployment automatically based on which environment it's building for.
 
-**Local**: `.env.local` stays pointed at **dev** permanently — it's what `npm run dev`
+**Local**: `.env.dev.local` stays pointed at **dev** permanently — it's what `npm run dev`
 and most script runs use by default. A separate `.env.prod.local` (never committed —
 covered by the repo's `.env*` gitignore rule) holds prod credentials, used only when
 explicitly passed:
@@ -41,7 +41,7 @@ explicitly passed:
 npx dotenv -e .env.prod.local -- npx tsx scripts/migrate-members.ts --no-redact
 ```
 `npm run live` runs the local dev server against `.env.prod.local` instead of
-`.env.local`, with a startup warning — use sparingly and deliberately.
+`.env.dev.local`, with a startup warning — use sparingly and deliberately.
 
 Both files set `SUPABASE_DATABASE_NAME` to a plain human label matching the real
 project name (`BH-Bowls Dev` / `BH-Bowls Production`) — `redact-dev-database.ts`
@@ -170,7 +170,7 @@ automatically, and asks for typed confirmation before touching anything; on a
 successful dev restore it also prints the `redact-dev-database.ts` command below as a
 reminder, since restored data is real member data until that's run — see its own
 header comment for the full reasoning). They need `SUPABASE_POOLER_URL` filled in on
-both `.env.local` and `.env.prod.local` (Dashboard → Connect → Shared Pooler, per
+both `.env.dev.local` and `.env.prod.local` (Dashboard → Connect → Shared Pooler, per
 below) — everything past this paragraph is the manual version, kept for reference/
 troubleshooting, not the day-to-day path once the scripts are working.
 
@@ -268,7 +268,7 @@ copy:
    `config`/`petrol_bands` duplicate-key warnings (harmless, see above).
 5. **Redact immediately**:
    ```powershell
-   npx dotenv -e .env.local -- npx tsx scripts/redact-dev-database.ts
+   npx dotenv -e .env.dev.local -- npx tsx scripts/redact-dev-database.ts
    ```
    Scrambles every password hash to a shared known test password and cycles every
    member/leaver/application/club-contact email across the 9 owned aliases — same

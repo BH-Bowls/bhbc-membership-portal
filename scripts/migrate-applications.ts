@@ -19,9 +19,9 @@
  * all aliases you own).
  *
  * Run with:
- *   npx dotenv -e .env.local -- npx tsx scripts/migrate-members.ts       (run first)
- *   npx dotenv -e .env.local -- npx tsx scripts/migrate-leavers.ts       (then this)
- *   npx dotenv -e .env.local -- npx tsx scripts/migrate-applications.ts  (then this)
+ *   npx dotenv -e .env.dev.local -- npx tsx scripts/migrate-members.ts       (run first)
+ *   npx dotenv -e .env.dev.local -- npx tsx scripts/migrate-leavers.ts       (then this)
+ *   npx dotenv -e .env.dev.local -- npx tsx scripts/migrate-applications.ts  (then this)
  */
 
 import { getAllApplications, type Application } from '../src/lib/applications-sheets';

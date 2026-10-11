@@ -4,12 +4,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { hasRole } from '@/lib/role-utils';
 import {
   getGroupById,
   getGroupMembers,
   addGroupMembers,
-  isGroupMember,
+  canAccessGroup,
   canManageGroupMembers,
   ensureGroupMemberTokens,
 } from '@/lib/availability-groups-supabase';
@@ -40,15 +39,9 @@ export async function GET(
 
     const userName = session.user.userName;
     const userRole = session.user.role || '';
-    const isAdmin = hasRole(userRole, 'Admin');
-    const isCreator = group.createdByUsername === userName;
-
-    // Access check: must be member, creator, or Admin
-    if (!isCreator && !isAdmin) {
-      const memberStatus = await isGroupMember(groupId, userName);
-      if (!memberStatus) {
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-      }
+    // Access check: member, creator, Admin, or (a squad's group) its organisers
+    if (!(await canAccessGroup(group, userName, userRole))) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     // Fetch and return the list of group members
