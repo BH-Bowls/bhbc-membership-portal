@@ -34,7 +34,7 @@
  * baseline first), but doesn't block a deliberate no-op re-run.
  *
  * Run with:
- *   npm run db-restore-dev          (restores into dev, via .env.local)
+ *   npm run db-restore-dev          (restores into dev, via .env.dev.local)
  *   npm run db-restore-production   (restores into prod, via .env.prod.local — only
  *                                     ever for genuine disaster recovery, never to
  *                                     push dev/test data into prod)
@@ -167,7 +167,7 @@ async function main() {
   // redacted — only nudge this for dev, never for a production restore.
   if (/dev/i.test(databaseName)) {
     console.log('\nThis is real member data now. Redact it before using dev for testing:');
-    console.log('  npx dotenv -e .env.local -- npx tsx scripts/redact-dev-database.ts');
+    console.log('  npx dotenv -e .env.dev.local -- npx tsx scripts/redact-dev-database.ts');
   }
 }
 

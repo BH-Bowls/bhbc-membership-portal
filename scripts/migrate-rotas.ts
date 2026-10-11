@@ -15,7 +15,7 @@
  * member_profiles columns, already populated by migrate-members.ts.
  *
  * Run with:
- *   npx dotenv -e .env.local -- npx tsx scripts/migrate-rotas.ts
+ *   npx dotenv -e .env.dev.local -- npx tsx scripts/migrate-rotas.ts
  */
 
 import { getGoogleSheetsClient, getSpreadsheetId } from '../src/lib/sheets';

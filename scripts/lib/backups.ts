@@ -15,11 +15,12 @@ export function ensureBackupsDir(): void {
   }
 }
 
-/** .dump files in backups/, oldest to newest (alphabetical sort matches chronological
- *  order since defaultBackupName()'s format is zero-padded and year-first). */
-export function listBackups(): string[] {
+/** Backup files in backups/ with this extension, oldest to newest (alphabetical sort
+ *  matches chronological order since the names are zero-padded and year-first).
+ *  '.dump' = db-dump.ts's data-only files; '.sql.gz' = full nightly / safety backups. */
+export function listBackups(extension: string = '.dump'): string[] {
   if (!existsSync(BACKUPS_DIR)) return [];
-  return readdirSync(BACKUPS_DIR).filter((f) => f.endsWith('.dump')).sort();
+  return readdirSync(BACKUPS_DIR).filter((f) => f.endsWith(extension)).sort();
 }
 
 export function ask(question: string): Promise<string> {

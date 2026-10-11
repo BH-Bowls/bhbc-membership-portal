@@ -24,7 +24,7 @@
  * suggestion was skipped, or whose added_by_username doesn't resolve, is skipped too.
  *
  * Run with:
- *   npx dotenv -e .env.local -- npx tsx scripts/migrate-suggestions.ts
+ *   npx dotenv -e .env.dev.local -- npx tsx scripts/migrate-suggestions.ts
  */
 
 import { getGoogleSheetsClient, getSpreadsheetId, getColumnMap } from '../src/lib/sheets';

@@ -23,7 +23,7 @@
  * scheduled_time stays a plain HH:MM text column, passed through as-is.
  *
  * Run with:
- *   npx dotenv -e .env.local -- npx tsx scripts/migrate-leagues.ts
+ *   npx dotenv -e .env.dev.local -- npx tsx scripts/migrate-leagues.ts
  */
 
 import { getGoogleSheetsClient, getLeaguesSpreadsheetId, getColumnMap } from '../src/lib/sheets';

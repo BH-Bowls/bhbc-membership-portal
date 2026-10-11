@@ -1009,7 +1009,7 @@ Never read `process.env` inline inside data-layer functions or API routes. Inste
 export function getSpreadsheetId(): string {
   const id = process.env.MEMBERS_SPREADSHEET_ID;
   if (!id) {
-    throw new Error('MEMBERS_SPREADSHEET_ID environment variable is not set. Check your .env.local file.');
+    throw new Error('MEMBERS_SPREADSHEET_ID environment variable is not set. Check your .env.dev.local file.');
   }
   return id;
 }

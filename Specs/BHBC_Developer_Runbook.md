@@ -92,12 +92,12 @@ Both are hosted on **Vercel**, under the same Vercel account. Both use the **sam
 
 ## 8. Environment variables reference
 
-Names only — actual values live in each Vercel project's dashboard, and locally in `.env.local` / `.env.prod.local` (never committed).
+Names only — actual values live in each Vercel project's dashboard, and locally in `.env.dev.local` / `.env.prod.local` (never committed).
 
 **Portal:**
 `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `NEXT_PUBLIC_APP_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_PRIVATE_KEY`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`, `GOOGLE_DRIVE_ATTACHMENTS_FOLDER_ID`, `FRIENDLIES_SPREADSHEET_ID`, `PORTAL_DOCUMENTS_FOLDER_ID`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `PUBLIC_ACCESS_PIN`, `ICS_UPDATE_EMAILS`
 
-> Most of the Portal's Sheets migrated to Supabase/Postgres through 2026 (see Section 1) — `MEMBERS_SPREADSHEET_ID`, `COMPETITIONS_SPREADSHEET_ID`, `LEAGUES_SPREADSHEET_ID`, `ROWLAND_SPREADSHEET_ID`, `MATCH_DAY_CONTACTS_SPREADSHEET_ID`, and `PORTAL_CONFIG_SPREADSHEET_ID` are now commented out in `.env.local`/`.env.prod.local` and removed from Vercel — no longer used. `FRIENDLIES_SPREADSHEET_ID` is the only spreadsheet ID still live, since Friendlies hasn't fully migrated off Sheets yet.
+> Most of the Portal's Sheets migrated to Supabase/Postgres through 2026 (see Section 1) — `MEMBERS_SPREADSHEET_ID`, `COMPETITIONS_SPREADSHEET_ID`, `LEAGUES_SPREADSHEET_ID`, `ROWLAND_SPREADSHEET_ID`, `MATCH_DAY_CONTACTS_SPREADSHEET_ID`, and `PORTAL_CONFIG_SPREADSHEET_ID` are now commented out in `.env.dev.local`/`.env.prod.local` and removed from Vercel — no longer used. `FRIENDLIES_SPREADSHEET_ID` is the only spreadsheet ID still live, since Friendlies hasn't fully migrated off Sheets yet.
 
 **Website:**
 `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_PRIVATE_KEY`, `WEBSITE_CONTENT_SHEET_ID`, `WEBSITE_DOCUMENTS_FOLDER_ID`, `FRIENDLIES_SPREADSHEET_ID` (copied from the Portal), `SMTP_USER`, `SMTP_PASSWORD`, `CONTACT_FORM_TO`, `GOOGLE_MAPS_EMBED_KEY`, `REVALIDATE_SECRET`

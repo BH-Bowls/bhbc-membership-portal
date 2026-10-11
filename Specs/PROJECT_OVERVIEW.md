@@ -588,7 +588,7 @@ Email types sent:
 
 ## 10. Environment Variables
 
-The following environment variables must be set in `.env.local` (never committed):
+The following environment variables must be set in `.env.dev.local` (never committed):
 
 ### Required for all features
 

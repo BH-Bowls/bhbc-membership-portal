@@ -11,7 +11,7 @@ import { google } from 'googleapis';
 export function getSpreadsheetId(): string {
   const id = process.env.MEMBERS_SPREADSHEET_ID;
   if (!id) {
-    throw new Error('MEMBERS_SPREADSHEET_ID environment variable is not set. Check your .env.local file.');
+    throw new Error('MEMBERS_SPREADSHEET_ID environment variable is not set. Check your .env.dev.local file.');
   }
   return id;
 }
@@ -19,7 +19,7 @@ export function getSpreadsheetId(): string {
 export function getCompetitionsSpreadsheetId(): string {
   const id = process.env.COMPETITIONS_SPREADSHEET_ID;
   if (!id) {
-    throw new Error('COMPETITIONS_SPREADSHEET_ID environment variable is not set. Check your .env.local file.');
+    throw new Error('COMPETITIONS_SPREADSHEET_ID environment variable is not set. Check your .env.dev.local file.');
   }
   return id;
 }
@@ -27,7 +27,7 @@ export function getCompetitionsSpreadsheetId(): string {
 export function getRowlandSpreadsheetId(): string {
   const id = process.env.ROWLAND_SPREADSHEET_ID;
   if (!id) {
-    throw new Error('ROWLAND_SPREADSHEET_ID environment variable is not set. Check your .env.local file.');
+    throw new Error('ROWLAND_SPREADSHEET_ID environment variable is not set. Check your .env.dev.local file.');
   }
   return id;
 }
@@ -35,7 +35,7 @@ export function getRowlandSpreadsheetId(): string {
 export function getLeaguesSpreadsheetId(): string {
   const id = process.env.LEAGUES_SPREADSHEET_ID;
   if (!id) {
-    throw new Error('LEAGUES_SPREADSHEET_ID environment variable is not set. Check your .env.local file.');
+    throw new Error('LEAGUES_SPREADSHEET_ID environment variable is not set. Check your .env.dev.local file.');
   }
   return id;
 }
@@ -43,7 +43,7 @@ export function getLeaguesSpreadsheetId(): string {
 function getServiceAccountEmail(): string {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   if (!email) {
-    throw new Error('GOOGLE_SERVICE_ACCOUNT_EMAIL environment variable is not set. Check your .env.local file.');
+    throw new Error('GOOGLE_SERVICE_ACCOUNT_EMAIL environment variable is not set. Check your .env.dev.local file.');
   }
   return email;
 }
@@ -51,7 +51,7 @@ function getServiceAccountEmail(): string {
 function getPrivateKey(): string {
   const key = process.env.GOOGLE_PRIVATE_KEY;
   if (!key) {
-    throw new Error('GOOGLE_PRIVATE_KEY environment variable is not set. Check your .env.local file.');
+    throw new Error('GOOGLE_PRIVATE_KEY environment variable is not set. Check your .env.dev.local file.');
   }
   return key.replace(/\\n/g, '\n');
 }

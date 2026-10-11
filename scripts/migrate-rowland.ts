@@ -18,7 +18,7 @@
  * it's just flagged so it can be checked by hand.
  *
  * Run with:
- *   npx dotenv -e .env.local -- npx tsx scripts/migrate-rowland.ts
+ *   npx dotenv -e .env.dev.local -- npx tsx scripts/migrate-rowland.ts
  */
 
 import {
