@@ -1,0 +1,139 @@
+# .github/workflows/db-backup.yml
+# Nightly backup of the production database (public + website schemas, full schema
+# and data) to the club's Google Drive, keeping 90 days. Emails on failure.
+# See specs/DATABASE_BACKUP_SPEC.md for setup (secrets, PG_MAJOR variable) and restore.
+
+name: Database backup
+
+on:
+  schedule:
+    - cron: '30 2 * * *'   # 02:30 UTC every night
+  workflow_dispatch:
+    inputs:
+      test_failure_alert:
+        description: 'Fail on purpose after the dump, to test the alert email (nothing is uploaded)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: db-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PG_MAJOR: ${{ vars.PG_MAJOR }}
+    steps:
+      - name: Check settings
+        run: |
+          if [ -z "$PG_MAJOR" ]; then
+            echo "::error::Repository variable PG_MAJOR is not set (the production Postgres major version, e.g. 17)."
+            exit 1
+          fi
+
+      - name: Install pg_dump and rclone
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq "postgresql-client-$PG_MAJOR" rclone
+          "/usr/lib/postgresql/$PG_MAJOR/bin/pg_dump" --version
+          rclone version | head -n 1
+
+      - name: Dump database
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          STAMP=$(date -u +%Y-%m-%d-%H%M)
+          FILE="backup-$STAMP.sql.gz"
+          # pipefail: a failing pg_dump fails the step instead of leaving a tiny gzip
+          "/usr/lib/postgresql/$PG_MAJOR/bin/pg_dump" "$BACKUP_DATABASE_URL" \
+            --schema=public --schema=website --no-owner \
+            | gzip -9 > "$FILE"
+          echo "FILE=$FILE" >> "$GITHUB_ENV"
+
+      - name: Verify dump
+        run: |
+          set -euo pipefail
+          gzip -t "$FILE"
+          SIZE=$(stat -c %s "$FILE")
+          echo "Backup size: $SIZE bytes"
+          if [ "$SIZE" -lt 51200 ]; then
+            echo "::error::Backup is under 50 KB — something is wrong."
+            exit 1
+          fi
+          if ! zcat "$FILE" | tail -n 10 | grep -q -- '-- PostgreSQL database dump complete'; then
+            echo "::error::Backup does not end with 'PostgreSQL database dump complete' — it is incomplete."
+            exit 1
+          fi
+
+      - name: Test failure alert
+        if: ${{ inputs.test_failure_alert }}
+        run: |
+          echo "::error::Failing on purpose to test the alert email (Test failure alert was ticked)."
+          exit 1
+
+      - name: Upload to Google Drive
+        env:
+          RCLONE_DRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
+          RCLONE_DRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
+          RCLONE_DRIVE_TOKEN: ${{ secrets.GDRIVE_TOKEN }}
+          RCLONE_DRIVE_ROOT_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          RCLONE_DRIVE_SCOPE: drive
+        run: |
+          rclone copy "$FILE" :drive: -v
+
+      - name: Delete backups older than 90 days
+        env:
+          RCLONE_DRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
+          RCLONE_DRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
+          RCLONE_DRIVE_TOKEN: ${{ secrets.GDRIVE_TOKEN }}
+          RCLONE_DRIVE_ROOT_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          RCLONE_DRIVE_SCOPE: drive
+        # Skips the Drive bin, so deleted backups stop counting against the quota at once
+        run: |
+          rclone delete :drive: --min-age 90d --include "backup-*.sql.gz" --drive-use-trash=false -v
+
+      - name: Email failure alert
+        if: ${{ failure() }}
+        env:
+          SMTP_USER: ${{ secrets.ALERT_SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.ALERT_SMTP_PASSWORD }}
+          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          RCPT_ARGS=()
+          TO_HEADER=""
+          IFS=',' read -ra ADDRS <<< "$ALERT_EMAIL_TO"
+          for a in "${ADDRS[@]}"; do
+            a=$(echo "$a" | xargs)
+            [ -z "$a" ] && continue
+            RCPT_ARGS+=(--mail-rcpt "$a")
+            TO_HEADER="${TO_HEADER:+$TO_HEADER, }$a"
+          done
+          {
+            echo "From: BHBC Backups <$SMTP_USER>"
+            echo "To: $TO_HEADER"
+            echo "Subject: BHBC database backup FAILED"
+            echo "Content-Type: text/plain; charset=utf-8"
+            echo ""
+            echo "Last night's database backup did not complete."
+            echo ""
+            echo "Run log: $RUN_URL"
+            echo ""
+            echo "See specs/DATABASE_BACKUP_SPEC.md section 4 for the usual causes."
+          } > mail.txt
+          curl --ssl-reqd --url 'smtp://smtp.gmail.com:587' \
+            --user "$SMTP_USER:$SMTP_PASSWORD" \
+            --mail-from "$SMTP_USER" "${RCPT_ARGS[@]}" \
+            --upload-file mail.txt
