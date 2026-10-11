@@ -60,7 +60,7 @@ Public forms (membership application, etc.) include a hidden honeypot field. Whe
 
 ### Environment variable getters — why not inline `process.env`
 
-Inline `process.env.SOME_VAR` in data-layer code returns `undefined` silently when the variable is missing, producing confusing downstream errors ("Cannot read property of undefined" rather than "this env var is missing"). The named getter pattern (`export function getSpreadsheetId()`) throws immediately with a message that tells the developer exactly which `.env.local` entry to add.
+Inline `process.env.SOME_VAR` in data-layer code returns `undefined` silently when the variable is missing, producing confusing downstream errors ("Cannot read property of undefined" rather than "this env var is missing"). The named getter pattern (`export function getSpreadsheetId()`) throws immediately with a message that tells the developer exactly which `.env.dev.local` entry to add.
 
 ### `alert()` in components — legacy pattern
 

@@ -45,7 +45,7 @@ Both are hosted on **Vercel**, under the same Vercel account. Both use the **sam
 - Database: Supabase/Postgres, two projects:
   - **Production:** `ovmaeycnlubjxsyrswoz`
   - **Dev:** `ofqepimyooesuckyrane` — used for local development *and* Vercel Preview deployments
-  - Both on Supabase's free "Hobby" plan — **no automatic backups**. `scripts/db-dump.ts` / `scripts/db-restore.ts` (and the `db-*` npm scripts) are the closest thing to a manual backup process currently in place.
+  - Both on Supabase's free "Hobby" plan, which keeps **no platform backups**. Production is backed up nightly by a GitHub Actions workflow to the club's Google Drive (90 days kept), with restore scripts for dev and production. See **`Specs/BHBC_Database_Backup_Technical_Runbook.md`**. `scripts/db-dump.ts` / `scripts/db-restore.ts` (and the `db-*` npm scripts) remain for copying data only between environments.
   - Migrations: `supabase/migrations/`
 - File attachments: Google Drive. `src/lib/drive.ts` prefers an OAuth-authenticated user (`GOOGLE_OAUTH_CLIENT_ID`/`SECRET`/`REFRESH_TOKEN`) if configured, falling back to the plain service account otherwise — the OAuth path exists because a bare service account has no Drive storage quota of its own on a non-Workspace Google account.
 - Email: Gmail SMTP via `nodemailer` (`SMTP_USER`/`SMTP_PASSWORD` — an app password, not the account's main password)
@@ -92,12 +92,12 @@ Both are hosted on **Vercel**, under the same Vercel account. Both use the **sam
 
 ## 8. Environment variables reference
 
-Names only — actual values live in each Vercel project's dashboard, and locally in `.env.local` / `.env.prod.local` (never committed).
+Names only — actual values live in each Vercel project's dashboard, and locally in `.env.dev.local` / `.env.prod.local` (never committed).
 
 **Portal:**
 `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `NEXT_PUBLIC_APP_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_PRIVATE_KEY`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`, `GOOGLE_DRIVE_ATTACHMENTS_FOLDER_ID`, `FRIENDLIES_SPREADSHEET_ID`, `PORTAL_DOCUMENTS_FOLDER_ID`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `PUBLIC_ACCESS_PIN`, `ICS_UPDATE_EMAILS`
 
-> Most of the Portal's Sheets migrated to Supabase/Postgres through 2026 (see Section 1) — `MEMBERS_SPREADSHEET_ID`, `COMPETITIONS_SPREADSHEET_ID`, `LEAGUES_SPREADSHEET_ID`, `ROWLAND_SPREADSHEET_ID`, `MATCH_DAY_CONTACTS_SPREADSHEET_ID`, and `PORTAL_CONFIG_SPREADSHEET_ID` are now commented out in `.env.local`/`.env.prod.local` and removed from Vercel — no longer used. `FRIENDLIES_SPREADSHEET_ID` is the only spreadsheet ID still live, since Friendlies hasn't fully migrated off Sheets yet.
+> Most of the Portal's Sheets migrated to Supabase/Postgres through 2026 (see Section 1) — `MEMBERS_SPREADSHEET_ID`, `COMPETITIONS_SPREADSHEET_ID`, `LEAGUES_SPREADSHEET_ID`, `ROWLAND_SPREADSHEET_ID`, `MATCH_DAY_CONTACTS_SPREADSHEET_ID`, and `PORTAL_CONFIG_SPREADSHEET_ID` are now commented out in `.env.dev.local`/`.env.prod.local` and removed from Vercel — no longer used. `FRIENDLIES_SPREADSHEET_ID` is the only spreadsheet ID still live, since Friendlies hasn't fully migrated off Sheets yet.
 
 **Website:**
 `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_PRIVATE_KEY`, `WEBSITE_CONTENT_SHEET_ID`, `WEBSITE_DOCUMENTS_FOLDER_ID`, `FRIENDLIES_SPREADSHEET_ID` (copied from the Portal), `SMTP_USER`, `SMTP_PASSWORD`, `CONTACT_FORM_TO`, `GOOGLE_MAPS_EMBED_KEY`, `REVALIDATE_SECRET`
@@ -110,7 +110,7 @@ Names only — actual values live in each Vercel project's dashboard, and locall
 |---|---|---|---|---|---|
 | GitHub | github.com/BH-Bowls | burgesshillbc@gmail.com | *[to be added]* | *[confirm]* | Org owns both repos |
 | Vercel | vercel.com | burgesshillbc@gmail.com | *[to be added]* | *[confirm]* | Pro plan, 2 projects |
-| Supabase | supabase.com | burgesshillbc@gmail.com | *[to be added]* | *[confirm]* | 2 projects, Hobby plan, no backups |
+| Supabase | supabase.com | burgesshillbc@gmail.com | *[to be added]* | *[confirm]* | 2 projects, Hobby plan, no platform backups (nightly GitHub Actions backup instead) |
 | Google Cloud Console | console.cloud.google.com | burgesshillbc@gmail.com | *[to be added]* | *[confirm]* | Same login used for Gmail SMTP |
 | Wix (domain/DNS) | wix.com | anneprice57@hotmail.com | *[to be added]* | *[confirm]* | Belongs to Anne Barnes (Committee); Anne and Liam both hold the login. Renews every 3 years, until May 2029. Plan: transfer to Cloudflare at that renewal. |
 

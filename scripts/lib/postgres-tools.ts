@@ -3,7 +3,7 @@
 // PostgreSQL's bin/ on PATH even with the official installer's "Command Line Tools"
 // component selected — confirmed 2026-08-17 (a bare "pg_dump" spawn failed with
 // ENOENT). Defaults to the confirmed-working install location; override with
-// POSTGRES_BIN_DIR in .env.local/.env.prod.local if your install lives elsewhere.
+// POSTGRES_BIN_DIR in .env.dev.local/.env.prod.local if your install lives elsewhere.
 
 import { join } from 'path';
 

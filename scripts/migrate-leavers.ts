@@ -20,8 +20,8 @@
  * password_hash overwritten with the same shared test hash.
  *
  * Run with:
- *   npx dotenv -e .env.local -- npx tsx scripts/migrate-members.ts   (run first)
- *   npx dotenv -e .env.local -- npx tsx scripts/migrate-leavers.ts   (then this)
+ *   npx dotenv -e .env.dev.local -- npx tsx scripts/migrate-members.ts   (run first)
+ *   npx dotenv -e .env.dev.local -- npx tsx scripts/migrate-leavers.ts   (then this)
  */
 
 import bcrypt from 'bcryptjs';

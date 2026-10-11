@@ -37,7 +37,7 @@
  * year comes from which tab the row was read from.
  *
  * Run with:
- *   npx dotenv -e .env.local -- npx tsx scripts/migrate-fixtures.ts
+ *   npx dotenv -e .env.dev.local -- npx tsx scripts/migrate-fixtures.ts
  */
 
 import { getGoogleSheetsClient } from '../src/lib/sheets';

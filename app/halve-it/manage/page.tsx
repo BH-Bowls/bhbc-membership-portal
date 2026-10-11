@@ -236,7 +236,7 @@ export default function HalveItManagePage() {
               ))}
             </ul>
           )}
-          <p className="text-sm text-gray-700">Inactive players keep their scores and stay in the tables, but aren&apos;t listed when entering a new night.</p>
+          <p className="text-sm text-gray-700">Inactive players keep their scores and stay in the tables. When entering a night they&apos;re listed last, greyed out.</p>
         </section>
 
         {/* Settings */}

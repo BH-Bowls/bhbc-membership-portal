@@ -1,7 +1,8 @@
 // app/api/halve-it/nights/[id]/route.ts
 // Halve It nights (Darts role / Admin).
-// PUT    — save a night: number of games, status (draft/final), notes, and its
-//          full set of scores (replaces what was there).
+// PUT    — save a night: number of games, status (draft/final), notes, money in and
+//          out (pence), the players' sheet order, and its full set of scores
+//          (replaces what was there).
 // DELETE — delete a night and its scores.
 
 import { NextRequest, NextResponse } from 'next/server';

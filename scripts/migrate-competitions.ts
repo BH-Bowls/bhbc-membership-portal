@@ -18,7 +18,7 @@
  * the Sheets version's own leniency there.
  *
  * Run with:
- *   npx dotenv -e .env.local -- npx tsx scripts/migrate-competitions.ts
+ *   npx dotenv -e .env.dev.local -- npx tsx scripts/migrate-competitions.ts
  */
 
 import { getGoogleSheetsClient, getCompetitionsSpreadsheetId, getColumnMap } from '../src/lib/sheets';

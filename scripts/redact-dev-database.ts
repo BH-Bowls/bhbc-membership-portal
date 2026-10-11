@@ -30,13 +30,13 @@
  * SAFETY: this mutates whichever database SUPABASE_URL points at, in place,
  * irreversibly (short of restoring a prior backup). Requires typed confirmation
  * before doing anything, and prints both SUPABASE_DATABASE_NAME (a plain human label
- * — set to the actual project name in .env.local/.env.prod.local, e.g. "BH-Bowls
+ * — set to the actual project name in .env.dev.local/.env.prod.local, e.g. "BH-Bowls
  * Dev"/"BH-Bowls Production") and the raw SUPABASE_URL, so you can actually check
  * it's dev before confirming — there is deliberately no --force/--yes flag to skip
  * that.
  *
  * Run with:
- *   npx dotenv -e .env.local -- npx tsx scripts/redact-dev-database.ts
+ *   npx dotenv -e .env.dev.local -- npx tsx scripts/redact-dev-database.ts
  */
 
 import bcrypt from 'bcryptjs';

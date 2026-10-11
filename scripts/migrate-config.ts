@@ -17,7 +17,7 @@
  * treatment the other migrate-*.ts scripts apply.
  *
  * Run with:
- *   npx dotenv -e .env.local -- npx tsx scripts/migrate-config.ts
+ *   npx dotenv -e .env.dev.local -- npx tsx scripts/migrate-config.ts
  */
 
 import { getLabelConfig } from '../src/lib/config-sheets';

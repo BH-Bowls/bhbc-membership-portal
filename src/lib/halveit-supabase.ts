@@ -5,7 +5,7 @@
 // in halveit-stats.ts.
 
 import { getSupabaseClient } from './supabase';
-import { HALVEIT_DEFAULT_SETTINGS, HALVEIT_MAX_SCORE, seasonForDate, todayIso } from '@/types/halveit';
+import { HALVEIT_DEFAULT_SETTINGS, HALVEIT_MAX_MONEY_PENCE, HALVEIT_MAX_SCORE, seasonForDate, todayIso } from '@/types/halveit';
 import type { HalveItNight, HalveItNightStatus, HalveItPlayer, HalveItScore, HalveItSeasonData, HalveItSettings } from '@/types/halveit';
 
 const PLAYER_SELECT = '*, users(username, member_profiles!user_id(first_name, known_as, last_name))';
@@ -37,6 +37,10 @@ function mapNight(row: any): HalveItNight {
     gamesCount: row.games_count,
     status: row.status,
     notes: row.notes,
+    moneyIn: row.money_in_pence,
+    moneyOut: row.money_out_pence,
+    broughtForward: 0, // worked out across the season in getSeasonData
+    playerOrder: row.player_order || [],
   };
 }
 
@@ -52,12 +56,11 @@ export function currentSeason(): number {
 
 export async function getSeasonData(season: number, includeDrafts: boolean): Promise<Omit<HalveItSeasonData, 'canManage'>> {
   const supabase = getSupabaseClient();
-  let nightsQuery = supabase.from('halveit_nights').select('*').eq('season', season).order('night_date', { ascending: true });
-  if (!includeDrafts) nightsQuery = nightsQuery.eq('status', 'final');
-
+  // Every night, drafts included, so the money balance runs through all of them;
+  // drafts are dropped afterwards for members who can't manage
   const [players, nights, settings, playerSeasons, nightSeasons] = await Promise.all([
     supabase.from('halveit_players').select(PLAYER_SELECT).eq('season', season),
-    nightsQuery,
+    supabase.from('halveit_nights').select('*').eq('season', season).order('night_date', { ascending: true }),
     supabase.from('halveit_settings').select('*').eq('season', season).maybeSingle(),
     supabase.from('halveit_players').select('season'),
     supabase.from('halveit_nights').select('season'),
@@ -66,8 +69,16 @@ export async function getSeasonData(season: number, includeDrafts: boolean): Pro
     if (r.error) throw new Error(`Failed to fetch Halve It data: ${r.error.message}`);
   }
 
+  // Money balance: each season starts at £0, and each night's brought-forward is
+  // the one before's brought-forward + money in - money out
   const mappedNights: HalveItNight[] = [];
-  for (const row of nights.data || []) mappedNights.push(mapNight(row));
+  let balance = 0;
+  for (const row of nights.data || []) {
+    const night = mapNight(row);
+    night.broughtForward = balance;
+    balance += night.moneyIn - night.moneyOut;
+    if (includeDrafts || night.status === 'final') mappedNights.push(night);
+  }
 
   // Scores for the nights being returned
   const scores: HalveItScore[] = [];
@@ -192,6 +203,9 @@ export interface NightUpdate {
   gamesCount: number;
   status: HalveItNightStatus;
   notes: string | null;
+  moneyIn: number; // pence
+  moneyOut: number; // pence
+  playerOrder: string[];
   scores: { playerId: string; gameNo: number; score: number }[];
 }
 
@@ -199,9 +213,13 @@ export interface NightUpdate {
 export async function saveNight(nightId: string, update: NightUpdate): Promise<{ night?: HalveItNight; error?: string }> {
   const night = await getNight(nightId);
   if (!night) return { error: 'Night not found' };
-  const { gamesCount, status, scores } = update;
+  const { gamesCount, status, scores, moneyIn, moneyOut, playerOrder } = update;
   if (!Number.isInteger(gamesCount) || gamesCount < 1 || gamesCount > 50) return { error: 'Number of games must be between 1 and 50' };
   if (status !== 'draft' && status !== 'final') return { error: 'Invalid status' };
+  for (const amount of [moneyIn, moneyOut]) {
+    if (!Number.isInteger(amount) || amount < 0 || amount > HALVEIT_MAX_MONEY_PENCE) return { error: 'Money in and out must be amounts from £0 to £10,000' };
+  }
+  if (!Array.isArray(playerOrder)) return { error: 'Player order is required' };
 
   const supabase = getSupabaseClient();
 
@@ -220,6 +238,14 @@ export async function saveNight(nightId: string, update: NightUpdate): Promise<{
     const key = `${s.playerId}:${s.gameNo}`;
     if (seen.has(key)) return { error: 'Duplicate score for the same player and game' };
     seen.add(key);
+  }
+
+  // The order may only list this season's players, each once
+  const ordered = new Set<string>();
+  for (const playerId of playerOrder) {
+    if (!validPlayers.has(playerId)) return { error: 'The player order has a player who isn\'t in this season\'s team' };
+    if (ordered.has(playerId)) return { error: 'The player order lists a player twice' };
+    ordered.add(playerId);
   }
 
   const { data: existing, error: existingError } = await supabase.from('halveit_scores').select('player_id, game_no').eq('night_id', nightId);
@@ -250,7 +276,15 @@ export async function saveNight(nightId: string, update: NightUpdate): Promise<{
 
   const { data, error } = await supabase
     .from('halveit_nights')
-    .update({ games_count: gamesCount, status, notes, updated_at: new Date().toISOString() })
+    .update({
+      games_count: gamesCount,
+      status,
+      notes,
+      money_in_pence: moneyIn,
+      money_out_pence: moneyOut,
+      player_order: playerOrder,
+      updated_at: new Date().toISOString(),
+    })
     .eq('id', nightId)
     .select('*')
     .single();

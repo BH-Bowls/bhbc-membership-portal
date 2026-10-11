@@ -3,6 +3,7 @@
 // the pages (client side) — only final nights ever count. A game's winner is the
 // highest score among the players who played that game; ties share the win.
 
+import { monthOf } from '@/types/halveit';
 import type { HalveItNight, HalveItPlayer, HalveItScore, HalveItSeasonData } from '@/types/halveit';
 
 export interface PlayerStats {
@@ -51,6 +52,34 @@ export function finalNights(data: HalveItSeasonData): HalveItNight[] {
   }
   nights.sort((a, b) => a.date.localeCompare(b.date));
   return nights;
+}
+
+/** The months (YYYY-MM) that have a final night, newest first. */
+export function finalMonths(data: HalveItSeasonData): string[] {
+  const months: string[] = [];
+  for (const night of finalNights(data)) {
+    const month = monthOf(night.date);
+    if (!months.includes(month)) months.push(month);
+  }
+  return months.reverse();
+}
+
+/** The season's data cut down to one month's nights and scores, so the usual
+ *  stats and tables can be worked out for just that month. */
+export function monthData(data: HalveItSeasonData, month: string): HalveItSeasonData {
+  const nights: HalveItNight[] = [];
+  const nightIds = new Set<string>();
+  for (const night of data.nights) {
+    if (monthOf(night.date) === month) {
+      nights.push(night);
+      nightIds.add(night.id);
+    }
+  }
+  const scores: HalveItScore[] = [];
+  for (const score of data.scores) {
+    if (nightIds.has(score.nightId)) scores.push(score);
+  }
+  return { ...data, nights, scores };
 }
 
 /** Scores from final nights only. */

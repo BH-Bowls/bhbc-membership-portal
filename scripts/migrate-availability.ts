@@ -36,7 +36,7 @@
  * migrate-fixtures.ts/migrate-rotas.ts.
  *
  * Run with:
- *   npx dotenv -e .env.local -- npx tsx scripts/migrate-availability.ts
+ *   npx dotenv -e .env.dev.local -- npx tsx scripts/migrate-availability.ts
  */
 
 import { randomUUID } from 'crypto';

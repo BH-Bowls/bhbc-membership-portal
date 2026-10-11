@@ -26,8 +26,8 @@
  * later, not part of populating the core Members->users/member_profiles mapping.
  *
  * Run with:
- *   npx dotenv -e .env.local -- npx tsx scripts/migrate-members.ts          (redacted, Dev)
- *   npx dotenv -e .env.local -- npx tsx scripts/migrate-members.ts --no-redact  (real cutover, Prod only)
+ *   npx dotenv -e .env.dev.local -- npx tsx scripts/migrate-members.ts          (redacted, Dev)
+ *   npx dotenv -e .env.dev.local -- npx tsx scripts/migrate-members.ts --no-redact  (real cutover, Prod only)
  */
 
 import bcrypt from 'bcryptjs';

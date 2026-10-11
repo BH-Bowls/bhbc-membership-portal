@@ -2,24 +2,26 @@
 
 // app/halve-it/page.tsx
 // Halve It — the winter darts league. League table (Total / Average / Best N),
-// the season's nights, and season records. Any member can view; the Darts role
+// the season's nights (with the money: brought forward, in, out, carried forward),
+// the same tables for each month (for choosing the monthly prize), and season records. Any member can view; the Darts role
 // (or Admin) also gets a link to Manage. Only final nights count.
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { getButtonClasses, getCardClasses } from '@/config/theme-helpers';
-import { useHalveItData, initialSeasonQuery, playerNames, nameList, Spinner, SeasonPicker, Position, isTied } from '@/components/halveit/shared';
-import { averageTable, bestNTable, computePlayerStats, computeRecords, finalNights, formatAverage, summariseNight, totalTable } from '@/lib/halveit-stats';
+import { useHalveItData, initialSeasonQuery, playerNames, nameList, Spinner, SeasonPicker, Position, isTied, NightMoney } from '@/components/halveit/shared';
+import { averageTable, bestNTable, computePlayerStats, computeRecords, finalMonths, finalNights, formatAverage, monthData, summariseNight, totalTable } from '@/lib/halveit-stats';
 import type { PlayerStats, Ranked } from '@/lib/halveit-stats';
-import { formatNightDate, seasonSpan } from '@/types/halveit';
+import { formatMonth, formatNightDate, seasonSpan } from '@/types/halveit';
 import type { HalveItSeasonData } from '@/types/halveit';
 
-type Tab = 'table' | 'nights' | 'records';
+type Tab = 'table' | 'nights' | 'months' | 'records';
 type TableMode = 'total' | 'average' | 'bestN';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'table', label: 'League Table' },
   { id: 'nights', label: 'Nights' },
+  { id: 'months', label: 'Months' },
   { id: 'records', label: 'Records' },
 ];
 
@@ -42,16 +44,20 @@ export default function HalveItPage() {
   const { data, error, loading } = useHalveItData(query);
   const [tab, setTab] = useState<Tab>('table');
   const [mode, setMode] = useState<TableMode>('total');
+  const [month, setMonth] = useState<string | null>(null); // null = the latest month
+  const [monthMode, setMonthMode] = useState<TableMode>('total');
 
   // Everything below is worked out from the season's raw scores
   const stats = useMemo(() => (data ? computePlayerStats(data) : []), [data]);
   const nights = useMemo(() => (data ? finalNights(data).reverse() : []), [data]); // newest first
   const records = useMemo(() => (data ? computeRecords(data, stats) : null), [data, stats]);
   const names = useMemo(() => playerNames(data ? data.players : []), [data]);
+  const months = useMemo(() => (data ? finalMonths(data) : []), [data]); // newest first
 
   function changeSeason(season: number) {
     window.history.replaceState(null, '', `/halve-it?season=${season}`);
     setQuery(`season=${season}`);
+    setMonth(null);
   }
 
   if (loading && !data) return <Spinner />;
@@ -133,10 +139,15 @@ export default function HalveItPage() {
                       Top score: <span className="font-semibold text-gray-900">{summary.topScore.score}</span> — {nameList(names, summary.topScore.playerIds)}
                     </div>
                   )}
+                  <NightMoney night={n} />
                 </Link>
               );
             })}
           </div>
+        )}
+
+        {tab === 'months' && nights.length > 0 && (
+          <MonthTables data={data} months={months} month={month || months[0]} onMonth={setMonth} mode={monthMode} onMode={setMonthMode} />
         )}
 
         {tab === 'records' && records && nights.length > 0 && (
@@ -192,6 +203,61 @@ export default function HalveItPage() {
           </div>
         )}
       </main>
+    </div>
+  );
+}
+
+/** One month's tables (Total / Average / Best N) over just that month's nights. */
+function MonthTables({ data, months, month, onMonth, mode, onMode }: {
+  data: HalveItSeasonData;
+  months: string[];
+  month: string;
+  onMonth: (month: string) => void;
+  mode: TableMode;
+  onMode: (mode: TableMode) => void;
+}) {
+  const monthOnly = useMemo(() => monthData(data, month), [data, month]);
+  const stats = useMemo(() => computePlayerStats(monthOnly), [monthOnly]);
+  const monthNights = finalNights(monthOnly);
+  const bestN = data.settings.bestNGames;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-2">
+        {months.map((m) => (
+          <button
+            key={m}
+            onClick={() => onMonth(m)}
+            className={`px-3 py-1.5 text-sm rounded-full border ${m === month ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-300 text-gray-900 hover:bg-gray-100'}`}
+          >
+            {formatMonth(m)}
+          </button>
+        ))}
+      </div>
+      <p className="text-sm text-gray-700">
+        {monthNights.length} night{monthNights.length !== 1 ? 's' : ''}: {monthNights.map((n) => formatNightDate(n.date)).join(', ')}
+      </p>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="inline-flex rounded-lg border border-gray-300 bg-white p-0.5">
+          {TABLE_MODES.map((m) => (
+            <button
+              key={m.id}
+              onClick={() => onMode(m.id)}
+              className={`px-3 py-1.5 text-sm rounded-md ${mode === m.id ? 'bg-blue-600 text-white' : 'text-gray-900 hover:bg-gray-100'}`}
+            >
+              {m.id === 'bestN' ? `Best ${bestN}` : m.label}
+            </button>
+          ))}
+        </div>
+        <p className="text-sm text-gray-700">
+          {mode === 'total' && 'All scores this month added together.'}
+          {mode === 'average' && 'Average score per game this month, for everyone who played — check the games played (Gms).'}
+          {mode === 'bestN' && `Each player's best ${bestN} game scores this month added together.`}
+        </p>
+      </div>
+      {mode === 'total' && <LeagueTable rows={totalTable(stats)} highlight="total" bestN={bestN} />}
+      {mode === 'average' && <LeagueTable rows={averageTable(stats, 1).qualified} highlight="average" bestN={bestN} />}
+      {mode === 'bestN' && <LeagueTable rows={bestNTable(stats)} highlight="bestN" bestN={bestN} />}
     </div>
   );
 }

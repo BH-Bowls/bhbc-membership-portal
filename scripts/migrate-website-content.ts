@@ -13,9 +13,9 @@
  * CLAUDE.md in the bhbc-website repo.
  *
  * Run with:
- *   npx dotenv -e .env.local -- npx tsx scripts/migrate-website-content.ts
+ *   npx dotenv -e .env.dev.local -- npx tsx scripts/migrate-website-content.ts
  *
- * Requires WEBSITE_CONTENT_SHEET_ID in .env.local — copy the value from the
+ * Requires WEBSITE_CONTENT_SHEET_ID in .env.dev.local — copy the value from the
  * bhbc-website repo's own .env.local (same spreadsheet, same shared service
  * account, same convention already used in reverse for FRIENDLIES_SPREADSHEET_ID).
  */

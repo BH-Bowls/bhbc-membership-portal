@@ -32,8 +32,8 @@
  * for a Dev refresh, then imports and runs the stats check.
  *
  * Run with:
- *   npx dotenv -e .env.local -- npx tsx scripts/import-friendlies-2026.ts           # dry run
- *   npx dotenv -e .env.local -- npx tsx scripts/import-friendlies-2026.ts --apply --as=<username>   # write
+ *   npx dotenv -e .env.dev.local -- npx tsx scripts/import-friendlies-2026.ts           # dry run
+ *   npx dotenv -e .env.dev.local -- npx tsx scripts/import-friendlies-2026.ts --apply --as=<username>   # write
  *
  * Order after a full Dev refresh: migrate-members -> ... -> migrate-fixtures -> this.
  */

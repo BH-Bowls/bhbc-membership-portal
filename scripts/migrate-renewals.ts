@@ -30,7 +30,7 @@
  * is_active=true only and would wrongly skip every leaver's real historical renewal row).
  *
  * Run with:
- *   npx dotenv -e .env.local -- npx tsx scripts/migrate-renewals.ts
+ *   npx dotenv -e .env.dev.local -- npx tsx scripts/migrate-renewals.ts
  */
 
 import { getGoogleSheetsClient, getSpreadsheetId, getColumnMap } from '../src/lib/sheets';

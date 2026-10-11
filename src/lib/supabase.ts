@@ -11,7 +11,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 export function getSupabaseUrl(): string {
   const url = process.env.SUPABASE_URL;
   if (!url) {
-    throw new Error('SUPABASE_URL environment variable is not set. Check your .env.local file.');
+    throw new Error('SUPABASE_URL environment variable is not set. Check your .env.dev.local file.');
   }
   return url;
 }
@@ -19,7 +19,7 @@ export function getSupabaseUrl(): string {
 export function getSupabaseServiceRoleKey(): string {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!key) {
-    throw new Error('SUPABASE_SERVICE_ROLE_KEY environment variable is not set. Check your .env.local file.');
+    throw new Error('SUPABASE_SERVICE_ROLE_KEY environment variable is not set. Check your .env.dev.local file.');
   }
   return key;
 }
