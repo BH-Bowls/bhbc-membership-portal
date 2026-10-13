@@ -9,6 +9,7 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { hasRole } from '@/lib/role-utils';
 import { getInputClasses, getCardClasses, getAlertClasses } from '@/config/theme-helpers';
+import { LabelLayoutsPanel } from '@/components/LabelLayoutsPanel';
 
 type Tab = 'general' | 'labels' | 'rowland' | 'bar';
 
@@ -37,17 +38,10 @@ const ROWLAND_FIELDS: [string, string, string][] = [
   ['rowland_entry_season', 'Entry season', 'Which season new entry-form submissions get tagged with, e.g. "2027".'],
 ];
 
+// Sheet measurements live on the named layouts (LabelLayoutsPanel), not here
 const LABELS_FIELDS: [string, string][] = [
   ['booklet_label_message', 'Booklet label message'],
   ['banner_url', 'Banner image URL'],
-  ['label_width_mm', 'Label width (mm)'],
-  ['label_height_mm', 'Label height (mm)'],
-  ['top_margin_mm', 'Top margin (mm)'],
-  ['left_margin_mm', 'Left margin (mm)'],
-  ['column_gap_mm', 'Column gap (mm)'],
-  ['row_gap_mm', 'Row gap (mm)'],
-  ['labels_per_row', 'Labels per row'],
-  ['labels_per_col', 'Labels per column'],
   ['printer_margin_mm', 'Printer margin (mm)'],
 ];
 
@@ -85,6 +79,12 @@ export default function AdminConfigPage() {
       router.push('/');
     }
   }, [session, status, router]);
+
+  // Runs once on mount: open the tab named in ?tab= (e.g. Print Labels links to ?tab=labels)
+  useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get('tab');
+    if (requested === 'general' || requested === 'labels' || requested === 'rowland' || requested === 'bar') setTab(requested);
+  }, []);
 
   // Load config
   useEffect(() => {
@@ -425,7 +425,7 @@ export default function AdminConfigPage() {
               )}
             </div>
 
-            <p className="text-xs text-gray-700">Used by Print Labels to lay out address, booklet, and locker labels.</p>
+            <p className="text-xs text-gray-700">Used by Print Labels on every layout. The printer margin is how far your printer can&apos;t print from the top and bottom of the page.</p>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
               {LABELS_FIELDS.map(([key, label]) => (
@@ -444,6 +444,12 @@ export default function AdminConfigPage() {
                 </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {tab === 'labels' && (
+          <div className={getCardClasses('md')}>
+            <LabelLayoutsPanel />
           </div>
         )}
 
