@@ -1,7 +1,9 @@
 'use client';
 
 // app/labels/page.tsx
-// Label printing — Address, Booklet, Locker, and Membership Card labels using Avery L7163 layout.
+// Label printing — Address, Booklet, Locker, and Membership Card labels, on any of
+// the named sheet layouts (Avery L7163 etc.) set up at /admin/config's Labels tab.
+// Each label type starts on its default layout; a different one can be picked per print.
 // Locker labels print from the Locker Register (/admin/lockers), not the member list.
 
 import { useEffect, useState, useMemo } from 'react';
@@ -13,20 +15,14 @@ import { hasRole } from '@/lib/role-utils';
 import { validUntilLabel } from '@/lib/membership-card';
 import { LOCKER_ROOMS } from '@/types/lockers';
 import type { LockerRoom, LockerWithMember } from '@/types/lockers';
+import { LABEL_TYPES } from '@/types/label-layouts';
+import type { LabelLayout, LabelType } from '@/types/label-layouts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface LabelConfig {
   booklet_label_message: string;
   banner_url: string;
-  label_width_mm: string;
-  label_height_mm: string;
-  top_margin_mm: string;
-  left_margin_mm: string;
-  column_gap_mm: string;
-  row_gap_mm: string;
-  labels_per_row: string;
-  labels_per_col: string;
   printer_margin_mm: string;
 }
 
@@ -45,7 +41,6 @@ interface LabelMember {
   locker?: { room: LockerRoom; lockerNumber: number };
 }
 
-type LabelType = 'address' | 'booklet' | 'locker' | 'card';
 type MemberFilter = 'all' | 'include' | 'manual';
 type LockerFilter = 'allocated' | 'all' | 'manual';
 
@@ -70,15 +65,23 @@ function lockerToLabel(l: LockerWithMember): LabelMember {
 const DEFAULT_CONFIG: LabelConfig = {
   booklet_label_message: 'Valid to 28th February 2027',
   banner_url: '/Booklet Label Pic.jpg',
-  label_width_mm: '99.1',
-  label_height_mm: '38.1',
-  top_margin_mm: '15.15',
-  left_margin_mm: '4.76',
-  column_gap_mm: '2.54',
-  row_gap_mm: '0',
-  labels_per_row: '2',
-  labels_per_col: '7',
   printer_margin_mm: '3',
+};
+
+// Used only until the layouts load (or if none could be loaded): Avery L7163
+const FALLBACK_LAYOUT: LabelLayout = {
+  id: '',
+  name: 'Avery L7163',
+  description: null,
+  widthMm: 99.1,
+  heightMm: 38.1,
+  topMarginMm: 15.15,
+  leftMarginMm: 4.76,
+  columnGapMm: 2.54,
+  rowGapMm: 0,
+  perRow: 2,
+  perCol: 7,
+  cardOutline: true,
 };
 
 // ── Label components ──────────────────────────────────────────────────────────
@@ -143,18 +146,25 @@ const CARD_HEIGHT_MM = 53.98;
 const CARD_INSET_MM = 1;
 
 // The My Account membership card (app/account/page.tsx) with its QR "back" folded
-// in on the right, so one card carries both. Drawn as a cut-out outline centred on
-// the label: credit-card width, and credit-card height when the label is tall
-// enough (otherwise as tall as the label allows). White background to save ink.
+// in on the right, so one card carries both. White background to save ink.
+// With `outline`, it's drawn as a cut-out outline centred on the label:
+// credit-card width, and credit-card height when the label is tall enough
+// (otherwise as tall as the label allows). Without it, the card fills the whole
+// label — for card-sized sheets, or a sticker that goes onto a blank plastic card.
 // The QR encodes the username, same as the on-screen card, for the till lookup.
-function CardLabel({ member, qrSrc, widthMm, heightMm }: { member: LabelMember; qrSrc: string | undefined; widthMm: number; heightMm: number }) {
+function CardLabel({ member, qrSrc, widthMm, heightMm, outline }: { member: LabelMember; qrSrc: string | undefined; widthMm: number; heightMm: number; outline: boolean }) {
   const validity = validUntilLabel(member);
-  const cardW = Math.min(CARD_WIDTH_MM, widthMm - 2 * CARD_INSET_MM);
-  const cardH = Math.min(CARD_HEIGHT_MM, heightMm - 2 * CARD_INSET_MM);
-  const qrMm = Math.min(cardH - 11, 30);
+  let cardW = widthMm;
+  let cardH = heightMm;
+  if (outline) {
+    cardW = Math.min(CARD_WIDTH_MM, widthMm - 2 * CARD_INSET_MM);
+    cardH = Math.min(CARD_HEIGHT_MM, heightMm - 2 * CARD_INSET_MM);
+  }
+  // The QR takes at most 40% of the width, so a narrow label still has room for the name
+  const qrMm = Math.min(cardH - 11, 30, cardW * 0.4);
   return (
     <div style={{ width: `${widthMm}mm`, height: `${heightMm}mm`, boxSizing: 'border-box', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', fontFamily: 'Arial, sans-serif' }}>
-      <div style={{ width: `${cardW}mm`, height: `${cardH}mm`, boxSizing: 'border-box', border: '0.2mm solid #9ca3af', borderRadius: '3mm', display: 'flex', alignItems: 'center', padding: '3mm', gap: '3mm', color: '#111827' }}>
+      <div style={{ width: `${cardW}mm`, height: `${cardH}mm`, boxSizing: 'border-box', border: outline ? '0.2mm solid #9ca3af' : 'none', borderRadius: outline ? '3mm' : '0', display: 'flex', alignItems: 'center', padding: '3mm', gap: '3mm', color: '#111827' }}>
         <div style={{ flex: 1, minWidth: 0, height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '2mm' }}>
             <img src="/bhbc-logo.jpg" alt="" style={{ height: '9mm', width: 'auto' }} />
@@ -174,25 +184,25 @@ function CardLabel({ member, qrSrc, widthMm, heightMm }: { member: LabelMember; 
   );
 }
 
-function LabelContent({ type, member, config, qrCodes }: { type: LabelType; member: LabelMember; config: LabelConfig; qrCodes: Record<string, string> }) {
-  const w = parseFloat(config.label_width_mm);
-  const h = parseFloat(config.label_height_mm);
+function LabelContent({ type, member, config, layout, qrCodes }: { type: LabelType; member: LabelMember; config: LabelConfig; layout: LabelLayout; qrCodes: Record<string, string> }) {
+  const w = layout.widthMm;
+  const h = layout.heightMm;
   if (type === 'address') return <AddressLabel member={member} widthMm={w} heightMm={h} />;
   if (type === 'booklet') return <BookletLabel member={member} config={config} widthMm={w} heightMm={h} />;
-  if (type === 'card') return <CardLabel member={member} qrSrc={qrCodes[member.userName]} widthMm={w} heightMm={h} />;
+  if (type === 'card') return <CardLabel member={member} qrSrc={qrCodes[member.userName]} widthMm={w} heightMm={h} outline={layout.cardOutline} />;
   return <LockerLabel member={member} widthMm={w} heightMm={h} />;
 }
 
 // ── Label sheet ───────────────────────────────────────────────────────────────
 
-function LabelSheet({ labelsOnSheet, type, config, qrCodes, skipCount = 0 }: { labelsOnSheet: LabelMember[]; type: LabelType; config: LabelConfig; qrCodes: Record<string, string>; skipCount?: number }) {
-  const w = parseFloat(config.label_width_mm);
-  const h = parseFloat(config.label_height_mm);
-  const top = parseFloat(config.top_margin_mm);
-  const left = parseFloat(config.left_margin_mm);
-  const colGap = parseFloat(config.column_gap_mm);
-  const rowGap = parseFloat(config.row_gap_mm);
-  const cols = parseInt(config.labels_per_row);
+function LabelSheet({ labelsOnSheet, type, config, layout, qrCodes, skipCount = 0 }: { labelsOnSheet: LabelMember[]; type: LabelType; config: LabelConfig; layout: LabelLayout; qrCodes: Record<string, string>; skipCount?: number }) {
+  const w = layout.widthMm;
+  const h = layout.heightMm;
+  const top = layout.topMarginMm;
+  const left = layout.leftMarginMm;
+  const colGap = layout.columnGapMm;
+  const rowGap = layout.rowGapMm;
+  const cols = layout.perRow;
   // @page uses top/bottom margin only (no left/right), so the full 210mm width is
   // available and paddingLeft maps 1:1 to paper position.
   const pm = parseFloat(config.printer_margin_mm || '0');
@@ -212,7 +222,7 @@ function LabelSheet({ labelsOnSheet, type, config, qrCodes, skipCount = 0 }: { l
         ))}
         {labelsOnSheet.map((member, i) => (
           <div key={i} style={{ width: `${w}mm`, height: `${h}mm`, overflow: 'hidden', border: '0.1mm dashed #ccc' }} className="label-cell">
-            <LabelContent type={type} member={member} config={config} qrCodes={qrCodes} />
+            <LabelContent type={type} member={member} config={config} layout={layout} qrCodes={qrCodes} />
           </div>
         ))}
       </div>
@@ -228,6 +238,13 @@ export default function LabelsPage() {
 
   const [config, setConfig] = useState<LabelConfig>(DEFAULT_CONFIG);
   const [configLoading, setConfigLoading] = useState(true);
+
+  // Sheet layouts, and each label type's default one
+  const [layouts, setLayouts] = useState<LabelLayout[]>([]);
+  const [defaultLayouts, setDefaultLayouts] = useState<Partial<Record<LabelType, string>>>({});
+  // A layout picked for this print; '' = the label type's default. Cleared when the type changes.
+  const [layoutChoice, setLayoutChoice] = useState('');
+  const [layoutsLoading, setLayoutsLoading] = useState(true);
 
   const [members, setMembers] = useState<LabelMember[]>([]);
   const [membersLoading, setMembersLoading] = useState(true);
@@ -265,6 +282,18 @@ export default function LabelsPage() {
       })
       .catch(() => {})
       .finally(() => setConfigLoading(false));
+  }, []);
+
+  // Load the sheet layouts (edited at /admin/config's Labels tab)
+  useEffect(() => {
+    fetch('/api/admin/labels/layouts')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.layouts) setLayouts(data.layouts);
+        if (data.defaults) setDefaultLayouts(data.defaults);
+      })
+      .catch(() => {})
+      .finally(() => setLayoutsLoading(false));
   }, []);
 
   // Load members
@@ -354,8 +383,17 @@ export default function LabelsPage() {
     return list;
   }, [selectedMembers, copies]);
 
+  // The layout being printed on: the one picked for this print, else the label
+  // type's default, else the first layout (or L7163 if none could be loaded)
+  let layout = FALLBACK_LAYOUT;
+  if (layouts.length > 0) layout = layouts[0];
+  const wantedId = layoutChoice || defaultLayouts[labelType] || '';
+  for (const l of layouts) {
+    if (l.id === wantedId) layout = l;
+  }
+
   // Split into sheets (first sheet may have fewer slots due to skip)
-  const labelsPerSheet = parseInt(config.labels_per_row) * parseInt(config.labels_per_col);
+  const labelsPerSheet = layout.perRow * layout.perCol;
   const sheets = useMemo(() => {
     const result: LabelMember[][] = [];
     if (labelList.length === 0) return result;
@@ -385,7 +423,7 @@ export default function LabelsPage() {
     });
   }
 
-  if (status === 'loading' || configLoading) {
+  if (status === 'loading' || configLoading || layoutsLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500" />
@@ -396,7 +434,6 @@ export default function LabelsPage() {
   if (!session || !hasRole(session.user?.role, 'Admin')) return null;
 
   const isLocker = labelType === 'locker';
-  const labelTypeLabel = { address: 'Address', booklet: 'Booklet', locker: 'Locker', card: 'Membership Card' };
 
   return (
     <>
@@ -415,7 +452,7 @@ export default function LabelsPage() {
       <div id="print-area">
         {sheets.map((sheet, i) => (
           <div key={i} style={{ pageBreakAfter: i < sheets.length - 1 ? 'always' : 'auto' }}>
-            <LabelSheet labelsOnSheet={sheet} type={labelType} config={config} qrCodes={qrCodes} skipCount={i === 0 ? skipLabels : 0} />
+            <LabelSheet labelsOnSheet={sheet} type={labelType} config={config} layout={layout} qrCodes={qrCodes} skipCount={i === 0 ? skipLabels : 0} />
           </div>
         ))}
       </div>
@@ -441,14 +478,41 @@ export default function LabelsPage() {
           {/* ── Label type ── */}
           <div className="bg-white shadow rounded-lg p-4">
             <h2 className="text-sm font-medium text-gray-700 mb-3">Label type</h2>
-            <div className="flex gap-4">
-              {(['address', 'booklet', 'locker', 'card'] as LabelType[]).map((t) => (
-                <label key={t} className="flex items-center gap-2 cursor-pointer">
-                  <input type="radio" name="labelType" value={t} checked={labelType === t} onChange={() => setLabelType(t)} className="text-blue-600" />
-                  <span className="text-sm text-gray-700">{labelTypeLabel[t]}</span>
+            <div className="flex flex-wrap gap-4">
+              {LABEL_TYPES.map((t) => (
+                <label key={t.id} className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="labelType"
+                    value={t.id}
+                    checked={labelType === t.id}
+                    onChange={() => { setLabelType(t.id); setLayoutChoice(''); setSkipLabels(0); }}
+                    className="text-blue-600"
+                  />
+                  <span className="text-sm text-gray-700">{t.label}</span>
                 </label>
               ))}
             </div>
+
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <label htmlFor="layout" className="text-sm font-medium text-gray-700">Sheet layout</label>
+              <select
+                id="layout"
+                value={layout.id}
+                onChange={(e) => { setLayoutChoice(e.target.value); setSkipLabels(0); }}
+                className="border border-gray-300 rounded-md px-2 py-1 text-sm text-gray-900 bg-white"
+              >
+                {layouts.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name}{defaultLayouts[labelType] === l.id ? ' (default)' : ''}
+                  </option>
+                ))}
+              </select>
+              <span className="text-sm text-gray-700">
+                {layout.widthMm} × {layout.heightMm} mm, {labelsPerSheet} per sheet
+              </span>
+            </div>
+            {layout.description && <p className="mt-1 text-sm text-gray-700">{layout.description}</p>}
           </div>
 
           {/* ── Members (or Lockers) ── */}
@@ -608,8 +672,8 @@ export default function LabelsPage() {
 
           {/* ── Config ── */}
           <div className="bg-white shadow rounded-lg p-4 flex items-center justify-between">
-            <span className="text-sm text-gray-500">Label dimensions, margins, and booklet message are configured in Admin &gt; Config.</span>
-            <Link href="/admin/config" className="text-sm text-blue-600 hover:text-blue-800 whitespace-nowrap">Edit label config →</Link>
+            <span className="text-sm text-gray-700">Sheet layouts, each label type&apos;s default layout, and the booklet message are set up in Admin &gt; Config.</span>
+            <Link href="/admin/config?tab=labels" className="text-sm text-blue-600 hover:text-blue-800 whitespace-nowrap">Edit label config →</Link>
           </div>
 
           {/* ── Preview ── */}
@@ -624,7 +688,7 @@ export default function LabelsPage() {
                     {sheets.length > 1 && <p className="text-xs text-gray-400 mb-1">Sheet {i + 1}</p>}
                     {/* Scale preview to fit screen */}
                     <div style={{ transform: 'scale(0.55)', transformOrigin: 'top left', width: '210mm', marginBottom: '-130mm' }}>
-                      <LabelSheet labelsOnSheet={sheet} type={labelType} config={config} qrCodes={qrCodes} skipCount={i === 0 ? skipLabels : 0} />
+                      <LabelSheet labelsOnSheet={sheet} type={labelType} config={config} layout={layout} qrCodes={qrCodes} skipCount={i === 0 ? skipLabels : 0} />
                     </div>
                   </div>
                 ))}
