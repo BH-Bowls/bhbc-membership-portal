@@ -54,10 +54,10 @@ export function currentSeason(): number {
 
 // ── Reads ──
 
-export async function getSeasonData(season: number, includeDrafts: boolean): Promise<Omit<HalveItSeasonData, 'canManage'>> {
+export async function getSeasonData(season: number, canManage: boolean): Promise<Omit<HalveItSeasonData, 'canManage'>> {
   const supabase = getSupabaseClient();
   // Every night, drafts included, so the money balance runs through all of them;
-  // drafts are dropped afterwards for members who can't manage
+  // drafts are dropped afterwards, and the money blanked, for members who can't manage
   const [players, nights, settings, playerSeasons, nightSeasons] = await Promise.all([
     supabase.from('halveit_players').select(PLAYER_SELECT).eq('season', season),
     supabase.from('halveit_nights').select('*').eq('season', season).order('night_date', { ascending: true }),
@@ -77,7 +77,13 @@ export async function getSeasonData(season: number, includeDrafts: boolean): Pro
     const night = mapNight(row);
     night.broughtForward = balance;
     balance += night.moneyIn - night.moneyOut;
-    if (includeDrafts || night.status === 'final') mappedNights.push(night);
+    if (!canManage) {
+      // The money is for Darts/Admin only
+      night.broughtForward = 0;
+      night.moneyIn = 0;
+      night.moneyOut = 0;
+    }
+    if (canManage || night.status === 'final') mappedNights.push(night);
   }
 
   // Scores for the nights being returned
