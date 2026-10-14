@@ -1160,11 +1160,48 @@ export default function ManageGamesPage() {
             { key: 'withdrawn',   label: 'Withdrawn' },
           ];
 
+          // CSV of the table in its current order, then the members who haven't played (all zeros)
+          const exportStats = () => {
+            const quote = (value: string | number) => {
+              const text = String(value);
+              if (/[",\r\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+              return text;
+            };
+            const lines: string[] = [];
+            const header: string[] = [];
+            for (const c of cols) header.push(quote(c.label));
+            lines.push(header.join(','));
+            for (const p of sortedStats) {
+              const cells: string[] = [];
+              for (const c of cols) cells.push(quote(p[c.key]));
+              lines.push(cells.join(','));
+            }
+            if (notPlayedStats !== null) {
+              for (const m of notPlayedStats) {
+                const cells: string[] = [];
+                for (const c of cols) cells.push(c.key === 'fullName' ? quote(m.fullName) : '0');
+                lines.push(cells.join(','));
+              }
+            }
+            const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `friendlies-player-stats-${new Date().toISOString().slice(0, 10)}.csv`;
+            link.click();
+            URL.revokeObjectURL(url);
+          };
+
           return (
             <div>
-            <p className="text-sm text-gray-600 mb-3">
-              {sortedStats.length} {sortedStats.length === 1 ? 'member has' : 'members have'} played at least one friendly.
-            </p>
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+              <p className="text-sm text-gray-600">
+                {sortedStats.length} {sortedStats.length === 1 ? 'member has' : 'members have'} played at least one friendly.
+              </p>
+              <button type="button" onClick={exportStats} className={getButtonClasses('secondary', 'sm')}>
+                Export (CSV)
+              </button>
+            </div>
             <div className="bg-white rounded-lg shadow overflow-auto max-h-[70vh]">
               <table className="min-w-full divide-y divide-gray-200 text-sm">
                 <thead className="bg-gray-50 sticky top-0 z-10">
