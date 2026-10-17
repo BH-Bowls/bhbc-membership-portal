@@ -482,9 +482,11 @@ function splitRoles(role: string | null): string[] {
 export interface ClubListEntry {
   clubName: string;
   lastYearFixtureCount: number;
+  /** Draft season's Friendlies against this club, per planning status — all zero when there's no draft season or no fixtures yet. */
+  draftStatusCounts: Record<PlanningStatus, number>;
 }
 
-/** Every club in the directory, each with a count of last year's (active season's) Friendlies against them — including 0, so a club BHBC has never played still shows up. */
+/** Every club in the directory, each with a count of last year's (active season's) Friendlies against them — including 0, so a club BHBC has never played still shows up — plus the draft season's Friendlies against them broken down by planning status. */
 export async function listClubsForFriendlies(): Promise<ClubListEntry[]> {
   const supabase = getSupabaseClient();
 
@@ -506,9 +508,27 @@ export async function listClubsForFriendlies(): Promise<ClubListEntry[]> {
     }
   }
 
+  const draftCounts: Record<string, Record<PlanningStatus, number>> = {};
+  const draftSeason = await getDraftSeason();
+  if (draftSeason) {
+    const { data: draftRows, error: draftError } = await supabase
+      .from('fixtures')
+      .select('club_name, planning_status')
+      .eq('season_id', draftSeason.id)
+      .eq('fixture_type', 'Friendly')
+      .not('club_name', 'is', null);
+    if (draftError) throw new Error(`Failed to fetch draft season fixture counts: ${draftError.message}`);
+    for (const row of draftRows || []) {
+      const status = row.planning_status as PlanningStatus;
+      if (!draftCounts[row.club_name]) draftCounts[row.club_name] = { Projected: 0, 'Email Sent': 0, Confirmed: 0 };
+      if (status in draftCounts[row.club_name]) draftCounts[row.club_name][status]++;
+    }
+  }
+
   return (clubs || []).map((c: any) => ({
     clubName: c.club_name,
     lastYearFixtureCount: counts[c.club_name] || 0,
+    draftStatusCounts: draftCounts[c.club_name] || { Projected: 0, 'Email Sent': 0, Confirmed: 0 },
   }));
 }
 

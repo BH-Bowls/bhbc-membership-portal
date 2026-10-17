@@ -12,7 +12,14 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { SeasonPlanningTabs } from '@/components/SeasonPlanningTabs';
 import { hasRole } from '@/lib/role-utils';
-import type { ClubListEntry } from '@/lib/season-planning-supabase';
+import type { ClubListEntry, PlanningStatus } from '@/lib/season-planning-supabase';
+
+// Same colours as the status badges on the Friendlies list itself.
+const STATUS_BADGES: { status: PlanningStatus; classes: string }[] = [
+  { status: 'Projected', classes: 'bg-amber-100 text-amber-800' },
+  { status: 'Email Sent', classes: 'bg-emerald-100 text-emerald-800' },
+  { status: 'Confirmed', classes: 'bg-green-100 text-green-800' },
+];
 
 export default function FriendliesClubsPage() {
   const { data: session } = useSession();
@@ -56,7 +63,7 @@ export default function FriendliesClubsPage() {
         </Link>
         <h1 className="text-2xl font-bold text-gray-900 mb-1">Season Planning</h1>
         <p className="text-sm text-gray-700 mb-4">
-          Clubs — last year's fixture count against each club, and a way in to contacts, outreach, and fixture history.
+          Clubs — this season's Friendlies against each club by status, last year's fixture count, and a way in to contacts, outreach, and fixture history.
         </p>
 
         <SeasonPlanningTabs active="friendlies" />
@@ -81,6 +88,17 @@ export default function FriendliesClubsPage() {
                       : `${club.lastYearFixtureCount} fixture${club.lastYearFixtureCount === 1 ? '' : 's'}`}
                     {' '}last year
                   </div>
+                </div>
+                <div className="flex flex-wrap items-center justify-end gap-1 ml-auto">
+                  {STATUS_BADGES.every(({ status }) => club.draftStatusCounts[status] === 0) ? (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">No fixtures</span>
+                  ) : (
+                    STATUS_BADGES.filter(({ status }) => club.draftStatusCounts[status] > 0).map(({ status, classes }) => (
+                      <span key={status} className={`text-xs font-medium px-2 py-0.5 rounded-full ${classes}`}>
+                        {club.draftStatusCounts[status]} {status}
+                      </span>
+                    ))
+                  )}
                 </div>
                 <Link
                   href={`/fixtures/season-planning/friendlies/clubs/${encodeURIComponent(club.clubName)}`}
