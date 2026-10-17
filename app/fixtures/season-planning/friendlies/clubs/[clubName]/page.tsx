@@ -15,6 +15,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { SeasonPlanningCalendar } from '@/components/SeasonPlanningCalendar';
+import { SeasonPlanningFreeDates } from '@/components/SeasonPlanningFreeDates';
 import { hasRole } from '@/lib/role-utils';
 import { getButtonClasses } from '@/config/theme-helpers';
 import type { ClubInfo, ClubFixtureHistoryRow, ClubClash } from '@/lib/season-planning-supabase';
@@ -321,7 +322,10 @@ export default function ClubInfoPage({ params }: PageProps) {
               ← All Clubs
             </Link>
           </div>
-          <SeasonPlanningCalendar />
+          <div className="flex items-center gap-2">
+            <SeasonPlanningCalendar />
+            <SeasonPlanningFreeDates />
+          </div>
         </div>
         <h1 className="text-2xl font-bold text-gray-900 mb-1">{clubName}</h1>
 
