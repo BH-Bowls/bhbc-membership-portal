@@ -106,6 +106,17 @@ async function buildJournalLines(dayEnd: BarDayEnd, config: BarNominalConfig): P
   postSigned('Cash variance', config.cashVarianceAccount, variance, true);
   postSigned('Cash variance', config.cashAccount, variance, false);
 
+  // Every pair above balances by construction, but the sales credits come from the
+  // individual bar_sales rows while the debits come from the Day End's stored
+  // totals -- if those ever disagree (e.g. a Day End created before 0066 split
+  // Cash Movements out of cash_sales_pence), refuse rather than hand Xero an
+  // unbalanced journal. Thrown before the export route marks anything exported.
+  const debits = lines.reduce((sum, l) => sum + l.debitPence, 0);
+  const credits = lines.reduce((sum, l) => sum + l.creditPence, 0);
+  if (debits !== credits) {
+    throw new Error(`${narration} doesn't balance (debits £${pounds(debits)}, credits £${pounds(credits)}) -- its stored totals don't match its sales. Nothing was exported.`);
+  }
+
   return lines;
 }
 
