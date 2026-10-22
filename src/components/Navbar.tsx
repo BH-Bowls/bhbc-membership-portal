@@ -194,6 +194,7 @@ export function Navbar() {
     if (isAdmin || canAccessBanking) {
       club.push({ name: 'Banking', href: '/banking' });
       club.push({ name: 'Bar Reconciliation', href: '/banking/bar-reconciliation' });
+      club.push({ name: 'Member Accounts', href: '/banking/member-accounts' });
     }
     if (isGMC || isAdmin) {
       club.push({ name: 'Member Suggestions', href: '/member-suggestions' });

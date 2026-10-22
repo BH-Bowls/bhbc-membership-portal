@@ -315,6 +315,92 @@ export async function getMemberAccount(userName: string): Promise<{ balancePence
   };
 }
 
+// ── Member Accounts report (Treasurer, /banking/member-accounts) ─────────────
+
+export interface MemberAccountSummary {
+  userName: string;
+  fullName: string;
+  openingPence: number;     // balance at the start of the range
+  topupsPence: number;      // positive
+  purchasesPence: number;   // positive (spend)
+  refundsPence: number;     // positive (cash paid back out)
+  adjustmentsPence: number; // signed (voided-sale reversals etc.)
+  closingPence: number;     // balance at the end of the range
+  currentPence: number;     // balance right now
+}
+
+/**
+ * One row per bar_accounts row (every member who has ever had a wallet,
+ * including £0), with opening/closing balances and per-type movement totals
+ * for [fromIso, toIso). Opening/closing come from the last ledger row's
+ * balance_after before each boundary (0 if none), so they're exact even for
+ * a range in the past. Ledger is paged since PostgREST caps responses at 1000.
+ */
+export async function getMemberAccountsReport(fromIso: string, toIso: string): Promise<MemberAccountSummary[]> {
+  const supabase = getSupabaseClient();
+  const { data: accts, error: acctErr } = await supabase.from('bar_accounts').select('user_name, balance_pence');
+  if (acctErr) throw new Error(`Failed to load bar accounts: ${acctErr.message}`);
+
+  const rows = new Map<string, MemberAccountSummary>();
+  const names = await nameMap();
+  for (const a of accts ?? []) {
+    rows.set(a.user_name.toLowerCase(), {
+      userName: a.user_name,
+      fullName: names.get(a.user_name.toLowerCase()) || a.user_name,
+      openingPence: 0, topupsPence: 0, purchasesPence: 0, refundsPence: 0, adjustmentsPence: 0, closingPence: 0,
+      currentPence: a.balance_pence,
+    });
+  }
+
+  const fromMs = Date.parse(fromIso);
+  const pageSize = 1000;
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from('bar_ledger')
+      .select('user_name, type, amount_pence, balance_after_pence, created_at')
+      .lt('created_at', toIso)
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`Failed to load bar ledger: ${error.message}`);
+    for (const r of data ?? []) {
+      const row = rows.get(String(r.user_name).toLowerCase());
+      if (!row) continue;
+      row.closingPence = r.balance_after_pence;
+      if (Date.parse(r.created_at) < fromMs) {
+        row.openingPence = r.balance_after_pence;
+        continue;
+      }
+      if (r.type === 'topup') row.topupsPence += r.amount_pence;
+      else if (r.type === 'purchase') row.purchasesPence -= r.amount_pence;
+      else if (r.type === 'refund') row.refundsPence -= r.amount_pence;
+      else row.adjustmentsPence += r.amount_pence;
+    }
+    if (!data || data.length < pageSize) break;
+  }
+
+  return [...rows.values()].sort((a, b) => a.fullName.localeCompare(b.fullName));
+}
+
+/** One member's ledger rows in [fromIso, toIso), oldest first — the report's drill-down. */
+export async function getMemberAccountTransactions(userName: string, fromIso: string, toIso: string): Promise<BarLedgerEntry[]> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('bar_ledger')
+    .select('*, bar_sales ( gross_total_pence, discount_pence )')
+    .eq('user_name', userName)
+    .gte('created_at', fromIso)
+    .lt('created_at', toIso)
+    .order('created_at', { ascending: true });
+  if (error) throw new Error(`Failed to load transactions: ${error.message}`);
+  return (data ?? []).map((r: any) => ({
+    id: r.id, type: r.type, amountPence: r.amount_pence, balanceAfterPence: r.balance_after_pence,
+    note: r.note, saleId: r.sale_id, staff: r.staff, paymentMethod: r.payment_method ?? null,
+    grossTotalPence: r.bar_sales?.gross_total_pence ?? null, discountPence: r.bar_sales?.discount_pence ?? null,
+    createdAt: r.created_at,
+  }));
+}
+
 // ── Money operations (atomic RPCs) ───────────────────────────────────────────
 
 export async function topUp(userName: string, amountPence: number, staff: string, note?: string, paymentMethod: 'cash' | 'card' = 'cash'): Promise<number> {
