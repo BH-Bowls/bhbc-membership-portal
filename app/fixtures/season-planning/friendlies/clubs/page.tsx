@@ -17,7 +17,7 @@ import type { ClubListEntry, PlanningStatus } from '@/lib/season-planning-supaba
 // Same colours as the status badges on the Friendlies list itself.
 const STATUS_BADGES: { status: PlanningStatus; classes: string }[] = [
   { status: 'Projected', classes: 'bg-amber-100 text-amber-800' },
-  { status: 'Email Sent', classes: 'bg-emerald-100 text-emerald-800' },
+  { status: 'Email Sent', classes: 'bg-blue-100 text-blue-800' },
   { status: 'Confirmed', classes: 'bg-green-100 text-green-800' },
 ];
 

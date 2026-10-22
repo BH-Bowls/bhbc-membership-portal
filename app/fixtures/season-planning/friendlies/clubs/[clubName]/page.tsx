@@ -71,7 +71,7 @@ function clashDetails(c: ClubClash): string {
 function planningBadgeClasses(status: string): string {
   switch (status) {
     case 'Projected': return 'bg-amber-100 text-amber-800';
-    case 'Email Sent': return 'bg-emerald-100 text-emerald-800';
+    case 'Email Sent': return 'bg-blue-100 text-blue-800';
     case 'Confirmed': return 'bg-green-100 text-green-800';
     default: return 'bg-gray-100 text-gray-700';
   }
