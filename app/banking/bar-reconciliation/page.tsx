@@ -224,6 +224,12 @@ export default function BarReconciliationPage() {
     setSelectedConfirmed(next);
   }
 
+  /** Header tickbox: selects every Day End currently shown, or clears them all if they're already all ticked. */
+  function toggleAllConfirmedSelected() {
+    const allSelected = confirmedVisible.every((d) => selectedConfirmed.has(d.id));
+    setSelectedConfirmed(allSelected ? new Set() : new Set(confirmedVisible.map((d) => d.id)));
+  }
+
   function downloadCsv(csv: string, prefix: string) {
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -528,7 +534,17 @@ export default function BarReconciliationPage() {
             <table className="w-full text-sm">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-3 py-2 text-left w-8"></th>
+                  <th className="px-3 py-2 text-left w-8">
+                    <input
+                      type="checkbox"
+                      title="Select all"
+                      checked={confirmedVisible.every((d) => selectedConfirmed.has(d.id))}
+                      ref={(el) => {
+                        if (el) el.indeterminate = confirmedVisible.some((d) => selectedConfirmed.has(d.id)) && !confirmedVisible.every((d) => selectedConfirmed.has(d.id));
+                      }}
+                      onChange={toggleAllConfirmedSelected}
+                    />
+                  </th>
                   <th className="px-3 py-2 text-left">Date</th>
                   <th className="px-3 py-2 text-left">Staff</th>
                   <th className="px-3 py-2 text-right">Cash removed</th>
