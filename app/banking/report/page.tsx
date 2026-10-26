@@ -108,7 +108,7 @@ export default function BankingReportPage() {
   });
 
   // Check authorization
-  const canAccess = hasRole(session?.user?.role, 'Admin', 'T');
+  const canAccess = hasRole(session?.user?.role, 'Admin', 'Treasurer', 'T');
 
   useEffect(() => {
     if (status === 'authenticated') {

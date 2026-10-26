@@ -69,7 +69,7 @@ export default function BankingPage() {
   const csvInputRef = useRef<HTMLInputElement>(null);
 
   // Check authorization
-  const canAccess = hasRole(session?.user?.role, 'Admin', 'T');
+  const canAccess = hasRole(session?.user?.role, 'Admin', 'Treasurer', 'T');
 
   useEffect(() => {
     if (status === 'authenticated') {
