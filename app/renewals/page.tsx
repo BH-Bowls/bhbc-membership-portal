@@ -17,6 +17,7 @@ import { hasRole } from '@/lib/role-utils';
 import { getMemberTypeDisplay, getMemberTypeOptions, isPlayer } from '@/lib/member-type-utils';
 import { saveDraft, restoreDraft, clearDraft } from '@/lib/form-draft-utils';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { SearchableSelect } from '@/components/SearchableSelect';
 import { formatOrdinalDate } from '@/lib/date-utils';
 import type { BankDetails } from '@/lib/bank-details';
 
@@ -135,8 +136,16 @@ export default function RenewalsPage() {
   const isRealAdmin = hasRole(session?.user?.role, 'Admin') && !(session?.user?.isImpersonating);
   const [targetUserName, setTargetUserName] = useState<string | null>(null);
   const [memberOptions, setMemberOptions] = useState<{ userName: string; name: string }[]>([]);
+  const ownUserName = session?.user?.userName || '';
+  // Searchable list for the selector — "Me" first, then everyone else
+  const memberSelectOptions: { value: string; label: string }[] = [{ value: ownUserName, label: `Me (${ownUserName})` }];
+  for (const m of memberOptions) {
+    if (m.userName.toLowerCase() !== ownUserName.toLowerCase()) {
+      memberSelectOptions.push({ value: m.userName, label: m.name });
+    }
+  }
   // Whose unsaved-changes copy the browser keeps — the member being edited
-  const draftOwner = targetUserName || (session?.user?.userName || '');
+  const draftOwner = targetUserName || ownUserName;
 
   // Void (spec §5)
   const [voidDialogOpen, setVoidDialogOpen] = useState(false);
@@ -777,21 +786,15 @@ export default function RenewalsPage() {
         {/* Admin member selector (spec §4) — view any member's renewal, and reach Void */}
         {isRealAdmin && (
           <div className="mb-4 bg-white shadow rounded-lg px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-2">
-            <label htmlFor="renewal-member" className="text-sm font-medium text-gray-900">Member:</label>
-            <select
-              id="renewal-member"
-              value={targetUserName || ''}
-              onChange={(e) => setTargetUserName(e.target.value === '' ? null : e.target.value)}
+            <label className="text-sm font-medium text-gray-900">Member:</label>
+            <SearchableSelect
+              options={memberSelectOptions}
+              value={targetUserName || ownUserName}
+              onChange={(value) => setTargetUserName(value === '' || value === ownUserName ? null : value)}
               disabled={isSaving}
-              className="block w-full sm:w-80 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
-            >
-              <option value="">Me ({session?.user?.userName})</option>
-              {memberOptions.map((m) => (
-                m.userName.toLowerCase() === (session?.user?.userName || '').toLowerCase() ? null : (
-                  <option key={m.userName} value={m.userName}>{m.name}</option>
-                )
-              ))}
-            </select>
+              placeholder="Type to search members..."
+              className="w-full sm:w-80"
+            />
             {targetUserName && (
               <span className="text-sm text-gray-700">Viewing {profile.fullKnownAs} {profile.lastName}&apos;s renewal</span>
             )}

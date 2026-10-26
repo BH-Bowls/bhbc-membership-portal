@@ -12,6 +12,7 @@
 // is a guess, not a confirmed rate name from your org's chart of accounts.
 
 import { getDayEndRevenueByNominalCode, type BarDayEnd, type BarBanking } from './bar-supabase';
+import { XERO_JOURNAL_HEADER, pounds, pushJournalRows, type JournalLine } from './xero-journal-csv';
 
 export interface BarNominalConfig {
   cashAccount: string;
@@ -21,24 +22,6 @@ export interface BarNominalConfig {
   cashVarianceAccount: string;
   defaultSalesAccount: string;
   cashBankedAccount: string;
-}
-
-interface JournalLine {
-  narration: string;
-  date: string;
-  description: string;
-  accountCode: string;
-  debitPence: number;
-  creditPence: number;
-}
-
-function csvEscape(value: string): string {
-  if (/[",\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`;
-  return value;
-}
-
-function pounds(pence: number): string {
-  return (pence / 100).toFixed(2);
 }
 
 async function buildJournalLines(dayEnd: BarDayEnd, config: BarNominalConfig): Promise<JournalLine[]> {
@@ -137,31 +120,16 @@ function buildBankingJournalLines(banking: BarBanking, config: BarNominalConfig)
   return lines;
 }
 
-function pushRows(rows: string[], lines: JournalLine[]) {
-  for (const l of lines) {
-    rows.push([
-      csvEscape(l.narration),
-      l.date,
-      csvEscape(l.description),
-      csvEscape(l.accountCode),
-      'No VAT',
-      l.debitPence ? pounds(l.debitPence) : '',
-      l.creditPence ? pounds(l.creditPence) : '',
-    ].join(','));
-  }
-}
-
 /** Builds one combined Manual Journal CSV covering both kinds of export this app
  * produces (specs/BAR_BANKING_XERO_SPEC.md §6.3, "order independence" -- either
  * set can be empty, and a Day End can be exported before or after being banked). */
 export async function buildXeroManualJournalCsv(dayEnds: BarDayEnd[], bankings: BarBanking[], config: BarNominalConfig): Promise<string> {
-  const header = ['*Narration', '*Date', 'Description', '*AccountCode', '*TaxRate', '*Debit', '*Credit'];
-  const rows: string[] = [header.join(',')];
+  const rows: string[] = [XERO_JOURNAL_HEADER.join(',')];
   for (const dayEnd of dayEnds) {
-    pushRows(rows, await buildJournalLines(dayEnd, config));
+    pushJournalRows(rows, await buildJournalLines(dayEnd, config));
   }
   for (const banking of bankings) {
-    pushRows(rows, buildBankingJournalLines(banking, config));
+    pushJournalRows(rows, buildBankingJournalLines(banking, config));
   }
   return rows.join('\n');
 }

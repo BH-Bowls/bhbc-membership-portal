@@ -64,6 +64,29 @@ Follow `specs/CODING_STANDARDS.md` throughout (no `?.` / `??`, explicit readable
 - **`POST /api/renewals/void`:** voids with a required reason, records the real Admin and sets `outstanding = 0`. The conditions are re-checked inside the UPDATE.
 - **Voided renewals:** they show a grey "voided" banner and are excluded from Banking, the Banking report, the membership card and labels. They stay in competition entrants, because a void is financial only. The data export marks them "Voided".
 
+### 2.7 Phase 3 — Renewals journal export (built 26 Oct 2026, same branch, uncommitted)
+
+**Migration and code:**
+- **Migration:** `0085_renewals_xero_journal.sql`. **Apply before deploying.** It adds:
+  - `renewal_xero_exports`, which stores each CSV;
+  - the export links on `renewals`, plus `renewal_payments.source`;
+  - `renewal_transactions`;
+  - the `renewals_xero_record_export()` function, which records an export all or nothing;
+  - config seeds.
+- **Logic:** `src/lib/renewals-xero.ts`. Every event becomes postings, and the same postings drive the journal preview, the export and the debtors report, so they always agree.
+- **Shared CSV format:** moved to `src/lib/xero-journal-csv.ts`. The bar export uses it unchanged.
+- **Page:** `/banking/renewals-xero`, with Export (preview and history), Checks (debtors as at a date, transfers clearing), Adjustments, and Settings tabs. It's linked from `/banking` and the navbar.
+
+**Differences from §6 as written:**
+- **One ledger:** `renewal_transactions` holds payments *and* adjustments, instead of a separate `renewal_adjustments` table. A `method` column (card or cash) is ready for till payments.
+- **Banking writes to the ledger:** `POST /api/banking/submit` now records each member's share of a match as a `payment` transaction, dated with the latest bank date of its payments. Banking only ever kept running totals on the renewal, which a daily journal can't use.
+- **Two extra accounts:**
+  - `renewals_nominal_donations_account` for Banking's donations;
+  - `renewals_nominal_adjustments_account` for Banking's "difference", where a negative is written off.
+- **Settings on the export page:** the account codes are edited there rather than on Admin config, because the treasurer isn't an Admin. Only `renewals_*` keys can be written there. Card clearing and Cash-in-hand are shown, but stay on Admin config → Bar.
+- **Adjustments use Banking's columns:** a charge or credit goes on `difference`, and a refund comes off `banking`. That keeps Banking's own formula (outstanding = fee − banking + donations + difference) right on its next match.
+- **Paid at submission:** §11.3a's `paid_at_submission` isn't handled yet. It comes with Stripe (Phase 5).
+
 ### 2.5 Competitions eligibility from the friendlies data (built 26 Oct 2026, same branch)
 
 - **Rule:** a playing member can enter club competitions if they made themselves available for at least `min_friendlies_for_competitions` friendlies in the previous season. The setting already existed (Admin config → General) but nothing read it. It's seeded at 8 and is **to be set to 6** for 2027.

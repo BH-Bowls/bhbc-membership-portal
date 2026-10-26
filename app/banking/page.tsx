@@ -619,6 +619,13 @@ export default function BankingPage() {
             </button>
 
             <button
+              onClick={() => router.push('/banking/renewals-xero')}
+              className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 flex items-center"
+            >
+              Renewals → Xero
+            </button>
+
+            <button
               onClick={() => router.push('/banking/add-payments')}
               className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 flex items-center"
             >
