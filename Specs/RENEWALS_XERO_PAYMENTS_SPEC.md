@@ -55,6 +55,15 @@ Follow `specs/CODING_STANDARDS.md` throughout (no `?.` / `??`, explicit readable
 - **Emails:** `renewal-confirmation.html` now takes its season from data (it was hardcoded as 2026).
 - **Reopen and drafts:** reopen and the §3.9 draft filters are included (competition entrants, membership card and labels, Banking list and report, data export Status column).
 
+### 2.6 Phase 2 — Admin member selector and Void (built 26 Oct 2026, same branch, uncommitted)
+
+- **Migration:** `0084_renewals_void.sql` adds `voided_at`, `voided_by` and `void_reason`, with a check that a void needs a submission and a reason. **Apply before deploying.**
+- **Member selector:** a real Admin (not impersonating) gets a **Member** selector at the top of `/renewals`, defaulting to "Me". Admins have no extra edit rights through it; the lock still applies.
+- **Void button:** on a submitted, renewing renewal with nothing paid.
+- **`GET /api/renewals/void`:** checks the void is allowed and lists the 200 Club numbers and competitions, each linked.
+- **`POST /api/renewals/void`:** voids with a required reason, records the real Admin and sets `outstanding = 0`. The conditions are re-checked inside the UPDATE.
+- **Voided renewals:** they show a grey "voided" banner and are excluded from Banking, the Banking report, the membership card and labels. They stay in competition entrants, because a void is financial only. The data export marks them "Voided".
+
 ### 2.5 Competitions eligibility from the friendlies data (built 26 Oct 2026, same branch)
 
 - **Rule:** a playing member can enter club competitions if they made themselves available for at least `min_friendlies_for_competitions` friendlies in the previous season. The setting already existed (Admin config → General) but nothing read it. It's seeded at 8 and is **to be set to 6** for 2027.
