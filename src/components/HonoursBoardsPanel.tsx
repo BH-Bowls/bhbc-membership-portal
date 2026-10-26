@@ -10,7 +10,7 @@ import { getButtonClasses, getInputClasses } from '@/config/theme-helpers';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import {
   BOARD_LAYOUTS, HONOURS_BOARD_FIELDS, START_YEAR_KEY, YEARS_PER_SET_KEY,
-  fieldLabel, layoutLabel, sheetForYear, sheetGeometry, sheetsUpTo, validateBoard, validateSheetSettings,
+  fieldLabel, layoutLabel, sheetForYear, sheetGeometry, sheetLabel, sheetsUpTo, validateBoard, validateSheetSettings,
 } from '@/types/honours-boards';
 import type { BoardLayout, HonoursBoard, HonoursBoardInput } from '@/types/honours-boards';
 
@@ -28,7 +28,7 @@ interface BoardForm {
   columns: ColumnForm[];
 }
 
-const EMPTY_FORM: BoardForm = { name: '', displayOrder: '0', layout: 'stacked', columns: [] };
+const EMPTY_FORM: BoardForm = { name: '', displayOrder: '0', layout: 'a2_plus_a3', columns: [] };
 
 function toForm(board: HonoursBoard): BoardForm {
   return {
@@ -269,13 +269,18 @@ export function HonoursBoardsPanel() {
             <p className="text-xs text-gray-700 mt-1">The first year on the wall. Raise it later to roll the oldest years off instead of adding a second set.</p>
           </div>
           <div>
-            <label className="block text-gray-900 mb-1">Years per set</label>
+            <label className="block text-gray-900 mb-1">Row control</label>
             {isEditingSheets ? (
               <input type="text" inputMode="numeric" value={editYearsPerSet} onChange={(e) => setEditYearsPerSet(e.target.value)} className={`${getInputClasses()} max-w-[10rem]`} />
             ) : (
               <span className="text-gray-900">{yearsPerSet || '—'}</span>
             )}
-            <p className="text-xs text-gray-700 mt-1">For two-sheet boards: sets the row spacing (71 gives names about 21pt, the first set running 1976–2046). More years means smaller text. Changing it moves every sheet&apos;s years, so all the printed sheets would need reprinting.</p>
+            <p className="text-xs text-gray-700 mt-1">
+              Sets the row spacing, and so the name size, on every board. Lower gives bigger names but fewer rows per
+              sheet. With an A2 sheet and A3 continuation: 71 gives names about 21pt (A2 sheet to 2026, 26 spare years);
+              65 about 23pt (A2 to 2022, 20 spare); 63 about 24pt (A2 to 2020, 16 spare). Changing it moves every
+              sheet&apos;s years, so all the printed sheets would need reprinting.
+            </p>
           </div>
         </div>
 
@@ -289,7 +294,7 @@ export function HonoursBoardsPanel() {
                   {layoutSheets(l.value).map(({ sheet: s, isCurrent, namePt }) => (
                     <li key={s.firstYear} className="p-2 flex flex-wrap justify-between gap-2">
                       <span className="text-gray-900">
-                        {s.position === 'Single' ? '' : `Set ${s.set} · ${s.position} · `}{s.firstYear}–{s.lastYear} · names about {namePt}pt
+                        {s.position === 'Single' ? '' : `Set ${s.set} · ${sheetLabel(l.value, s)} · `}{s.firstYear}–{s.lastYear} · names about {namePt}pt
                       </span>
                       {s.position === 'Single' ? (
                         <span className="text-blue-800">Reprinted each season, a little smaller each time</span>

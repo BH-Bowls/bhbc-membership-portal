@@ -9,9 +9,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { getButtonClasses, getAlertClasses, getInputClasses } from '@/config/theme-helpers';
 import { theme } from '@/config/theme';
-import { MIN_READABLE_PT, layoutLabel, sheetForYear, sheetGeometry, sheetsUpTo, validateSheetSettings } from '@/types/honours-boards';
-import type { BoardSheet, HonoursBoard } from '@/types/honours-boards';
-import type { BodyFont, HonoursYearRow } from '@/lib/honours-board-pdf';
+import {
+  BOARD_LAYOUTS, MIN_READABLE_PT, a3Halves, sheetForYear, sheetGeometry, sheetLabel, sheetsUpTo, validateSheetSettings,
+} from '@/types/honours-boards';
+import type { BoardLayout, BoardSheet, HonoursBoard } from '@/types/honours-boards';
+import type { BoardStyle, BodyFont, HonoursYearRow } from '@/lib/honours-board-pdf';
 
 // Listed here as well as in honours-board-pdf.tsx so the page doesn't load the PDF library just to draw the picker
 const BODY_FONT_OPTIONS: { value: BodyFont; hint: string }[] = [
@@ -19,6 +21,21 @@ const BODY_FONT_OPTIONS: { value: BodyFont; hint: string }[] = [
   { value: 'Inter', hint: 'Matches the website' },
   { value: 'Lora', hint: 'Traditional serif, reads a little smaller' },
 ];
+
+// How the rows are told apart — offered while the club chooses, like the font
+const STYLE_OPTIONS: { value: BoardStyle; label: string; hint: string }[] = [
+  { value: 'stone', label: 'Stone stripes', hint: 'Pale warm grey on alternate years' },
+  { value: 'grey', label: 'Grey stripes', hint: "The website's light grey on alternate years" },
+  { value: 'rules', label: 'Lines', hint: 'A fine line between years, no shading — the traditional ledger look' },
+  { value: 'decades', label: 'Decade shading', hint: 'Every other decade lightly tinted, in blocks of ten years' },
+  { value: 'ivory', label: 'Ivory', hint: 'Warm off-white sheet, fine lines, gold line under the title — test print first; the print shop must print to the edge' },
+  { value: 'green', label: 'Green stripes', hint: 'The original pale green alternate years' },
+];
+
+/** Identifies a sheet in the picker — an A2 sheet and its first A3 half start in the same year. */
+function sheetKey(s: BoardSheet): string {
+  return `${s.firstYear}-${s.part ?? 0}`;
+}
 
 export default function PrintHonoursBoardsPage() {
   const [boards, setBoards] = useState<HonoursBoard[]>([]);
@@ -29,9 +46,12 @@ export default function PrintHonoursBoardsPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [boardId, setBoardId] = useState('');
-  // The chosen sheet's first year; 0 = the board's current sheet
-  const [sheetFirstYear, setSheetFirstYear] = useState(0);
+  // Try a board in another layout without changing its saved one; '' = the saved layout
+  const [previewLayout, setPreviewLayout] = useState<BoardLayout | ''>('');
+  // The chosen sheet (see sheetKey); '' = the board's current sheet
+  const [chosenSheet, setChosenSheet] = useState('');
   const [bodyFont, setBodyFont] = useState<BodyFont>('Atkinson Hyperlegible Next');
+  const [boardStyle, setBoardStyle] = useState<BoardStyle>('stone');
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
@@ -93,10 +113,30 @@ export default function PrintHonoursBoardsPage() {
     return settingsError ? null : sheetForYear(upToYear(b), startYear, b.layout, yearsPerSet);
   }
 
-  const board = boards.find((b) => b.id === boardId) || null;
-  const sheets: BoardSheet[] = board && !settingsError ? sheetsUpTo(upToYear(board), startYear, board.layout, yearsPerSet) : [];
+  /**
+   * Every sheet a board can print: all sheets up to the end of the current set (so the
+   * set's later sheet can be printed blank, e.g. for a trial), with an A2 sheet also
+   * offered as its two A3 halves where the layout allows.
+   */
+  function printableSheets(b: HonoursBoard): BoardSheet[] {
+    const current = currentSheetFor(b);
+    if (!current) return [];
+    // Reach the end of the current set: include the next sheet if it's in the same set
+    const next = sheetForYear(current.lastYear + 1, startYear, b.layout, yearsPerSet);
+    const until = next && next.set === current.set && b.layout !== 'single' ? next.lastYear : upToYear(b);
+    const list: BoardSheet[] = [];
+    for (const s of sheetsUpTo(until, startYear, b.layout, yearsPerSet)) {
+      list.push(...a3Halves(b.layout, s, yearsPerSet), s);
+    }
+    return list;
+  }
+
+  const savedBoard = boards.find((b) => b.id === boardId) || null;
+  // The board as previewed: its saved layout, or the one chosen to try
+  const board = savedBoard && previewLayout ? { ...savedBoard, layout: previewLayout } : savedBoard;
+  const sheets: BoardSheet[] = board ? printableSheets(board) : [];
   const boardCurrent = board ? currentSheetFor(board) : null;
-  const sheet = sheets.find((s) => s.firstYear === sheetFirstYear) || boardCurrent;
+  const sheet = sheets.find((s) => sheetKey(s) === chosenSheet) || boardCurrent;
   const geometry = board && sheet ? sheetGeometry(board.layout, sheet, yearsPerSet) : null;
 
   /** Builds one sheet's PDF; the PDF library is only downloaded the first time this runs. */
@@ -109,6 +149,7 @@ export default function PrintHonoursBoardsPage() {
       rows,
       lastYearShown: lastSeason,
       bodyFont,
+      boardStyle,
       clubName: theme.brand.name,
     });
     return { blob, fileName: honoursBoardFileName(forBoard, forSheet, yearsPerSet) };
@@ -178,6 +219,31 @@ export default function PrintHonoursBoardsPage() {
     }
   }
 
+  /**
+   * A trial print of the A2-plus-A3 layout entirely on A3: sheets 1 and 2 (the A2 sheet's
+   * two halves) and sheet 3, for every board — whatever layout each board is saved with.
+   */
+  async function downloadA3Trial() {
+    setWorking(true);
+    setActionError(null);
+    try {
+      for (const saved of boards) {
+        const b: HonoursBoard = { ...saved, layout: 'a2_plus_a3' };
+        // Sheets 1 and 2 in place of the A2 sheet; sheet 3 as it is
+        const trialSheets = printableSheets(b).filter((s) => s.position !== 'Top' || s.part);
+        for (const s of trialSheets) {
+          const { blob, fileName } = await build(b, s);
+          saveFile(blob, fileName);
+        }
+      }
+    } catch (err) {
+      console.error('[honours-boards A3 trial download]', err);
+      setActionError('Could not build the PDFs');
+    } finally {
+      setWorking(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -221,7 +287,7 @@ export default function PrintHonoursBoardsPage() {
                   if (!current) return null;
                   return (
                     <li key={b.id}>
-                      {b.name}: {current.position === 'Single' ? 'the sheet' : `set ${current.set} ${current.position.toLowerCase()} sheet`} ({current.firstYear}–{current.lastYear})
+                      {b.name}: {current.position === 'Single' ? 'the sheet' : `set ${current.set}, ${sheetLabel(b.layout, current)}`} ({current.firstYear}–{current.lastYear})
                     </li>
                   );
                 })}
@@ -232,29 +298,63 @@ export default function PrintHonoursBoardsPage() {
             </div>
           )}
 
+          {/* Trial print of the A2-plus-A3 layout, all on A3 */}
+          {!settingsError && boards.length > 0 && (
+            <div className="bg-white shadow rounded-lg p-5 space-y-3">
+              <h2 className="font-semibold text-gray-900">A3 trial print</h2>
+              <p className="text-sm text-gray-700">
+                Every board as three A3 landscape sheets: sheets 1 and 2 (which make up the A2 sheet) and
+                sheet 3, the yearly sheet. Same years, sizes and columns as the final A2 and A3 prints. Uses
+                the row style and font chosen below.
+              </p>
+              <button onClick={downloadA3Trial} disabled={working} className={getButtonClasses('secondary', 'md')}>
+                {working ? 'Building…' : `Download ${boards.length * 3} A3 PDFs`}
+              </button>
+            </div>
+          )}
+
           {/* Any one sheet, with a preview */}
           {board && sheets.length > 0 && (
             <div className="bg-white shadow rounded-lg p-5 space-y-4">
               <h2 className="font-semibold text-gray-900">Preview or print one sheet</h2>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
                 <label className="block">
                   <span className="text-gray-700">Board</span>
                   <select
                     value={boardId}
-                    onChange={(e) => { setBoardId(e.target.value); setSheetFirstYear(0); }}
+                    onChange={(e) => { setBoardId(e.target.value); setPreviewLayout(''); setChosenSheet(''); }}
                     className={`${getInputClasses()} w-full mt-0.5`}
                   >
                     {boards.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
                   </select>
-                  <span className="block text-xs text-gray-700 mt-1">{layoutLabel(board.layout)}</span>
+                </label>
+                <label className="block">
+                  <span className="text-gray-700">Layout</span>
+                  <select
+                    value={previewLayout}
+                    onChange={(e) => { setPreviewLayout(e.target.value as BoardLayout | ''); setChosenSheet(''); }}
+                    className={`${getInputClasses()} w-full mt-0.5`}
+                  >
+                    {BOARD_LAYOUTS.map((l) => (
+                      <option key={l.value} value={savedBoard && l.value === savedBoard.layout ? '' : l.value}>
+                        {l.label}{savedBoard && l.value === savedBoard.layout ? ' (saved)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="block text-xs text-gray-700 mt-1">
+                    {previewLayout
+                      ? 'Trying a different layout for this preview only. To keep it, change the board in Config > Honours Boards.'
+                      : BOARD_LAYOUTS.find((l) => l.value === board.layout)?.hint}
+                  </span>
                 </label>
                 <label className="block">
                   <span className="text-gray-700">Sheet</span>
-                  <select value={sheet ? sheet.firstYear : 0} onChange={(e) => setSheetFirstYear(Number(e.target.value))} className={`${getInputClasses()} w-full mt-0.5`}>
+                  <select value={sheet ? sheetKey(sheet) : ''} onChange={(e) => setChosenSheet(e.target.value)} className={`${getInputClasses()} w-full mt-0.5`}>
                     {sheets.map((s) => (
-                      <option key={s.firstYear} value={s.firstYear}>
-                        {s.position === 'Single' ? '' : `Set ${s.set} · ${s.position} · `}{s.firstYear}–{s.lastYear}{boardCurrent && s.firstYear === boardCurrent.firstYear ? ' (current)' : ''}
+                      <option key={sheetKey(s)} value={sheetKey(s)}>
+                        {s.position === 'Single' ? '' : `Set ${s.set} · ${sheetLabel(board.layout, s)} · `}{s.firstYear}–{s.lastYear}
+                        {boardCurrent && sheetKey(s) === sheetKey(boardCurrent) ? ' (current)' : ''}
                       </option>
                     ))}
                   </select>
@@ -280,6 +380,19 @@ export default function PrintHonoursBoardsPage() {
                       <input type="radio" name="bodyFont" checked={bodyFont === f.value} onChange={() => setBodyFont(f.value)} className="h-4 w-4" />
                       <span className="text-gray-900">{f.value}</span>
                       <span className="text-gray-700">— {f.hint}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+
+              <fieldset className="text-sm">
+                <legend className="text-gray-700 mb-1">Row style</legend>
+                <div className="space-y-1">
+                  {STYLE_OPTIONS.map((o) => (
+                    <label key={o.value} className="flex items-center gap-2 cursor-pointer">
+                      <input type="radio" name="boardStyle" checked={boardStyle === o.value} onChange={() => setBoardStyle(o.value)} className="h-4 w-4" />
+                      <span className="text-gray-900">{o.label}</span>
+                      <span className="text-gray-700">— {o.hint}</span>
                     </label>
                   ))}
                 </div>

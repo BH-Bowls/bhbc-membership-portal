@@ -1,7 +1,8 @@
 // src/types/honours-boards.ts
 // Printed honours boards for the clubhouse wall (supabase/migrations/0078_honours_boards.sql
-// to 0080_honours_boards_layouts.sql). Each board picks a layout — two stacked A2 sheets,
-// two A3 sheets side by side, or one A3 sheet fitted to the years so far. Every board
+// to 0082_honours_boards_a2_plus_a3.sql). Each board picks a layout — an A2 sheet with an A3
+// continuation sheet, two stacked A2 or A3 sheets, two A3 sheets side by side, or one A3
+// sheet fitted to the years so far. Every board
 // shares the start year and the years per set (which sets the row spacing), as config keys.
 
 /** Config keys shared by every board. */
@@ -37,13 +38,23 @@ export function fieldLabel(field: string): string {
 }
 
 /** How a board's sheets are printed and hung. */
-export type BoardLayout = 'stacked' | 'side_by_side' | 'single';
+export type BoardLayout = 'a2_plus_a3' | 'stacked' | 'stacked_a3' | 'side_by_side' | 'single';
 
 export const BOARD_LAYOUTS: { value: BoardLayout; label: string; hint: string }[] = [
   {
+    value: 'a2_plus_a3',
+    label: 'One A2 portrait sheet (or two A3s), with an A3 continuation sheet below',
+    hint: 'Sheets 1 and 2 hold the title, headings and earlier years and never change — print them as one A2 portrait sheet, or as two A3 landscape sheets. Sheet 3, an A3 landscape sheet in its own frame below, has a short title and headings and is reprinted each year. Columns line up throughout.',
+  },
+  {
     value: 'stacked',
     label: 'Two A2 landscape sheets, one above the other',
-    hint: 'Title and headings on the top sheet. The bottom sheet is reprinted each year.',
+    hint: 'Each sheet in its own A2 frame. Title and headings on the top sheet. The bottom sheet is reprinted each year.',
+  },
+  {
+    value: 'stacked_a3',
+    label: 'Two A3 landscape sheets, one above the other',
+    hint: 'Both sheets in one A2 portrait frame. The same layout as two A2 sheets, scaled down, so the text is smaller (about 15pt instead of 21pt).',
   },
   {
     value: 'side_by_side',
@@ -117,8 +128,8 @@ export function validateBoard(board: HonoursBoardInput): string | null {
 
 // ── Sheet measurements ──
 // The base measurements are for an A3 landscape sheet. A2 is the same layout scaled up by
-// √2 (A-sizes keep their proportions); the side-by-side A3 portrait sheets use the A2
-// scale for text and rows too, so every two-sheet board prints at the same size.
+// √2 (A-sizes keep their proportions); the A2-plus-A3 and side-by-side layouts use the A2
+// scale for text and rows too, so those boards all print at the same size.
 
 const MM = 72 / 25.4; // points per millimetre
 const SQRT2 = Math.SQRT2;
@@ -192,8 +203,47 @@ function sideBySideSplit(yearsPerSet: number): SideBySideSplit {
   return { leftYears, rightYears, rowHeightMm, titleHeightMm: usable - header - leftYears * rowHeightMm };
 }
 
+// The A3 continuation sheet has slimmer top and bottom margins (printers manage 5mm) and a
+// one-line title, so it fits a whole extra year
+const CONT_MARGIN_Y_MM = 8;
+const CONT_TITLE_MIN_MM = 8;
+
+interface A2PlusA3Split {
+  a2Years: number;
+  a3Years: number;
+  rowHeightMm: number;      // as printed, both sheets
+  marginXMm: number;        // left and right, both sheets — the same, so the columns line up
+  titleHeightMm: number;    // A2 sheet's title area
+  contTitleHeightMm: number; // A3 sheet's one-line title
+}
+
+/**
+ * A2-plus-A3 layout: an A2 portrait sheet and an A3 landscape sheet below it — both 420mm
+ * wide — at the same row spacing as the stacked A2 boards.
+ */
+function a2PlusA3Split(yearsPerSet: number): A2PlusA3Split {
+  const rowHeightMm = stackedSplit(yearsPerSet).rowHeightMm * SQRT2;
+  const header = HEADER_H_MM * SQRT2;
+  const marginXMm = SHEET_MARGIN_MM * SQRT2;
+  // A2 sheet: as many years as still leave the minimum title height
+  const a2Usable = A3_LONG_MM * SQRT2 - marginXMm * 2;
+  const a2Years = Math.max(1, Math.floor((a2Usable - header - TITLE_MIN_MM * SQRT2) / rowHeightMm));
+  // A3 sheet: as many years as leave room for its one-line title
+  const a3Usable = A3_SHORT_MM - CONT_MARGIN_Y_MM * 2;
+  const a3Years = Math.max(1, Math.floor((a3Usable - header - CONT_TITLE_MIN_MM) / rowHeightMm));
+  return {
+    a2Years, a3Years, rowHeightMm, marginXMm,
+    titleHeightMm: a2Usable - header - a2Years * rowHeightMm,
+    contTitleHeightMm: a3Usable - header - a3Years * rowHeightMm,
+  };
+}
+
 /** Years on the first and second sheet of a set, for the two-sheet layouts. */
 export function twoSheetSplit(layout: BoardLayout, yearsPerSet: number): { firstYears: number; secondYears: number } {
+  if (layout === 'a2_plus_a3') {
+    const split = a2PlusA3Split(yearsPerSet);
+    return { firstYears: split.a2Years, secondYears: split.a3Years };
+  }
   if (layout === 'side_by_side') {
     const split = sideBySideSplit(yearsPerSet);
     return { firstYears: split.leftYears, secondYears: split.rightYears };
@@ -205,7 +255,7 @@ export function twoSheetSplit(layout: BoardLayout, yearsPerSet: number): { first
 /** Checks the shared settings; returns an error message or null. */
 export function validateSheetSettings(startYear: number, yearsPerSet: number): string | null {
   if (!Number.isInteger(startYear) || startYear < 1900 || startYear > 2200) return 'Start year must be a year, e.g. 1976';
-  if (!Number.isInteger(yearsPerSet) || yearsPerSet < 20 || yearsPerSet > 90) return 'Years per set must be a whole number from 20 to 90';
+  if (!Number.isInteger(yearsPerSet) || yearsPerSet < 20 || yearsPerSet > 90) return 'Row control must be a whole number from 20 to 90';
   return null;
 }
 
@@ -217,6 +267,35 @@ export interface BoardSheet {
   position: SheetPosition;
   firstYear: number;
   lastYear: number;
+  // A2-plus-A3 layout only: the A2 sheet printed as two A3 halves instead (1 = upper, 2 = lower)
+  part?: 1 | 2;
+}
+
+/**
+ * A2-plus-A3 layout: the A2 sheet split into two A3 landscape sheets — "sheets 1 and 2" —
+ * for printing on A3 (e.g. a trial print). Same years, row spacing and column widths as the
+ * A2 sheet; the upper half has the title and headings, the lower half rows only.
+ * Returns an empty list for any other sheet.
+ */
+export function a3Halves(layout: BoardLayout, sheet: BoardSheet, yearsPerSet: number): BoardSheet[] {
+  if (layout !== 'a2_plus_a3' || sheet.position !== 'Top') return [];
+  const { a2Years, rowHeightMm } = a2PlusA3Split(yearsPerSet);
+  // The lower half is rows only, so it takes as many as fit; the upper half the rest
+  const lowerYears = Math.min(a2Years - 1, Math.floor((A3_SHORT_MM - SHEET_MARGIN_MM * 2) / rowHeightMm));
+  const split = sheet.firstYear + (a2Years - lowerYears);
+  return [
+    { ...sheet, part: 1, lastYear: split - 1 },
+    { ...sheet, part: 2, firstYear: split },
+  ];
+}
+
+/** How a sheet is named on the print page and in file names, e.g. "Sheet 3 (A3)" or "Bottom". */
+export function sheetLabel(layout: BoardLayout, sheet: BoardSheet): string {
+  if (layout === 'a2_plus_a3') {
+    if (sheet.part) return `Sheet ${sheet.part} (A3)`;
+    return sheet.position === 'Top' ? 'Sheets 1+2 (one A2)' : 'Sheet 3 (A3)';
+  }
+  return sheet.position;
 }
 
 /**
@@ -233,6 +312,7 @@ export function sheetForYear(year: number, startYear: number, layout: BoardLayou
   const setIndex = Math.floor((year - startYear) / setLength);
   const setFirstYear = startYear + setIndex * setLength;
   const onFirst = year - setFirstYear < firstYears;
+  // Stacked layouts (A2 or A3) have top and bottom sheets
   const names: [SheetPosition, SheetPosition] = layout === 'side_by_side' ? ['Left', 'Right'] : ['Top', 'Bottom'];
   return {
     set: setIndex + 1,
@@ -268,9 +348,11 @@ export interface SheetGeometry {
   orientation: 'landscape' | 'portrait';
   widthMm: number;
   heightMm: number;
-  marginMm: number;
+  marginXMm: number;      // left and right
+  marginYMm: number;      // top and bottom
   scale: number;          // title, headings and year column, relative to the A3 base sizes
   titleHeightMm: number;  // 0 = no title on this sheet
+  contTitleHeightMm: number; // one-line "(continued)" title; 0 = none
   headerHeightMm: number; // 0 = no column headings on this sheet
   rowHeightMm: number;
   namePt: number;         // standard name size, before long names are shrunk to fit
@@ -278,15 +360,54 @@ export interface SheetGeometry {
 
 /** Page size and measurements for one sheet of a board. */
 export function sheetGeometry(layout: BoardLayout, sheet: BoardSheet, yearsPerSet: number): SheetGeometry {
-  if (layout === 'stacked') {
+  if (layout === 'a2_plus_a3' && sheet.part) {
+    // The A2 sheet's upper or lower half on its own A3 landscape sheet: same side margins,
+    // so the columns match the A2 sheet and sheet 3
+    const split = a2PlusA3Split(yearsPerSet);
+    const isUpper = sheet.part === 1;
+    const header = HEADER_H_MM * SQRT2;
+    const years = sheet.lastYear - sheet.firstYear + 1;
+    return {
+      paper: 'A3', orientation: 'landscape', widthMm: A3_LONG_MM, heightMm: A3_SHORT_MM,
+      marginXMm: split.marginXMm, marginYMm: SHEET_MARGIN_MM, scale: SQRT2,
+      titleHeightMm: isUpper ? A3_SHORT_MM - SHEET_MARGIN_MM * 2 - header - years * split.rowHeightMm : 0,
+      contTitleHeightMm: 0,
+      headerHeightMm: isUpper ? header : 0,
+      rowHeightMm: split.rowHeightMm, namePt: namePointSize(split.rowHeightMm),
+    };
+  }
+
+  if (layout === 'a2_plus_a3') {
+    const split = a2PlusA3Split(yearsPerSet);
+    const isA2 = sheet.position === 'Top';
+    return {
+      paper: isA2 ? 'A2' : 'A3',
+      orientation: isA2 ? 'portrait' : 'landscape',
+      // Both sheets are 420mm wide: A2 portrait and A3 landscape
+      widthMm: A3_LONG_MM,
+      heightMm: isA2 ? A3_LONG_MM * SQRT2 : A3_SHORT_MM,
+      marginXMm: split.marginXMm,
+      marginYMm: isA2 ? split.marginXMm : CONT_MARGIN_Y_MM,
+      scale: SQRT2,
+      titleHeightMm: isA2 ? split.titleHeightMm : 0,
+      contTitleHeightMm: isA2 ? 0 : split.contTitleHeightMm,
+      headerHeightMm: HEADER_H_MM * SQRT2,
+      rowHeightMm: split.rowHeightMm, namePt: namePointSize(split.rowHeightMm),
+    };
+  }
+
+  if (layout === 'stacked' || layout === 'stacked_a3') {
+    // A3 is the base size; A2 is everything (margins included) scaled up by √2
+    const s = layout === 'stacked' ? SQRT2 : 1;
     const split = stackedSplit(yearsPerSet);
     const isTop = sheet.position === 'Top';
-    const rowHeightMm = split.rowHeightMm * SQRT2;
+    const rowHeightMm = split.rowHeightMm * s;
     return {
-      paper: 'A2', orientation: 'landscape', widthMm: A3_LONG_MM * SQRT2, heightMm: A3_SHORT_MM * SQRT2,
-      marginMm: SHEET_MARGIN_MM * SQRT2, scale: SQRT2,
-      titleHeightMm: isTop ? split.titleHeightMm * SQRT2 : 0,
-      headerHeightMm: isTop ? HEADER_H_MM * SQRT2 : 0,
+      paper: layout === 'stacked' ? 'A2' : 'A3', orientation: 'landscape', widthMm: A3_LONG_MM * s, heightMm: A3_SHORT_MM * s,
+      marginXMm: SHEET_MARGIN_MM * s, marginYMm: SHEET_MARGIN_MM * s, scale: s,
+      titleHeightMm: isTop ? split.titleHeightMm * s : 0,
+      contTitleHeightMm: 0,
+      headerHeightMm: isTop ? HEADER_H_MM * s : 0,
       rowHeightMm, namePt: namePointSize(rowHeightMm),
     };
   }
@@ -295,8 +416,9 @@ export function sheetGeometry(layout: BoardLayout, sheet: BoardSheet, yearsPerSe
     const split = sideBySideSplit(yearsPerSet);
     return {
       paper: 'A3', orientation: 'portrait', widthMm: A3_SHORT_MM, heightMm: A3_LONG_MM,
-      marginMm: SHEET_MARGIN_MM, scale: SQRT2,
+      marginXMm: SHEET_MARGIN_MM, marginYMm: SHEET_MARGIN_MM, scale: SQRT2,
       titleHeightMm: sheet.position === 'Left' ? split.titleHeightMm : 0,
+      contTitleHeightMm: 0,
       headerHeightMm: HEADER_H_MM * SQRT2,
       rowHeightMm: split.rowHeightMm, namePt: namePointSize(split.rowHeightMm),
     };
@@ -307,8 +429,8 @@ export function sheetGeometry(layout: BoardLayout, sheet: BoardSheet, yearsPerSe
   const rowHeightMm = (A3_LONG_MM - SHEET_MARGIN_MM * 2 - TITLE_TARGET_MM - HEADER_H_MM) / years;
   return {
     paper: 'A3', orientation: 'portrait', widthMm: A3_SHORT_MM, heightMm: A3_LONG_MM,
-    marginMm: SHEET_MARGIN_MM, scale: 1,
-    titleHeightMm: TITLE_TARGET_MM, headerHeightMm: HEADER_H_MM,
+    marginXMm: SHEET_MARGIN_MM, marginYMm: SHEET_MARGIN_MM, scale: 1,
+    titleHeightMm: TITLE_TARGET_MM, contTitleHeightMm: 0, headerHeightMm: HEADER_H_MM,
     rowHeightMm, namePt: namePointSize(rowHeightMm),
   };
 }
