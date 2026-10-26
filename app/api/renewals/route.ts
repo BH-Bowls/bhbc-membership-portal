@@ -1,5 +1,11 @@
 // app/api/renewals/route.ts
-// API route for getting and updating user renewals with buddy authorization
+// API route for getting and updating user renewals with buddy authorization.
+//
+// Draft / Submit (specs/RENEWALS_XERO_PAYMENTS_SPEC.md §3): PUT takes
+// action: 'draft' | 'submit' | 'reopen' (missing = 'submit', the behaviour before drafts
+// existed). Once a renewal is submitted, every further change is refused with 409 — for
+// every role, Admin included. The one exception is 'reopen' on a submitted
+// "not renewing" renewal (§3.7).
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
@@ -9,13 +15,27 @@ import { updateUserProfile } from '@/lib/profile-supabase';
 import {
   getRenewalByUsername,
   updateRenewal,
+  reopenRenewal,
   calculateFees,
+  getPaymentReference,
   sendRenewalConfirmation,
+  sendRenewalDraftEmail,
   sendCancellationConfirmation,
+  RENEWAL_LOCKED_MESSAGE,
   type Renewal,
   type FeeBreakdown,
 } from '@/lib/renewals-supabase';
 import { canManageUser, canEditPaymentFields } from '@/lib/buddies-supabase';
+import { getBankDetails } from '@/lib/bank-details';
+import { getCompetitionEligibility } from '@/lib/competition-eligibility';
+
+// The competitions that carry an entry and need eligibility (subs are covered too).
+const COMPETITION_FIELDS = [
+  'mensChampionship', 'ladiesMaynard', 'mensTwoWood', 'ladiesTwoWood',
+  'marriedPairs', 'drawnPairs', 'australianPairs', 'drawnTriples',
+  'handicap', 'oldlands', 'veterans',
+  'drawnPairsSub', 'australianPairsSub', 'drawnTriplesSub',
+];
 
 // GET /api/renewals?userName=target
 // Returns renewal data + profile data for calculations (buddy system)
@@ -88,16 +108,9 @@ export async function GET(request: NextRequest) {
       renewal
     );
 
-    // Calculate eligibility. The original rule ("played >= 8 friendlies last season, or
-    // an admin manually approved an exception") needs a real friendlies-attendance count
-    // that doesn't exist in Postgres yet (Friendlies migration is deferred — see
-    // supabase/migrations/0032_competitions_eligible_override.sql). Until then, eligibility
-    // is admin-set per member; defaults to NOT eligible when no override has been set.
-    const canEnterCompetitions = profile.competitionsEligibleOverride === true;
-
-    const eligibility = {
-      canEnterCompetitions,
-    };
+    // Club competitions: available for at least N friendlies last season (counted live
+    // from the friendlies data), unless an Admin has set an override for this member.
+    const eligibility = await getCompetitionEligibility(targetUserName, profile.competitionsEligibleOverride);
 
     return NextResponse.json({
       profile: {
@@ -109,10 +122,13 @@ export async function GET(request: NextRequest) {
         honorary: profile.honorary,
         emailAddress: profile.emailAddress,
         title: profile.title,
+        printedMembershipBook: profile.printedMembershipBook,
       },
       renewal: renewalWithVolunteering,
       fees,
       eligibility,
+      bankDetails: await getBankDetails(),
+      paymentReference: getPaymentReference(profile.userName),
       managedUser: {
         userName: targetUserName,
         isSelf: targetUserName === session.user.userName,
@@ -179,6 +195,75 @@ export async function PUT(request: NextRequest) {
       );
     }
 
+    let action: 'draft' | 'submit' | 'reopen' = 'submit';
+    if (data.action === 'draft' || data.action === 'reopen') {
+      action = data.action;
+    }
+
+    // Reopen a submitted "not renewing" renewal back to a draft (§3.7). Nothing else
+    // in the request is saved — the member edits and submits it again as normal.
+    if (action === 'reopen') {
+      const reopenResult = await reopenRenewal(targetUserName);
+      if (!reopenResult.success) {
+        return NextResponse.json({ error: reopenResult.error }, { status: 409 });
+      }
+      const reopenedRenewal = await getRenewalByUsername(targetUserName);
+      return NextResponse.json({
+        success: true,
+        reopened: true,
+        renewal: reopenedRenewal,
+        message: 'Your renewal has been reopened as a draft.',
+      });
+    }
+
+    // The lock: a submitted renewal can't be changed by anyone (§3.4). updateRenewal's
+    // onlyIfDraft below re-checks this inside the UPDATE itself, in case two saves race.
+    if (existingRenewal.submittedAt) {
+      return NextResponse.json({ error: RENEWAL_LOCKED_MESSAGE, locked: true }, { status: 409 });
+    }
+
+    if (data.renewingMembership !== true && data.renewingMembership !== false) {
+      return NextResponse.json(
+        { error: 'Please choose whether you are renewing or cancelling your membership.' },
+        { status: 400 }
+      );
+    }
+
+    // Not renewing has no draft stage — it always submits (§3.3).
+    const isSubmit = action === 'submit' || data.renewingMembership === false;
+
+    if (isSubmit && data.renewingMembership === true
+      && data.printedMembershipBook !== true && data.printedMembershipBook !== false) {
+      return NextResponse.json(
+        { error: 'Please say whether you would like a printed membership book.' },
+        { status: 400 }
+      );
+    }
+
+    // Competition entries need eligibility — checked here, not just by the form's
+    // disabled checkboxes.
+    if (data.renewingMembership === true) {
+      let anyCompetition = false;
+      for (const field of COMPETITION_FIELDS) {
+        if (data[field] === true) anyCompetition = true;
+      }
+      if (anyCompetition) {
+        const eligibility = await getCompetitionEligibility(targetUserName, profile.competitionsEligibleOverride);
+        if (!eligibility.canEnterCompetitions) {
+          return NextResponse.json(
+            { error: `Competition entries need ${eligibility.friendliesRequired} friendlies in ${eligibility.previousSeasonYear}. Please untick the competitions, or contact BHBC if you think this is wrong.` },
+            { status: 400 }
+          );
+        }
+      }
+    }
+
+    // Who actually pressed Submit — the real Admin when impersonating, never the member.
+    let submittedBy = session.user.userName;
+    if (session.user.isImpersonating && session.user.originalAdmin && session.user.originalAdmin.userName) {
+      submittedBy = session.user.originalAdmin.userName;
+    }
+
     // Split data: volunteering fields + demographics go to Users sheet, rest goes to Renewals sheet
     const volunteeringFields: Record<string, any> = {
       drivingAwayMatches: data.drivingAwayMatches,
@@ -197,6 +282,12 @@ export async function PUT(request: NextRequest) {
     if (data.memberType) {
       volunteeringFields.memberType = data.memberType;
     }
+    // Printed membership book is a standing preference on the member, not the renewal
+    // (§3.8) — only asked when renewing, so "not renewing" leaves it unchanged.
+    if (data.renewingMembership === true
+      && (data.printedMembershipBook === true || data.printedMembershipBook === false)) {
+      volunteeringFields.printedMembershipBook = data.printedMembershipBook;
+    }
 
     // Remove volunteering fields and demographics from renewal data
     const renewalData = { ...data };
@@ -210,6 +301,13 @@ export async function PUT(request: NextRequest) {
     delete renewalData.otherSkills;
     delete renewalData.ageDemographic; // Don't save to Renewals sheet
     delete renewalData.memberType; // Don't save to Renewals sheet
+    delete renewalData.printedMembershipBook; // Saved on the member profile
+    delete renewalData.action;
+    // Server-controlled — never taken from the browser
+    delete renewalData.submittedAt;
+    delete renewalData.submittedBy;
+    delete renewalData.renewalsClosed;
+    delete renewalData.confirmationEmailDate;
 
     // Filter payment fields (admin-only edit)
     if (!canEditPaymentFields(session.user.role)) {
@@ -311,8 +409,17 @@ export async function PUT(request: NextRequest) {
       };
     }
 
-    // Update renewal data in Renewals sheet
-    const result = await updateRenewal(targetUserName, renewalUpdates);
+    if (isSubmit) {
+      renewalUpdates.submittedAt = new Date().toISOString();
+      renewalUpdates.submittedBy = submittedBy;
+    }
+
+    // Update renewal data — only while it's still a draft (the lock, §3.4)
+    const result = await updateRenewal(targetUserName, renewalUpdates, { onlyIfDraft: true });
+
+    if (result.locked) {
+      return NextResponse.json({ error: RENEWAL_LOCKED_MESSAGE, locked: true }, { status: 409 });
+    }
 
     if (!result.success) {
       return NextResponse.json(
@@ -348,6 +455,29 @@ export async function PUT(request: NextRequest) {
       ? session.user.originalAdmin?.userName
       : session.user.userName;
 
+    // Save Draft — the draft email (no bank details, clearly says it isn't submitted)
+    if (!isSubmit) {
+      const draftEmailResult = await sendRenewalDraftEmail(
+        targetUserName,
+        updatedRenewal,
+        fees,
+        data.memberType || profile.memberType,
+        managerUserName
+      );
+      if (!draftEmailResult.success) {
+        console.error('Failed to send draft email:', draftEmailResult.error);
+      }
+      return NextResponse.json({
+        success: true,
+        submitted: false,
+        renewal: updatedRenewal,
+        fees,
+        emailSent: draftEmailResult.success,
+        warning: draftEmailResult.success ? undefined : 'Draft saved but the email could not be sent',
+        message: 'Your renewal has been saved as a draft. It is not submitted yet.',
+      });
+    }
+
     // Send confirmation email based on renewal status
     if (data.renewingMembership) {
       // Send renewal confirmation email
@@ -364,6 +494,7 @@ export async function PUT(request: NextRequest) {
         emailSent = false;
         return NextResponse.json({
           success: true,
+          submitted: true,
           partialSuccess: true,
           renewal: updatedRenewal,
           fees,
@@ -389,6 +520,7 @@ export async function PUT(request: NextRequest) {
         emailSent = false;
         return NextResponse.json({
           success: true,
+          submitted: true,
           partialSuccess: true,
           renewal: updatedRenewal,
           fees,
@@ -405,6 +537,7 @@ export async function PUT(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
+      submitted: true,
       renewal: updatedRenewal,
       fees,
       emailSent: true,

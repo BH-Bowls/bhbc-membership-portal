@@ -116,6 +116,7 @@ function mapRow(row: any): User {
     comments: profile?.comments ?? null,
     socialEmails: profile?.social_emails ?? false,
     handbookEntry: profile?.handbook_entry ?? false,
+    printedMembershipBook: profile?.printed_membership_book ?? null,
     drivingAwayMatches: profile?.driving_away_matches ?? null,
     drivingAdditionalInfo: profile?.driving_additional_info ?? null,
     greenMaintenance: profile?.green_maintenance ?? null,

@@ -1,5 +1,11 @@
 // app/renewals/page.tsx
-// Membership renewal page for 2026 season
+// Membership renewal page for the current season.
+//
+// Draft / Submit (specs/RENEWALS_XERO_PAYMENTS_SPEC.md §3): a renewing member can Save
+// Draft as often as they like, then Submit — after which the renewal is locked for
+// everyone (the API enforces it). "Not renewing" submits straight away, and can be
+// reopened back to a draft. (The browser's own unsaved-changes autosave below —
+// form-draft-utils — is separate from a saved draft and only covers changes not yet saved.)
 
 'use client';
 
@@ -10,6 +16,9 @@ import { useNavbarConfig } from '@/lib/navbar-config';
 import { hasRole } from '@/lib/role-utils';
 import { getMemberTypeDisplay, getMemberTypeOptions, isPlayer } from '@/lib/member-type-utils';
 import { saveDraft, restoreDraft, clearDraft } from '@/lib/form-draft-utils';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { formatOrdinalDate } from '@/lib/date-utils';
+import type { BankDetails } from '@/lib/bank-details';
 
 interface UserProfile {
   userName: string;
@@ -20,6 +29,7 @@ interface UserProfile {
   honorary: string | null; // "Y" or "N" or null
   emailAddress: string;
   title: string | null;
+  printedMembershipBook: boolean | null;
 }
 
 interface Renewal {
@@ -54,7 +64,12 @@ interface Renewal {
   banking?: number | null;
   dateReceived?: string | null;
   renewalsClosed?: boolean;
+  submittedAt?: string | null; // null = draft
+  // Stored on the member profile, not the renewal — carried here so it saves with the form
+  printedMembershipBook?: boolean | null;
 }
+
+type SaveAction = 'draft' | 'submit';
 
 interface FeeBreakdown {
   membershipFee: number;
@@ -88,14 +103,26 @@ export default function RenewalsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [bankDetails, setBankDetails] = useState<BankDetails | null>(null);
+  const [paymentReference, setPaymentReference] = useState('');
+  const [confirmSubmitOpen, setConfirmSubmitOpen] = useState(false);
+  const [isReopening, setIsReopening] = useState(false);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [emailSent, setEmailSent] = useState(true); // Track if confirmation email was sent
   const [emailWarning, setEmailWarning] = useState(''); // Warning if email failed
   const [eligibility, setEligibility] = useState<{
     canEnterCompetitions: boolean;
+    friendliesRequired: number;
+    friendliesLastSeason: number | null;
+    previousSeasonYear: number;
+    override: boolean | null;
   }>({
     canEnterCompetitions: false,
+    friendliesRequired: 6,
+    friendliesLastSeason: null,
+    previousSeasonYear: new Date().getFullYear() - 1,
+    override: null,
   });
 
   // Load renewal data on mount and when session changes (uses session.user.userName automatically)
@@ -155,38 +182,47 @@ export default function RenewalsPage() {
       if (!response.ok) throw new Error('Failed to load renewal data');
 
       const data = await response.json();
+      // The printed membership book answer lives on the member profile; carry it on the
+      // renewal object so it's edited and saved along with the rest of the form.
+      const loadedRenewal: Renewal = {
+        ...data.renewal,
+        printedMembershipBook: data.profile.printedMembershipBook,
+      };
       setProfile(data.profile);
-      setRenewal(data.renewal);
+      setRenewal(loadedRenewal);
       setFees(data.fees);
       setEligibility(data.eligibility);
+      setBankDetails(data.bankDetails);
+      setPaymentReference(data.paymentReference || '');
 
       // Initialize fields from profile
       setAgeDemographic(data.profile.ageDemographic);
       setMemberType(data.profile.memberType);
 
-      // Check for draft and restore if found
+      // Restore unsaved changes kept in the browser — but never onto a submitted
+      // renewal, which can't be changed any more.
+      let localChanges: { renewal: Renewal; ageDemographic: string; memberType: string } | null = null;
       if (session?.user?.userName) {
-        const draft = restoreDraft<{
-          renewal: Renewal;
-          ageDemographic: string;
-          memberType: string;
-        }>('Renewals', session.user.userName);
-
-        if (draft) {
-          setEditedRenewal(draft.renewal);
-          setEditedAgeDemographic(draft.ageDemographic);
-          setEditedMemberType(draft.memberType);
-          setIsEditing(true);
-          // Show notification that draft was restored
-          setSuccessMessage('Draft restored from previous session');
-          setTimeout(() => setSuccessMessage(''), 3000);
+        if (loadedRenewal.submittedAt) {
+          clearDraft('Renewals', session.user.userName);
         } else {
-          setEditedRenewal(data.renewal);
-          setEditedAgeDemographic(data.profile.ageDemographic);
-          setEditedMemberType(data.profile.memberType);
+          localChanges = restoreDraft<{
+            renewal: Renewal;
+            ageDemographic: string;
+            memberType: string;
+          }>('Renewals', session.user.userName);
         }
+      }
+
+      if (localChanges) {
+        setEditedRenewal(localChanges.renewal);
+        setEditedAgeDemographic(localChanges.ageDemographic);
+        setEditedMemberType(localChanges.memberType);
+        setIsEditing(true);
+        setSuccessMessage('Your unsaved changes from last time have been restored.');
+        setTimeout(() => setSuccessMessage(''), 3000);
       } else {
-        setEditedRenewal(data.renewal);
+        setEditedRenewal(loadedRenewal);
         setEditedAgeDemographic(data.profile.ageDemographic);
         setEditedMemberType(data.profile.memberType);
       }
@@ -242,12 +278,23 @@ export default function RenewalsPage() {
     setEditedRenewal({ ...editedRenewal, [field]: value });
   };
 
-  const handleSave = async () => {
+  const handleSave = async (action: SaveAction) => {
     if (!editedRenewal) return;
 
+    if (editedRenewal.renewingMembership !== true && editedRenewal.renewingMembership !== false) {
+      setError('Please choose whether you are renewing or cancelling your membership.');
+      return;
+    }
+
     // Validation: Check if required fields are set
-    if (!editedAgeDemographic || !editedMemberType) {
+    if (editedRenewal.renewingMembership && (!editedAgeDemographic || !editedMemberType)) {
       setError('Please select both Age Demographic and Member Type before saving.');
+      return;
+    }
+
+    if (action === 'submit' && editedRenewal.renewingMembership
+      && editedRenewal.printedMembershipBook !== true && editedRenewal.printedMembershipBook !== false) {
+      setError('Please say whether you would like a printed membership book before submitting.');
       return;
     }
 
@@ -261,6 +308,7 @@ export default function RenewalsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...editedRenewal,
+          action,
           ageDemographic: editedAgeDemographic, // Include age demographic for Members sheet update
           memberType: editedMemberType, // Include member type for Members sheet update
         }),
@@ -268,6 +316,14 @@ export default function RenewalsPage() {
 
       if (!response.ok) {
         const data = await response.json();
+        if (response.status === 409) {
+          // Submitted elsewhere (another tab, or a buddy) — show the locked renewal.
+          if (session?.user?.userName) {
+            clearDraft('Renewals', session.user.userName);
+          }
+          setIsEditing(false);
+          await loadRenewalData();
+        }
         throw new Error(data.error || 'Failed to save renewal');
       }
 
@@ -278,21 +334,74 @@ export default function RenewalsPage() {
       setEmailSent(data.emailSent !== false); // Default to true if not specified
       setEmailWarning(data.warning || '');
 
-      // Clear draft on successful save
+      // The browser's unsaved-changes copy isn't needed once the server has it
       if (session?.user?.userName) {
         clearDraft('Renewals', session.user.userName);
       }
 
       // Update main state with saved values
-      setRenewal(editedRenewal);
+      let submittedAt: string | null = null;
+      if (data.renewal && data.renewal.submittedAt) {
+        submittedAt = data.renewal.submittedAt;
+      }
+      setRenewal({ ...editedRenewal, submittedAt });
       setAgeDemographic(editedAgeDemographic);
       setMemberType(editedMemberType);
       setIsEditing(false);
-      setIsSubmitted(true);
-    } catch (err: any) {
-      setError(err.message || 'Failed to save renewal');
+
+      if (data.submitted) {
+        setIsSubmitted(true);
+      } else {
+        setSuccessMessage(data.emailSent === false
+          ? 'Saved as a draft. Your renewal is NOT submitted yet — come back and press Submit Renewal when you are ready.'
+          : 'Saved as a draft and emailed to you. Your renewal is NOT submitted yet — come back and press Submit Renewal when you are ready.');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    } catch (err) {
+      setError(err instanceof Error && err.message ? err.message : 'Failed to save renewal');
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  // Submit asks for confirmation first when renewing, since it locks the renewal for good.
+  // "Not renewing" submits straight away (it can be reopened).
+  const handleSubmitClick = () => {
+    if (editedRenewal && editedRenewal.renewingMembership) {
+      setConfirmSubmitOpen(true);
+    } else {
+      handleSave('submit');
+    }
+  };
+
+  const handleConfirmSubmit = () => {
+    setConfirmSubmitOpen(false);
+    handleSave('submit');
+  };
+
+  // Reopen a submitted "not renewing" renewal back to a draft (spec §3.7)
+  const handleReopen = async () => {
+    setIsReopening(true);
+    setError('');
+    setSuccessMessage('');
+    try {
+      const response = await fetch('/api/renewals', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'reopen' }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to reopen renewal');
+      }
+      setIsSubmitted(false);
+      await loadRenewalData();
+      setIsEditing(true);
+      setSuccessMessage('Your renewal has been reopened. Make your choices below, then submit it.');
+    } catch (err) {
+      setError(err instanceof Error && err.message ? err.message : 'Failed to reopen renewal');
+    } finally {
+      setIsReopening(false);
     }
   };
 
@@ -395,15 +504,23 @@ export default function RenewalsPage() {
     return true;
   };
 
+  // The navbar holds two buttons. Renewing: Submit + Save Draft (Cancel is on the page).
+  // Not renewing: Save (which submits) + Cancel.
+  const editingRenewing = !!(editedRenewal && editedRenewal.renewingMembership);
   useNavbarConfig({
     actionButtons: isEditing ? {
       primary: {
-        label: editedRenewal?.renewingMembership ? 'Submit Renewal' : 'Save',
-        onClick: handleSave,
+        label: editingRenewing ? 'Submit Renewal' : 'Save',
+        onClick: handleSubmitClick,
         loading: isSaving,
         variant: 'primary' as const,
       },
-      secondary: {
+      secondary: editingRenewing ? {
+        label: 'Save Draft',
+        onClick: () => handleSave('draft'),
+        disabled: isSaving,
+        variant: 'secondary' as const,
+      } : {
         label: 'Cancel',
         onClick: handleCancel,
         disabled: isSaving,
@@ -423,11 +540,16 @@ export default function RenewalsPage() {
     );
   }
 
-  // Check if payment has been received (form should be read-only)
-  // Admins can edit even after payment is received
+  // A submitted renewal is locked for everyone, Admin included (spec §3.4) — the API
+  // refuses any change, this just shows it read-only.
   const isAdmin = hasRole(session?.user?.role, 'Admin', 'Super Admin');
   const isImpersonating = session?.user?.isImpersonating || false;
-  const paymentReceived = (renewal.banking !== null && renewal.banking !== undefined) && !isAdmin;
+  const isLocked = !!renewal.submittedAt;
+  const paymentReceived = renewal.banking !== null && renewal.banking !== undefined && renewal.banking > 0;
+  let submittedOnLabel = '';
+  if (renewal.submittedAt) {
+    submittedOnLabel = formatOrdinalDate(renewal.submittedAt.substring(0, 10));
+  }
 
   // Renewals closed check — show closed message to non-admin, non-impersonating users
   if (renewal.renewalsClosed && !isAdmin && !isImpersonating) {
@@ -449,7 +571,7 @@ export default function RenewalsPage() {
   const currentRenewal = isEditing ? editedRenewal : renewal;
   const currentAgeDemographic = isEditing ? editedAgeDemographic : ageDemographic;
   const currentMemberType = isEditing ? editedMemberType : memberType;
-  const isFormDisabled = !isEditing || paymentReceived;
+  const isFormDisabled = !isEditing || isLocked;
 
   // Success message after submission
   if (isSubmitted && renewal.renewingMembership) {
@@ -497,11 +619,11 @@ export default function RenewalsPage() {
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6">
                 <h3 className="text-lg font-medium text-blue-900 mb-3">Payment Details</h3>
                 <div className="space-y-1 text-sm text-blue-800">
-                  <p><span className="font-medium">Bank:</span> HSBC</p>
-                  <p><span className="font-medium">Sort Code:</span> 40-15-16</p>
-                  <p><span className="font-medium">Account Number:</span> 81554948</p>
-                  <p><span className="font-medium">Account Name:</span> Burgess Hill Bowls Club</p>
-                  <p><span className="font-medium">Reference:</span> SUBS {profile.lastName.toUpperCase()}</p>
+                  <p><span className="font-medium">Bank:</span> {bankDetails ? bankDetails.bankName : ''}</p>
+                  <p><span className="font-medium">Sort Code:</span> {bankDetails ? bankDetails.bankSortCode : ''}</p>
+                  <p><span className="font-medium">Account Number:</span> {bankDetails ? bankDetails.bankAccountNumber : ''}</p>
+                  <p><span className="font-medium">Account Name:</span> {bankDetails ? bankDetails.bankAccountName : ''}</p>
+                  <p><span className="font-medium">Reference:</span> {paymentReference}</p>
                 </div>
                 <p className="mt-4 text-sm text-blue-700">
                   Please make payment at your earliest convenience. Card payments are also accepted at the bar.
@@ -587,14 +709,64 @@ export default function RenewalsPage() {
         {/* Renewal Form */}
         <div className="bg-white shadow rounded-lg">
           <div className="px-4 py-5 sm:p-6">
-            {/* Edit Button (View Mode Only) - Submit/Cancel are in navbar when editing */}
-            {!isEditing && !paymentReceived && (
+            {/* Status: submitted (locked) */}
+            {isLocked && (
+              <div className="mb-6 bg-green-50 border border-green-200 rounded-lg p-4">
+                <p className="text-sm font-medium text-green-900">
+                  {renewal.renewingMembership
+                    ? `Renewal submitted on ${submittedOnLabel}.`
+                    : `You told us on ${submittedOnLabel} that you are not renewing your membership.`}
+                </p>
+                <p className="text-sm text-green-800 mt-1">
+                  {renewal.renewingMembership
+                    ? 'A submitted renewal can\'t be changed. If something is wrong, please contact the Treasurer.'
+                    : 'If you change your mind, you can reopen your renewal and fill it in.'}
+                </p>
+                {!renewal.renewingMembership && (
+                  <button
+                    onClick={handleReopen}
+                    disabled={isReopening}
+                    className="mt-3 px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isReopening ? 'Reopening…' : 'Reopen renewal'}
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Status: a saved draft that hasn't been submitted */}
+            {!isLocked && renewal.renewingMembership === true && (
+              <div className="mb-6 bg-yellow-50 border border-yellow-300 rounded-lg p-4">
+                <p className="text-sm font-medium text-yellow-900">
+                  Your renewal is saved as a draft. It is NOT submitted yet.
+                </p>
+                <p className="text-sm text-yellow-900 mt-1">
+                  You can change it as often as you like. When you are happy with it, press Submit Renewal. Please don&apos;t pay until you have submitted.
+                </p>
+              </div>
+            )}
+
+            {/* Edit Button (View Mode Only) - Submit / Save Draft are in the navbar when editing */}
+            {!isEditing && !isLocked && (
               <div className="flex justify-end space-x-3 mb-6">
                 <button
                   onClick={handleEdit}
                   className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors cursor-pointer"
                 >
-                  Edit Renewal
+                  {renewal.renewingMembership === true ? 'Continue Renewal' : 'Start Renewal'}
+                </button>
+              </div>
+            )}
+
+            {/* Cancel unsaved changes — the navbar's two buttons are Submit and Save Draft when renewing */}
+            {isEditing && editingRenewing && (
+              <div className="flex justify-end mb-6">
+                <button
+                  onClick={handleCancel}
+                  disabled={isSaving}
+                  className="px-4 py-2 bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  Cancel changes
                 </button>
               </div>
             )}
@@ -712,6 +884,41 @@ export default function RenewalsPage() {
 
             {currentRenewal?.renewingMembership && (
               <>
+                {/* Printed Membership Book — saved on the member profile, carried from year to year (spec §3.8) */}
+                <div className="mb-8 pb-8 border-b">
+                  <h3 className="text-lg font-medium text-gray-900 mb-2">Printed Membership Book</h3>
+                  <p className="text-sm text-gray-700 mb-4">
+                    Do you want a printed membership book? (contains contact names and fixtures)
+                  </p>
+                  <div className="flex flex-col sm:flex-row gap-3 sm:gap-8">
+                    <label className="flex items-center cursor-pointer">
+                      <input
+                        type="radio"
+                        name="printedMembershipBook"
+                        checked={currentRenewal?.printedMembershipBook === true}
+                        onChange={() => handleChange('printedMembershipBook', true)}
+                        disabled={isFormDisabled}
+                        className="h-5 w-5 text-blue-500 focus:ring-blue-500 border-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                      />
+                      <span className="ml-3 text-sm font-medium text-gray-900">Yes, please</span>
+                    </label>
+                    <label className="flex items-center cursor-pointer">
+                      <input
+                        type="radio"
+                        name="printedMembershipBook"
+                        checked={currentRenewal?.printedMembershipBook === false}
+                        onChange={() => handleChange('printedMembershipBook', false)}
+                        disabled={isFormDisabled}
+                        className="h-5 w-5 text-blue-500 focus:ring-blue-500 border-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                      />
+                      <span className="ml-3 text-sm font-medium text-gray-900">No, thank you</span>
+                    </label>
+                  </div>
+                  {isEditing && currentRenewal?.printedMembershipBook !== true && currentRenewal?.printedMembershipBook !== false && (
+                    <p className="mt-2 text-sm text-gray-700">Please choose one before you submit.</p>
+                  )}
+                </div>
+
                 {/* 200 Club Section */}
                 <div className="mb-8 pb-8 border-b">
                   <h3 className="text-lg font-medium text-gray-900 mb-2">200 Club</h3>
@@ -908,9 +1115,16 @@ export default function RenewalsPage() {
 
                     {/* Detailed Instructions */}
                     <div className="mb-4 space-y-2 text-sm text-gray-700">
-                      <p>Entry to competitions will only be accepted by playing members who have made themselves available for 8 Friendly matches in the previous season.</p>
+                      <p>Entry to competitions will only be accepted by playing members who have made themselves available for {eligibility.friendliesRequired} Friendly matches in the previous season.</p>
+                      {eligibility.override === null && (
+                        <p>
+                          {eligibility.friendliesLastSeason === null
+                            ? `There are no friendlies records for ${eligibility.previousSeasonYear}.`
+                            : `You made yourself available for ${eligibility.friendliesLastSeason} Friendly ${eligibility.friendliesLastSeason === 1 ? 'match' : 'matches'} in ${eligibility.previousSeasonYear}.`}
+                        </p>
+                      )}
                       <p>
-                        You are <span className={eligibility.canEnterCompetitions ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}>{eligibility.canEnterCompetitions ? 'eligible' : 'NOT eligible'}</span> to enter Club Comps next year. {!eligibility.canEnterCompetitions && 'If you believe this is incorrect, please contact BHBC.'}
+                        You are <span className={eligibility.canEnterCompetitions ? 'text-green-700 font-semibold' : 'text-red-700 font-semibold'}>{eligibility.canEnterCompetitions ? 'eligible' : 'NOT eligible'}</span> to enter Club Comps this season. {!eligibility.canEnterCompetitions && 'If you believe this is incorrect, please contact BHBC.'}
                       </p>
                       <p className="text-xs">New members shall not be eligible to enter any Club competition in their first full playing season. Exceptions will be made for experienced bowlers by the Tournament Committee.</p>
                       <p className="text-xs">The OLDLAND competition is open only to those members who have NOT won a BHBC singles competition.</p>
@@ -956,7 +1170,7 @@ export default function RenewalsPage() {
                                 type="checkbox"
                                 checked={currentRenewal[key as keyof Renewal] as boolean}
                                 onChange={(e) => handleChange(key as keyof Renewal, e.target.checked)}
-                                disabled={!eligibility.canEnterCompetitions || paymentReceived || !!(mainToSubKey[key] && currentRenewal[mainToSubKey[key] as keyof Renewal])}
+                                disabled={!eligibility.canEnterCompetitions || isFormDisabled || !!(mainToSubKey[key] && currentRenewal[mainToSubKey[key] as keyof Renewal])}
                                 className="h-4 w-4 text-blue-500 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                               />
                               <label className={`ml-2 text-sm ${
@@ -984,7 +1198,7 @@ export default function RenewalsPage() {
                                 type="checkbox"
                                 checked={currentRenewal[key as keyof Renewal] as boolean}
                                 onChange={(e) => handleChange(key as keyof Renewal, e.target.checked)}
-                                disabled={!eligibility.canEnterCompetitions || paymentReceived || !!(subToMainKey[key] && currentRenewal[subToMainKey[key] as keyof Renewal])}
+                                disabled={!eligibility.canEnterCompetitions || isFormDisabled || !!(subToMainKey[key] && currentRenewal[subToMainKey[key] as keyof Renewal])}
                                 className="h-4 w-4 text-blue-500 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                               />
                               <label className={`ml-2 text-sm ${
@@ -1024,16 +1238,54 @@ export default function RenewalsPage() {
               </div>
             )}
 
-            {/* Payment Details — shown under Total Fee Payable when renewing and payment not yet received */}
-            {currentRenewal?.renewingMembership && !paymentReceived && (
+            {/* Not submitted yet — no payment details until it is, so nobody pays for a draft */}
+            {!isLocked && currentRenewal?.renewingMembership && (
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-6">
+                <p className="text-sm text-gray-700">
+                  How to pay will be shown, and emailed to you, once you submit your renewal.
+                </p>
+              </div>
+            )}
+
+            {/* Save / Submit at the bottom of the form too, so nobody has to scroll back up */}
+            {isEditing && (
+              <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 mb-6">
+                <button
+                  onClick={handleCancel}
+                  disabled={isSaving}
+                  className="px-4 py-2 bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  Cancel changes
+                </button>
+                {editingRenewing && (
+                  <button
+                    onClick={() => handleSave('draft')}
+                    disabled={isSaving}
+                    className="px-4 py-2 bg-white text-blue-700 border border-blue-500 rounded-md hover:bg-blue-50 transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    Save Draft
+                  </button>
+                )}
+                <button
+                  onClick={handleSubmitClick}
+                  disabled={isSaving}
+                  className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {isSaving ? 'Saving…' : editingRenewing ? 'Submit Renewal' : 'Save'}
+                </button>
+              </div>
+            )}
+
+            {/* Payment Details — once submitted, while payment not yet received */}
+            {isLocked && renewal.renewingMembership && !paymentReceived && (
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6">
                 <h3 className="text-lg font-medium text-blue-900 mb-3">Payment Details</h3>
                 <div className="space-y-1 text-sm text-blue-800">
-                  <p><span className="font-medium">Bank:</span> HSBC</p>
-                  <p><span className="font-medium">Sort Code:</span> 40-15-16</p>
-                  <p><span className="font-medium">Account Number:</span> 81554948</p>
-                  <p><span className="font-medium">Account Name:</span> Burgess Hill Bowls Club</p>
-                  <p><span className="font-medium">Reference:</span> SUBS {profile?.lastName.toUpperCase()}</p>
+                  <p><span className="font-medium">Bank:</span> {bankDetails ? bankDetails.bankName : ''}</p>
+                  <p><span className="font-medium">Sort Code:</span> {bankDetails ? bankDetails.bankSortCode : ''}</p>
+                  <p><span className="font-medium">Account Number:</span> {bankDetails ? bankDetails.bankAccountNumber : ''}</p>
+                  <p><span className="font-medium">Account Name:</span> {bankDetails ? bankDetails.bankAccountName : ''}</p>
+                  <p><span className="font-medium">Reference:</span> {paymentReference}</p>
                 </div>
                 <p className="mt-4 text-sm text-blue-700">
                   Please make payment at your earliest convenience. Card payments are also accepted at the bar.
@@ -1051,8 +1303,8 @@ export default function RenewalsPage() {
                     </svg>
                     <div>
                       <h3 className="text-lg font-medium text-green-900">Payment Received</h3>
-                      <p className="text-sm text-green-700 mt-1">
-                        Your renewal payment has been received. Your details are locked and cannot be modified.
+                      <p className="text-sm text-green-800 mt-1">
+                        Your renewal payment has been received. Thank you.
                       </p>
                     </div>
                   </div>
@@ -1068,6 +1320,16 @@ export default function RenewalsPage() {
           </div>
         </div>
       </main>
+
+      <ConfirmDialog
+        isOpen={confirmSubmitOpen}
+        title="Submit your renewal?"
+        message={`Once submitted, your renewal can't be changed. Total payable: ${formatCurrency(fees.total)}. Submit now?`}
+        confirmLabel="Submit Renewal"
+        cancelLabel="Not yet"
+        onConfirm={handleConfirmSubmit}
+        onCancel={() => setConfirmSubmitOpen(false)}
+      />
     </div>
   );
 }

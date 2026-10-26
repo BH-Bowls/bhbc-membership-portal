@@ -40,6 +40,13 @@ const ROWLAND_FIELDS: [string, string, string][] = [
   ['rowland_entry_season', 'Entry season', 'Which season new entry-form submissions get tagged with, e.g. "2027".'],
 ];
 
+const BANK_FIELDS: [string, string][] = [
+  ['bank_name', 'Bank'],
+  ['bank_sort_code', 'Sort code'],
+  ['bank_account_number', 'Account number'],
+  ['bank_account_name', 'Account name'],
+];
+
 // Sheet measurements live on the named layouts (LabelLayoutsPanel), not here
 const LABELS_FIELDS: [string, string][] = [
   ['booklet_label_message', 'Booklet label message'],
@@ -118,7 +125,7 @@ export default function AdminConfigPage() {
 
     setSavingGeneral(true);
     try {
-      const updates = {
+      const updates: Record<string, string> = {
         maintenance_mode: editGeneral.maintenance_mode ?? 'false',
         age_reference_date: ageAnchor,
         min_friendlies_for_competitions: editGeneral.min_friendlies_for_competitions ?? '',
@@ -126,6 +133,7 @@ export default function AdminConfigPage() {
         season_planning_capacity_warning_threshold: editGeneral.season_planning_capacity_warning_threshold ?? '',
         season_planning_max_players_per_day: editGeneral.season_planning_max_players_per_day ?? '',
       };
+      for (const [key] of BANK_FIELDS) updates[key] = editGeneral[key] ?? '';
       const res = await fetch('/api/admin/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -351,7 +359,7 @@ export default function AdminConfigPage() {
                 ) : (
                   <span className="text-gray-900">{config.min_friendlies_for_competitions || '—'}</span>
                 )}
-                <p className="text-xs text-gray-700 mt-1">Not yet used anywhere in the app — Renewals' eligibility check still reads this threshold from Sheets.</p>
+                <p className="text-xs text-gray-700 mt-1">Renewal form — a playing member can enter club competitions if they made themselves available for at least this many friendlies last season. An Admin can override it per member on the member&apos;s page.</p>
               </div>
 
               {/* Season Planning capacity */}
@@ -401,6 +409,32 @@ export default function AdminConfigPage() {
                   <span className="text-gray-900">{config.season_planning_max_players_per_day || '—'}</span>
                 )}
                 <p className="text-xs text-gray-700 mt-1">Season Planning — not enforced, just a warning. Covers all fixtures that day (Home and Away both need a full team), unlike the rinks check above which only counts Home.</p>
+              </div>
+
+              {/* Bank details */}
+              <div className="pt-2 border-t border-gray-200">
+                <h3 className="text-sm font-medium text-gray-700 mb-2">Bank details</h3>
+                <p className="text-xs text-gray-700 mb-3">
+                  Shown in payment instructions — the Renewals page and confirmation email, the
+                  membership application payment email, and the Rowland Cup entry page and email.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {BANK_FIELDS.map(([key, label]) => (
+                    <div key={key}>
+                      <label className="block text-gray-900 mb-1">{label}</label>
+                      {isEditingGeneral ? (
+                        <input
+                          type="text"
+                          value={editGeneral[key] ?? ''}
+                          onChange={(e) => setEditGeneral((prev) => ({ ...prev, [key]: e.target.value }))}
+                          className={`${getInputClasses()} w-full`}
+                        />
+                      ) : (
+                        <span className="text-gray-900">{config[key] || '—'}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           </div>

@@ -93,6 +93,7 @@ async function fetchMembersRows(): Promise<ReportRow[]> {
     comments: str(u.comments),
     social_emails: str(u.socialEmails),
     handbook_entry: str(u.handbookEntry),
+    printed_membership_book: str(u.printedMembershipBook),
     driving_away_matches: str(u.drivingAwayMatches),
     driving_additional_info: str(u.drivingAdditionalInfo),
     green_maintenance: str(u.greenMaintenance),
@@ -127,6 +128,7 @@ const MEMBERS_COLUMNS: SchemaColumn[] = [
   col('renew_status', 'Renew Status'), col('friendlies_last_year', 'Friendlies Last Year'),
   col('competitions_eligible_override', 'Competitions Eligible Override'),
   col('comments', 'Comments'), col('social_emails', 'Social Emails'), col('handbook_entry', 'Handbook Entry'),
+  col('printed_membership_book', 'Printed Membership Book'),
   col('driving_away_matches', 'Driving Away Matches'), col('driving_additional_info', 'Driving Additional Info'),
   col('green_maintenance', 'Green Maintenance'), col('green_additional_info', 'Green Additional Info'),
   col('bar_duty', 'Bar Duty'), col('bar_additional_info', 'Bar Additional Info'), col('other_skills', 'Other Skills'),
@@ -144,6 +146,10 @@ async function fetchRenewalsRows(): Promise<ReportRow[]> {
     user_name: (r.username || '').toLowerCase(),
     username_display: r.username,
     season_year: str(r.season_year),
+    // Drafts are kept in the export but marked, so they're never mistaken for renewals (spec §3.9)
+    status: r.submitted_at ? 'Submitted' : 'Draft',
+    submitted_at: str(r.submitted_at),
+    submitted_by: str(r.submitted_by),
     renewing_membership: str(r.renewing_membership),
     renewals_closed: str(r.renewals_closed),
     playing_fee: str(r.playing_fee),
@@ -188,6 +194,7 @@ async function fetchRenewalsRows(): Promise<ReportRow[]> {
 
 const RENEWALS_COLUMNS: SchemaColumn[] = [
   col('username_display', 'Username'), col('season_year', 'Season Year'),
+  col('status', 'Status'), col('submitted_at', 'Submitted At'), col('submitted_by', 'Submitted By'),
   col('renewing_membership', 'Renewing Membership'), col('renewals_closed', 'Renewals Closed'),
   col('playing_fee', 'Playing Fee'), col('social_fee', 'Social Fee'), col('competitions_fee', 'Competitions Fee'),
   col('club_200_fee', '200 Club Fee'), col('total_fee_due', 'Total Fee Due'),

@@ -849,6 +849,31 @@ export async function getPlayerStats(userName: string): Promise<PlayerStats> {
   return computeStats(userName, data);
 }
 
+/**
+ * How many friendlies a member made themselves available for in a given season (by year),
+ * for the club competitions entry rule on the renewal form. Every entry they didn't
+ * withdraw from counts, whatever became of the game — selected, reserve, opposition,
+ * cancelled, abandoned, or a game left at Open — because the rule is about the member's
+ * availability, not whether the game went ahead. This is the same figure as the "Total"
+ * on Friendlies → My Stats (app/api/friendlies/stats), so the two always agree.
+ * Null when that season doesn't exist.
+ */
+export async function getFriendliesAvailableCount(userName: string, seasonYear: number): Promise<number | null> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.from('seasons').select('id').eq('year', seasonYear).maybeSingle();
+  if (error) throw new Error(`Failed to look up the ${seasonYear} season: ${error.message}`);
+  if (!data) return null;
+  const rows = await getSeasonEntryCodes(data.id);
+  const target = userName.toLowerCase();
+  let count = 0;
+  for (const row of rows) {
+    if (row.username.toLowerCase() === target && !row.withdrawn) {
+      count++;
+    }
+  }
+  return count;
+}
+
 /** Season friendly stats for every player with an entry, keyed by lowercase username. */
 export async function getAllPlayerStats(seasonId?: string): Promise<Map<string, PlayerStats>> {
   const data = await loadSeasonOccasionData(seasonId);
