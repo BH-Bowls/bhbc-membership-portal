@@ -367,6 +367,9 @@ export default function CompetitionSetupPage({
   // Comp start date (when the first round begins; leave blank if fixed-day like Triples)
   const [compStartDate, setCompStartDate] = useState('');
 
+  // Season year — decides which year's renewals the entrants list comes from
+  const [seasonYear, setSeasonYear] = useState('');
+
   // Manual draw count — used when there are no renewals entrants (e.g. centenary)
   const [manualDrawCount, setManualDrawCount] = useState('');
 
@@ -399,13 +402,21 @@ export default function CompetitionSetupPage({
 
     Promise.all([
       fetch(`/api/competitions/${compId}`).then((r) => r.json()),
-      fetch(`/api/competitions/${compId}/entrants`).then((r) => r.json()),
       fetch('/api/competitions/members').then((r) => r.json()),
     ])
-      .then(([compData, entrantData, memberData]) => {
+      .then(async ([compData, memberData]) => {
         if (compData.error) throw new Error(compData.error);
 
         const comp: Competition = compData.competition;
+
+        // A competition not yet started defaults to this year, so a new season's
+        // setup picks up the new renewals without anyone having to change it.
+        // It's saved to the competition along with the dates.
+        const thisYear = new Date().getFullYear();
+        const effectiveYear = comp.status === 'Not Started' && comp.year < thisYear ? thisYear : comp.year;
+        setSeasonYear(String(effectiveYear));
+
+        const entrantData = await fetch(`/api/competitions/${compId}/entrants?year=${effectiveYear}`).then((r) => r.json());
         const matches: CompMatch[] = compData.matches || [];
         setCompetition(comp);
 
@@ -498,6 +509,21 @@ export default function CompetitionSetupPage({
   }, [compId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Reload just the entrants when the season year is changed by hand
+  function changeSeasonYear(value: string) {
+    setSeasonYear(value);
+    const year = parseInt(value, 10);
+    if (!compId || !/^\d{4}$/.test(value)) return;
+    fetch(`/api/competitions/${compId}/entrants?year=${year}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.error) return;
+        setEntrants(data.entrants || []);
+        setSubs(data.subs || []);
+      })
+      .catch(() => { /* keep the current list */ });
+  }
 
   useEffect(() => {
     if (!loading && !isCommittee) router.replace(`/competitions/${compId}`);
@@ -661,6 +687,7 @@ export default function CompetitionSetupPage({
           qfFixed,
           sfFixed,
           compStartDate: compStartDate || null,
+          ...(/^\d{4}$/.test(seasonYear) ? { year: parseInt(seasonYear, 10) } : {}),
           ...(entrants.length === 0 && manualDrawCount
             ? { drawSideCount: parseInt(manualDrawCount, 10) || null }
             : {}),
@@ -1010,6 +1037,19 @@ export default function CompetitionSetupPage({
 
             <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
               <h2 className="font-semibold text-gray-900 mb-2">Play-by dates &amp; finals</h2>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Season</label>
+                <input
+                  type="number"
+                  min={2020}
+                  max={2100}
+                  value={seasonYear}
+                  onChange={(e) => changeSeasonYear(e.target.value)}
+                  className="block w-32 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
+                />
+                <p className="mt-1 text-xs text-gray-700">Entrants are taken from this season&apos;s renewals.</p>
+              </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {/* Finals date — always shown */}
