@@ -65,6 +65,10 @@ interface Renewal {
   dateReceived?: string | null;
   renewalsClosed?: boolean;
   submittedAt?: string | null; // null = draft
+  voidedAt?: string | null;
+  voidedBy?: string | null;
+  voidReason?: string | null;
+  totalPayment?: number;
   // Stored on the member profile, not the renewal — carried here so it saves with the form
   printedMembershipBook?: boolean | null;
 }
@@ -125,18 +129,55 @@ export default function RenewalsPage() {
     override: null,
   });
 
-  // Load renewal data on mount and when session changes (uses session.user.userName automatically)
+  // Admin member selector (spec §4): a real Admin (not impersonating) can open any
+  // member's renewal here. null = their own. Impersonation isn't used for this because it
+  // swaps the role, so the Admin-only Void button would never show.
+  const isRealAdmin = hasRole(session?.user?.role, 'Admin') && !(session?.user?.isImpersonating);
+  const [targetUserName, setTargetUserName] = useState<string | null>(null);
+  const [memberOptions, setMemberOptions] = useState<{ userName: string; name: string }[]>([]);
+  // Whose unsaved-changes copy the browser keeps — the member being edited
+  const draftOwner = targetUserName || (session?.user?.userName || '');
+
+  // Void (spec §5)
+  const [voidDialogOpen, setVoidDialogOpen] = useState(false);
+  const [voidReason, setVoidReason] = useState('');
+  const [isVoiding, setIsVoiding] = useState(false);
+  const [voidInfo, setVoidInfo] = useState<{
+    canVoid: boolean;
+    blocker: string | null;
+    attachments: { club200Numbers: string[]; competitions: { compId: string; name: string }[] };
+  } | null>(null);
+
+  // Load renewal data on mount, when the session changes, and when an Admin picks another member
   useEffect(() => {
     if (status === 'authenticated' && session?.user?.userName) {
       loadRenewalData();
     }
-  }, [status, session?.user?.userName, session?.user?.isImpersonating]);
+  }, [status, session?.user?.userName, session?.user?.isImpersonating, targetUserName]);
 
   // Reset editing state when user changes (prevents stale state after switching users)
   useEffect(() => {
     setIsEditing(false);
+    setIsSubmitted(false);
     setEditedRenewal(null); // Clear edited data to prevent auto-save race condition
-  }, [session?.user?.userName]);
+  }, [session?.user?.userName, targetUserName]);
+
+  // Members for the Admin selector
+  useEffect(() => {
+    if (!isRealAdmin) return;
+    fetch('/api/admin/members')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json) => {
+        if (json && Array.isArray(json.members)) {
+          const options: { userName: string; name: string }[] = [];
+          for (const m of json.members) {
+            options.push({ userName: m.userName, name: `${m.firstName} ${m.lastName}` });
+          }
+          setMemberOptions(options);
+        }
+      })
+      .catch(() => {});
+  }, [isRealAdmin]);
 
   // Recalculate fees whenever renewal data or demographics change
   useEffect(() => {
@@ -177,8 +218,8 @@ export default function RenewalsPage() {
       setIsLoading(true);
       setError('');
       setSuccessMessage('');
-      // No userName parameter needed - API uses session.user.userName
-      const response = await fetch('/api/renewals');
+      // No userName = the session user (or the impersonated member); an Admin's selector passes one
+      const response = await fetch(targetUserName ? `/api/renewals?userName=${encodeURIComponent(targetUserName)}` : '/api/renewals');
       if (!response.ok) throw new Error('Failed to load renewal data');
 
       const data = await response.json();
@@ -202,15 +243,15 @@ export default function RenewalsPage() {
       // Restore unsaved changes kept in the browser — but never onto a submitted
       // renewal, which can't be changed any more.
       let localChanges: { renewal: Renewal; ageDemographic: string; memberType: string } | null = null;
-      if (session?.user?.userName) {
+      if (draftOwner) {
         if (loadedRenewal.submittedAt) {
-          clearDraft('Renewals', session.user.userName);
+          clearDraft('Renewals', draftOwner);
         } else {
           localChanges = restoreDraft<{
             renewal: Renewal;
             ageDemographic: string;
             memberType: string;
-          }>('Renewals', session.user.userName);
+          }>('Renewals', draftOwner);
         }
       }
 
@@ -235,7 +276,7 @@ export default function RenewalsPage() {
 
   // Auto-save drafts when editing
   useEffect(() => {
-    if (!renewal || !session?.user?.userName || !isEditing) return;
+    if (!renewal || !draftOwner || !isEditing) return;
 
     const draftData = {
       renewal: editedRenewal,
@@ -251,9 +292,9 @@ export default function RenewalsPage() {
 
     // Auto-save draft when in edit mode and changes exist
     if (hasChanges) {
-      saveDraft('Renewals', session.user.userName, draftData);
+      saveDraft('Renewals', draftOwner, draftData);
     }
-  }, [editedRenewal, editedAgeDemographic, editedMemberType, renewal, ageDemographic, memberType, isEditing, session?.user?.userName]);
+  }, [editedRenewal, editedAgeDemographic, editedMemberType, renewal, ageDemographic, memberType, isEditing, draftOwner]);
 
   const handleEdit = () => {
     setIsEditing(true);
@@ -262,8 +303,8 @@ export default function RenewalsPage() {
   };
 
   const handleCancel = () => {
-    if (session?.user?.userName) {
-      clearDraft('Renewals', session.user.userName);
+    if (draftOwner) {
+      clearDraft('Renewals', draftOwner);
     }
     setIsEditing(false);
     setEditedRenewal(renewal);
@@ -318,8 +359,8 @@ export default function RenewalsPage() {
         const data = await response.json();
         if (response.status === 409) {
           // Submitted elsewhere (another tab, or a buddy) — show the locked renewal.
-          if (session?.user?.userName) {
-            clearDraft('Renewals', session.user.userName);
+          if (draftOwner) {
+            clearDraft('Renewals', draftOwner);
           }
           setIsEditing(false);
           await loadRenewalData();
@@ -335,8 +376,8 @@ export default function RenewalsPage() {
       setEmailWarning(data.warning || '');
 
       // The browser's unsaved-changes copy isn't needed once the server has it
-      if (session?.user?.userName) {
-        clearDraft('Renewals', session.user.userName);
+      if (draftOwner) {
+        clearDraft('Renewals', draftOwner);
       }
 
       // Update main state with saved values
@@ -388,7 +429,7 @@ export default function RenewalsPage() {
       const response = await fetch('/api/renewals', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'reopen' }),
+        body: JSON.stringify({ action: 'reopen', userName: targetUserName || undefined }),
       });
       const data = await response.json();
       if (!response.ok) {
@@ -402,6 +443,54 @@ export default function RenewalsPage() {
       setError(err instanceof Error && err.message ? err.message : 'Failed to reopen renewal');
     } finally {
       setIsReopening(false);
+    }
+  };
+
+  // Void (Admin, spec §5): check it's allowed and fetch what's still attached, then open the dialog
+  const handleVoidClick = async () => {
+    if (!renewal) return;
+    setError('');
+    setVoidReason('');
+    setVoidInfo(null);
+    try {
+      const response = await fetch(`/api/renewals/void?userName=${encodeURIComponent(renewal.userName)}`);
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to check renewal');
+      }
+      if (!data.canVoid) {
+        setError(data.blocker || 'This renewal can\'t be voided.');
+        return;
+      }
+      setVoidInfo(data);
+      setVoidDialogOpen(true);
+    } catch (err) {
+      setError(err instanceof Error && err.message ? err.message : 'Failed to check renewal');
+    }
+  };
+
+  const handleConfirmVoid = async () => {
+    if (!renewal || !voidReason.trim()) return;
+    setIsVoiding(true);
+    setError('');
+    try {
+      const response = await fetch('/api/renewals/void', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userName: renewal.userName, reason: voidReason.trim() }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to void renewal');
+      }
+      setVoidDialogOpen(false);
+      await loadRenewalData();
+      setSuccessMessage('The renewal has been voided. Nothing is owed on it now.');
+    } catch (err) {
+      setVoidDialogOpen(false);
+      setError(err instanceof Error && err.message ? err.message : 'Failed to void renewal');
+    } finally {
+      setIsVoiding(false);
     }
   };
 
@@ -586,7 +675,7 @@ export default function RenewalsPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
                 <h2 className="text-lg font-semibold text-green-900">
-                  {isImpersonating
+                  {isImpersonating || targetUserName
                     ? `Thank you! ${profile?.fullKnownAs}'s renewal has been submitted.`
                     : 'Thank you! Your renewal has been submitted.'}
                 </h2>
@@ -685,6 +774,30 @@ export default function RenewalsPage() {
     <div className="min-h-screen bg-gray-50">
       {/* Main Content */}
       <main className="max-w-4xl mx-auto py-6 sm:px-6 lg:px-8">
+        {/* Admin member selector (spec §4) — view any member's renewal, and reach Void */}
+        {isRealAdmin && (
+          <div className="mb-4 bg-white shadow rounded-lg px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-2">
+            <label htmlFor="renewal-member" className="text-sm font-medium text-gray-900">Member:</label>
+            <select
+              id="renewal-member"
+              value={targetUserName || ''}
+              onChange={(e) => setTargetUserName(e.target.value === '' ? null : e.target.value)}
+              disabled={isSaving}
+              className="block w-full sm:w-80 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
+            >
+              <option value="">Me ({session?.user?.userName})</option>
+              {memberOptions.map((m) => (
+                m.userName.toLowerCase() === (session?.user?.userName || '').toLowerCase() ? null : (
+                  <option key={m.userName} value={m.userName}>{m.name}</option>
+                )
+              ))}
+            </select>
+            {targetUserName && (
+              <span className="text-sm text-gray-700">Viewing {profile.fullKnownAs} {profile.lastName}&apos;s renewal</span>
+            )}
+          </div>
+        )}
+
         {/* Error Message */}
         {error && (
           <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
@@ -709,8 +822,21 @@ export default function RenewalsPage() {
         {/* Renewal Form */}
         <div className="bg-white shadow rounded-lg">
           <div className="px-4 py-5 sm:p-6">
+            {/* Status: voided (spec §5) — nothing is owed */}
+            {renewal.voidedAt && (
+              <div className="mb-6 bg-gray-100 border border-gray-300 rounded-lg p-4">
+                <p className="text-sm font-medium text-gray-900">
+                  This renewal was voided on {formatOrdinalDate(renewal.voidedAt.substring(0, 10))}
+                  {renewal.voidedBy ? ` by ${renewal.voidedBy}` : ''}. Nothing is owed on it.
+                </p>
+                {renewal.voidReason && (
+                  <p className="text-sm text-gray-700 mt-1">Reason: {renewal.voidReason}</p>
+                )}
+              </div>
+            )}
+
             {/* Status: submitted (locked) */}
-            {isLocked && (
+            {isLocked && !renewal.voidedAt && (
               <div className="mb-6 bg-green-50 border border-green-200 rounded-lg p-4">
                 <p className="text-sm font-medium text-green-900">
                   {renewal.renewingMembership
@@ -730,6 +856,21 @@ export default function RenewalsPage() {
                   >
                     {isReopening ? 'Reopening…' : 'Reopen renewal'}
                   </button>
+                )}
+                {/* Void — Admin only, renewing, nothing paid (re-checked by the server) */}
+                {isRealAdmin && renewal.renewingMembership && !paymentReceived && (
+                  <div className="mt-3 pt-3 border-t border-green-200">
+                    <button
+                      onClick={handleVoidClick}
+                      disabled={isVoiding}
+                      className="px-4 py-2 bg-white text-red-700 border border-red-300 rounded-md hover:bg-red-50 transition-colors cursor-pointer disabled:opacity-50"
+                    >
+                      Void renewal
+                    </button>
+                    <p className="text-xs text-gray-700 mt-1">
+                      Admin only. Cancels what&apos;s owed on this renewal. Only possible while nothing has been paid.
+                    </p>
+                  </div>
                 )}
               </div>
             )}
@@ -1320,6 +1461,48 @@ export default function RenewalsPage() {
           </div>
         </div>
       </main>
+
+      <ConfirmDialog
+        isOpen={voidDialogOpen}
+        title={`Void ${profile.fullKnownAs} ${profile.lastName}'s renewal?`}
+        message={`This cancels the ${formatCurrency(renewal.totalPayment || fees.total)} owed. It doesn't change their choices, competition entries or 200 Club numbers.`}
+        confirmLabel={isVoiding ? 'Voiding…' : 'Void renewal'}
+        confirmVariant="danger"
+        confirmDisabled={isVoiding || voidReason.trim() === ''}
+        onConfirm={handleConfirmVoid}
+        onCancel={() => setVoidDialogOpen(false)}
+      >
+        <div className="mb-4 text-left">
+          <label htmlFor="void-reason" className="block text-sm font-medium text-gray-900 mb-1">Reason (required)</label>
+          <textarea
+            id="void-reason"
+            value={voidReason}
+            onChange={(e) => setVoidReason(e.target.value)}
+            rows={3}
+            className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
+          />
+          {voidInfo && (voidInfo.attachments.club200Numbers.length > 0 || voidInfo.attachments.competitions.length > 0) && (
+            <div className="mt-3 bg-yellow-50 border border-yellow-300 rounded-md p-3 text-sm text-yellow-900">
+              <p className="font-medium mb-1">Still attached — the void won&apos;t remove these, so deal with them by hand:</p>
+              {voidInfo.attachments.club200Numbers.length > 0 && (
+                <p>
+                  200 Club {voidInfo.attachments.club200Numbers.length === 1 ? 'number' : 'numbers'}:{' '}
+                  <a href="/200-club" className="underline">{voidInfo.attachments.club200Numbers.join(', ')}</a>
+                </p>
+              )}
+              {voidInfo.attachments.competitions.length > 0 && (
+                <ul className="mt-1 list-disc list-inside">
+                  {voidInfo.attachments.competitions.map((c) => (
+                    <li key={c.name}>
+                      <a href={`/competitions/${c.compId}`} className="underline">{c.name}</a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+      </ConfirmDialog>
 
       <ConfirmDialog
         isOpen={confirmSubmitOpen}

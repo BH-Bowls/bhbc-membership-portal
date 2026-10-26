@@ -91,7 +91,8 @@ export async function GET(request: NextRequest) {
       .from('renewals')
       .select('username, renewing_membership, playing_fee, social_fee, competitions_fee, club_200_fee, total_fee_due, outstanding, banking, difference, donations, card_machine, bank_transfer, cheque, cash')
       .eq('season_year', seasonYear)
-      .not('submitted_at', 'is', null); // drafts aren't owed (spec §3.9)
+      .not('submitted_at', 'is', null) // drafts aren't owed (spec §3.9)
+      .is('voided_at', null);          // nor are voided renewals (§5)
     if (renewalsError) throw new Error(renewalsError.message);
 
     // Fetch Postgres members for full names

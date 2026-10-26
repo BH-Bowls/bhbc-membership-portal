@@ -147,9 +147,12 @@ async function fetchRenewalsRows(): Promise<ReportRow[]> {
     username_display: r.username,
     season_year: str(r.season_year),
     // Drafts are kept in the export but marked, so they're never mistaken for renewals (spec §3.9)
-    status: r.submitted_at ? 'Submitted' : 'Draft',
+    status: r.voided_at ? 'Voided' : r.submitted_at ? 'Submitted' : 'Draft',
     submitted_at: str(r.submitted_at),
     submitted_by: str(r.submitted_by),
+    voided_at: str(r.voided_at),
+    voided_by: str(r.voided_by),
+    void_reason: str(r.void_reason),
     renewing_membership: str(r.renewing_membership),
     renewals_closed: str(r.renewals_closed),
     playing_fee: str(r.playing_fee),
@@ -195,6 +198,7 @@ async function fetchRenewalsRows(): Promise<ReportRow[]> {
 const RENEWALS_COLUMNS: SchemaColumn[] = [
   col('username_display', 'Username'), col('season_year', 'Season Year'),
   col('status', 'Status'), col('submitted_at', 'Submitted At'), col('submitted_by', 'Submitted By'),
+  col('voided_at', 'Voided At'), col('voided_by', 'Voided By'), col('void_reason', 'Void Reason'),
   col('renewing_membership', 'Renewing Membership'), col('renewals_closed', 'Renewals Closed'),
   col('playing_fee', 'Playing Fee'), col('social_fee', 'Social Fee'), col('competitions_fee', 'Competitions Fee'),
   col('club_200_fee', '200 Club Fee'), col('total_fee_due', 'Total Fee Due'),

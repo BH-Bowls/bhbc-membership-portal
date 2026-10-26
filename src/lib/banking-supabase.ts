@@ -212,6 +212,7 @@ export async function getRenewalsWithOutstanding(): Promise<RenewalForBanking[]>
     .select('username, outstanding, banking, donations, difference, total_fee_due, bank_transfer, card_machine, cheque, cash, payment_ids, payment_notes, date_paid')
     .eq('season_year', seasonYear)
     .not('submitted_at', 'is', null) // drafts aren't owed and can't be paid (spec §3.9)
+    .is('voided_at', null)           // nor are voided renewals (§5)
     .gt('outstanding', 0);
   if (error) throw new Error(`Failed to retrieve renewals with outstanding balances: ${error.message}`);
 

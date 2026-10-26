@@ -83,6 +83,9 @@ export interface Renewal {
   confirmationEmailDate?: string | null;
   submittedAt?: string | null; // null = draft (or not started)
   submittedBy?: string | null; // the real person who pressed Submit (never an impersonated user)
+  voidedAt?: string | null;    // §5 — set by voidRenewal() only
+  voidedBy?: string | null;
+  voidReason?: string | null;
   createdAt?: string | null;
   dateUpdated?: string | null;
 }
@@ -131,6 +134,7 @@ export async function getLatestRenewedSeason(userName: string): Promise<number |
     .ilike('username', userName)
     .eq('renewing_membership', true)
     .not('submitted_at', 'is', null) // drafts don't count (§3.9)
+    .is('voided_at', null)           // nor do voided renewals (§5)
     .order('season_year', { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -154,6 +158,7 @@ export async function getLatestRenewedSeasonsByUser(): Promise<Map<string, numbe
       .select('username, season_year')
       .eq('renewing_membership', true)
       .not('submitted_at', 'is', null) // drafts don't count (§3.9)
+      .is('voided_at', null)           // nor do voided renewals (§5)
       .order('id', { ascending: true })
       .range(from, from + pageSize - 1);
     if (error) throw new Error(`Failed to fetch renewed seasons: ${error.message}`);
@@ -201,6 +206,9 @@ function mapRow(row: any): Renewal {
     confirmationEmailDate: row.confirmation_email_date,
     submittedAt: row.submitted_at,
     submittedBy: row.submitted_by,
+    voidedAt: row.voided_at,
+    voidedBy: row.voided_by,
+    voidReason: row.void_reason,
     createdAt: row.created_at,
     dateUpdated: row.updated_at,
   };
@@ -362,6 +370,134 @@ export async function reopenRenewal(userName: string): Promise<{ success: boolea
     return { success: false, error: 'Only a submitted "not renewing" renewal can be reopened.' };
   }
   return { success: true };
+}
+
+/**
+ * True when anything at all has been paid on a renewal row — a void is only allowed
+ * before that (spec §5.1). Reads the raw payment columns.
+ */
+function hasAnyPayment(row: Record<string, unknown>): boolean {
+  const columns = ['banking', 'bank_transfer', 'card_machine', 'cheque', 'cash'];
+  for (const column of columns) {
+    const value = row[column];
+    if (value !== null && value !== undefined && Number(value) !== 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Whether a renewal can be voided right now, and if not, why not (spec §5.1). */
+export async function getVoidBlocker(userName: string): Promise<string | null> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('renewals')
+    .select('submitted_at, voided_at, renewing_membership, banking, bank_transfer, card_machine, cheque, cash')
+    .ilike('username', userName)
+    .eq('season_year', getCurrentSeasonYear())
+    .maybeSingle();
+  if (error) throw new Error(`Failed to check renewal for ${userName}: ${error.message}`);
+  if (!data) return 'There is no renewal for this season.';
+  if (!data.submitted_at) return 'Only a submitted renewal can be voided.';
+  if (data.voided_at) return 'This renewal has already been voided.';
+  if (data.renewing_membership !== true) return 'Only a renewal that is renewing membership can be voided.';
+  if (hasAnyPayment(data)) {
+    return 'A payment has been received on this renewal, so it can\'t be voided. The Treasurer will need to make a credit adjustment instead.';
+  }
+  return null;
+}
+
+/**
+ * Void a whole submitted renewal (spec §5.3) — Admin only, checked by the caller.
+ * Purely financial: sets outstanding to 0 and records who/when/why. Doesn't touch the
+ * member's choices, competition entries or 200 Club numbers.
+ * The conditions are re-checked inside the UPDATE, so a payment recorded a moment
+ * earlier still blocks it.
+ */
+export async function voidRenewal(
+  userName: string,
+  voidedBy: string,
+  reason: string
+): Promise<{ success: boolean; error?: string }> {
+  const blocker = await getVoidBlocker(userName);
+  if (blocker) {
+    return { success: false, error: blocker };
+  }
+
+  const supabase = getSupabaseClient();
+  const now = new Date().toISOString();
+  const { error, count } = await supabase
+    .from('renewals')
+    .update(
+      { voided_at: now, voided_by: voidedBy, void_reason: reason, outstanding: 0, updated_at: now },
+      { count: 'exact' }
+    )
+    .ilike('username', userName)
+    .eq('season_year', getCurrentSeasonYear())
+    .not('submitted_at', 'is', null)
+    .is('voided_at', null)
+    // Banking's updateRenewalPayment() always sets the banking total along with the
+    // per-method columns, so banking alone catches a payment recorded since the check above.
+    .or('banking.is.null,banking.eq.0');
+  if (error) {
+    return { success: false, error: `Failed to void renewal: ${error.message}` };
+  }
+  if (!count) {
+    return { success: false, error: 'The renewal changed while you were voiding it — please reload and check.' };
+  }
+  return { success: true };
+}
+
+/**
+ * What's still attached to a member's renewal, shown in the Void dialog so the Admin can
+ * deal with it by hand (spec §5.2): 200 Club numbers held this season, and competitions
+ * entered.
+ */
+export async function getRenewalAttachments(userName: string): Promise<{
+  club200Numbers: string[];
+  competitions: Array<{ compId: string; name: string }>;
+}> {
+  const supabase = getSupabaseClient();
+  const seasonYear = getCurrentSeasonYear();
+
+  const { data: entries, error } = await supabase
+    .from('two_hundred_club_entries')
+    .select('number')
+    .ilike('username', userName)
+    .eq('season', String(seasonYear));
+  if (error) throw new Error(`Failed to fetch 200 Club numbers for ${userName}: ${error.message}`);
+
+  const club200Numbers: string[] = [];
+  for (const entry of entries || []) {
+    club200Numbers.push(String(entry.number));
+  }
+  club200Numbers.sort((a, b) => Number(a) - Number(b));
+
+  // compId matches Competitions' own ids (competitions-supabase.ts COMP_SHEET_CONFIG),
+  // so each can link to /competitions/[compId].
+  const renewal = await getRenewalByUsername(userName);
+  const entered: Array<[boolean, string, string]> = [
+    [renewal.mensChampionship, 'mens-championship', 'Men\'s Championship'],
+    [renewal.ladiesMaynard, 'ladies-maynard', 'Ladies Maynard'],
+    [renewal.mensTwoWood, 'mens-two-wood', 'Men\'s Two Wood'],
+    [renewal.ladiesTwoWood, 'ladies-two-wood', 'Ladies Two Wood'],
+    [renewal.marriedPairs, 'married-pairs', 'Married Pairs'],
+    [renewal.drawnPairs, 'drawn-pairs', 'Drawn Pairs'],
+    [renewal.australianPairs, 'australian-pairs', 'Australian Pairs'],
+    [renewal.drawnTriples, 'drawn-triples', 'Drawn Triples'],
+    [renewal.handicap, 'handicap', 'Handicap'],
+    [renewal.oldlands, 'oldlands', 'Oldlands'],
+    [renewal.veterans, 'veterans', 'Veterans'],
+    [renewal.drawnPairsSub, 'drawn-pairs', 'Drawn Pairs (substitute)'],
+    [renewal.australianPairsSub, 'australian-pairs', 'Australian Pairs (substitute)'],
+    [renewal.drawnTriplesSub, 'drawn-triples', 'Drawn Triples (substitute)'],
+  ];
+  const competitions: Array<{ compId: string; name: string }> = [];
+  for (const [isEntered, compId, name] of entered) {
+    if (isEntered) competitions.push({ compId, name });
+  }
+
+  return { club200Numbers, competitions };
 }
 
 /**
