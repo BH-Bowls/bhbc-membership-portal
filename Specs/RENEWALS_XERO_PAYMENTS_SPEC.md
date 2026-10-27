@@ -99,6 +99,71 @@ Follow `specs/CODING_STANDARDS.md` throughout (no `?.` / `??`, explicit readable
 - **Not yet:** the **Pay online** button comes with Stripe (Phase 5). "At the bar" is shown now, but the till's Membership fees option comes with Phase 6.
 - **Buddies:** a buddy sees each managed member's entry, but only their own draft links to `/renewals`, because the renewal form's member selector is Admin-only.
 
+### 2.9 Phase 5 — Stripe online payments (built 27 Oct 2026, same branch, uncommitted)
+
+**Migration and code:**
+- **Migration:** `0086_renewals_stripe.sql`. **Apply before deploying.** It adds:
+  - on `renewals`: `stripe`, `paid_at_submission`, `pending_checkout_session_id`, `pending_checkout_expires_at`;
+  - on `renewal_payments`: type `STR`, `stripe_session_id`, `stripe_payment_intent_id`, and a unique index on (session, member);
+  - the `renewals_record_stripe_payment()` function, which records a whole session all or nothing and returns 0 if it was already recorded;
+  - config `stripe_payments_enabled` (default `false`).
+- **Package:** `stripe` 23.0.1, pinned, with API version `2026-09-30.endive`.
+- **Code:** `src/lib/stripe.ts` (client, env getters, the enabled check) and `src/lib/stripe-payments.ts` (checkout, webhook handling, status, cancel).
+- **Routes:**
+  - `POST /api/payments/stripe/checkout` — My Account's Pay online.
+  - `GET` / `POST /api/payments/stripe/status` — polling, and cancelling a held draft.
+  - `POST /api/webhooks/stripe` — public in `proxy.ts` and PIN-exempt.
+- **Renewals API:** `PUT /api/renewals` takes `action: 'pay'`.
+
+**Pages:**
+- **`/renewals`:**
+  - **Submit and pay £X online** button at the bottom of the form, with a confirmation dialog.
+  - **Pay online by card** in the Payment Details box once submitted, and on the submitted screen.
+  - Banners for processing, paid, cancelled and expired.
+  - A "payment in progress" banner with **Cancel the online payment** while a draft is held.
+- **`/account`:** Pay online, with a tick list when there's more than one member, and a processing banner on return.
+- **Banking report:** an "Online (Stripe)" total.
+- **Xero journal:** a renewal paid at submission is journalled Dr Stripe clearing, Cr income. My Account payments go Dr Stripe clearing, Cr debtors through `renewal_transactions`.
+
+**Differences from §11 as written:**
+- **Config toggle:** on Admin config → **General**, not a Renewals tab, because there isn't one.
+- **Return pages:** "Submit and pay online" returns to `/renewals` rather than `/account`, so the member lands back on their renewal. `&member=` brings an Admin back to the member they were working on.
+- **Cancelling:** coming back via `cancel_url` expires the Stripe page straight away and releases the draft, rather than waiting up to 30 minutes for it to expire.
+  - The cancel is made **by member**, using the session id stored on the renewal, because Stripe only fills in `{CHECKOUT_SESSION_ID}` on `success_url`.
+  - It checks Stripe first, so a page that was paid after all gets recorded rather than cancelled.
+  - The browser's own Back button doesn't reach `cancel_url`. The renewal then shows "payment in progress" with a **Cancel the online payment** button, and My Account shows "online payment in progress".
+- **Catch-up when the webhook is missed** (found in testing 27 Oct): the webhook isn't the only way a payment is recorded. `reconcileCheckoutSession()` asks Stripe directly, with the secret key, so it can't be faked from the browser. A paid session is recorded exactly as the webhook would (idempotent), and an expired one releases its draft. It runs when the return page polls for status, when a held renewal is loaded, and before any save to a held renewal. A My Account payment whose webhook never arrives is only caught while its return page is open.
+- **Webhook events:** `checkout.session.completed`, `checkout.session.async_payment_succeeded` and `checkout.session.expired`. The newer Stripe CLI needs them listed with `--events`, and the live dashboard webhook needs the same three ticked.
+- **Paid-at-submission ledger:** these payments get no `renewal_transactions` row, because the submission itself carries the Stripe posting. The Adjustments tab shows a "Paid online when submitted" line in its place.
+- **200 Club picks:** §11.3a step 4's picks aren't handled, because the number picker is Phase 7.
+- **Banking:** Stripe payments come in already Matched with `source = 'stripe'`, so the Banking match screen and the transfers clearing check never show them.
+
+**Environment:** `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET`, with test keys on dev and preview. Pay online stays hidden until both the config switch and the secret key are set.
+
+**Tested on dev, 27 Oct 2026:**
+- Submit and pay.
+- Pay from My Account.
+- A buddy paying for two.
+- A 3-D Secure card.
+- Stripe's ← back link and the browser's Back button.
+- Cancelling a held payment.
+- Catching up on payments whose webhook was missed.
+
+**Go-live checklist:**
+1. Apply migration 0086 on prod.
+2. Treasurer: the club's Stripe account is verified, with HSBC set as the payout account.
+3. In the Stripe dashboard (live), go to **Developers → Webhooks** and add an endpoint at `https://<portal domain>/api/webhooks/stripe`. Tick `checkout.session.completed`, `checkout.session.async_payment_succeeded` and `checkout.session.expired`.
+4. In Vercel, for **Production only**, set `STRIPE_SECRET_KEY` (`sk_live_…`) and `STRIPE_WEBHOOK_SECRET` (the live endpoint's `whsec_…`). Preview keeps the test keys.
+5. In the Stripe dashboard, turn on **Settings → Customer emails → Successful payments**. Test mode never emails receipts.
+6. Tick **Online renewal payments (Stripe)** on Admin config → General when ready.
+7. Make one small live payment, then refund it in the Stripe dashboard and record the refund on the Adjustments tab.
+
+**Testing locally:** `stripe login`, then:
+
+`stripe listen --api-key sk_test_… --events checkout.session.completed,checkout.session.async_payment_succeeded,checkout.session.expired --forward-to localhost:3001/api/webhooks/stripe`
+
+Without `--api-key`, the CLI can be linked to a different test environment from the key, and no events arrive.
+
 ### 2.5 Competitions eligibility from the friendlies data (built 26 Oct 2026, same branch)
 
 - **Rule:** a playing member can enter club competitions if they made themselves available for at least `min_friendlies_for_competitions` friendlies in the previous season. The setting already existed (Admin config → General) but nothing read it. It's seeded at 8 and is **to be set to 6** for 2027.

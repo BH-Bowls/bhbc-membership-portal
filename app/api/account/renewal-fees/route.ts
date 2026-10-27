@@ -10,6 +10,7 @@ import { authOptions } from '@/lib/auth';
 import { getAllUsers } from '@/lib/members-supabase';
 import { getRenewalFeeStatuses, getCurrentSeasonYear, getPaymentReference } from '@/lib/renewals-supabase';
 import { getBankDetails } from '@/lib/bank-details';
+import { isStripePaymentsEnabled } from '@/lib/stripe';
 
 export async function GET() {
   const session = await getServerSession(authOptions);
@@ -62,6 +63,7 @@ export async function GET() {
     return NextResponse.json({
       seasonYear: getCurrentSeasonYear(),
       bankDetails: bankDetails,
+      stripeEnabled: await isStripePaymentsEnabled(),
       items: items,
     });
   } catch (err) {

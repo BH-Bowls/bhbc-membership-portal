@@ -86,6 +86,9 @@ export interface Renewal {
   voidedAt?: string | null;    // §5 — set by voidRenewal() only
   voidedBy?: string | null;
   voidReason?: string | null;
+  paidAtSubmission?: boolean;                // §11.3a — submitted and paid online together
+  pendingCheckoutSessionId?: string | null;  // §11.3a — a "Submit and pay online" page is open
+  pendingCheckoutExpiresAt?: string | null;
   createdAt?: string | null;
   dateUpdated?: string | null;
 }
@@ -150,12 +153,13 @@ export async function getLatestRenewedSeason(userName: string): Promise<number |
  * What the My Account fee card (spec §7) shows for one member this season.
  *   none         — no renewal started (or an empty row)
  *   draft        — saved but not submitted
+ *   payment_pending — a draft held while its "Submit and pay online" page is open (§11.3a)
  *   not_renewing — submitted as not renewing
  *   outstanding  — submitted, something still to pay
  *   paid         — submitted, nothing left to pay
  *   voided       — voided by an Admin (the card shows nothing)
  */
-export type RenewalFeeState = 'none' | 'draft' | 'not_renewing' | 'outstanding' | 'paid' | 'voided';
+export type RenewalFeeState = 'none' | 'draft' | 'payment_pending' | 'not_renewing' | 'outstanding' | 'paid' | 'voided';
 
 export interface RenewalFeeStatus {
   userName: string;
@@ -173,7 +177,7 @@ export async function getRenewalFeeStatuses(userNames: string[]): Promise<Renewa
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
     .from('renewals')
-    .select('username, renewing_membership, submitted_at, voided_at, total_fee_due, outstanding')
+    .select('username, renewing_membership, submitted_at, voided_at, total_fee_due, outstanding, pending_checkout_session_id, pending_checkout_expires_at')
     .eq('season_year', getCurrentSeasonYear());
   if (error) throw new Error(`Failed to fetch renewal fee statuses: ${error.message}`);
 
@@ -195,6 +199,10 @@ export async function getRenewalFeeStatuses(userNames: string[]): Promise<Renewa
         state = 'voided';
       } else if (!row.submitted_at) {
         state = row.renewing_membership === null ? 'none' : 'draft';
+        if (state === 'draft' && row.pending_checkout_session_id && row.pending_checkout_expires_at
+          && new Date(String(row.pending_checkout_expires_at)).getTime() > Date.now()) {
+          state = 'payment_pending';
+        }
       } else if (row.renewing_membership === false) {
         state = 'not_renewing';
       } else if (outstanding > 0) {
@@ -273,6 +281,9 @@ function mapRow(row: any): Renewal {
     voidedAt: row.voided_at,
     voidedBy: row.voided_by,
     voidReason: row.void_reason,
+    paidAtSubmission: row.paid_at_submission === true,
+    pendingCheckoutSessionId: row.pending_checkout_session_id || null,
+    pendingCheckoutExpiresAt: row.pending_checkout_expires_at || null,
     createdAt: row.created_at,
     dateUpdated: row.updated_at,
   };
@@ -313,6 +324,8 @@ const FIELD_TO_COLUMN: Record<string, string> = {
   confirmationEmailDate: 'confirmation_email_date',
   submittedAt: 'submitted_at',
   submittedBy: 'submitted_by',
+  pendingCheckoutSessionId: 'pending_checkout_session_id',
+  pendingCheckoutExpiresAt: 'pending_checkout_expires_at',
 };
 
 // ============================================================================
@@ -750,7 +763,8 @@ export async function sendRenewalConfirmation(
   userName: string,
   renewal: Renewal,
   fees: FeeBreakdown,
-  managerUserName?: string
+  managerUserName?: string,
+  options?: { paidOnline?: boolean }  // §11.3a — "Paid, thank you" in place of how to pay
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const user = await getUserByUsername(userName);
@@ -761,6 +775,9 @@ export async function sendRenewalConfirmation(
     if (!isEmailConfigured()) {
       return { success: false, error: 'SMTP not configured' };
     }
+
+    let paidOnline: string | null = null;
+    if (options && options.paidOnline) paidOnline = 'Y';
 
     const recipient = await resolveRenewalRecipient(user, managerUserName);
     if (!recipient) {
@@ -813,6 +830,7 @@ export async function sendRenewalConfirmation(
           barAdditionalInfo: user.barAdditionalInfo || null,
           otherSkills: user.otherSkills || null,
           showTriplesWarning: renewal.drawnTriples ? 'Y' : null,
+          paidOnline,
           ...bankDetails,
         }
       )

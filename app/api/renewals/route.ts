@@ -28,6 +28,8 @@ import {
 import { canManageUser, canEditPaymentFields } from '@/lib/buddies-supabase';
 import { getBankDetails } from '@/lib/bank-details';
 import { getCompetitionEligibility } from '@/lib/competition-eligibility';
+import { isStripePaymentsEnabled } from '@/lib/stripe';
+import { createSubmitCheckout, isCheckoutHeld, reconcileCheckoutSession } from '@/lib/stripe-payments';
 
 // The competitions that carry an entry and need eligibility (subs are covered too).
 const COMPETITION_FIELDS = [
@@ -76,7 +78,20 @@ export async function GET(request: NextRequest) {
     }
 
     // Get renewal data
-    const renewal = await getRenewalByUsername(targetUserName);
+    let renewal = await getRenewalByUsername(targetUserName);
+
+    // A "Submit and pay online" page was opened for this renewal — check with Stripe in
+    // case it was paid (or expired) without the webhook reaching us (§11.3a)
+    if (renewal.pendingCheckoutSessionId && (await isStripePaymentsEnabled())) {
+      try {
+        const outcome = await reconcileCheckoutSession(renewal.pendingCheckoutSessionId);
+        if (outcome !== 'waiting') {
+          renewal = await getRenewalByUsername(targetUserName);
+        }
+      } catch (err) {
+        console.error('Could not check the pending Stripe payment:', err);
+      }
+    }
 
     if (!renewal) {
       return NextResponse.json(
@@ -129,6 +144,8 @@ export async function GET(request: NextRequest) {
       eligibility,
       bankDetails: await getBankDetails(),
       paymentReference: getPaymentReference(profile.userName),
+      stripeEnabled: await isStripePaymentsEnabled(),
+      paymentInProgress: isCheckoutHeld(renewal.pendingCheckoutSessionId, renewal.pendingCheckoutExpiresAt),
       managedUser: {
         userName: targetUserName,
         isSelf: targetUserName === session.user.userName,
@@ -186,7 +203,24 @@ export async function PUT(request: NextRequest) {
     }
 
     // Get existing renewal data to preserve partial payments
-    const existingRenewal = await getRenewalByUsername(targetUserName);
+    let existingRenewal = await getRenewalByUsername(targetUserName);
+
+    // A held "Submit and pay online" draft: make sure Stripe hasn't already taken the
+    // payment before anything is saved over it (it may now be submitted and locked)
+    if (existingRenewal.pendingCheckoutSessionId) {
+      try {
+        const outcome = await reconcileCheckoutSession(existingRenewal.pendingCheckoutSessionId);
+        if (outcome !== 'waiting') {
+          existingRenewal = await getRenewalByUsername(targetUserName);
+        }
+      } catch (err) {
+        console.error('Could not check the pending Stripe payment:', err);
+        return NextResponse.json(
+          { error: 'Could not check the online payment for this renewal. Please try again in a moment.', paymentInProgress: true },
+          { status: 409 }
+        );
+      }
+    }
 
     if (!existingRenewal) {
       return NextResponse.json(
@@ -195,9 +229,18 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    let action: 'draft' | 'submit' | 'reopen' = 'submit';
-    if (data.action === 'draft' || data.action === 'reopen') {
+    let action: 'draft' | 'submit' | 'reopen' | 'pay' = 'submit';
+    if (data.action === 'draft' || data.action === 'reopen' || data.action === 'pay') {
       action = data.action;
+    }
+
+    // While a "Submit and pay online" page is open the draft is held, so the amount being
+    // paid can't drift from the form (§11.3a). An expired hold is simply released below.
+    if (isCheckoutHeld(existingRenewal.pendingCheckoutSessionId, existingRenewal.pendingCheckoutExpiresAt)) {
+      return NextResponse.json(
+        { error: 'An online payment for this renewal is in progress. Finish or cancel it on the payment page first.', paymentInProgress: true },
+        { status: 409 }
+      );
     }
 
     // Reopen a submitted "not renewing" renewal back to a draft (§3.7). Nothing else
@@ -231,8 +274,14 @@ export async function PUT(request: NextRequest) {
 
     // Not renewing has no draft stage — it always submits (§3.3).
     const isSubmit = action === 'submit' || data.renewingMembership === false;
+    // "Submit and pay online" (§11.3a): every Submit check runs, but it's saved as a draft
+    // and only submitted by the Stripe webhook once the payment has gone through.
+    const isPay = action === 'pay' && data.renewingMembership === true;
+    if (isPay && !(await isStripePaymentsEnabled())) {
+      return NextResponse.json({ error: 'Online payments are not available.' }, { status: 400 });
+    }
 
-    if (isSubmit && data.renewingMembership === true
+    if ((isSubmit || isPay) && data.renewingMembership === true
       && data.printedMembershipBook !== true && data.printedMembershipBook !== false) {
       return NextResponse.json(
         { error: 'Please say whether you would like a printed membership book.' },
@@ -308,6 +357,9 @@ export async function PUT(request: NextRequest) {
     delete renewalData.submittedBy;
     delete renewalData.renewalsClosed;
     delete renewalData.confirmationEmailDate;
+    delete renewalData.paidAtSubmission;
+    delete renewalData.pendingCheckoutSessionId;
+    delete renewalData.pendingCheckoutExpiresAt;
 
     // Filter payment fields (admin-only edit)
     if (!canEditPaymentFields(session.user.role)) {
@@ -413,6 +465,11 @@ export async function PUT(request: NextRequest) {
       renewalUpdates.submittedAt = new Date().toISOString();
       renewalUpdates.submittedBy = submittedBy;
     }
+    // Any hold left from an expired "Submit and pay online" page goes with this save
+    if (existingRenewal.pendingCheckoutSessionId) {
+      renewalUpdates.pendingCheckoutSessionId = null;
+      renewalUpdates.pendingCheckoutExpiresAt = null;
+    }
 
     // Update renewal data — only while it's still a draft (the lock, §3.4)
     const result = await updateRenewal(targetUserName, renewalUpdates, { onlyIfDraft: true });
@@ -454,6 +511,32 @@ export async function PUT(request: NextRequest) {
     const managerUserName = session.user.isImpersonating
       ? session.user.originalAdmin?.userName
       : session.user.userName;
+
+    // Submit and pay online — saved as a draft; send the browser to Stripe. No draft email:
+    // the confirmation goes out when the webhook submits it.
+    if (isPay) {
+      if (fees.total <= 0) {
+        return NextResponse.json({ error: 'There is nothing to pay on this renewal — use Submit Renewal.' }, { status: 400 });
+      }
+      try {
+        let memberParam: string | null = null;
+        if (data.userName && data.userName.toLowerCase() !== session.user.userName.toLowerCase()) {
+          memberParam = targetUserName;
+        }
+        const checkoutUrl = await createSubmitCheckout({
+          payer: submittedBy,
+          userName: targetUserName,
+          memberParam: memberParam,
+        });
+        return NextResponse.json({ success: true, submitted: false, checkoutUrl: checkoutUrl, renewal: updatedRenewal, fees });
+      } catch (err) {
+        console.error('Failed to start Stripe checkout:', err);
+        return NextResponse.json(
+          { error: 'Your renewal was saved as a draft, but the payment page could not be opened. Please try again, or submit and pay another way.' },
+          { status: 502 }
+        );
+      }
+    }
 
     // Save Draft — the draft email (no bank details, clearly says it isn't submitted)
     if (!isSubmit) {

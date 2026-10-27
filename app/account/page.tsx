@@ -33,7 +33,7 @@ interface RenewalFeeItem {
   userName: string;
   fullName: string;
   isSelf: boolean;
-  state: 'none' | 'draft' | 'not_renewing' | 'outstanding' | 'paid' | 'voided';
+  state: 'none' | 'draft' | 'payment_pending' | 'not_renewing' | 'outstanding' | 'paid' | 'voided';
   totalFee: number;
   outstanding: number;
   paymentReference: string;
@@ -47,6 +47,7 @@ interface RenewalFeesData {
     bankAccountNumber: string;
     bankAccountName: string;
   };
+  stripeEnabled: boolean;
   items: RenewalFeeItem[];
 }
 
@@ -72,6 +73,84 @@ export default function MyAccountPage() {
 
   const [fees, setFees] = useState<RenewalFeesData | null>(null);
   const [copiedReference, setCopiedReference] = useState<string | null>(null);
+
+  // Pay online (spec §11.3): which outstanding renewals are ticked (all, by default)
+  const [unticked, setUnticked] = useState<string[]>([]);
+  const [paying, setPaying] = useState(false);
+  const [payError, setPayError] = useState<string | null>(null);
+  // Back from Stripe: 'waiting' until the webhook has recorded it
+  const [paymentStatus, setPaymentStatus] = useState<'waiting' | 'recorded' | 'expired' | 'slow' | null>(null);
+
+  const loadFees = () => {
+    // The fee card is extra information — if it fails, the rest of the page still works
+    fetch('/api/account/renewal-fees')
+      .then((r) => r.json())
+      .then((data) => {
+        if (!data.error) {
+          setFees(data);
+        }
+      })
+      .catch(() => {});
+  };
+
+  // Returned from Stripe (?payment=processing&session_id=…) — poll until the webhook
+  // has recorded the payment. The redirect itself never records anything.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const sessionId = params.get('session_id');
+    if (params.get('payment') !== 'processing' || !sessionId) return;
+    setTab('card');
+    setPaymentStatus('waiting');
+    let attempts = 0;
+    let stopped = false;
+    const check = () => {
+      if (stopped) return;
+      attempts += 1;
+      fetch('/api/payments/stripe/status?session=' + encodeURIComponent(sessionId))
+        .then((r) => r.json())
+        .then((data) => {
+          if (stopped) return;
+          if (data.status === 'recorded') {
+            setPaymentStatus('recorded');
+            loadFees();
+            window.history.replaceState(null, '', '/account');
+          } else if (data.status === 'expired') {
+            setPaymentStatus('expired');
+          } else if (attempts >= 20) {
+            setPaymentStatus('slow');
+          } else {
+            setTimeout(check, 2000);
+          }
+        })
+        .catch(() => {
+          if (!stopped && attempts < 20) setTimeout(check, 2000);
+        });
+    };
+    check();
+    return () => { stopped = true; };
+  }, []);
+
+  const payOnline = async (userNames: string[]) => {
+    setPayError(null);
+    setPaying(true);
+    try {
+      const res = await fetch('/api/payments/stripe/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userNames: userNames }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.url) {
+        setPayError(data.error || 'Could not start the payment.');
+        setPaying(false);
+        return;
+      }
+      window.location.href = data.url;
+    } catch {
+      setPayError('Could not start the payment.');
+      setPaying(false);
+    }
+  };
 
   useEffect(() => {
     fetch('/api/bar/me')
@@ -99,15 +178,7 @@ export default function MyAccountPage() {
       })
       .catch(() => setCardError('Failed to load membership card'));
 
-    // The fee card is extra information — if it fails, the rest of the page still works
-    fetch('/api/account/renewal-fees')
-      .then((r) => r.json())
-      .then((data) => {
-        if (!data.error) {
-          setFees(data);
-        }
-      })
-      .catch(() => {});
+    loadFees();
   }, []);
 
   const copyReference = (reference: string) => {
@@ -122,16 +193,24 @@ export default function MyAccountPage() {
   const feeItems: RenewalFeeItem[] = [];
   if (fees) {
     for (const item of fees.items) {
-      if (item.state === 'draft' || item.state === 'outstanding' || item.state === 'paid') {
+      if (item.state === 'draft' || item.state === 'payment_pending' || item.state === 'outstanding' || item.state === 'paid') {
         feeItems.push(item);
       }
     }
   }
   let anyOutstanding = false;
   let selfHasFeeItem = false;
+  let outstandingCount = 0;
+  const tickedToPay: string[] = [];
+  let tickedTotal = 0;
   for (const item of feeItems) {
     if (item.state === 'outstanding') {
       anyOutstanding = true;
+      outstandingCount += 1;
+      if (unticked.indexOf(item.userName) === -1) {
+        tickedToPay.push(item.userName);
+        tickedTotal += item.outstanding;
+      }
     }
     if (item.isSelf) {
       selfHasFeeItem = true;
@@ -252,6 +331,27 @@ export default function MyAccountPage() {
               </>
             )}
 
+            {paymentStatus === 'waiting' && (
+              <div className="mt-6 bg-blue-50 border border-blue-200 text-blue-900 rounded-lg px-4 py-3 text-sm">
+                Payment received — updating your account…
+              </div>
+            )}
+            {paymentStatus === 'recorded' && (
+              <div className="mt-6 bg-green-50 border border-green-200 text-green-800 rounded-lg px-4 py-3 text-sm">
+                Thank you — your payment has been recorded. Stripe will email you a receipt.
+              </div>
+            )}
+            {paymentStatus === 'slow' && (
+              <div className="mt-6 bg-amber-50 border border-amber-200 text-amber-900 rounded-lg px-4 py-3 text-sm">
+                Your payment is taking longer than usual to show here. There&apos;s no need to pay again — refresh this page in a few minutes.
+              </div>
+            )}
+            {paymentStatus === 'expired' && (
+              <div className="mt-6 bg-amber-50 border border-amber-200 text-amber-900 rounded-lg px-4 py-3 text-sm">
+                That payment page expired before it was paid. Nothing has been taken — you can start again below.
+              </div>
+            )}
+
             {fees && feeItems.length > 0 && (
               <div className="bg-white shadow rounded-lg p-5 mt-6">
                 <h2 className="text-lg font-semibold text-gray-900 mb-3">{fees.seasonYear} membership fees</h2>
@@ -264,6 +364,14 @@ export default function MyAccountPage() {
                       {item.state === 'draft' && (
                         <p className="text-sm text-amber-800 mt-1">
                           {item.isSelf ? 'Your renewal is' : 'This renewal is'} saved as a draft — it isn&apos;t complete until it&apos;s submitted.{' '}
+                          {item.isSelf && (
+                            <Link href="/renewals" className="text-blue-600 hover:text-blue-800 font-medium">Go to Renewals</Link>
+                          )}
+                        </p>
+                      )}
+                      {item.state === 'payment_pending' && (
+                        <p className="text-sm text-blue-900 mt-1">
+                          An online payment for {item.isSelf ? 'your' : 'this'} renewal is in progress. If the payment page was left without paying, you can cancel it on Renewals.{' '}
                           {item.isSelf && (
                             <Link href="/renewals" className="text-blue-600 hover:text-blue-800 font-medium">Go to Renewals</Link>
                           )}
@@ -298,6 +406,44 @@ export default function MyAccountPage() {
                 {anyOutstanding && (
                   <div className="mt-4 border-t border-gray-200 pt-4 text-sm text-gray-700 space-y-2">
                     <p className="font-medium text-gray-900">How to pay</p>
+                    {fees.stripeEnabled && (
+                      <div className="pb-2">
+                        <p><span className="font-medium">Online by card</span>{outstandingCount > 1 ? ', for the members ticked:' : ':'}</p>
+                        {outstandingCount > 1 && (
+                          <div className="mt-1 space-y-1">
+                            {feeItems.map((item) => (
+                              item.state !== 'outstanding' ? null : (
+                                <label key={item.userName} className="flex items-center gap-2 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={unticked.indexOf(item.userName) === -1}
+                                    onChange={(e) => {
+                                      const next: string[] = [];
+                                      for (const u of unticked) {
+                                        if (u !== item.userName) next.push(u);
+                                      }
+                                      if (!e.target.checked) next.push(item.userName);
+                                      setUnticked(next);
+                                    }}
+                                    className="h-4 w-4 text-blue-600 border-gray-300 rounded"
+                                  />
+                                  <span className="text-gray-900">{item.fullName} — {fmtPounds(item.outstanding)}</span>
+                                </label>
+                              )
+                            ))}
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => payOnline(tickedToPay)}
+                          disabled={paying || tickedToPay.length === 0 || paymentStatus === 'waiting'}
+                          className="mt-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-medium"
+                        >
+                          {paying ? 'Opening payment page…' : `Pay ${fmtPounds(tickedTotal)} online`}
+                        </button>
+                        {payError && <p className="text-sm text-red-700 mt-2">{payError}</p>}
+                      </div>
+                    )}
                     <div>
                       <p><span className="font-medium">By bank transfer</span>, using the reference shown above{feeItems.length > 1 ? ' for each member' : ''}:</p>
                       <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">

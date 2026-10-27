@@ -9,7 +9,7 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { useNavbarConfig } from '@/lib/navbar-config';
@@ -69,12 +69,16 @@ interface Renewal {
   voidedAt?: string | null;
   voidedBy?: string | null;
   voidReason?: string | null;
+  paidAtSubmission?: boolean;
+  pendingCheckoutSessionId?: string | null; // a "Submit and pay online" page is open
   totalPayment?: number;
   // Stored on the member profile, not the renewal — carried here so it saves with the form
   printedMembershipBook?: boolean | null;
 }
 
-type SaveAction = 'draft' | 'submit';
+// 'pay' = Submit and pay online (spec §11.3a): saved as a draft, submitted by the Stripe
+// webhook once paid
+type SaveAction = 'draft' | 'submit' | 'pay';
 
 interface FeeBreakdown {
   membershipFee: number;
@@ -112,6 +116,12 @@ export default function RenewalsPage() {
   const [paymentReference, setPaymentReference] = useState('');
   const [confirmSubmitOpen, setConfirmSubmitOpen] = useState(false);
   const [isReopening, setIsReopening] = useState(false);
+  // Online payments (spec §11)
+  const [stripeEnabled, setStripeEnabled] = useState(false);
+  const [paymentInProgress, setPaymentInProgress] = useState(false);
+  const [confirmPayOpen, setConfirmPayOpen] = useState(false);
+  const [paymentNotice, setPaymentNotice] = useState<{ tone: 'info' | 'success' | 'warning'; text: string } | null>(null);
+  const [isPayingOnline, setIsPayingOnline] = useState(false);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [emailSent, setEmailSent] = useState(true); // Track if confirmation email was sent
@@ -135,6 +145,9 @@ export default function RenewalsPage() {
   // swaps the role, so the Admin-only Void button would never show.
   const isRealAdmin = hasRole(session?.user?.role, 'Admin') && !(session?.user?.isImpersonating);
   const [targetUserName, setTargetUserName] = useState<string | null>(null);
+  // Bumped to reload the renewal (e.g. once a Stripe payment has been recorded)
+  const [reloadKey, setReloadKey] = useState(0);
+  const loadCounter = useRef(0);
   const [memberOptions, setMemberOptions] = useState<{ userName: string; name: string }[]>([]);
   const ownUserName = session?.user?.userName || '';
   // Searchable list for the selector — "Me" first, then everyone else
@@ -162,7 +175,7 @@ export default function RenewalsPage() {
     if (status === 'authenticated' && session?.user?.userName) {
       loadRenewalData();
     }
-  }, [status, session?.user?.userName, session?.user?.isImpersonating, targetUserName]);
+  }, [status, session?.user?.userName, session?.user?.isImpersonating, targetUserName, reloadKey]);
 
   // Reset editing state when user changes (prevents stale state after switching users)
   useEffect(() => {
@@ -223,15 +236,21 @@ export default function RenewalsPage() {
   }, [isSubmitted]);
 
   const loadRenewalData = async () => {
+    // Only the latest load counts — switching member quickly (or coming back from Stripe
+    // to another member's renewal) can leave an earlier load still arriving
+    loadCounter.current += 1;
+    const thisLoad = loadCounter.current;
     try {
       setIsLoading(true);
       setError('');
       setSuccessMessage('');
       // No userName = the session user (or the impersonated member); an Admin's selector passes one
       const response = await fetch(targetUserName ? `/api/renewals?userName=${encodeURIComponent(targetUserName)}` : '/api/renewals');
+      if (thisLoad !== loadCounter.current) return;
       if (!response.ok) throw new Error('Failed to load renewal data');
 
       const data = await response.json();
+      if (thisLoad !== loadCounter.current) return;
       // The printed membership book answer lives on the member profile; carry it on the
       // renewal object so it's edited and saved along with the rest of the form.
       const loadedRenewal: Renewal = {
@@ -244,6 +263,8 @@ export default function RenewalsPage() {
       setEligibility(data.eligibility);
       setBankDetails(data.bankDetails);
       setPaymentReference(data.paymentReference || '');
+      setStripeEnabled(data.stripeEnabled === true);
+      setPaymentInProgress(data.paymentInProgress === true);
 
       // Initialize fields from profile
       setAgeDemographic(data.profile.ageDemographic);
@@ -277,9 +298,13 @@ export default function RenewalsPage() {
         setEditedMemberType(data.profile.memberType);
       }
     } catch (err) {
-      setError('Failed to load renewal data. Please try again.');
+      if (thisLoad === loadCounter.current) {
+        setError('Failed to load renewal data. Please try again.');
+      }
     } finally {
-      setIsLoading(false);
+      if (thisLoad === loadCounter.current) {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -342,7 +367,7 @@ export default function RenewalsPage() {
       return;
     }
 
-    if (action === 'submit' && editedRenewal.renewingMembership
+    if ((action === 'submit' || action === 'pay') && editedRenewal.renewingMembership
       && editedRenewal.printedMembershipBook !== true && editedRenewal.printedMembershipBook !== false) {
       setError('Please say whether you would like a printed membership book before submitting.');
       return;
@@ -378,6 +403,18 @@ export default function RenewalsPage() {
       }
 
       const data = await response.json();
+
+      // Submit and pay online — off to Stripe's payment page. The form is saved as a
+      // draft on the server, so the browser's copy isn't needed.
+      if (data.checkoutUrl) {
+        if (draftOwner) {
+          clearDraft('Renewals', draftOwner);
+        }
+        setIsPayingOnline(true);
+        window.location.href = data.checkoutUrl;
+        return;
+      }
+
       setFees(data.fees);
 
       // Track email status
@@ -428,6 +465,134 @@ export default function RenewalsPage() {
     setConfirmSubmitOpen(false);
     handleSave('submit');
   };
+
+  const handleConfirmPay = () => {
+    setConfirmPayOpen(false);
+    handleSave('pay');
+  };
+
+  // Pay online for a submitted renewal — the same Stripe page as My Account's Pay online
+  const handlePayOutstanding = async () => {
+    if (!renewal) return;
+    setError('');
+    setIsPayingOnline(true);
+    try {
+      const res = await fetch('/api/payments/stripe/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userNames: [renewal.userName] }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.url) {
+        setError(data.error || 'Could not start the payment.');
+        setIsPayingOnline(false);
+        return;
+      }
+      window.location.href = data.url;
+    } catch {
+      setError('Could not start the payment.');
+      setIsPayingOnline(false);
+    }
+  };
+
+  // Release a held draft — the member left Stripe's page without paying. Cancels by
+  // member (null = the session user); the server finds the payment page from the renewal.
+  // Returns 'recorded' if Stripe shows it was paid after all.
+  const cancelHeldPayment = async (memberUserName: string | null): Promise<string> => {
+    try {
+      const res = await fetch('/api/payments/stripe/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'cancel', userName: memberUserName || undefined }),
+      });
+      const data = await res.json();
+      return data.outcome || '';
+    } catch {
+      return '';
+    }
+  };
+
+  const cancelledNotice = (outcome: string) => {
+    if (outcome === 'recorded') {
+      setPaymentNotice({ tone: 'success', text: 'That payment had already gone through — the renewal is submitted and paid.' });
+    } else {
+      setPaymentNotice({ tone: 'warning', text: "The online payment was cancelled. The renewal hasn't been submitted — it's still a draft, and nothing has been taken." });
+    }
+  };
+
+  const handleCancelHeldPayment = async () => {
+    if (!renewal) return;
+    setIsSaving(true);
+    const outcome = await cancelHeldPayment(targetUserName);
+    setIsSaving(false);
+    cancelledNotice(outcome);
+    setReloadKey((k) => k + 1);
+  };
+
+  // The browser's Back button from Stripe's page can show this page from the browser's
+  // memory as it was before leaving — reload it so the renewal is up to date.
+  useEffect(() => {
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) window.location.reload();
+    };
+    window.addEventListener('pageshow', onPageShow);
+    return () => window.removeEventListener('pageshow', onPageShow);
+  }, []);
+
+  // Back from Stripe: ?payment=processing (paid — wait for the webhook to submit it) or
+  // ?payment=cancelled (left without paying — release the draft). &member= brings an
+  // Admin back to the member they were working on. Runs once the session is known.
+  const [returnHandled, setReturnHandled] = useState(false);
+  useEffect(() => {
+    if (returnHandled || status !== 'authenticated') return;
+    setReturnHandled(true);
+    const params = new URLSearchParams(window.location.search);
+    const payment = params.get('payment');
+    const sessionId = params.get('session_id');
+    const member = params.get('member');
+    if (payment !== 'cancelled' && payment !== 'processing') return;
+    let memberUserName: string | null = null;
+    if (member && isRealAdmin) {
+      memberUserName = member;
+      setTargetUserName(member);
+    }
+    window.history.replaceState(null, '', '/renewals');
+
+    if (payment === 'cancelled') {
+      cancelHeldPayment(memberUserName).then((outcome) => {
+        cancelledNotice(outcome);
+        setReloadKey((k) => k + 1);
+      });
+      return;
+    }
+
+    if (payment === 'processing' && sessionId) {
+      setPaymentNotice({ tone: 'info', text: 'Payment received — submitting your renewal…' });
+      let attempts = 0;
+      const check = () => {
+        attempts += 1;
+        fetch('/api/payments/stripe/status?session=' + encodeURIComponent(sessionId))
+          .then((r) => r.json())
+          .then((data) => {
+            if (data.status === 'recorded') {
+              setPaymentNotice({ tone: 'success', text: 'Thank you — your renewal is submitted and paid. A confirmation email is on its way, and Stripe will email a receipt.' });
+              setReloadKey((k) => k + 1);
+            } else if (data.status === 'expired') {
+              setPaymentNotice({ tone: 'warning', text: "That payment page expired before it was paid. Nothing has been taken, and your renewal is still a draft." });
+              setReloadKey((k) => k + 1);
+            } else if (attempts >= 20) {
+              setPaymentNotice({ tone: 'warning', text: "Your payment is taking longer than usual to show here. There's no need to pay again — refresh this page in a few minutes." });
+            } else {
+              setTimeout(check, 2000);
+            }
+          })
+          .catch(() => {
+            if (attempts < 20) setTimeout(check, 2000);
+          });
+      };
+      check();
+    }
+  }, [status, returnHandled, isRealAdmin]);
 
   // Reopen a submitted "not renewing" renewal back to a draft (spec §3.7)
   const handleReopen = async () => {
@@ -746,6 +911,15 @@ export default function RenewalsPage() {
                 <p className="mt-4 text-sm text-blue-700">
                   Please make payment at your earliest convenience. Card payments are also accepted at the bar.
                 </p>
+                {stripeEnabled && (
+                  <button
+                    onClick={handlePayOutstanding}
+                    disabled={isPayingOnline}
+                    className="mt-4 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    {isPayingOnline ? 'Opening payment page…' : 'Pay online by card'}
+                  </button>
+                )}
               </div>
 
               {renewal.drawnTriples && (
@@ -882,6 +1056,34 @@ export default function RenewalsPage() {
               </div>
             )}
 
+            {/* Back from Stripe, or an online payment cancelled */}
+            {paymentNotice && (
+              <div className={'mb-6 rounded-lg p-4 text-sm border ' + (
+                paymentNotice.tone === 'success' ? 'bg-green-50 border-green-200 text-green-900'
+                  : paymentNotice.tone === 'warning' ? 'bg-amber-50 border-amber-200 text-amber-900'
+                    : 'bg-blue-50 border-blue-200 text-blue-900'
+              )}>
+                {paymentNotice.text}
+              </div>
+            )}
+
+            {/* A "Submit and pay online" page is open — the draft is held until it's paid or cancelled */}
+            {!isLocked && paymentInProgress && (
+              <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <p className="text-sm font-medium text-blue-900">An online payment for this renewal is in progress.</p>
+                <p className="text-sm text-blue-900 mt-1">
+                  It can&apos;t be changed until the payment is finished. If you left the payment page without paying, cancel it here.
+                </p>
+                <button
+                  onClick={handleCancelHeldPayment}
+                  disabled={isSaving}
+                  className="mt-3 px-4 py-2 bg-white text-blue-700 border border-blue-500 rounded-md hover:bg-blue-50 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  Cancel the online payment
+                </button>
+              </div>
+            )}
+
             {/* Status: a saved draft that hasn't been submitted */}
             {!isLocked && renewal.renewingMembership === true && (
               <div className="mb-6 bg-yellow-50 border border-yellow-300 rounded-lg p-4">
@@ -895,7 +1097,7 @@ export default function RenewalsPage() {
             )}
 
             {/* Edit Button (View Mode Only) - Submit / Save Draft are in the navbar when editing */}
-            {!isEditing && !isLocked && (
+            {!isEditing && !isLocked && !paymentInProgress && (
               <div className="flex justify-end space-x-3 mb-6">
                 <button
                   onClick={handleEdit}
@@ -1416,11 +1618,21 @@ export default function RenewalsPage() {
                 )}
                 <button
                   onClick={handleSubmitClick}
-                  disabled={isSaving}
+                  disabled={isSaving || isPayingOnline}
                   className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors cursor-pointer disabled:opacity-50"
                 >
                   {isSaving ? 'Saving…' : editingRenewing ? 'Submit Renewal' : 'Save'}
                 </button>
+                {/* Submit and pay online (spec §11.3a) — this renewal only */}
+                {editingRenewing && stripeEnabled && fees.total > 0 && (
+                  <button
+                    onClick={() => setConfirmPayOpen(true)}
+                    disabled={isSaving || isPayingOnline}
+                    className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    {isPayingOnline ? 'Opening payment page…' : `Submit and pay ${formatCurrency(fees.total)} online`}
+                  </button>
+                )}
               </div>
             )}
 
@@ -1438,6 +1650,15 @@ export default function RenewalsPage() {
                 <p className="mt-4 text-sm text-blue-700">
                   Please make payment at your earliest convenience. Card payments are also accepted at the bar.
                 </p>
+                {stripeEnabled && (
+                  <button
+                    onClick={handlePayOutstanding}
+                    disabled={isPayingOnline}
+                    className="mt-4 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    {isPayingOnline ? 'Opening payment page…' : 'Pay online by card'}
+                  </button>
+                )}
               </div>
             )}
 
@@ -1519,6 +1740,16 @@ export default function RenewalsPage() {
         cancelLabel="Not yet"
         onConfirm={handleConfirmSubmit}
         onCancel={() => setConfirmSubmitOpen(false)}
+      />
+
+      <ConfirmDialog
+        isOpen={confirmPayOpen}
+        title="Submit and pay online?"
+        message={`You'll go to a secure Stripe page to pay ${formatCurrency(fees.total)} by card. Your renewal is submitted once the payment goes through, and can't be changed after that. If you don't finish paying, it stays as a draft.`}
+        confirmLabel="Go to payment"
+        cancelLabel="Not yet"
+        onConfirm={handleConfirmPay}
+        onCancel={() => setConfirmPayOpen(false)}
       />
     </div>
   );

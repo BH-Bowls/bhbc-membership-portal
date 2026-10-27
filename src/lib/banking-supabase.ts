@@ -46,7 +46,7 @@ function toISODate(dateStr: string): string {
 export interface Payment {
   payment_id: string;
   date: string;
-  type: 'TRF' | 'CDM' | 'CHQ' | 'CSH';
+  type: 'TRF' | 'CDM' | 'CHQ' | 'CSH' | 'STR';
   reference: string;
   amount: number;
   status: 'Unmatched' | 'Matched' | 'Deleted';

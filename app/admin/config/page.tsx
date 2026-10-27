@@ -129,6 +129,7 @@ export default function AdminConfigPage() {
         maintenance_mode: editGeneral.maintenance_mode ?? 'false',
         age_reference_date: ageAnchor,
         min_friendlies_for_competitions: editGeneral.min_friendlies_for_competitions ?? '',
+        stripe_payments_enabled: editGeneral.stripe_payments_enabled === 'true' ? 'true' : 'false',
         season_planning_green_total_rinks: editGeneral.season_planning_green_total_rinks ?? '',
         season_planning_capacity_warning_threshold: editGeneral.season_planning_capacity_warning_threshold ?? '',
         season_planning_max_players_per_day: editGeneral.season_planning_max_players_per_day ?? '',
@@ -360,6 +361,21 @@ export default function AdminConfigPage() {
                   <span className="text-gray-900">{config.min_friendlies_for_competitions || '—'}</span>
                 )}
                 <p className="text-xs text-gray-700 mt-1">Renewal form — a playing member can enter club competitions if they made themselves available for at least this many friendlies last season. An Admin can override it per member on the member&apos;s page.</p>
+              </div>
+
+              {/* Stripe online payments (renewals spec §11.9) */}
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    disabled={!isEditingGeneral}
+                    checked={(isEditingGeneral ? editGeneral.stripe_payments_enabled : config.stripe_payments_enabled) === 'true'}
+                    onChange={(e) => setEditGeneral((prev) => ({ ...prev, stripe_payments_enabled: e.target.checked ? 'true' : 'false' }))}
+                    className="h-4 w-4 text-blue-600 border-gray-300 rounded"
+                  />
+                  <span className="font-medium text-gray-900">Online renewal payments (Stripe)</span>
+                </label>
+                <p className="text-xs text-gray-700 mt-1 ml-6">Shows &quot;Submit and pay online&quot; on the renewal form and &quot;Pay online&quot; on My Account. Also needs the Stripe keys set on the server.</p>
               </div>
 
               {/* Season Planning capacity */}

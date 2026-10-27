@@ -189,14 +189,18 @@ function submissionPostings(row: Record<string, unknown>, reverse: boolean): Pos
   const username = String(row.username);
   const timestamp = String(reverse ? row.voided_at : row.submitted_at);
   const date = toUkDate(timestamp);
-  const label = reverse ? 'Renewals voided' : 'Renewals submitted';
+  // Submitted and paid online together (§11.3a): straight to Stripe clearing, never
+  // through Membership debtors
+  const paidAtSubmission = row.paid_at_submission === true;
+  let label = reverse ? 'Renewals voided' : 'Renewals submitted';
+  if (paidAtSubmission) label = reverse ? 'Renewals voided (paid online)' : 'Renewals submitted and paid online';
   const eventKey = `${reverse ? 'void' : 'submit'}:${row.id}`;
   let total = 0;
   for (const [account, pence] of feeLines(row)) {
     post(postings, date, label, account, reverse ? 'Dr' : 'Cr', pence, username, eventKey);
     total += pence;
   }
-  post(postings, date, label, 'debtors', reverse ? 'Cr' : 'Dr', total, username, eventKey);
+  post(postings, date, label, paidAtSubmission ? 'stripeClearing' : 'debtors', reverse ? 'Cr' : 'Dr', total, username, eventKey);
   return postings;
 }
 
@@ -256,7 +260,7 @@ function transactionPostings(row: Record<string, unknown>): Posting[] {
 // LOADING EVENTS
 // ============================================================================
 
-const RENEWAL_COLUMNS = 'id, username, season_year, submitted_at, voided_at, renewing_membership, playing_fee, social_fee, competitions_fee, club_200_fee, xero_submit_export_id, xero_void_export_id';
+const RENEWAL_COLUMNS = 'id, username, season_year, submitted_at, voided_at, renewing_membership, playing_fee, social_fee, competitions_fee, club_200_fee, paid_at_submission, xero_submit_export_id, xero_void_export_id';
 
 async function fetchAll(build: (from: number, to: number) => PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>): Promise<Record<string, unknown>[]> {
   const pageSize = 1000;
@@ -790,7 +794,7 @@ export async function getMemberAccount(userName: string): Promise<MemberAccount 
   const seasonYear = getCurrentSeasonYear();
   const [{ data: renewal, error }, txns, users] = await Promise.all([
     supabase.from('renewals')
-      .select('username, submitted_at, voided_at, total_fee_due, outstanding')
+      .select('username, submitted_at, voided_at, total_fee_due, outstanding, paid_at_submission, xero_submit_export_id')
       .ilike('username', userName)
       .eq('season_year', seasonYear)
       .maybeSingle(),
@@ -809,6 +813,19 @@ export async function getMemberAccount(userName: string): Promise<MemberAccount 
   }
 
   const transactions: MemberAccount['transactions'] = [];
+  // A renewal submitted and paid online together has no payment row of its own — the
+  // submission is journalled straight against Stripe clearing (§11.3a)
+  if (renewal.paid_at_submission === true && renewal.submitted_at) {
+    transactions.push({
+      id: 'paid-at-submission',
+      date: toUkDate(String(renewal.submitted_at)),
+      kind: 'payment',
+      description: 'Paid online when submitted',
+      amountPence: toPence(renewal.total_fee_due),
+      reason: null,
+      exported: !!renewal.xero_submit_export_id,
+    });
+  }
   for (const t of txns) {
     let description = '';
     if (t.kind === 'payment') {

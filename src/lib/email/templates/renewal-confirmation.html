@@ -223,6 +223,16 @@
                 Payment Details
               </h2>
 
+              {{#if paidOnline}}
+              <div style="background-color: #ECFDF5; padding: 20px; border-radius: 8px; margin: 0 0 20px 0;">
+                <p style="margin: 0; font-size: 16px; color: #065F46; font-weight: bold;">
+                  Paid online — thank you.
+                </p>
+                <p style="margin: 8px 0 0 0; font-size: 15px; color: #065F46;">
+                  Your card payment of {{totalFee}} has been received. Stripe sends a separate receipt.
+                </p>
+              </div>
+              {{else}}
               <div style="background-color: #F3F4F6; padding: 20px; border-radius: 8px; margin: 0 0 20px 0;">
                 <table role="presentation" style="width: 100%; border-collapse: collapse;">
                   <tr>
@@ -271,6 +281,7 @@
               <p style="margin: 0 0 20px 0; font-size: 16px; color: #1F2937;">
                 Please make payment at your earliest convenience. Card payments are also accepted at the bar.
               </p>
+              {{/if}}
 
               <p style="margin: 0 0 20px 0; font-size: 16px; color: #1F2937;">
                 If you have any questions, please contact the Treasurer.

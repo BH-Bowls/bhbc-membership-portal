@@ -198,7 +198,8 @@ export default function BankingPage() {
     }
     setEditingPayment(payment);
     setPaymentDate(payment.date);
-    setPaymentType(payment.type);
+    // Stripe (STR) payments arrive already matched, so they never reach this dialog
+    setPaymentType(payment.type === 'STR' ? 'TRF' : payment.type);
     setPaymentAmount(payment.amount.toString());
     setPaymentReference(payment.reference);
     setShowPaymentDialog(true);

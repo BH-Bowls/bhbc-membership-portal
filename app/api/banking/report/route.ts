@@ -26,12 +26,13 @@ export interface RenewalReportRow {
   bankTransfer: number;
   cheque: number;
   cash: number;
+  stripe: number;
 }
 
 export interface PaymentReportRow {
   paymentId: string;
   date: string;
-  type: 'TRF' | 'CDM' | 'CHQ' | 'CSH';
+  type: 'TRF' | 'CDM' | 'CHQ' | 'CSH' | 'STR';
   reference: string;
   amount: number;
   status: string;
@@ -52,6 +53,7 @@ export interface ReportTotals {
   bankTransfer: number;
   cheque: number;
   cash: number;
+  stripe: number;
   count: number;
 }
 
@@ -60,6 +62,7 @@ export interface PaymentTotals {
   CDM: { amount: number; count: number };
   CHQ: { amount: number; count: number };
   CSH: { amount: number; count: number };
+  STR: { amount: number; count: number };
   total: { amount: number; count: number };
 }
 
@@ -67,7 +70,7 @@ function zeroTotals(count: number): ReportTotals {
   return {
     playingFee: 0, socialFee: 0, competitionsFee: 0, club200Fee: 0, totalFeeDue: 0,
     outstanding: 0, banking: 0, difference: 0, donations: 0,
-    cardMachine: 0, bankTransfer: 0, cheque: 0, cash: 0, count,
+    cardMachine: 0, bankTransfer: 0, cheque: 0, cash: 0, stripe: 0, count,
   };
 }
 
@@ -89,7 +92,7 @@ export async function GET(request: NextRequest) {
     // Fetch Renewals data (current season only — this table is real multi-year history now)
     const { data: renewalsRows, error: renewalsError } = await supabase
       .from('renewals')
-      .select('username, renewing_membership, playing_fee, social_fee, competitions_fee, club_200_fee, total_fee_due, outstanding, banking, difference, donations, card_machine, bank_transfer, cheque, cash')
+      .select('username, renewing_membership, playing_fee, social_fee, competitions_fee, club_200_fee, total_fee_due, outstanding, banking, difference, donations, card_machine, bank_transfer, cheque, cash, stripe')
       .eq('season_year', seasonYear)
       .not('submitted_at', 'is', null) // drafts aren't owed (spec §3.9)
       .is('voided_at', null);          // nor are voided renewals (§5)
@@ -130,6 +133,7 @@ export async function GET(request: NextRequest) {
         bankTransfer: Number(row.bank_transfer) || 0,
         cheque: Number(row.cheque) || 0,
         cash: Number(row.cash) || 0,
+        stripe: Number(row.stripe) || 0,
       };
 
       // Only rows where outstanding has actually been set (not null) count as paid/unpaid
@@ -158,6 +162,7 @@ export async function GET(request: NextRequest) {
       paidTotals.bankTransfer += row.bankTransfer;
       paidTotals.cheque += row.cheque;
       paidTotals.cash += row.cash;
+      paidTotals.stripe += row.stripe;
     }
 
     // Calculate unpaid subs totals
@@ -207,6 +212,7 @@ export async function GET(request: NextRequest) {
         CDM: { amount: 0, count: 0 },
         CHQ: { amount: 0, count: 0 },
         CSH: { amount: 0, count: 0 },
+        STR: { amount: 0, count: 0 },
         total: { amount: 0, count: 0 },
       };
 
