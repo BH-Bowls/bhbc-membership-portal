@@ -671,12 +671,32 @@ export default function RenewalsPage() {
   const currentMemberType = isEditing ? editedMemberType : memberType;
   const isFormDisabled = !isEditing || isLocked;
 
+  // Admin member selector (spec §4) — view any member's renewal, and reach Void. Also shown
+  // on the "submitted" screen so the Admin can go straight on to the next member.
+  const adminMemberSelector = isRealAdmin ? (
+    <div className="mb-4 bg-white shadow rounded-lg px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-2">
+      <label className="text-sm font-medium text-gray-900">Member:</label>
+      <SearchableSelect
+        options={memberSelectOptions}
+        value={targetUserName || ''}
+        onChange={(value) => setTargetUserName(value === '' || value === ownUserName ? null : value)}
+        disabled={isSaving}
+        placeholder={`Me (${ownUserName}) — type to search members...`}
+        className="w-full sm:w-80"
+      />
+      {targetUserName && (
+        <span className="text-sm text-gray-700">Viewing {profile.fullKnownAs} {profile.lastName}&apos;s renewal</span>
+      )}
+    </div>
+  ) : null;
+
   // Success message after submission
   if (isSubmitted && renewal.renewingMembership) {
 
     return (
       <div className="min-h-screen bg-gray-50">
-        <main className="max-w-3xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
+        <main className={'max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 ' + (isRealAdmin ? 'py-6' : 'py-12')}>
+          {adminMemberSelector}
           <div className="bg-white shadow-lg rounded-lg overflow-hidden">
             <div className="bg-green-50 px-6 py-4 border-b border-green-100">
               <div className="flex items-center">
@@ -783,23 +803,7 @@ export default function RenewalsPage() {
     <div className="min-h-screen bg-gray-50">
       {/* Main Content */}
       <main className="max-w-4xl mx-auto py-6 sm:px-6 lg:px-8">
-        {/* Admin member selector (spec §4) — view any member's renewal, and reach Void */}
-        {isRealAdmin && (
-          <div className="mb-4 bg-white shadow rounded-lg px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-2">
-            <label className="text-sm font-medium text-gray-900">Member:</label>
-            <SearchableSelect
-              options={memberSelectOptions}
-              value={targetUserName || ownUserName}
-              onChange={(value) => setTargetUserName(value === '' || value === ownUserName ? null : value)}
-              disabled={isSaving}
-              placeholder="Type to search members..."
-              className="w-full sm:w-80"
-            />
-            {targetUserName && (
-              <span className="text-sm text-gray-700">Viewing {profile.fullKnownAs} {profile.lastName}&apos;s renewal</span>
-            )}
-          </div>
-        )}
+        {adminMemberSelector}
 
         {/* Error Message */}
         {error && (

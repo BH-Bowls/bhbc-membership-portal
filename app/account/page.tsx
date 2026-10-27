@@ -27,7 +27,31 @@ interface MembershipCardData {
   latestRenewedSeasonYear: number | null;
 }
 
+// Membership fee card (specs/RENEWALS_XERO_PAYMENTS_SPEC.md §7) — one entry for the
+// member and one for each member they manage as a buddy
+interface RenewalFeeItem {
+  userName: string;
+  fullName: string;
+  isSelf: boolean;
+  state: 'none' | 'draft' | 'not_renewing' | 'outstanding' | 'paid' | 'voided';
+  totalFee: number;
+  outstanding: number;
+  paymentReference: string;
+}
+
+interface RenewalFeesData {
+  seasonYear: number;
+  bankDetails: {
+    bankName: string;
+    bankSortCode: string;
+    bankAccountNumber: string;
+    bankAccountName: string;
+  };
+  items: RenewalFeeItem[];
+}
+
 const fmt = (pence: number) => '£' + (pence / 100).toFixed(2);
+const fmtPounds = (pounds: number) => '£' + pounds.toFixed(2);
 
 type Tab = 'transactions' | 'card';
 
@@ -45,6 +69,9 @@ export default function MyAccountPage() {
   const [cardError, setCardError] = useState('');
   const [showQr, setShowQr] = useState(false);
   const qrCanvasRef = useRef<HTMLCanvasElement>(null);
+
+  const [fees, setFees] = useState<RenewalFeesData | null>(null);
+  const [copiedReference, setCopiedReference] = useState<string | null>(null);
 
   useEffect(() => {
     fetch('/api/bar/me')
@@ -71,7 +98,45 @@ export default function MyAccountPage() {
         }
       })
       .catch(() => setCardError('Failed to load membership card'));
+
+    // The fee card is extra information — if it fails, the rest of the page still works
+    fetch('/api/account/renewal-fees')
+      .then((r) => r.json())
+      .then((data) => {
+        if (!data.error) {
+          setFees(data);
+        }
+      })
+      .catch(() => {});
   }, []);
+
+  const copyReference = (reference: string) => {
+    navigator.clipboard.writeText(reference).then(() => {
+      setCopiedReference(reference);
+      setTimeout(() => setCopiedReference(null), 1500);
+    }).catch(() => {});
+  };
+
+  // Members whose fee card has something to show (voided and not-started show nothing,
+  // apart from the existing "Renew your membership" link for the member themselves)
+  const feeItems: RenewalFeeItem[] = [];
+  if (fees) {
+    for (const item of fees.items) {
+      if (item.state === 'draft' || item.state === 'outstanding' || item.state === 'paid') {
+        feeItems.push(item);
+      }
+    }
+  }
+  let anyOutstanding = false;
+  let selfHasFeeItem = false;
+  for (const item of feeItems) {
+    if (item.state === 'outstanding') {
+      anyOutstanding = true;
+    }
+    if (item.isSelf) {
+      selfHasFeeItem = true;
+    }
+  }
 
   useEffect(() => {
     if (showQr && qrCanvasRef.current && session && session.user && session.user.userName) {
@@ -179,12 +244,73 @@ export default function MyAccountPage() {
                   )}
                 </button>
                 <p className="text-xs text-gray-500 mt-2 text-center">Tap the card to {showQr ? 'show your details' : 'show your QR code'}.</p>
-                {validUntilLabel(card).renewalDue && (
+                {validUntilLabel(card).renewalDue && !selfHasFeeItem && (
                   <p className="text-sm text-gray-700 mt-4 text-center">
                     <Link href="/renewals" className="text-blue-600 hover:text-blue-800 font-medium">Renew your membership</Link>
                   </p>
                 )}
               </>
+            )}
+
+            {fees && feeItems.length > 0 && (
+              <div className="bg-white shadow rounded-lg p-5 mt-6">
+                <h2 className="text-lg font-semibold text-gray-900 mb-3">{fees.seasonYear} membership fees</h2>
+                <div className="divide-y divide-gray-100">
+                  {feeItems.map((item) => (
+                    <div key={item.userName} className="py-3">
+                      {feeItems.length > 1 || !item.isSelf ? (
+                        <div className="text-sm font-medium text-gray-900">{item.fullName}{item.isSelf ? ' (you)' : ''}</div>
+                      ) : null}
+                      {item.state === 'draft' && (
+                        <p className="text-sm text-amber-800 mt-1">
+                          {item.isSelf ? 'Your renewal is' : 'This renewal is'} saved as a draft — it isn&apos;t complete until it&apos;s submitted.{' '}
+                          {item.isSelf && (
+                            <Link href="/renewals" className="text-blue-600 hover:text-blue-800 font-medium">Go to Renewals</Link>
+                          )}
+                        </p>
+                      )}
+                      {item.state === 'outstanding' && (
+                        <div className="mt-1">
+                          <div className="flex justify-between items-baseline">
+                            <span className="text-sm text-gray-700">Membership fee outstanding</span>
+                            <span className="text-lg font-bold text-gray-900">{fmtPounds(item.outstanding)}</span>
+                          </div>
+                          <div className="flex items-center gap-2 mt-1 text-sm text-gray-700">
+                            <span>Bank transfer reference:</span>
+                            <span className="font-mono font-semibold text-gray-900">{item.paymentReference}</span>
+                            <button
+                              type="button"
+                              onClick={() => copyReference(item.paymentReference)}
+                              className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+                            >
+                              {copiedReference === item.paymentReference ? 'Copied' : 'Copy'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      {item.state === 'paid' && (
+                        <p className="text-sm text-green-700 mt-1">Membership paid — thank you.</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {anyOutstanding && (
+                  <div className="mt-4 border-t border-gray-200 pt-4 text-sm text-gray-700 space-y-2">
+                    <p className="font-medium text-gray-900">How to pay</p>
+                    <div>
+                      <p><span className="font-medium">By bank transfer</span>, using the reference shown above{feeItems.length > 1 ? ' for each member' : ''}:</p>
+                      <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
+                        {fees.bankDetails.bankAccountName && (<><dt className="text-gray-700">Account name</dt><dd className="text-gray-900">{fees.bankDetails.bankAccountName}</dd></>)}
+                        {fees.bankDetails.bankName && (<><dt className="text-gray-700">Bank</dt><dd className="text-gray-900">{fees.bankDetails.bankName}</dd></>)}
+                        {fees.bankDetails.bankSortCode && (<><dt className="text-gray-700">Sort code</dt><dd className="text-gray-900 font-mono">{fees.bankDetails.bankSortCode}</dd></>)}
+                        {fees.bankDetails.bankAccountNumber && (<><dt className="text-gray-700">Account number</dt><dd className="text-gray-900 font-mono">{fees.bankDetails.bankAccountNumber}</dd></>)}
+                      </dl>
+                    </div>
+                    <p><span className="font-medium">At the bar</span>, by card or cash.</p>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         )}

@@ -121,7 +121,7 @@ export function getCurrentSeasonYear(): number {
 }
 
 /**
- * The most recent season_year this member has confirmed renewing_membership = true for,
+ * The most recent season_year this member has confirmed renewing_membership = true for and paid,
  * or null if they never have. Used by the My Account membership card to derive a
  * "valid until" date (see app/api/account/membership-card/route.ts) -- interim, since
  * renewals has no stored expiry date yet.
@@ -135,6 +135,7 @@ export async function getLatestRenewedSeason(userName: string): Promise<number |
     .eq('renewing_membership', true)
     .not('submitted_at', 'is', null) // drafts don't count (§3.9)
     .is('voided_at', null)           // nor do voided renewals (§5)
+    .or('outstanding.is.null,outstanding.lte.0') // nor unpaid ones — the card is valid once paid
     .order('season_year', { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -143,6 +144,68 @@ export async function getLatestRenewedSeason(userName: string): Promise<number |
     return null;
   }
   return data.season_year;
+}
+
+/**
+ * What the My Account fee card (spec §7) shows for one member this season.
+ *   none         — no renewal started (or an empty row)
+ *   draft        — saved but not submitted
+ *   not_renewing — submitted as not renewing
+ *   outstanding  — submitted, something still to pay
+ *   paid         — submitted, nothing left to pay
+ *   voided       — voided by an Admin (the card shows nothing)
+ */
+export type RenewalFeeState = 'none' | 'draft' | 'not_renewing' | 'outstanding' | 'paid' | 'voided';
+
+export interface RenewalFeeStatus {
+  userName: string;
+  state: RenewalFeeState;
+  totalFee: number;
+  outstanding: number;
+}
+
+/**
+ * Fee status for each of the given usernames in the current season. Read only — unlike
+ * getRenewalByUsername it never creates a row, so opening My Account doesn't start a
+ * renewal for anyone.
+ */
+export async function getRenewalFeeStatuses(userNames: string[]): Promise<RenewalFeeStatus[]> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('renewals')
+    .select('username, renewing_membership, submitted_at, voided_at, total_fee_due, outstanding')
+    .eq('season_year', getCurrentSeasonYear());
+  if (error) throw new Error(`Failed to fetch renewal fee statuses: ${error.message}`);
+
+  const rowsByUser = new Map<string, Record<string, unknown>>();
+  for (const row of data || []) {
+    rowsByUser.set(String(row.username).toLowerCase(), row);
+  }
+
+  const statuses: RenewalFeeStatus[] = [];
+  for (const userName of userNames) {
+    const row = rowsByUser.get(userName.toLowerCase());
+    let state: RenewalFeeState = 'none';
+    let totalFee = 0;
+    let outstanding = 0;
+    if (row) {
+      totalFee = Number(row.total_fee_due) || 0;
+      outstanding = Number(row.outstanding) || 0;
+      if (row.voided_at) {
+        state = 'voided';
+      } else if (!row.submitted_at) {
+        state = row.renewing_membership === null ? 'none' : 'draft';
+      } else if (row.renewing_membership === false) {
+        state = 'not_renewing';
+      } else if (outstanding > 0) {
+        state = 'outstanding';
+      } else {
+        state = 'paid';
+      }
+    }
+    statuses.push({ userName: userName, state: state, totalFee: totalFee, outstanding: outstanding });
+  }
+  return statuses;
 }
 
 // Bulk form of getLatestRenewedSeason for label printing — lowercased username →
@@ -159,6 +222,7 @@ export async function getLatestRenewedSeasonsByUser(): Promise<Map<string, numbe
       .eq('renewing_membership', true)
       .not('submitted_at', 'is', null) // drafts don't count (§3.9)
       .is('voided_at', null)           // nor do voided renewals (§5)
+      .or('outstanding.is.null,outstanding.lte.0') // nor unpaid ones
       .order('id', { ascending: true })
       .range(from, from + pageSize - 1);
     if (error) throw new Error(`Failed to fetch renewed seasons: ${error.message}`);

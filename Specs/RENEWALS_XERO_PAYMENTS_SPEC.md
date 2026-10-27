@@ -87,6 +87,18 @@ Follow `specs/CODING_STANDARDS.md` throughout (no `?.` / `??`, explicit readable
 - **Adjustments use Banking's columns:** a charge or credit goes on `difference`, and a refund comes off `banking`. That keeps Banking's own formula (outstanding = fee − banking + donations + difference) right on its next match.
 - **Paid at submission:** §11.3a's `paid_at_submission` isn't handled yet. It comes with Stripe (Phase 5).
 
+### 2.8 Phase 4 — My Account fee card (built 26 Oct 2026, same branch, uncommitted)
+
+- **Data:** `getRenewalFeeStatuses()` in `src/lib/renewals-supabase.ts` gives each member's state this season: none, draft, not renewing, outstanding, paid or voided. It only reads, so opening My Account never creates a renewal row.
+- **API:** `GET /api/account/renewal-fees` returns the member, then anyone who has them as their buddy, with the bank details and each member's `SUBS {username}` reference.
+- **Card:** on the Membership Card tab of `/account`, below the card.
+  - Draft: "saved as a draft — it isn't complete until it's submitted", with a link to `/renewals` for the member's own renewal.
+  - Outstanding: the amount, the bank transfer reference with a Copy button, then one "How to pay" block (bank details, at the bar by card or cash).
+  - Paid: "Membership paid — thank you."
+  - Voided, not renewing and not started show nothing. The existing "Renew your membership" link still shows when the member's renewal is due and they have no fee entry.
+- **Not yet:** the **Pay online** button comes with Stripe (Phase 5). "At the bar" is shown now, but the till's Membership fees option comes with Phase 6.
+- **Buddies:** a buddy sees each managed member's entry, but only their own draft links to `/renewals`, because the renewal form's member selector is Admin-only.
+
 ### 2.5 Competitions eligibility from the friendlies data (built 26 Oct 2026, same branch)
 
 - **Rule:** a playing member can enter club competitions if they made themselves available for at least `min_friendlies_for_competitions` friendlies in the previous season. The setting already existed (Admin config → General) but nothing read it. It's seeded at 8 and is **to be set to 6** for 2027.
