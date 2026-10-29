@@ -1,13 +1,14 @@
 // app/api/banking/bar-reconciliation/transactions/route.ts
 // GET — the underlying bar_sales/bar_ledger rows behind one line of a Day End
 // record (drill-down from the Treasurer Bar Reconciliation page).
-// ?dayEndId=<id>&kind=wallet_sales|card_sales|cash_sales|cash_movements|cash_topups|card_topups|refunds
+// ?dayEndId=<id>&kind=wallet_sales|card_sales|cash_sales|cash_movements|cash_topups|card_topups|refunds|renewal_cash|renewal_card
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
 import { getDayEndSales, getDayEndLedger } from '@/lib/bar-supabase';
+import { getTillRenewalLedgerRows } from '@/lib/renewals-till';
 
 function canAccess(role: string | undefined | null): boolean {
   return hasRole(role, 'Admin', 'Treasurer', 'T');
@@ -38,6 +39,10 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ ledger: await getDayEndLedger(dayEndId, 'topup', 'card') });
       case 'refunds':
         return NextResponse.json({ ledger: await getDayEndLedger(dayEndId, 'refund') });
+      case 'renewal_cash':
+        return NextResponse.json({ ledger: await getTillRenewalLedgerRows(dayEndId, 'cash') });
+      case 'renewal_card':
+        return NextResponse.json({ ledger: await getTillRenewalLedgerRows(dayEndId, 'card') });
       default:
         return NextResponse.json({ error: 'Unknown kind' }, { status: 400 });
     }

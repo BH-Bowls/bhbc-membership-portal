@@ -69,7 +69,7 @@ export default function BankingPage() {
   const csvInputRef = useRef<HTMLInputElement>(null);
 
   // Check authorization
-  const canAccess = hasRole(session?.user?.role, 'Admin', 'T');
+  const canAccess = hasRole(session?.user?.role, 'Admin', 'Treasurer', 'T');
 
   useEffect(() => {
     if (status === 'authenticated') {
@@ -198,7 +198,8 @@ export default function BankingPage() {
     }
     setEditingPayment(payment);
     setPaymentDate(payment.date);
-    setPaymentType(payment.type);
+    // Stripe (STR) payments arrive already matched, so they never reach this dialog
+    setPaymentType(payment.type === 'STR' ? 'TRF' : payment.type);
     setPaymentAmount(payment.amount.toString());
     setPaymentReference(payment.reference);
     setShowPaymentDialog(true);
@@ -616,6 +617,13 @@ export default function BankingPage() {
               className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 flex items-center"
             >
               Report
+            </button>
+
+            <button
+              onClick={() => router.push('/banking/renewals-xero')}
+              className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 flex items-center"
+            >
+              Renewals → Xero
             </button>
 
             <button

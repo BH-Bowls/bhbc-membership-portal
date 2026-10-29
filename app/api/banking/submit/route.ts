@@ -5,10 +5,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import {
+  getPayment,
   updatePayment,
   updateRenewalPayment,
 } from '@/lib/banking-supabase';
 import { hasRole } from '@/lib/role-utils';
+import { recordBankingPaymentTransaction } from '@/lib/renewals-xero';
 
 interface MatchedRenewal {
   userName: string;
@@ -88,6 +90,30 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Which payments went to which member, and their bank dates — each member's share is
+    // recorded as a renewal transaction for the Xero journal (spec §6.2), dated with the
+    // latest bank date of the payments matched to them.
+    const paymentsByUser = new Map<string, { ids: string[]; latestDate: string }>();
+    for (const payment of matchedPayments as MatchedPayment[]) {
+      let paymentDate = '';
+      try {
+        const stored = await getPayment(payment.payment_id);
+        if (stored) paymentDate = String(stored.date).substring(0, 10);
+      } catch (error) {
+        console.error(`Failed to read payment ${payment.payment_id}:`, error);
+      }
+      for (const raw of String(payment.matched_users || '').split(',')) {
+        const user = raw.trim().toLowerCase();
+        if (!user) continue;
+        const entry = paymentsByUser.get(user) || { ids: [], latestDate: '' };
+        entry.ids.push(payment.payment_id);
+        if (paymentDate > entry.latestDate) entry.latestDate = paymentDate;
+        paymentsByUser.set(user, entry);
+      }
+    }
+    const today = new Date();
+    const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
     // Update Renewals sheet
     for (const renewal of matchedRenewals as MatchedRenewal[]) {
       // Calculate new cumulative values by adding matched amounts to existing amounts
@@ -130,6 +156,24 @@ export async function POST(request: NextRequest) {
         updatedRenewals.push(renewal.userName);
       } catch (error) {
         const errorMsg = `Failed to update renewal for ${renewal.userName}: ${error instanceof Error ? error.message : 'Unknown error'}`;
+        console.error(errorMsg);
+        errors.push(errorMsg);
+        continue;
+      }
+
+      try {
+        const matched = paymentsByUser.get(renewal.userName.toLowerCase());
+        await recordBankingPaymentTransaction({
+          userName: renewal.userName,
+          amount: renewal.matched_banking,
+          donation: renewal.matched_donations,
+          writeOff: renewal.matched_difference,
+          paymentIds: matched ? matched.ids.join(',') : '',
+          txnDate: matched && matched.latestDate ? matched.latestDate : todayIso,
+          createdBy: session && session.user ? session.user.userName : 'unknown',
+        });
+      } catch (error) {
+        const errorMsg = `${renewal.userName}'s payment was matched, but not recorded for the Xero export: ${error instanceof Error ? error.message : 'Unknown error'}`;
         console.error(errorMsg);
         errors.push(errorMsg);
         // Continue processing other renewals despite failure

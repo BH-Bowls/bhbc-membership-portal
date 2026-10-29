@@ -72,7 +72,7 @@ const ACCENT_BORDERS = [
 
 const fmt = (pence: number) => `£${(pence / 100).toFixed(2)}`;
 
-type View = 'volunteer' | 'person' | 'sale' | 'topup' | 'report' | 'sales' | 'products' | 'cashmovement';
+type View = 'volunteer' | 'person' | 'sale' | 'topup' | 'report' | 'sales' | 'products' | 'cashmovement' | 'membership';
 interface BasketLine { product: BarProduct; qty: number }
 interface MemberOption { userName: string; fullName: string }
 
@@ -85,6 +85,7 @@ const SCREEN_TITLES: Record<View, string> = {
   report: 'Dayend',
   products: 'Products',
   cashmovement: 'Cash Movement',
+  membership: 'Membership Fees',
 };
 
 export default function BarTillPage() {
@@ -108,7 +109,7 @@ export default function BarTillPage() {
   // What to do once a name is tapped on the volunteer picker — set when it's opened
   // to identify a Cash/Card tab or to attribute a Top Up, rather than just to change
   // who's marked as serving (the plain 'Change' link leaves this null).
-  const [pendingAction, setPendingAction] = useState<'cashcard' | 'topup' | 'endofday' | 'cashmovement' | null>(null);
+  const [pendingAction, setPendingAction] = useState<'cashcard' | 'topup' | 'endofday' | 'cashmovement' | 'membership' | null>(null);
   const [personSearch, setPersonSearch] = useState('');
   const [showScanner, setShowScanner] = useState(false);
   const [error, setError] = useState('');
@@ -272,6 +273,9 @@ export default function BarTillPage() {
     } else if (pendingAction === 'cashmovement') {
       setPendingAction(null);
       setView('cashmovement');
+    } else if (pendingAction === 'membership') {
+      setPendingAction(null);
+      setView('membership');
     } else {
       setView('person');
     }
@@ -465,6 +469,12 @@ export default function BarTillPage() {
   // Cash added to or removed from the till for a non-sale reason (float top-up,
   // petty cash, etc.) -- discouraged but needed, so it still asks who's serving
   // for audit, same as a Top Up. See bar_cash_movement() in 0064_bar_cash_movements.sql.
+  // Membership fees (renewals spec §8) — asks who's serving, stored on the payment for audit
+  function openMembershipFees() {
+    setPendingAction('membership');
+    setView('volunteer');
+  }
+
   function openCashMovement() {
     setPendingAction('cashmovement');
     setView('volunteer');
@@ -600,6 +610,7 @@ export default function BarTillPage() {
                 <button onClick={openEndOfDay} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Dayend</button>
                 <button onClick={() => setView('products')} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Products</button>
                 <button onClick={openCashMovement} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Cash Movement</button>
+                <button onClick={openMembershipFees} disabled={offline} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 disabled:opacity-50">Membership Fees</button>
                 {isBarTillLogin && (
                   <button onClick={() => signOut({ callbackUrl: '/bar' })}
                     className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 text-red-600">Logout</button>
@@ -792,6 +803,11 @@ export default function BarTillPage() {
         {/* ── CASH MOVEMENT: cash in/out of the till for a non-sale reason ────── */}
         {view === 'cashmovement' && (
           <CashMovementView categories={categories} products={products} busy={busy} onConfirm={doCashMovement} />
+        )}
+
+        {/* ── MEMBERSHIP FEES: a submitted renewal paid in full, card or cash ──── */}
+        {view === 'membership' && (
+          <MembershipFeesView staff={volunteer} offline={offline} onDone={() => backToPersonPicker(true)} />
         )}
 
         {/* ── REPORT ───────────────────────────────────────────────────────── */}
@@ -1085,6 +1101,176 @@ function TopUp({ member, busy, onConfirm }: { member: BarAccount; busy: boolean;
 // Cash added to or removed from the till for a non-sale reason. The product picked
 // (a variable_price product -- see 0064_bar_cash_movements.sql) supplies the nominal
 // code; the amount and reason are entered fresh each time.
+// Membership fees (renewals spec §8.1): find a member whose submitted renewal still owes
+// something, take the full amount due by card or cash, and record it. Card is taken
+// on the card machine first, then confirmed here. Needs to be online — the amount due
+// is checked against the database when it's recorded.
+interface TillRenewalDue {
+  userName: string;
+  fullName: string;
+  membershipFee: number;
+  competitionsFee: number;
+  club200Fee: number;
+  totalFee: number;
+  outstanding: number;
+}
+
+function MembershipFeesView({ staff, offline, onDone }: { staff: string; offline: boolean; onDone: () => void }) {
+  const [due, setDue] = useState<TillRenewalDue[] | null>(null);
+  const [loadError, setLoadError] = useState('');
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState<TillRenewalDue | null>(null);
+  const [method, setMethod] = useState<'card' | 'cash' | null>(null);
+  const [confirmed, setConfirmed] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const [paid, setPaid] = useState<{ name: string; amount: number; method: 'card' | 'cash' } | null>(null);
+
+  const load = useCallback(() => {
+    setLoadError('');
+    fetch('/api/bar/membership-fees')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.renewals) setDue(data.renewals);
+        else setLoadError(data.error || 'Could not load membership fees');
+      })
+      .catch(() => setLoadError('Could not load membership fees'));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  function choose(r: TillRenewalDue) {
+    setSelected(r); setMethod(null); setConfirmed(false); setSaveError('');
+  }
+
+  async function record() {
+    if (!selected || !method || !confirmed) return;
+    setSaving(true); setSaveError('');
+    try {
+      const res = await fetch('/api/bar/membership-fees', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userName: selected.userName, method, amountPence: Math.round(selected.outstanding * 100),
+          staff, confirmed: true,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setSaveError(data.error || 'Could not record the payment');
+        // The amount may have changed (e.g. a bank transfer was matched) — refresh it
+        load();
+        return;
+      }
+      setPaid({ name: selected.fullName, amount: selected.outstanding, method });
+      setSelected(null);
+      load();
+    } catch {
+      setSaveError('Could not record the payment — check the connection and try again');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const pounds = (n: number) => `£${n.toFixed(2)}`;
+
+  if (paid) {
+    return (
+      <div className="bg-white border border-gray-200 rounded-xl p-5 max-w-lg">
+        <div className="p-4 bg-green-50 border border-green-200 text-green-900 rounded-lg">
+          <p className="font-semibold">Membership paid — {paid.name}</p>
+          <p className="text-sm mt-1">{pounds(paid.amount)} {paid.method === 'card' ? 'by card' : 'in cash'}. It shows as paid on their renewal straight away.</p>
+          {paid.method === 'cash' && <p className="text-sm mt-1">Put the cash in the till — it&apos;s included in the Dayend&apos;s expected cash.</p>}
+        </div>
+        <div className="mt-4 flex gap-3">
+          <button onClick={() => setPaid(null)} className="flex-1 py-3 rounded-lg border border-gray-300 bg-white font-medium hover:bg-gray-50">Another member</button>
+          <button onClick={onDone} className="flex-1 py-3 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700">Done</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (selected) {
+    return (
+      <div className="bg-white border border-gray-200 rounded-xl p-5 max-w-lg">
+        <div className="text-lg font-semibold text-gray-900">{selected.fullName}</div>
+        <div className="mt-3 space-y-1 text-sm text-gray-700">
+          {selected.membershipFee > 0 && <div className="flex justify-between"><span>Membership</span><span>{pounds(selected.membershipFee)}</span></div>}
+          {selected.competitionsFee > 0 && <div className="flex justify-between"><span>Competitions</span><span>{pounds(selected.competitionsFee)}</span></div>}
+          {selected.club200Fee > 0 && <div className="flex justify-between"><span>200 Club</span><span>{pounds(selected.club200Fee)}</span></div>}
+          {selected.outstanding !== selected.totalFee && (
+            <div className="flex justify-between"><span>Already paid / adjusted</span><span>{pounds(selected.totalFee - selected.outstanding)}</span></div>
+          )}
+          <div className="flex justify-between font-bold text-lg text-gray-900 border-t pt-2 mt-2"><span>Amount due</span><span>{pounds(selected.outstanding)}</span></div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 mt-5">
+          <button onClick={() => { setMethod('card'); setConfirmed(false); }}
+            className={`py-3 rounded-lg font-semibold border ${method === 'card' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-900 border-gray-300 hover:bg-gray-50'}`}>Card</button>
+          <button onClick={() => { setMethod('cash'); setConfirmed(false); }}
+            className={`py-3 rounded-lg font-semibold border ${method === 'cash' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-900 border-gray-300 hover:bg-gray-50'}`}>Cash</button>
+        </div>
+
+        {method && (
+          <label className="flex items-start gap-3 mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg cursor-pointer">
+            <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} className="mt-1 h-5 w-5" />
+            <span className="text-sm text-gray-900">
+              {method === 'card'
+                ? <>Payment of <strong>{pounds(selected.outstanding)}</strong> taken on the card machine</>
+                : <><strong>{pounds(selected.outstanding)}</strong> cash received and put in the till</>}
+            </span>
+          </label>
+        )}
+
+        {saveError && <div className="mt-3 p-3 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{saveError}</div>}
+
+        <div className="mt-4 flex gap-3">
+          <button onClick={() => setSelected(null)} disabled={saving} className="flex-1 py-3 rounded-lg border border-gray-300 bg-white font-medium hover:bg-gray-50 disabled:opacity-50">Back</button>
+          <button onClick={record} disabled={saving || offline || !method || !confirmed}
+            className="flex-1 py-3 rounded-lg bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-50">
+            {saving ? 'Recording…' : 'Record payment'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Member search — matches anywhere in the name or username
+  const term = search.trim().toLowerCase();
+  const matches: TillRenewalDue[] = [];
+  if (due) {
+    for (const r of due) {
+      if (term === '' || r.fullName.toLowerCase().includes(term) || r.userName.toLowerCase().includes(term)) {
+        matches.push(r);
+      }
+    }
+  }
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl p-5 max-w-lg">
+      <p className="text-sm text-gray-700 mb-3">Members with a submitted renewal still to pay. Full amount only — part payments go through the Treasurer.</p>
+      <input
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="Search by name"
+        className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-base mb-3"
+        autoFocus
+      />
+      {loadError && <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{loadError}</div>}
+      {!loadError && due === null && <p className="text-sm text-gray-700">Loading…</p>}
+      {due !== null && matches.length === 0 && (
+        <p className="text-sm text-gray-700">{due.length === 0 ? 'Nobody has a membership fee to pay.' : 'No match — their renewal may not be submitted yet, or is already paid.'}</p>
+      )}
+      <div className="divide-y divide-gray-100 max-h-[60vh] overflow-y-auto">
+        {matches.map((r) => (
+          <button key={r.userName} onClick={() => choose(r)} className="w-full flex justify-between items-center py-3 px-1 text-left hover:bg-gray-50">
+            <span className="text-gray-900">{r.fullName}</span>
+            <span className="font-semibold text-gray-900">{pounds(r.outstanding)}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function CashMovementView({ categories, products, busy, onConfirm }: {
   categories: BarCategoryRow[];
   products: BarProduct[];
@@ -1171,7 +1357,7 @@ function CashMovementView({ categories, products, busy, onConfirm }: {
   );
 }
 
-type DrillKind = 'wallet_sales' | 'card_sales' | 'cash_sales' | 'cash_movements' | 'cash_topups' | 'card_topups' | 'refunds';
+type DrillKind = 'wallet_sales' | 'card_sales' | 'cash_sales' | 'cash_movements' | 'cash_topups' | 'card_topups' | 'refunds' | 'renewal_cash' | 'renewal_card';
 
 function ReportView({ report, submitting, success, onSubmit }: { report: BarReport; submitting: boolean; success: BarDayEnd | null; onSubmit: (cashRemovedPence: number, carryForward: boolean, reason: string) => void }) {
   // Default suggests removing everything expected, but never a negative amount —
@@ -1257,6 +1443,7 @@ function ReportView({ report, submitting, success, onSubmit }: { report: BarRepo
       {row('Member Account Top-ups (cash)', report.topupsPence, 'cash_topups')}
       {row('Cash Sales', report.cashSalesPence, 'cash_sales')}
       {report.cashMovementsPence !== 0 && row('Cash Movements', report.cashMovementsPence, 'cash_movements')}
+      {report.renewalCashPence !== 0 && row('Membership fees (cash)', report.renewalCashPence, 'renewal_cash')}
       {row('Refunds paid out (cash)', report.refundsPence, 'refunds')}
       {row('Expected cash in till', report.expectedCashPence, undefined, true)}
 
@@ -1310,6 +1497,10 @@ function ReportView({ report, submitting, success, onSubmit }: { report: BarRepo
         {row('Member Account Sales', report.byMethodPence.wallet, 'wallet_sales')}
         {row('Card Sales', report.byMethodPence.card, 'card_sales')}
         {row('Member Account Top-ups (by card)', report.cardTopupsPence, 'card_topups')}
+        {report.renewalCardPence !== 0 && row('Membership fees (by card)', report.renewalCardPence, 'renewal_card')}
+        {(report.renewalCashPence !== 0 || report.renewalCardPence !== 0) && (
+          <p className="text-xs text-gray-700 mt-2">Membership fees go in the renewals journal, not the bar journal.</p>
+        )}
       </div>
     </div>
   );

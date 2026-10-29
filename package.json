@@ -1,6 +1,6 @@
 {
   "name": "bhbc-membership-portal",
-  "version": "2.6.0",
+  "version": "2.7.0",
   "previewVersion": "35",
   "private": true,
   "scripts": {
@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@ducanh2912/next-pwa": "^10.2.9",
+    "@react-pdf/renderer": "^4.3.0",
     "@supabase/supabase-js": "^2.111.0",
     "@vercel/analytics": "^2.0.1",
     "bcryptjs": "^3.0.3",
@@ -51,6 +52,7 @@
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "sharp": "^0.34.5",
+    "stripe": "23.0.1",
     "uuid": "^13.0.0",
     "zod": "^4.1.13"
   },

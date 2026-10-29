@@ -18,7 +18,7 @@
 
 import { getSupabaseClient } from './supabase';
 import { getAllUsers } from './members-supabase';
-import { getRenewalCompetitionEntries, getCurrentSeasonYear } from './renewals-supabase';
+import { getRenewalCompetitionEntries } from './renewals-supabase';
 import type { Competition, CompMatch, CompType, CompStatus, CompRound, CompMemberInfo } from '@/types/competitions';
 import { ROUND_ORDER } from '@/types/competitions';
 
@@ -535,8 +535,10 @@ export async function updateMatch(
  * sorted by member type (Playing Men first, then Playing Ladies) then surname.
  *
  * For pairs/triples the substitute list is also returned separately.
+ * seasonYear is the competition's own year (competitions.year), not the calendar
+ * year, so a previous season's competition still shows that season's entrants.
  */
-export async function getEntrantsFromRenewals(compId: string): Promise<{
+export async function getEntrantsFromRenewals(compId: string, seasonYear: number): Promise<{
   entrants: string[];
   subs: string[];
 }> {
@@ -549,7 +551,7 @@ export async function getEntrantsFromRenewals(compId: string): Promise<{
     return { entrants: [], subs: [] };
   }
 
-  const rows = await getRenewalCompetitionEntries(getCurrentSeasonYear());
+  const rows = await getRenewalCompetitionEntries(seasonYear);
 
   const entrantUsernames: string[] = [];
   const subUsernames: string[] = [];

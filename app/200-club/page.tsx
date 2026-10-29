@@ -457,6 +457,7 @@ function DrawForm({ season, numPrizes, entries, onDone }: { season: string; numP
   const positions = Array.from({ length: Math.max(1, numPrizes) }, (_, i) => i + 1);
   const [date, setDate] = useState('');
   const [numbers, setNumbers] = useState<{ [pos: number]: string }>({});
+  const [emailWinners, setEmailWinners] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -469,7 +470,7 @@ function DrawForm({ season, numPrizes, entries, onDone }: { season: string; numP
     try {
       const picks = positions.map(pos => ({ position: pos, number: valueAt(pos) })).filter(p => p.number.trim());
       const res = await fetch('/api/200-club/draw', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ season, date: friendlyDate(date), picks }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ season, date: friendlyDate(date), picks, emailWinners }),
       });
       const d = await res.json();
       if (res.ok) onDone(); else setError(d.error || 'Failed to record draw');
@@ -500,6 +501,11 @@ function DrawForm({ season, numPrizes, entries, onDone }: { season: string; numP
           </div>
         ))}
       </div>
+      <label className="mt-3 flex items-center gap-2 text-sm text-gray-700">
+        <input type="checkbox" checked={emailWinners} onChange={(e) => setEmailWinners(e.target.checked)}
+          className="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-600" />
+        Email the winners
+      </label>
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
       <div className="mt-3 flex gap-2">
         <button type="submit" disabled={saving || !date.trim()} className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-50">

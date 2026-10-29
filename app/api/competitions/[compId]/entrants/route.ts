@@ -1,5 +1,6 @@
 // app/api/competitions/[compId]/entrants/route.ts
 // GET /api/competitions/[compId]/entrants
+// GET /api/competitions/[compId]/entrants?year=2027 (year optional)
 // Returns usernames (+ basic info) of members who entered this competition.
 // Also returns sub lists for pairs/triples.
 // Committee only.
@@ -7,7 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getEntrantsFromRenewals, getMemberInfoMap } from '@/lib/competitions-supabase';
+import { getEntrantsFromRenewals, getMemberInfoMap, getCompetitionById } from '@/lib/competitions-supabase';
 import { hasRole } from '@/lib/role-utils';
 
 export async function GET(
@@ -25,8 +26,20 @@ export async function GET(
     }
 
     const { compId } = await params;
+
+    // Which season's renewals to read: ?year= (the Setup page passes the year being
+    // edited, before it's saved), otherwise the competition's saved year.
+    let seasonYear = parseInt(request.nextUrl.searchParams.get('year') || '', 10);
+    if (!Number.isFinite(seasonYear)) {
+      const comp = await getCompetitionById(compId);
+      if (!comp) {
+        return NextResponse.json({ error: 'Competition not found' }, { status: 404 });
+      }
+      seasonYear = comp.year;
+    }
+
     const [{ entrants, subs }, memberMap] = await Promise.all([
-      getEntrantsFromRenewals(compId),
+      getEntrantsFromRenewals(compId, seasonYear),
       getMemberInfoMap(),
     ]);
 

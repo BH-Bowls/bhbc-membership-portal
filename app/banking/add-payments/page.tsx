@@ -21,7 +21,7 @@ export default function AddPaymentsPage() {
   const router = useRouter();
 
   // Check authorization
-  const canAccess = hasRole(session?.user?.role, 'Admin', 'T');
+  const canAccess = hasRole(session?.user?.role, 'Admin', 'Treasurer', 'T');
 
   const [payments, setPayments] = useState<PaymentRow[]>([
     {

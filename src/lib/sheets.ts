@@ -230,6 +230,7 @@ export interface User {
   comments: string | null;
   socialEmails: boolean;
   handbookEntry: boolean;
+  printedMembershipBook: boolean | null; // Wants a printed membership book (0083) — asked on the renewal form each year; null = never answered
   drivingAwayMatches: string | null;
   drivingAdditionalInfo: string | null;
   greenMaintenance: string | null;
@@ -830,6 +831,7 @@ function parseUserRow(row: any[], rowNumber: number, colMap: { [key: string]: nu
     comments: get('comments'),
     socialEmails: getBool('social_emails'),
     handbookEntry: getBool('handbook_entry'),
+    printedMembershipBook: null, // Postgres-only field (0083), no Sheets equivalent
     drivingAwayMatches: get('driving_away_matches'),
     drivingAdditionalInfo: get('driving_additional_info'),
     greenMaintenance: get('green_maintenance'),

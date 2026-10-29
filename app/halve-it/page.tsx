@@ -139,7 +139,7 @@ export default function HalveItPage() {
                       Top score: <span className="font-semibold text-gray-900">{summary.topScore.score}</span> — {nameList(names, summary.topScore.playerIds)}
                     </div>
                   )}
-                  <NightMoney night={n} />
+                  {data.canManage && <NightMoney night={n} />}
                 </Link>
               );
             })}

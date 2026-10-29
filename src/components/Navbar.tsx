@@ -14,6 +14,7 @@ import { VersionDisplay } from './VersionDisplay';
 import { checkForUnsavedChanges, clearAllDrafts, getUnsavedChangesSummary } from '@/lib/form-draft-utils';
 import { ConfirmDialog } from './ConfirmDialog';
 import { useNavbarConfigValue, type NavbarActionButton as ActionButton } from '@/lib/navbar-config';
+import { useNavFit } from '@/hooks/useNavFit';
 
 interface SubMenuItem {
   name: string;
@@ -193,6 +194,8 @@ export function Navbar() {
     if (isAdmin || canAccessBanking) {
       club.push({ name: 'Banking', href: '/banking' });
       club.push({ name: 'Bar Reconciliation', href: '/banking/bar-reconciliation' });
+      club.push({ name: 'Renewals → Xero', href: '/banking/renewals-xero' });
+      club.push({ name: 'Member Accounts', href: '/banking/member-accounts' });
     }
     if (isGMC || isAdmin) {
       club.push({ name: 'Member Suggestions', href: '/member-suggestions' });
@@ -449,6 +452,27 @@ export function Navbar() {
 
   // Use role-appropriate navigation items.
   const navigationItems = isKiosk ? kioskNavigationItems : regularNavigationItems;
+
+  // ── Desktop menu fitting (see useNavFit) ──
+  // Help always stays visible at the end of the row. Every other item can move into
+  // a "More" menu — last one first — once dropping the icons isn't enough to fit.
+  const fitItems: NavItem[] = [];
+  let helpItem: NavItem | null = null;
+  const itemNames: string[] = [];
+  for (const item of navigationItems) {
+    itemNames.push(item.name);
+    if (item.name === 'Help') helpItem = item;
+    else fitItems.push(item);
+  }
+  const desktopRowActive = !showLogoOnly && !isTokenMode && !actionButtons;
+  const { slotRef, rowRef, showIcons, moreCount } = useNavFit(itemNames.join('|'), fitItems.length, desktopRowActive);
+  const moreItems = fitItems.slice(fitItems.length - moreCount);
+
+  // What the centred desktop row shows: the items that fit, then More (if needed).
+  // Help is rendered separately, beside the profile icon.
+  const MORE_ITEM = '__more__';
+  const desktopRowItems: NavItem[] = fitItems.slice(0, fitItems.length - moreCount);
+  if (moreCount > 0) desktopRowItems.push({ name: MORE_ITEM });
 
   const isActive = (href: string) => {
     if (href === '/') {
@@ -719,94 +743,8 @@ export function Navbar() {
     </button>
   );
 
-  // The dedicated bar-till login never sees a navbar — it only ever visits /bar,
-  // and the till hides all portal navigation there. Admin/Committee visiting /bar
-  // through their own login still see the normal navbar (this only fires for the
-  // 'Bar' role itself). Placed after every hook above runs, never before —
-  // conditionally skipping hooks based on a role that can change between renders
-  // (e.g. via impersonation) would break React's rules of hooks.
-  //
-  // Also hide on /bar itself while logged out (the till's own PIN entry screen) —
-  // roles is empty at that point (no session yet), so the check above alone
-  // wouldn't catch it, and the till is meant to look like a locked-down kiosk
-  // even before signing in. Gated on !session so Admin/Committee still see the
-  // normal navbar when they're the ones authenticated and visiting /bar.
-  if (roles.includes('Bar') || (pathname === '/bar' && !session)) return null;
-
-  return (
-    <nav className="sticky top-0 z-50 bg-white shadow-sm print:hidden">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between h-16">
-          {/* Logo/Brand — always links to portal root */}
-          <div className="flex items-center">
-            <a href="https://www.burgesshillbowlsclub.com/" className="flex-shrink-0 flex items-center">
-              <img
-                src="/bhbc-logo.jpg"
-                alt="BHBC Logo"
-                style={{ height: '40px', width: 'auto' }}
-              />
-            </a>
-          </div>
-
-          {/* Token-restricted mode — no session but token param present */}
-          {isTokenMode && (
-            <div className="flex items-center">
-              <a
-                href={`/login?callbackUrl=${encodeURIComponent(pathname)}`}
-                className="px-4 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors"
-              >
-                Log in
-              </a>
-            </div>
-          )}
-
-          {/* Guest login button(s) */}
-          {showLogoOnly && !isTokenMode && (
-            <div className="flex items-center gap-2">
-              {/* Members-area indicator — shown when a guest has entered the access PIN */}
-              {pinActive && (
-                <div className="relative" data-members-menu>
-                  <button
-                    onClick={() => setShowMembersMenu(v => !v)}
-                    className="flex items-center gap-1.5 rounded-md bg-green-100 px-3 py-1.5 text-sm font-medium text-green-800 hover:bg-green-200 transition-colors"
-                    title="You have entered the members-area PIN"
-                  >
-                    <span className="h-2 w-2 rounded-full bg-green-500" />
-                    Members Area Active
-                  </button>
-                  {showMembersMenu && (
-                    <div className="absolute right-0 mt-1 w-48 rounded-md border border-gray-200 bg-white py-1 shadow-lg z-50">
-                      <button
-                        onClick={handleLeaveMembersArea}
-                        className="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-                      >
-                        Leave members area
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-              {guestButtons ?? (
-                <a
-                  href="/login"
-                  className="px-4 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors"
-                >
-                  Log in
-                </a>
-              )}
-            </div>
-          )}
-
-          {/* Desktop Navigation — hidden for guest/logo-only mode or token mode */}
-          {!showLogoOnly && !isTokenMode && <div className="hidden md:flex md:items-center md:space-x-4">
-            {/* Show action buttons if provided, otherwise show normal navigation */}
-            {actionButtons ? (
-              <div className="flex items-center space-x-3">
-                {actionButtons.secondary && renderActionButton(actionButtons.secondary, 'secondary')}
-                {actionButtons.primary && renderActionButton(actionButtons.primary, 'primary')}
-              </div>
-            ) : (
-              navigationItems.map((item) => (
+  // One item on the desktop row: a dropdown (Lookups, Admin) or a plain link
+  const renderDesktopItem = (item: NavItem) => (
               item.subItems || item.subItemGroups ? (
                 // Dropdown menu item
                 <div key={item.name} className="relative" data-nav-dropdown>
@@ -814,7 +752,7 @@ export function Navbar() {
                     onClick={() => toggleDropdown(item.name)}
                     className={getNavItemClasses(isDropdownActive(item.subItems, item.subItemGroups))}
                   >
-                    {item.icon && <span className="mr-2">{item.icon}</span>}
+                    {showIcons && item.icon && <span className="mr-2">{item.icon}</span>}
                     {item.name}
                     <svg className="ml-1 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -901,14 +839,204 @@ export function Navbar() {
                   onClick={(e) => handleNavigation(e, item.href!)}
                   className={getNavItemClasses(isActive(item.href!))}
                 >
-                  {item.icon && <span className="mr-2">{item.icon}</span>}
+                  {showIcons && item.icon && <span className="mr-2">{item.icon}</span>}
                   {item.name}
                 </Link>
               )
-            )))}
+  );
+
+  // The desktop "More" dropdown: the items that didn't fit on the row. Plain links are
+  // listed as links; dropdown items (Lookups, Admin) are sections that expand in place —
+  // one open at a time — with Admin's categories shown as small headings.
+  const renderMoreMenu = () => {
+    // Highlight More when the current page is one of the items inside it
+    let moreActive = false;
+    for (const item of moreItems) {
+      if (item.href && isActive(item.href)) moreActive = true;
+      if (isDropdownActive(item.subItems, item.subItemGroups)) moreActive = true;
+    }
+
+    const closeMenus = () => {
+      setOpenDropdown(null);
+      setOpenAdminCategory(null);
+    };
+
+    const renderLink = (link: SubMenuItem, indent: boolean) => (
+      <Link
+        key={link.href}
+        href={link.href}
+        onClick={(e) => {
+          handleNavigation(e, link.href);
+          closeMenus();
+        }}
+        className={`block ${indent ? 'pl-7' : 'px-4'} pr-4 py-2 text-sm ${
+          isActive(link.href) ? 'bg-blue-100 text-blue-700' : 'text-gray-700 hover:bg-gray-100'
+        }`}
+      >
+        {link.name}
+      </Link>
+    );
+
+    return (
+      <div key={MORE_ITEM} className="relative" data-nav-dropdown>
+        <button onClick={() => toggleDropdown(MORE_ITEM)} className={getNavItemClasses(moreActive)}>
+          More
+          <svg className="ml-1 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        {openDropdown === MORE_ITEM && (
+          <div className="absolute right-0 mt-2 w-64 max-h-[75vh] overflow-y-auto rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-50">
+            <div className="py-1">
+              {moreItems.map((item) => {
+                // A plain link
+                if (item.href) return renderLink({ name: item.name, href: item.href }, false);
+
+                // A dropdown item — a section that expands to show its links
+                const sectionOpen = openAdminCategory === item.name;
+                return (
+                  <div key={item.name}>
+                    <button
+                      type="button"
+                      onClick={() => setOpenAdminCategory(sectionOpen ? null : item.name)}
+                      className={`flex items-center justify-between w-full px-4 py-2 text-sm font-medium ${
+                        isDropdownActive(item.subItems, item.subItemGroups) ? 'text-blue-700' : 'text-gray-700 hover:bg-gray-100'
+                      }`}
+                    >
+                      {item.name}
+                      <svg
+                        className={`h-3.5 w-3.5 transition-transform ${sectionOpen ? 'rotate-180' : ''}`}
+                        fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+                    {sectionOpen && (
+                      <div className="bg-gray-50 py-1">
+                        {item.subItems && item.subItems.map((link) => renderLink(link, true))}
+                        {item.subItemGroups && item.subItemGroups.map((group) => (
+                          <div key={group.label}>
+                            <div className="pl-7 pr-4 pt-2 pb-1 text-xs font-semibold uppercase tracking-wider text-gray-700">{group.label}</div>
+                            {group.items.map((link) => renderLink(link, true))}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // The dedicated bar-till login never sees a navbar — it only ever visits /bar,
+  // and the till hides all portal navigation there. Admin/Committee visiting /bar
+  // through their own login still see the normal navbar (this only fires for the
+  // 'Bar' role itself). Placed after every hook above runs, never before —
+  // conditionally skipping hooks based on a role that can change between renders
+  // (e.g. via impersonation) would break React's rules of hooks.
+  //
+  // Also hide on /bar itself while logged out (the till's own PIN entry screen) —
+  // roles is empty at that point (no session yet), so the check above alone
+  // wouldn't catch it, and the till is meant to look like a locked-down kiosk
+  // even before signing in. Gated on !session so Admin/Committee still see the
+  // normal navbar when they're the ones authenticated and visiting /bar.
+  if (roles.includes('Bar') || (pathname === '/bar' && !session)) return null;
+
+  return (
+    <nav className="sticky top-0 z-50 bg-white shadow-sm print:hidden">
+      {/* Full width (no max-w) so a wide screen gives the menu room before it needs More */}
+      <div className="px-4 sm:px-6 lg:px-8">
+        <div className="flex justify-between h-16">
+          {/* Logo/Brand — always links to portal root */}
+          <div className="flex flex-none items-center">
+            <a href="https://www.burgesshillbowlsclub.com/" className="flex-shrink-0 flex items-center">
+              <img
+                src="/bhbc-logo.jpg"
+                alt="BHBC Logo"
+                style={{ height: '40px', width: 'auto' }}
+              />
+            </a>
+          </div>
+
+          {/* Token-restricted mode — no session but token param present */}
+          {isTokenMode && (
+            <div className="flex items-center">
+              <a
+                href={`/login?callbackUrl=${encodeURIComponent(pathname)}`}
+                className="px-4 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors"
+              >
+                Log in
+              </a>
+            </div>
+          )}
+
+          {/* Guest login button(s) */}
+          {showLogoOnly && !isTokenMode && (
+            <div className="flex items-center gap-2">
+              {/* Members-area indicator — shown when a guest has entered the access PIN */}
+              {pinActive && (
+                <div className="relative" data-members-menu>
+                  <button
+                    onClick={() => setShowMembersMenu(v => !v)}
+                    className="flex items-center gap-1.5 rounded-md bg-green-100 px-3 py-1.5 text-sm font-medium text-green-800 hover:bg-green-200 transition-colors"
+                    title="You have entered the members-area PIN"
+                  >
+                    <span className="h-2 w-2 rounded-full bg-green-500" />
+                    Members Area Active
+                  </button>
+                  {showMembersMenu && (
+                    <div className="absolute right-0 mt-1 w-48 rounded-md border border-gray-200 bg-white py-1 shadow-lg z-50">
+                      <button
+                        onClick={handleLeaveMembersArea}
+                        className="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                      >
+                        Leave members area
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              {guestButtons ?? (
+                <a
+                  href="/login"
+                  className="px-4 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors"
+                >
+                  Log in
+                </a>
+              )}
+            </div>
+          )}
+
+          {/* Desktop Navigation — hidden for guest/logo-only mode or token mode */}
+          {/* The item row sits in a slot that can shrink (flex-1 min-w-0) while the row
+              itself keeps its natural width (flex-none) — useNavFit compares the two to
+              decide whether to drop icons / move items into More */}
+          {!showLogoOnly && !isTokenMode && <div className="hidden md:flex md:items-center md:justify-end md:flex-1 md:min-w-0 md:ml-6">
+            {/* Show action buttons if provided, otherwise show normal navigation */}
+            {actionButtons ? (
+              <div className="flex items-center space-x-3">
+                {actionButtons.secondary && renderActionButton(actionButtons.secondary, 'secondary')}
+                {actionButtons.primary && renderActionButton(actionButtons.primary, 'primary')}
+              </div>
+            ) : (
+              <>
+              {/* The items sit centred in the space between the logo and Help */}
+              <div ref={slotRef} className="flex flex-1 min-w-0 justify-center">
+              <div ref={rowRef} className="flex flex-none items-center space-x-4 whitespace-nowrap">
+              {desktopRowItems.map((item) => item.name === MORE_ITEM ? renderMoreMenu() : renderDesktopItem(item))}
+              </div>
+              </div>
+              {/* Help always sits beside the profile icon */}
+              {helpItem && <div className="flex flex-none items-center ml-4">{renderDesktopItem(helpItem)}</div>}
+              </>
+            )}
 
             {/* Profile Icon Dropdown (or Hamburger Menu when editing) */}
-            <div ref={profileDropdownRef} className="relative ml-4 pl-4 border-l border-gray-200">
+            <div ref={profileDropdownRef} className="relative flex-none ml-4 pl-4 border-l border-gray-200">
               {actionButtons ? (
                 // Hamburger menu when editing
                 <button

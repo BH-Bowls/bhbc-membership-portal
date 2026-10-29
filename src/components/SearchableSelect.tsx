@@ -95,7 +95,13 @@ export function SearchableSelect({
   // Handle input change
   function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
     if (disabled) return;
-    const newValue = e.target.value;
+    let newValue = e.target.value;
+    // While closed, the box shows the selected option's label, so the first keystroke
+    // arrives on the end of it. Start the search from just what was typed instead of
+    // making the user delete the label first.
+    if (!isOpen && displayValue && newValue.startsWith(displayValue)) {
+      newValue = newValue.slice(displayValue.length);
+    }
     setSearchTerm(newValue);
     setIsOpen(true);
     setHighlightedIndex(0);

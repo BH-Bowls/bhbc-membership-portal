@@ -2,7 +2,8 @@
 
 // app/admin/config/page.tsx
 // App-wide settings — General (maintenance mode, age anchor, competitions threshold)
-// and Labels (print-label layout config, moved here from /labels). Admin only.
+// Labels (print-label layout config, moved here from /labels), Rowland, Bar, and
+// Honours Boards (printed honours board layouts). Admin only.
 
 import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
@@ -10,8 +11,9 @@ import { useRouter } from 'next/navigation';
 import { hasRole } from '@/lib/role-utils';
 import { getInputClasses, getCardClasses, getAlertClasses } from '@/config/theme-helpers';
 import { LabelLayoutsPanel } from '@/components/LabelLayoutsPanel';
+import { HonoursBoardsPanel } from '@/components/HonoursBoardsPanel';
 
-type Tab = 'general' | 'labels' | 'rowland' | 'bar';
+type Tab = 'general' | 'labels' | 'rowland' | 'bar' | 'honours';
 
 const BAR_NOMINAL_FIELDS: [string, string][] = [
   ['bar_nominal_cash_account', 'Cash-in-hand'],
@@ -36,6 +38,13 @@ const ROWLAND_FIELDS: [string, string, string][] = [
   ['rowland_entry_fee', 'Entry fee per team (£)', 'Charged per team on the Rowland Cup entry form.'],
   ['rowland_entry_deadline', 'Entry deadline (YYYY-MM-DD)', 'Shown on the entry form and confirmation email, and used as the access-token expiry.'],
   ['rowland_entry_season', 'Entry season', 'Which season new entry-form submissions get tagged with, e.g. "2027".'],
+];
+
+const BANK_FIELDS: [string, string][] = [
+  ['bank_name', 'Bank'],
+  ['bank_sort_code', 'Sort code'],
+  ['bank_account_number', 'Account number'],
+  ['bank_account_name', 'Account name'],
 ];
 
 // Sheet measurements live on the named layouts (LabelLayoutsPanel), not here
@@ -83,7 +92,7 @@ export default function AdminConfigPage() {
   // Runs once on mount: open the tab named in ?tab= (e.g. Print Labels links to ?tab=labels)
   useEffect(() => {
     const requested = new URLSearchParams(window.location.search).get('tab');
-    if (requested === 'general' || requested === 'labels' || requested === 'rowland' || requested === 'bar') setTab(requested);
+    if (requested === 'general' || requested === 'labels' || requested === 'rowland' || requested === 'bar' || requested === 'honours') setTab(requested);
   }, []);
 
   // Load config
@@ -116,14 +125,16 @@ export default function AdminConfigPage() {
 
     setSavingGeneral(true);
     try {
-      const updates = {
+      const updates: Record<string, string> = {
         maintenance_mode: editGeneral.maintenance_mode ?? 'false',
         age_reference_date: ageAnchor,
         min_friendlies_for_competitions: editGeneral.min_friendlies_for_competitions ?? '',
+        stripe_payments_enabled: editGeneral.stripe_payments_enabled === 'true' ? 'true' : 'false',
         season_planning_green_total_rinks: editGeneral.season_planning_green_total_rinks ?? '',
         season_planning_capacity_warning_threshold: editGeneral.season_planning_capacity_warning_threshold ?? '',
         season_planning_max_players_per_day: editGeneral.season_planning_max_players_per_day ?? '',
       };
+      for (const [key] of BANK_FIELDS) updates[key] = editGeneral[key] ?? '';
       const res = await fetch('/api/admin/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -259,7 +270,7 @@ export default function AdminConfigPage() {
 
         {/* Tabs */}
         <div className="border-b border-gray-200 flex gap-6">
-          {(['general', 'labels', 'rowland', 'bar'] as Tab[]).map((t) => (
+          {(['general', 'labels', 'rowland', 'bar', 'honours'] as Tab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -267,7 +278,7 @@ export default function AdminConfigPage() {
                 tab === t ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
               }`}
             >
-              {t === 'general' ? 'General' : t === 'labels' ? 'Labels' : t === 'rowland' ? 'Rowland' : 'Bar'}
+              {t === 'general' ? 'General' : t === 'labels' ? 'Labels' : t === 'rowland' ? 'Rowland' : t === 'bar' ? 'Bar' : 'Honours Boards'}
             </button>
           ))}
         </div>
@@ -349,7 +360,22 @@ export default function AdminConfigPage() {
                 ) : (
                   <span className="text-gray-900">{config.min_friendlies_for_competitions || '—'}</span>
                 )}
-                <p className="text-xs text-gray-700 mt-1">Not yet used anywhere in the app — Renewals' eligibility check still reads this threshold from Sheets.</p>
+                <p className="text-xs text-gray-700 mt-1">Renewal form — a playing member can enter club competitions if they made themselves available for at least this many friendlies last season. An Admin can override it per member on the member&apos;s page.</p>
+              </div>
+
+              {/* Stripe online payments (renewals spec §11.9) */}
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    disabled={!isEditingGeneral}
+                    checked={(isEditingGeneral ? editGeneral.stripe_payments_enabled : config.stripe_payments_enabled) === 'true'}
+                    onChange={(e) => setEditGeneral((prev) => ({ ...prev, stripe_payments_enabled: e.target.checked ? 'true' : 'false' }))}
+                    className="h-4 w-4 text-blue-600 border-gray-300 rounded"
+                  />
+                  <span className="font-medium text-gray-900">Online renewal payments (Stripe)</span>
+                </label>
+                <p className="text-xs text-gray-700 mt-1 ml-6">Shows &quot;Submit and pay online&quot; on the renewal form and &quot;Pay online&quot; on My Account. Also needs the Stripe keys set on the server.</p>
               </div>
 
               {/* Season Planning capacity */}
@@ -399,6 +425,32 @@ export default function AdminConfigPage() {
                   <span className="text-gray-900">{config.season_planning_max_players_per_day || '—'}</span>
                 )}
                 <p className="text-xs text-gray-700 mt-1">Season Planning — not enforced, just a warning. Covers all fixtures that day (Home and Away both need a full team), unlike the rinks check above which only counts Home.</p>
+              </div>
+
+              {/* Bank details */}
+              <div className="pt-2 border-t border-gray-200">
+                <h3 className="text-sm font-medium text-gray-700 mb-2">Bank details</h3>
+                <p className="text-xs text-gray-700 mb-3">
+                  Shown in payment instructions — the Renewals page and confirmation email, the
+                  membership application payment email, and the Rowland Cup entry page and email.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {BANK_FIELDS.map(([key, label]) => (
+                    <div key={key}>
+                      <label className="block text-gray-900 mb-1">{label}</label>
+                      {isEditingGeneral ? (
+                        <input
+                          type="text"
+                          value={editGeneral[key] ?? ''}
+                          onChange={(e) => setEditGeneral((prev) => ({ ...prev, [key]: e.target.value }))}
+                          className={`${getInputClasses()} w-full`}
+                        />
+                      ) : (
+                        <span className="text-gray-900">{config[key] || '—'}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
@@ -625,6 +677,13 @@ export default function AdminConfigPage() {
                 </div>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ── Honours Boards tab ── */}
+        {tab === 'honours' && (
+          <div className={getCardClasses('md')}>
+            <HonoursBoardsPanel />
           </div>
         )}
       </main>

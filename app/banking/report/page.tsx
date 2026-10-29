@@ -25,12 +25,13 @@ interface RenewalReportRow {
   bankTransfer: number;
   cheque: number;
   cash: number;
+  stripe: number;
 }
 
 interface PaymentReportRow {
   paymentId: string;
   date: string;
-  type: 'TRF' | 'CDM' | 'CHQ' | 'CSH';
+  type: 'TRF' | 'CDM' | 'CHQ' | 'CSH' | 'STR';
   reference: string;
   amount: number;
   status: string;
@@ -51,6 +52,7 @@ interface ReportTotals {
   bankTransfer: number;
   cheque: number;
   cash: number;
+  stripe: number;
   count: number;
 }
 
@@ -59,6 +61,7 @@ interface PaymentTotals {
   CDM: { amount: number; count: number };
   CHQ: { amount: number; count: number };
   CSH: { amount: number; count: number };
+  STR: { amount: number; count: number };
   total: { amount: number; count: number };
 }
 
@@ -78,6 +81,7 @@ const typeLabels: Record<string, string> = {
   CDM: 'Card Machine',
   CHQ: 'Cheque',
   CSH: 'Cash',
+  STR: 'Online (Stripe)',
 };
 
 // Get payment types used by a member
@@ -87,6 +91,7 @@ const getPaymentTypes = (row: RenewalReportRow): string => {
   if (row.cardMachine > 0) types.push('CDM');
   if (row.cheque > 0) types.push('CHQ');
   if (row.cash > 0) types.push('CSH');
+  if (row.stripe > 0) types.push('STR');
   return types.join(', ') || '-';
 };
 
@@ -108,7 +113,7 @@ export default function BankingReportPage() {
   });
 
   // Check authorization
-  const canAccess = hasRole(session?.user?.role, 'Admin', 'T');
+  const canAccess = hasRole(session?.user?.role, 'Admin', 'Treasurer', 'T');
 
   useEffect(() => {
     if (status === 'authenticated') {
@@ -188,6 +193,7 @@ export default function BankingReportPage() {
     csv += `"Card Machine",,,,${at.CDM.amount},"${at.CDM.count} records"\n`;
     csv += `"Cheque",,,,${at.CHQ.amount},"${at.CHQ.count} records"\n`;
     csv += `"Cash",,,,${at.CSH.amount},"${at.CSH.count} records"\n`;
+    csv += `"Online (Stripe)",,,,${at.STR.amount},"${at.STR.count} records"\n`;
     csv += `"GRAND TOTAL",,,,${at.total.amount},"${at.total.count} records"\n`;
     csv += '\n';
 
@@ -486,7 +492,7 @@ export default function BankingReportPage() {
 
               {/* Totals by Type */}
               <div className="px-6 pb-4 border-t">
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-4 py-4 text-sm">
+                <div className="grid grid-cols-2 md:grid-cols-6 gap-4 py-4 text-sm">
                   <div>
                     <span className="text-gray-500">Bank Transfer</span>
                     <div className="font-semibold">{formatCurrency(data.allocatedPayments.totals.TRF.amount)}</div>
@@ -506,6 +512,11 @@ export default function BankingReportPage() {
                     <span className="text-gray-500">Cash</span>
                     <div className="font-semibold">{formatCurrency(data.allocatedPayments.totals.CSH.amount)}</div>
                     <div className="text-xs text-gray-400">{data.allocatedPayments.totals.CSH.count} records</div>
+                  </div>
+                  <div>
+                    <span className="text-gray-700">Online (Stripe)</span>
+                    <div className="font-semibold">{formatCurrency(data.allocatedPayments.totals.STR.amount)}</div>
+                    <div className="text-xs text-gray-700">{data.allocatedPayments.totals.STR.count} records</div>
                   </div>
                   <div className="border-l pl-4">
                     <span className="text-gray-500 font-medium">Grand Total</span>

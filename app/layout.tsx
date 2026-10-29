@@ -37,7 +37,9 @@ export default function RootLayout({
         <ChunkErrorRecovery />
         <OfflineBanner />
         <Providers>{children}</Providers>
-        <Analytics />
+        {/* Vercel sets VERCEL=1 on its own builds/deployments only — skipping it
+            locally avoids the analytics script's console noise/404s on localhost. */}
+        {process.env.VERCEL && <Analytics />}
       </body>
     </html>
   );

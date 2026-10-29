@@ -8,6 +8,7 @@
 
 import Link from 'next/link';
 import { SeasonPlanningCalendar } from './SeasonPlanningCalendar';
+import { SeasonPlanningFreeDates } from './SeasonPlanningFreeDates';
 
 interface SeasonPlanningTabsProps {
   active: 'events' | 'friendlies' | 'leagues';
@@ -48,6 +49,7 @@ export function SeasonPlanningTabs({ active }: SeasonPlanningTabsProps) {
           Reservations
         </Link>
         <SeasonPlanningCalendar />
+        <SeasonPlanningFreeDates />
       </div>
     </div>
   );

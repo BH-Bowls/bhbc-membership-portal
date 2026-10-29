@@ -74,7 +74,7 @@ function displayClubName(clubName: string, clubSuffix: string): string {
 function statusBadgeClasses(status: string): string {
   switch (status) {
     case 'Projected': return 'bg-amber-100 text-amber-800';
-    case 'Email Sent': return 'bg-emerald-100 text-emerald-800';
+    case 'Email Sent': return 'bg-blue-100 text-blue-800';
     case 'Confirmed': return 'bg-green-100 text-green-800';
     default: return 'bg-gray-100 text-gray-700';
   }
@@ -527,7 +527,7 @@ export default function SeasonPlanningFriendliesPage() {
               <div className="grid grid-cols-3 gap-3 mb-4">
                 {[
                   { label: 'Projected', stats: statusCounts.projected, classes: 'border-amber-200 bg-amber-50 text-amber-800' },
-                  { label: 'Email Sent', stats: statusCounts.emailSent, classes: 'border-emerald-200 bg-emerald-50 text-emerald-800' },
+                  { label: 'Email Sent', stats: statusCounts.emailSent, classes: 'border-blue-200 bg-blue-50 text-blue-800' },
                   { label: 'Confirmed', stats: statusCounts.confirmed, classes: 'border-green-200 bg-green-50 text-green-800' },
                 ].map((stat) => (
                   <div key={stat.label} className={`rounded-lg border px-4 py-3 ${stat.classes}`}>

@@ -44,6 +44,7 @@ interface MemberForm {
   otherSkills: string;
   socialEmails: boolean;
   handbookEntry: boolean;
+  printedMembershipBook: boolean | null;
   competitionsEligibleOverride: boolean | null;
 }
 
@@ -117,6 +118,7 @@ export default function MemberDetailPage() {
           otherSkills: str(m.otherSkills),
           socialEmails: m.socialEmails === true,
           handbookEntry: m.handbookEntry === true,
+          printedMembershipBook: m.printedMembershipBook === true ? true : m.printedMembershipBook === false ? false : null,
           competitionsEligibleOverride: m.competitionsEligibleOverride === true ? true : m.competitionsEligibleOverride === false ? false : null,
         });
         setLoading(false);
@@ -397,12 +399,12 @@ export default function MemberDetailPage() {
                       set('competitionsEligibleOverride', v === 'Y' ? true : v === 'N' ? false : null);
                     }}
                   >
-                    <option value="">No override (defaults to not eligible)</option>
+                    <option value="">No override (uses last season&apos;s friendlies)</option>
                     <option value="Y">Eligible</option>
                     <option value="N">Not eligible</option>
                   </select>
                   <p className="mt-1 text-xs text-gray-700">
-                    Manual override shown on the member&apos;s renewal form — the automatic &quot;8 friendlies last season&quot; check isn&apos;t available yet.
+                    Normally worked out from the friendlies the member made themselves available for last season (the number needed is in Admin config → General). Set an override only for an exception.
                   </p>
                 </div>
               </div>
@@ -415,6 +417,24 @@ export default function MemberDetailPage() {
                   <input type="checkbox" checked={form.handbookEntry} onChange={(e) => set('handbookEntry', e.target.checked)} />
                   Include in handbook
                 </label>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Printed membership book</label>
+                  <select
+                    className={`${getInputClasses()} sm:w-64`}
+                    value={form.printedMembershipBook === true ? 'Y' : form.printedMembershipBook === false ? 'N' : ''}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      set('printedMembershipBook', v === 'Y' ? true : v === 'N' ? false : null);
+                    }}
+                  >
+                    <option value="">Not answered</option>
+                    <option value="Y">Yes, wants a printed book</option>
+                    <option value="N">No</option>
+                  </select>
+                  <p className="mt-1 text-xs text-gray-700">
+                    Asked on the renewal form each year.
+                  </p>
+                </div>
               </div>
               <div className="mt-4 pt-3 border-t border-gray-200">
                 {isOwnAccount ? (

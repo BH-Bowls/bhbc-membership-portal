@@ -121,6 +121,8 @@ export interface BarReport {
   carriedForwardPence: number; // brought forward from the last cash-up (config bar_cash_carried_forward_pence); signed
   expectedCashPence: number; // carried forward + top-ups + cash sales + cash movements − refunds in range (a bank-time guide)
   discountsGivenPence: number; // sum of member discounts given in range — informational, ready for Xero
+  renewalCashPence: number; // membership fees taken in cash at the till — in the till, so in expected cash, but journalled by renewals (renewals spec §8.3)
+  renewalCardPence: number; // membership fees taken by card at the till — listed so the card machine total can be checked
 }
 
 // ── Name lookup helper ───────────────────────────────────────────────────────
@@ -315,6 +317,92 @@ export async function getMemberAccount(userName: string): Promise<{ balancePence
   };
 }
 
+// ── Member Accounts report (Treasurer, /banking/member-accounts) ─────────────
+
+export interface MemberAccountSummary {
+  userName: string;
+  fullName: string;
+  openingPence: number;     // balance at the start of the range
+  topupsPence: number;      // positive
+  purchasesPence: number;   // positive (spend)
+  refundsPence: number;     // positive (cash paid back out)
+  adjustmentsPence: number; // signed (voided-sale reversals etc.)
+  closingPence: number;     // balance at the end of the range
+  currentPence: number;     // balance right now
+}
+
+/**
+ * One row per bar_accounts row (every member who has ever had a wallet,
+ * including £0), with opening/closing balances and per-type movement totals
+ * for [fromIso, toIso). Opening/closing come from the last ledger row's
+ * balance_after before each boundary (0 if none), so they're exact even for
+ * a range in the past. Ledger is paged since PostgREST caps responses at 1000.
+ */
+export async function getMemberAccountsReport(fromIso: string, toIso: string): Promise<MemberAccountSummary[]> {
+  const supabase = getSupabaseClient();
+  const { data: accts, error: acctErr } = await supabase.from('bar_accounts').select('user_name, balance_pence');
+  if (acctErr) throw new Error(`Failed to load bar accounts: ${acctErr.message}`);
+
+  const rows = new Map<string, MemberAccountSummary>();
+  const names = await nameMap();
+  for (const a of accts ?? []) {
+    rows.set(a.user_name.toLowerCase(), {
+      userName: a.user_name,
+      fullName: names.get(a.user_name.toLowerCase()) || a.user_name,
+      openingPence: 0, topupsPence: 0, purchasesPence: 0, refundsPence: 0, adjustmentsPence: 0, closingPence: 0,
+      currentPence: a.balance_pence,
+    });
+  }
+
+  const fromMs = Date.parse(fromIso);
+  const pageSize = 1000;
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from('bar_ledger')
+      .select('user_name, type, amount_pence, balance_after_pence, created_at')
+      .lt('created_at', toIso)
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`Failed to load bar ledger: ${error.message}`);
+    for (const r of data ?? []) {
+      const row = rows.get(String(r.user_name).toLowerCase());
+      if (!row) continue;
+      row.closingPence = r.balance_after_pence;
+      if (Date.parse(r.created_at) < fromMs) {
+        row.openingPence = r.balance_after_pence;
+        continue;
+      }
+      if (r.type === 'topup') row.topupsPence += r.amount_pence;
+      else if (r.type === 'purchase') row.purchasesPence -= r.amount_pence;
+      else if (r.type === 'refund') row.refundsPence -= r.amount_pence;
+      else row.adjustmentsPence += r.amount_pence;
+    }
+    if (!data || data.length < pageSize) break;
+  }
+
+  return [...rows.values()].sort((a, b) => a.fullName.localeCompare(b.fullName));
+}
+
+/** One member's ledger rows in [fromIso, toIso), oldest first — the report's drill-down. */
+export async function getMemberAccountTransactions(userName: string, fromIso: string, toIso: string): Promise<BarLedgerEntry[]> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('bar_ledger')
+    .select('*, bar_sales ( gross_total_pence, discount_pence )')
+    .eq('user_name', userName)
+    .gte('created_at', fromIso)
+    .lt('created_at', toIso)
+    .order('created_at', { ascending: true });
+  if (error) throw new Error(`Failed to load transactions: ${error.message}`);
+  return (data ?? []).map((r: any) => ({
+    id: r.id, type: r.type, amountPence: r.amount_pence, balanceAfterPence: r.balance_after_pence,
+    note: r.note, saleId: r.sale_id, staff: r.staff, paymentMethod: r.payment_method ?? null,
+    grossTotalPence: r.bar_sales?.gross_total_pence ?? null, discountPence: r.bar_sales?.discount_pence ?? null,
+    createdAt: r.created_at,
+  }));
+}
+
 // ── Money operations (atomic RPCs) ───────────────────────────────────────────
 
 export async function topUp(userName: string, amountPence: number, staff: string, note?: string, paymentMethod: 'cash' | 'card' = 'cash'): Promise<number> {
@@ -451,13 +539,27 @@ export async function getReport(): Promise<BarReport> {
   const config = await getConfig();
   const carriedForwardPence = parseInt(config.bar_cash_carried_forward_pence || '0', 10) || 0;
 
+  // Membership fees taken at the till, not yet in a Day End (see 0087_renewals_till.sql)
+  const { data: renewalPayments, error: renewalErr } = await supabase
+    .from('renewal_payments').select('type, amount').eq('source', 'till').is('day_end_id', null).neq('status', 'Deleted');
+  if (renewalErr) throw new Error(`Failed to load membership fee payments: ${renewalErr.message}`);
+  let renewalCashPence = 0;
+  let renewalCardPence = 0;
+  for (const r of renewalPayments ?? []) {
+    const pence = Math.round((Number(r.amount) || 0) * 100);
+    if (r.type === 'CSH') renewalCashPence += pence;
+    if (r.type === 'CDM') renewalCardPence += pence;
+  }
+
   return {
     salesCount: (sales ?? []).length,
     byMethodPence, byCategoryPence,
     byProduct: [...byProductMap.values()].sort((a, b) => b.totalPence - a.totalPence),
     topupsPence, cardTopupsPence, refundsPence, cashSalesPence, cashMovementsPence, outstandingPence, carriedForwardPence,
-    expectedCashPence: carriedForwardPence + topupsPence + cashSalesPence + cashMovementsPence - refundsPence,
+    expectedCashPence: carriedForwardPence + topupsPence + cashSalesPence + cashMovementsPence + renewalCashPence - refundsPence,
     discountsGivenPence,
+    renewalCashPence,
+    renewalCardPence,
   };
 }
 
@@ -483,6 +585,8 @@ export interface BarDayEnd {
   cardTopupsPence: number;
   discountsGivenPence: number;
   outstandingBalancePence: number;
+  renewalCashPence: number;   // membership fees taken at the till (0087) — in cash expected, not in the bar journal
+  renewalCardPence: number;
   confirmedAt: string | null;   // reviewed (and corrected, if needed) — see specs/BAR_BANKING_XERO_SPEC.md §3
   confirmedBy: string | null;
   bankingId: string | null;     // set once included in a bar_bankings batch (§5); null = not yet banked
@@ -503,6 +607,7 @@ function mapDayEndRow(r: any): BarDayEnd {
     differenceReason: r.difference_reason, walletSalesPence: r.wallet_sales_pence,
     cardSalesPence: r.card_sales_pence, cardTopupsPence: r.card_topups_pence,
     discountsGivenPence: r.discounts_given_pence, outstandingBalancePence: r.outstanding_balance_pence,
+    renewalCashPence: r.renewal_cash_pence || 0, renewalCardPence: r.renewal_card_pence || 0,
     confirmedAt: r.confirmed_at, confirmedBy: r.confirmed_by,
     bankingId: (bankingLinks && bankingLinks.length > 0) ? bankingLinks[0].banking_id : null,
     xeroExportedAt: r.xero_exported_at, xeroExportedBy: r.xero_exported_by,
@@ -668,7 +773,7 @@ export async function markBankingsExported(bankingIds: string[], exportedBy: str
 
 export interface BarDayEndLedgerRow {
   id: string;
-  type: 'topup' | 'refund';
+  type: 'topup' | 'refund' | 'renewal';   // renewal = a membership fee taken at the till
   amountPence: number;
   paymentMethod: 'cash' | 'card' | null;
   userName: string;

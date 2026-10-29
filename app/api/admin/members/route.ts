@@ -49,6 +49,8 @@ export async function GET() {
           greenMaintenance: user.greenMaintenance || '',
           drivingAwayMatches: user.drivingAwayMatches || '',
           barDuty: user.barDuty || '',
+          // Printed membership book (renewal form) — for the print-run list
+          printedMembershipBook: user.printedMembershipBook,
         };
       });
 

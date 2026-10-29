@@ -66,9 +66,11 @@ export default function HalveItNightPage({ params }: { params: Promise<{ nightId
           )}
         </div>
 
-        <div className="bg-white rounded-lg shadow px-4 pb-3 pt-1 max-w-md">
-          <NightMoney night={night} />
-        </div>
+        {data.canManage && (
+          <div className="bg-white rounded-lg shadow px-4 pb-3 pt-1 max-w-md">
+            <NightMoney night={night} />
+          </div>
+        )}
 
         {night.notes && <p className="text-sm text-gray-900 bg-white rounded-lg shadow px-4 py-3 whitespace-pre-line">{night.notes}</p>}
 
