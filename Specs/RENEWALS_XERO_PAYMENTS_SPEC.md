@@ -164,6 +164,45 @@ Follow `specs/CODING_STANDARDS.md` throughout (no `?.` / `??`, explicit readable
 
 Without `--api-key`, the CLI can be linked to a different test environment from the key, and no events arrive.
 
+### 2.10 Phase 6 — Membership fees at the bar till (built 27 Oct 2026, same branch, uncommitted)
+
+**Migration and code:**
+- **Migration:** `0087_renewals_till.sql`. **Apply before deploying.** It adds:
+  - `renewal_payments.day_end_id` and `staff`;
+  - `bar_day_ends.renewal_cash_pence` and `renewal_card_pence`;
+  - the `renewals_record_till_payment()` function;
+  - a new `bar_create_day_end()`, which is 0066's version plus a sweep of till renewal payments.
+- **Recording:** one database function, all or nothing. It writes:
+  - a matched Banking payment: `CDM` or `CSH`, reference `TILL {username}`, `source = 'till'`, with the server's staff name;
+  - the renewal's `card_machine` or `cash`, `banking`, `outstanding`, `date_paid` and `payment_ids`;
+  - a `renewal_transactions` payment with source `till` and method `card` or `cash`.
+
+  It refuses unless the renewal is submitted, not voided, and the amount equals what's outstanding right now. So a stale till screen can't take the wrong amount, for example if a bank transfer was matched in the meantime.
+- **Code:** `src/lib/renewals-till.ts`, and `GET`/`POST /api/bar/membership-fees` (till roles only).
+
+**The till:**
+- A **Membership Fees** button on the Home screen. It asks who's serving, then:
+  1. search for a member;
+  2. see the breakdown and the amount due;
+  3. choose **Card** or **Cash**;
+  4. tick "Payment of £X taken on the card machine" (or "cash received and put in the till");
+  5. press **Record payment**.
+- The confirmation screen offers **Another member** or **Done**.
+- It's disabled while the till is offline.
+
+**Day End:**
+- **Cash** membership fees are added to expected cash and shown as "Membership fees (cash)".
+- **Card** membership fees are listed under "For completeness", so the card machine total can be checked.
+- Both can be drilled into, on the till's Dayend screen and on Bar Reconciliation. Both are marked "in the renewals journal, not this one".
+- The **bar Xero journal doesn't post them.** Its variance is expected minus removed, and the renewal cash is in both, so it still balances.
+- The **renewals journal** posts Dr Card clearing or Cash-in-hand, Cr Membership debtors, using the bar's own account codes from Admin config → Bar.
+- When the cash is banked, the bar banking journal moves the whole amount out of Cash-in-hand as before.
+
+**Differences from §8 as written:**
+- Membership fees has its own button on the till's Home screen, rather than sitting inside the member's basket.
+- The cash confirmation is a tick box too, not just a Confirm button.
+- **Bar Reconciliation** shows the lines but has no separate "Renewal payments" list. The drill-down gives the member, staff and amount instead.
+
 ### 2.5 Competitions eligibility from the friendlies data (built 26 Oct 2026, same branch)
 
 - **Rule:** a playing member can enter club competitions if they made themselves available for at least `min_friendlies_for_competitions` friendlies in the previous season. The setting already existed (Admin config → General) but nothing read it. It's seeded at 8 and is **to be set to 6** for 2027.
