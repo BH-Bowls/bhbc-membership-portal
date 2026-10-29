@@ -2,17 +2,21 @@
 
 // src/components/HonoursBoardsPanel.tsx
 // Admin > Config > Honours Boards: the printed honours boards for the clubhouse wall —
-// the years shared by every board, and each board's layout and columns
-// (add / edit / delete). See supabase/migrations/0078 to 0080.
+// the years shared by every board, each board's layout and columns (add / edit / delete),
+// and the club's print style. See supabase/migrations/0078 to 0082 and 0088.
 
 import { useEffect, useState } from 'react';
 import { getButtonClasses, getInputClasses } from '@/config/theme-helpers';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { HonoursBoardStyleEditor } from '@/components/HonoursBoardStyleEditor';
+import { STYLE_KEY, parseBoardStyle, sameStyle } from '@/types/honours-board-style';
+import { HonoursRowSettings } from '@/components/HonoursRowSettings';
+import type { BoardStyleSettings } from '@/types/honours-board-style';
 import {
-  BOARD_LAYOUTS, HONOURS_BOARD_FIELDS, START_YEAR_KEY, YEARS_PER_SET_KEY,
+  BOARD_LAYOUTS, HONOURS_BOARD_FIELDS, LINE_SPACING_KEY, START_YEAR_KEY, YEARS_PER_SET_KEY, parseLineSpacing,
   fieldLabel, layoutLabel, sheetForYear, sheetGeometry, sheetLabel, sheetsUpTo, validateBoard, validateSheetSettings,
 } from '@/types/honours-boards';
-import type { BoardLayout, HonoursBoard, HonoursBoardInput } from '@/types/honours-boards';
+import type { BoardLayout, HonoursBoard, HonoursBoardInput, LineSpacing } from '@/types/honours-boards';
 
 // The form edits numbers as text, so a half-typed value doesn't jump about
 interface ColumnForm {
@@ -60,6 +64,8 @@ export function HonoursBoardsPanel() {
   const [yearsPerSet, setYearsPerSet] = useState('');
   const [editStartYear, setEditStartYear] = useState('');
   const [editYearsPerSet, setEditYearsPerSet] = useState('');
+  const [lineSpacing, setLineSpacing] = useState<LineSpacing>('snug');
+  const [editLineSpacing, setEditLineSpacing] = useState<LineSpacing>('snug');
   const [isEditingSheets, setIsEditingSheets] = useState(false);
   const [savingSheets, setSavingSheets] = useState(false);
   const [sheetsError, setSheetsError] = useState('');
@@ -70,6 +76,12 @@ export function HonoursBoardsPanel() {
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<HonoursBoard | null>(null);
+
+  // The club's print style, as saved and as being edited
+  const [savedStyle, setSavedStyle] = useState<BoardStyleSettings>(parseBoardStyle(''));
+  const [editStyle, setEditStyle] = useState<BoardStyleSettings>(parseBoardStyle(''));
+  const [savingStyle, setSavingStyle] = useState(false);
+  const [styleMessage, setStyleMessage] = useState('');
 
   async function load() {
     try {
@@ -87,6 +99,10 @@ export function HonoursBoardsPanel() {
       setBoards(boardsData.boards);
       setStartYear(configData.config[START_YEAR_KEY] || '');
       setYearsPerSet(configData.config[YEARS_PER_SET_KEY] || '');
+      setLineSpacing(parseLineSpacing(configData.config[LINE_SPACING_KEY]));
+      const style = parseBoardStyle(configData.config[STYLE_KEY]);
+      setSavedStyle(style);
+      setEditStyle(style);
       setError('');
     } catch {
       setError('Failed to load honours boards');
@@ -114,16 +130,36 @@ export function HonoursBoardsPanel() {
       const res = await fetch('/api/admin/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [START_YEAR_KEY]: String(start), [YEARS_PER_SET_KEY]: String(perSet) }),
+        body: JSON.stringify({ [START_YEAR_KEY]: String(start), [YEARS_PER_SET_KEY]: String(perSet), [LINE_SPACING_KEY]: editLineSpacing }),
       });
       if (!res.ok) throw new Error();
       setStartYear(String(start));
       setYearsPerSet(String(perSet));
+      setLineSpacing(editLineSpacing);
       setIsEditingSheets(false);
     } catch {
       setSheetsError('Failed to save sheet settings');
     } finally {
       setSavingSheets(false);
+    }
+  }
+
+  async function saveStyle() {
+    setSavingStyle(true);
+    setStyleMessage('');
+    try {
+      const res = await fetch('/api/admin/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [STYLE_KEY]: JSON.stringify(editStyle) }),
+      });
+      if (!res.ok) throw new Error();
+      setSavedStyle(editStyle);
+      setStyleMessage('Saved — the print page now starts from this style.');
+    } catch {
+      setStyleMessage('Failed to save the print style');
+    } finally {
+      setSavingStyle(false);
     }
   }
 
@@ -211,7 +247,7 @@ export function HonoursBoardsPanel() {
     return sheetsUpTo(thisYear, start, layout, perSet).map((s) => ({
       sheet: s,
       isCurrent: current !== null && s.firstYear === current.firstYear,
-      namePt: Math.round(sheetGeometry(layout, s, perSet).namePt),
+      namePt: Math.round(sheetGeometry(layout, s, perSet, lineSpacing).namePt),
     }));
   }
 
@@ -232,7 +268,7 @@ export function HonoursBoardsPanel() {
           <h3 className="text-sm font-medium text-gray-900">Sheets</h3>
           {!isEditingSheets ? (
             <button
-              onClick={() => { setEditStartYear(startYear); setEditYearsPerSet(yearsPerSet); setSheetsError(''); setIsEditingSheets(true); }}
+              onClick={() => { setEditStartYear(startYear); setEditYearsPerSet(yearsPerSet); setEditLineSpacing(lineSpacing); setSheetsError(''); setIsEditingSheets(true); }}
               className="text-sm text-blue-600 hover:text-blue-800"
             >
               Edit
@@ -268,21 +304,19 @@ export function HonoursBoardsPanel() {
             )}
             <p className="text-xs text-gray-700 mt-1">The first year on the wall. Raise it later to roll the oldest years off instead of adding a second set.</p>
           </div>
-          <div>
-            <label className="block text-gray-900 mb-1">Row control</label>
-            {isEditingSheets ? (
-              <input type="text" inputMode="numeric" value={editYearsPerSet} onChange={(e) => setEditYearsPerSet(e.target.value)} className={`${getInputClasses()} max-w-[10rem]`} />
-            ) : (
-              <span className="text-gray-900">{yearsPerSet || '—'}</span>
-            )}
-            <p className="text-xs text-gray-700 mt-1">
-              Sets the row spacing, and so the name size, on every board. Lower gives bigger names but fewer rows per
-              sheet. With an A2 sheet and A3 continuation: 71 gives names about 21pt (A2 sheet to 2026, 26 spare years);
-              65 about 23pt (A2 to 2022, 20 spare); 63 about 24pt (A2 to 2020, 16 spare). Changing it moves every
-              sheet&apos;s years, so all the printed sheets would need reprinting.
-            </p>
-          </div>
         </div>
+
+        {/* Row control and line spacing go together: one hint says what they give */}
+        <HonoursRowSettings
+          rowControl={isEditingSheets ? editYearsPerSet : yearsPerSet}
+          onRowControl={setEditYearsPerSet}
+          lineSpacing={isEditingSheets ? editLineSpacing : lineSpacing}
+          onLineSpacing={setEditLineSpacing}
+          startYear={Number(isEditingSheets ? editStartYear : startYear)}
+          layout={boards.length > 0 ? boards[0].layout : 'a2_plus_a3'}
+          editable={isEditingSheets}
+          radioName="honoursConfigLineSpacing"
+        />
 
         {/* What each layout gives with these settings */}
         {settingsValid && (
@@ -362,6 +396,28 @@ export function HonoursBoardsPanel() {
         <p className="text-sm">
           <a href="/admin/website/honours-boards" className="text-blue-600 hover:text-blue-800">Print the boards →</a>
         </p>
+      </div>
+
+      {/* The club's print style — the print page starts from it, and can change it for one print */}
+      <div className="space-y-3">
+        <h3 className="text-sm font-medium text-gray-900">Print style</h3>
+        <p className="text-xs text-gray-700">
+          How every board looks when printed. The print page starts from this; changes made there
+          are for that preview or print only.
+        </p>
+        <HonoursBoardStyleEditor value={editStyle} onChange={(s) => { setEditStyle(s); setStyleMessage(''); }} />
+        {styleMessage && <p className="text-sm text-gray-900">{styleMessage}</p>}
+        <div className="flex gap-2">
+          <button onClick={saveStyle} disabled={savingStyle || sameStyle(editStyle, savedStyle)} className={getButtonClasses('primary', 'sm')}>
+            {savingStyle ? 'Saving…' : 'Save print style'}
+          </button>
+          {/* Only offered once something has changed */}
+          {!sameStyle(editStyle, savedStyle) && (
+            <button onClick={() => setEditStyle(savedStyle)} disabled={savingStyle} className={getButtonClasses('secondary', 'sm')}>
+              Undo changes
+            </button>
+          )}
+        </div>
       </div>
 
       <ConfirmDialog

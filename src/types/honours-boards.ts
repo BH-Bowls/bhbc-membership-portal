@@ -8,6 +8,7 @@
 /** Config keys shared by every board. */
 export const START_YEAR_KEY = 'honours_board_start_year';
 export const YEARS_PER_SET_KEY = 'honours_board_years_per_set';
+export const LINE_SPACING_KEY = 'honours_board_line_spacing';
 
 /**
  * The website.honours_internal columns a board can show, with a default heading.
@@ -151,9 +152,25 @@ const MAX_NAME_PT = 28;
 /** Below this a single-sheet board is getting hard to read, and the print page says so. */
 export const MIN_READABLE_PT = 11;
 
-/** Standard name size (pt) for a printed row height (mm), before long names are shrunk to fit. */
-export function namePointSize(rowHeightMm: number): number {
-  return Math.min(MAX_NAME_PT, rowHeightMm * MM * NAME_FILL);
+/** How much room is left between rows of names: the rows stay the same height, the names get smaller. */
+export type LineSpacing = 'snug' | 'comfortable' | 'generous';
+
+export const LINE_SPACINGS: { value: LineSpacing; label: string; scale: number }[] = [
+  { value: 'snug', label: 'Snug', scale: 1 },               // names as big as the row allows
+  { value: 'comfortable', label: 'Comfortable', scale: 0.88 },
+  { value: 'generous', label: 'Generous', scale: 0.78 },
+];
+
+/** A saved line spacing, or snug (the original look) if nothing valid is saved. */
+export function parseLineSpacing(raw: unknown): LineSpacing {
+  const found = LINE_SPACINGS.find((l) => l.value === raw);
+  return found ? found.value : 'snug';
+}
+
+/** Standard name size (pt) for a printed row height (mm) and line spacing, before long names are shrunk to fit. */
+export function namePointSize(rowHeightMm: number, spacing: LineSpacing): number {
+  const choice = LINE_SPACINGS.find((l) => l.value === spacing);
+  return Math.min(MAX_NAME_PT, rowHeightMm * MM * NAME_FILL) * (choice ? choice.scale : 1);
 }
 
 interface StackedSplit {
@@ -359,7 +376,7 @@ export interface SheetGeometry {
 }
 
 /** Page size and measurements for one sheet of a board. */
-export function sheetGeometry(layout: BoardLayout, sheet: BoardSheet, yearsPerSet: number): SheetGeometry {
+export function sheetGeometry(layout: BoardLayout, sheet: BoardSheet, yearsPerSet: number, spacing: LineSpacing): SheetGeometry {
   if (layout === 'a2_plus_a3' && sheet.part) {
     // The A2 sheet's upper or lower half on its own A3 landscape sheet: same side margins,
     // so the columns match the A2 sheet and sheet 3
@@ -373,7 +390,7 @@ export function sheetGeometry(layout: BoardLayout, sheet: BoardSheet, yearsPerSe
       titleHeightMm: isUpper ? A3_SHORT_MM - SHEET_MARGIN_MM * 2 - header - years * split.rowHeightMm : 0,
       contTitleHeightMm: 0,
       headerHeightMm: isUpper ? header : 0,
-      rowHeightMm: split.rowHeightMm, namePt: namePointSize(split.rowHeightMm),
+      rowHeightMm: split.rowHeightMm, namePt: namePointSize(split.rowHeightMm, spacing),
     };
   }
 
@@ -392,7 +409,7 @@ export function sheetGeometry(layout: BoardLayout, sheet: BoardSheet, yearsPerSe
       titleHeightMm: isA2 ? split.titleHeightMm : 0,
       contTitleHeightMm: isA2 ? 0 : split.contTitleHeightMm,
       headerHeightMm: HEADER_H_MM * SQRT2,
-      rowHeightMm: split.rowHeightMm, namePt: namePointSize(split.rowHeightMm),
+      rowHeightMm: split.rowHeightMm, namePt: namePointSize(split.rowHeightMm, spacing),
     };
   }
 
@@ -408,7 +425,7 @@ export function sheetGeometry(layout: BoardLayout, sheet: BoardSheet, yearsPerSe
       titleHeightMm: isTop ? split.titleHeightMm * s : 0,
       contTitleHeightMm: 0,
       headerHeightMm: isTop ? HEADER_H_MM * s : 0,
-      rowHeightMm, namePt: namePointSize(rowHeightMm),
+      rowHeightMm, namePt: namePointSize(rowHeightMm, spacing),
     };
   }
 
@@ -420,7 +437,7 @@ export function sheetGeometry(layout: BoardLayout, sheet: BoardSheet, yearsPerSe
       titleHeightMm: sheet.position === 'Left' ? split.titleHeightMm : 0,
       contTitleHeightMm: 0,
       headerHeightMm: HEADER_H_MM * SQRT2,
-      rowHeightMm: split.rowHeightMm, namePt: namePointSize(split.rowHeightMm),
+      rowHeightMm: split.rowHeightMm, namePt: namePointSize(split.rowHeightMm, spacing),
     };
   }
 
@@ -431,6 +448,6 @@ export function sheetGeometry(layout: BoardLayout, sheet: BoardSheet, yearsPerSe
     paper: 'A3', orientation: 'portrait', widthMm: A3_SHORT_MM, heightMm: A3_LONG_MM,
     marginXMm: SHEET_MARGIN_MM, marginYMm: SHEET_MARGIN_MM, scale: 1,
     titleHeightMm: TITLE_TARGET_MM, contTitleHeightMm: 0, headerHeightMm: HEADER_H_MM,
-    rowHeightMm, namePt: namePointSize(rowHeightMm),
+    rowHeightMm, namePt: namePointSize(rowHeightMm, spacing),
   };
 }

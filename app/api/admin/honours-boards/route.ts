@@ -1,7 +1,8 @@
 // app/api/admin/honours-boards/route.ts
 // Printed honours board layouts.
-// GET  → all boards in display order, plus the shared year settings (Admin, Captain, GMC —
-//        the roles that edit honours, so they can print the boards too)
+// GET  → all boards in display order, plus the shared year and row settings and the saved print
+//        style (Admin, Captain, GMC — the roles that edit honours, so they can print the
+//        boards too)
 // POST → add a board (Admin only)
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -10,8 +11,9 @@ import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
 import { getConfig } from '@/lib/config-supabase';
 import { createHonoursBoard, getHonoursBoards } from '@/lib/honours-boards-supabase';
-import { START_YEAR_KEY, YEARS_PER_SET_KEY } from '@/types/honours-boards';
+import { LINE_SPACING_KEY, START_YEAR_KEY, YEARS_PER_SET_KEY, parseLineSpacing } from '@/types/honours-boards';
 import type { HonoursBoardInput } from '@/types/honours-boards';
+import { STYLE_KEY, parseBoardStyle } from '@/types/honours-board-style';
 
 async function requireAdmin(): Promise<NextResponse | null> {
   const session = await getServerSession(authOptions);
@@ -30,6 +32,9 @@ export async function GET() {
       boards,
       startYear: Number(config[START_YEAR_KEY]),
       yearsPerSet: Number(config[YEARS_PER_SET_KEY]),
+      lineSpacing: parseLineSpacing(config[LINE_SPACING_KEY]),
+      // Nothing saved yet (or a damaged value) gives the default look
+      style: parseBoardStyle(config[STYLE_KEY]),
     });
   } catch (error) {
     console.error('[GET /api/admin/honours-boards]', error);

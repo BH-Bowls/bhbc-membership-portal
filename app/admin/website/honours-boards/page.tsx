@@ -12,25 +12,12 @@ import { theme } from '@/config/theme';
 import {
   BOARD_LAYOUTS, MIN_READABLE_PT, a3Halves, sheetForYear, sheetGeometry, sheetLabel, sheetsUpTo, validateSheetSettings,
 } from '@/types/honours-boards';
-import type { BoardLayout, BoardSheet, HonoursBoard } from '@/types/honours-boards';
-import type { BoardStyle, BodyFont, HonoursYearRow } from '@/lib/honours-board-pdf';
-
-// Listed here as well as in honours-board-pdf.tsx so the page doesn't load the PDF library just to draw the picker
-const BODY_FONT_OPTIONS: { value: BodyFont; hint: string }[] = [
-  { value: 'Atkinson Hyperlegible Next', hint: 'Recommended — designed for low-vision readers' },
-  { value: 'Inter', hint: 'Matches the website' },
-  { value: 'Lora', hint: 'Traditional serif, reads a little smaller' },
-];
-
-// How the rows are told apart — offered while the club chooses, like the font
-const STYLE_OPTIONS: { value: BoardStyle; label: string; hint: string }[] = [
-  { value: 'stone', label: 'Stone stripes', hint: 'Pale warm grey on alternate years' },
-  { value: 'grey', label: 'Grey stripes', hint: "The website's light grey on alternate years" },
-  { value: 'rules', label: 'Lines', hint: 'A fine line between years, no shading — the traditional ledger look' },
-  { value: 'decades', label: 'Decade shading', hint: 'Every other decade lightly tinted, in blocks of ten years' },
-  { value: 'ivory', label: 'Ivory', hint: 'Warm off-white sheet, fine lines, gold line under the title — test print first; the print shop must print to the edge' },
-  { value: 'green', label: 'Green stripes', hint: 'The original pale green alternate years' },
-];
+import type { BoardLayout, BoardSheet, HonoursBoard, LineSpacing } from '@/types/honours-boards';
+import type { HonoursYearRow } from '@/lib/honours-board-pdf';
+import { HonoursBoardStyleEditor } from '@/components/HonoursBoardStyleEditor';
+import { HonoursRowSettings } from '@/components/HonoursRowSettings';
+import { DEFAULT_STYLE, sameStyle } from '@/types/honours-board-style';
+import type { BoardStyleSettings } from '@/types/honours-board-style';
 
 /** Identifies a sheet in the picker — an A2 sheet and its first A3 half start in the same year. */
 function sheetKey(s: BoardSheet): string {
@@ -41,7 +28,12 @@ export default function PrintHonoursBoardsPage() {
   const [boards, setBoards] = useState<HonoursBoard[]>([]);
   const [rows, setRows] = useState<HonoursYearRow[]>([]);
   const [startYear, setStartYear] = useState(0);
-  const [yearsPerSet, setYearsPerSet] = useState(0);
+  // Row control and line spacing as saved in Config, and as used here (start as the saved
+  // ones; changes are for this preview or print only)
+  const [savedYearsPerSet, setSavedYearsPerSet] = useState(0);
+  const [rowControl, setRowControl] = useState('');
+  const [savedLineSpacing, setSavedLineSpacing] = useState<LineSpacing>('snug');
+  const [lineSpacing, setLineSpacing] = useState<LineSpacing>('snug');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -50,8 +42,10 @@ export default function PrintHonoursBoardsPage() {
   const [previewLayout, setPreviewLayout] = useState<BoardLayout | ''>('');
   // The chosen sheet (see sheetKey); '' = the board's current sheet
   const [chosenSheet, setChosenSheet] = useState('');
-  const [bodyFont, setBodyFont] = useState<BodyFont>('Atkinson Hyperlegible Next');
-  const [boardStyle, setBoardStyle] = useState<BoardStyle>('stone');
+  // The club's style as saved in Config, and the style used here (starts as the saved one;
+  // changes are for this preview or print only)
+  const [savedStyle, setSavedStyle] = useState<BoardStyleSettings>(DEFAULT_STYLE);
+  const [style, setStyle] = useState<BoardStyleSettings>(DEFAULT_STYLE);
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
@@ -73,7 +67,12 @@ export default function PrintHonoursBoardsPage() {
         if (!honoursRes.ok) throw new Error(honoursData.error || 'Failed to load honours');
         setBoards(boardsData.boards);
         setStartYear(boardsData.startYear);
-        setYearsPerSet(boardsData.yearsPerSet);
+        setSavedYearsPerSet(boardsData.yearsPerSet);
+        setRowControl(String(boardsData.yearsPerSet));
+        setSavedLineSpacing(boardsData.lineSpacing);
+        setLineSpacing(boardsData.lineSpacing);
+        setSavedStyle(boardsData.style);
+        setStyle(boardsData.style);
         setRows(honoursData.rows);
         if (boardsData.boards.length > 0) setBoardId(boardsData.boards[0].id);
       } catch (err) {
@@ -100,7 +99,17 @@ export default function PrintHonoursBoardsPage() {
   const thisYear = new Date().getFullYear();
 
   // Settings are 0 until loaded, which is invalid — so no sheets are worked out before then
-  const settingsError = validateSheetSettings(startYear, yearsPerSet);
+  const settingsError = validateSheetSettings(startYear, savedYearsPerSet);
+  // A row control typed here is used once it's valid; until then the saved one stays in use
+  const rowControlValid = validateSheetSettings(startYear, Number(rowControl)) === null;
+  const yearsPerSet = rowControlValid ? Number(rowControl) : savedYearsPerSet;
+  const rowsChanged = yearsPerSet !== savedYearsPerSet || lineSpacing !== savedLineSpacing;
+
+  /** Back to the row control and line spacing saved in Config. */
+  function rowsBackToSaved() {
+    setRowControl(String(savedYearsPerSet));
+    setLineSpacing(savedLineSpacing);
+  }
 
   /** The latest year a board's sheets need to reach: a single sheet stops at the last season, with no spare rows. */
   function upToYear(b: HonoursBoard): number {
@@ -137,7 +146,7 @@ export default function PrintHonoursBoardsPage() {
   const sheets: BoardSheet[] = board ? printableSheets(board) : [];
   const boardCurrent = board ? currentSheetFor(board) : null;
   const sheet = sheets.find((s) => sheetKey(s) === chosenSheet) || boardCurrent;
-  const geometry = board && sheet ? sheetGeometry(board.layout, sheet, yearsPerSet) : null;
+  const geometry = board && sheet ? sheetGeometry(board.layout, sheet, yearsPerSet, lineSpacing) : null;
 
   /** Builds one sheet's PDF; the PDF library is only downloaded the first time this runs. */
   async function build(forBoard: HonoursBoard, forSheet: BoardSheet): Promise<{ blob: Blob; fileName: string }> {
@@ -146,13 +155,18 @@ export default function PrintHonoursBoardsPage() {
       board: forBoard,
       sheet: forSheet,
       yearsPerSet,
+      lineSpacing,
       rows,
       lastYearShown: lastSeason,
-      bodyFont,
-      boardStyle,
+      style,
       clubName: theme.brand.name,
     });
-    return { blob, fileName: honoursBoardFileName(forBoard, forSheet, yearsPerSet) };
+    return { blob, fileName: honoursBoardFileName(forBoard, forSheet, yearsPerSet, style.bleed) };
+  }
+
+  /** The message to show when a build fails: a font problem says what's wrong, anything else is generic. */
+  function failureMessage(err: unknown, fallback: string): string {
+    return err instanceof Error && err.name === 'HonoursFontError' ? err.message : fallback;
   }
 
   /** Saves a Blob as a file via a temporary link. */
@@ -178,7 +192,7 @@ export default function PrintHonoursBoardsPage() {
       setPreviewUrl(url);
     } catch (err) {
       console.error('[honours-boards preview]', err);
-      setActionError('Could not build the preview');
+      setActionError(failureMessage(err, 'Could not build the preview'));
     } finally {
       setWorking(false);
     }
@@ -193,7 +207,7 @@ export default function PrintHonoursBoardsPage() {
       saveFile(blob, fileName);
     } catch (err) {
       console.error('[honours-boards download]', err);
-      setActionError('Could not build the PDF');
+      setActionError(failureMessage(err, 'Could not build the PDF'));
     } finally {
       setWorking(false);
     }
@@ -213,7 +227,7 @@ export default function PrintHonoursBoardsPage() {
       }
     } catch (err) {
       console.error('[honours-boards season download]', err);
-      setActionError('Could not build the PDFs');
+      setActionError(failureMessage(err, 'Could not build the PDFs'));
     } finally {
       setWorking(false);
     }
@@ -238,7 +252,7 @@ export default function PrintHonoursBoardsPage() {
       }
     } catch (err) {
       console.error('[honours-boards A3 trial download]', err);
-      setActionError('Could not build the PDFs');
+      setActionError(failureMessage(err, 'Could not build the PDFs'));
     } finally {
       setWorking(false);
     }
@@ -281,6 +295,12 @@ export default function PrintHonoursBoardsPage() {
             <div className="bg-white shadow rounded-lg p-5 space-y-3">
               <h2 className="font-semibold text-gray-900">This season&apos;s sheets</h2>
               <p className="text-sm text-gray-700">After entering {lastSeason || thisYear}&apos;s winners, reprint these. The other sheets never change.</p>
+              {/* A one-off row change moves the sheets, so say so where it matters most */}
+              {rowsChanged && (
+                <div className={getAlertClasses('warning')}>
+                  Using the rows changed below for this print, not the ones saved in Config.
+                </div>
+              )}
               <ul className="text-sm text-gray-900 list-disc pl-5">
                 {boards.map((b) => {
                   const current = currentSheetFor(b);
@@ -305,7 +325,7 @@ export default function PrintHonoursBoardsPage() {
               <p className="text-sm text-gray-700">
                 Every board as three A3 landscape sheets: sheets 1 and 2 (which make up the A2 sheet) and
                 sheet 3, the yearly sheet. Same years, sizes and columns as the final A2 and A3 prints. Uses
-                the row style and font chosen below.
+                the style chosen below.
               </p>
               <button onClick={downloadA3Trial} disabled={working} className={getButtonClasses('secondary', 'md')}>
                 {working ? 'Building…' : `Download ${boards.length * 3} A3 PDFs`}
@@ -372,31 +392,60 @@ export default function PrintHonoursBoardsPage() {
                 </div>
               )}
 
-              <fieldset className="text-sm">
-                <legend className="text-gray-700 mb-1">Font for names</legend>
-                <div className="space-y-1">
-                  {BODY_FONT_OPTIONS.map((f) => (
-                    <label key={f.value} className="flex items-center gap-2 cursor-pointer">
-                      <input type="radio" name="bodyFont" checked={bodyFont === f.value} onChange={() => setBodyFont(f.value)} className="h-4 w-4" />
-                      <span className="text-gray-900">{f.value}</span>
-                      <span className="text-gray-700">— {f.hint}</span>
-                    </label>
-                  ))}
+              {/* Rows: the saved row control and line spacing, or changed here for this print only */}
+              <div className="text-sm space-y-2">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="text-gray-900">
+                    Rows: {rowsChanged ? 'changed for this print — not saved' : 'as saved in Config'}
+                  </span>
+                  {/* Only offered once something has changed */}
+                  {(rowsChanged || rowControl !== String(savedYearsPerSet)) && (
+                    <button onClick={rowsBackToSaved} className="text-blue-600 hover:text-blue-800">Back to saved</button>
+                  )}
                 </div>
-              </fieldset>
+                <details className="rounded-md border border-gray-200 p-3">
+                  <summary className="cursor-pointer text-blue-600 hover:text-blue-800">Change the row control or line spacing for this print</summary>
+                  <div className="mt-3">
+                    <HonoursRowSettings
+                      rowControl={rowControl}
+                      onRowControl={setRowControl}
+                      lineSpacing={lineSpacing}
+                      onLineSpacing={setLineSpacing}
+                      startYear={startYear}
+                      layout={board.layout}
+                      editable
+                      radioName="honoursPrintLineSpacing"
+                    />
+                    <p className="text-xs text-gray-700 mt-3">
+                      To keep them for every print, save them in{' '}
+                      <a href="/admin/config?tab=honours" className="text-blue-600 hover:text-blue-800">Config &gt; Honours Boards</a> (Admin).
+                    </p>
+                  </div>
+                </details>
+              </div>
 
-              <fieldset className="text-sm">
-                <legend className="text-gray-700 mb-1">Row style</legend>
-                <div className="space-y-1">
-                  {STYLE_OPTIONS.map((o) => (
-                    <label key={o.value} className="flex items-center gap-2 cursor-pointer">
-                      <input type="radio" name="boardStyle" checked={boardStyle === o.value} onChange={() => setBoardStyle(o.value)} className="h-4 w-4" />
-                      <span className="text-gray-900">{o.label}</span>
-                      <span className="text-gray-700">— {o.hint}</span>
-                    </label>
-                  ))}
+              {/* The style: the club's saved one, or changed here for this print only */}
+              <div className="text-sm space-y-2">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="text-gray-900">
+                    Style: {sameStyle(style, savedStyle) ? 'the club style (saved)' : 'changed for this print — not saved'}
+                  </span>
+                  {/* Only offered once something has changed */}
+                  {!sameStyle(style, savedStyle) && (
+                    <button onClick={() => setStyle(savedStyle)} className="text-blue-600 hover:text-blue-800">Back to saved</button>
+                  )}
                 </div>
-              </fieldset>
+                <details className="rounded-md border border-gray-200 p-3">
+                  <summary className="cursor-pointer text-blue-600 hover:text-blue-800">Change the style for this print</summary>
+                  <div className="mt-3">
+                    <HonoursBoardStyleEditor value={style} onChange={setStyle} />
+                    <p className="text-xs text-gray-700 mt-3">
+                      To keep a style for every print, save it in{' '}
+                      <a href="/admin/config?tab=honours" className="text-blue-600 hover:text-blue-800">Config &gt; Honours Boards</a> (Admin).
+                    </p>
+                  </div>
+                </details>
+              </div>
 
               {actionError && <div className={getAlertClasses('danger')}>{actionError}</div>}
 
@@ -420,9 +469,12 @@ export default function PrintHonoursBoardsPage() {
 
               {geometry && (
                 <p className="text-xs text-gray-700">
-                  Print at 100% / actual size on {geometry.paper}, {geometry.orientation}. The white margin means no bleed or
-                  trimming is needed. Headings and names use the fonts embedded in the PDF, so the print shop sees exactly
-                  what&apos;s previewed here.
+                  Print at 100% / actual size on {geometry.paper}, {geometry.orientation}.{' '}
+                  {/* Bleed makes the PDF bigger than the paper, so the print shop needs telling */}
+                  {style.bleed
+                    ? 'The PDF is 3mm bigger all round: ask the print shop to trim the bleed off.'
+                    : 'The margin means no bleed or trimming is needed.'}{' '}
+                  Every font is embedded in the PDF, so the print shop sees exactly what&apos;s previewed here.
                 </p>
               )}
             </div>
