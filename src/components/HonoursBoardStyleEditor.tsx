@@ -1,10 +1,11 @@
 'use client';
 
 // src/components/HonoursBoardStyleEditor.tsx
-// Edits how the printed honours boards look: ready-made schemes, background (with bleed),
-// stripes, lines, text and heading colours, and the fonts for titles, years and names.
-// Used by Config > Honours Boards (the club's saved style) and the print page (changes
-// for a preview or one-off print). Any colour can be typed as a hex code; a code that
+// Edits how the printed honours boards look, grouped by what they change: ready-made schemes,
+// the sheet (colour, bleed), the title, the headings and years, the names (with their
+// stripes and lines), and the crest beside the title.
+// Used on the Print Honours Boards page, for a preview or one-off print (an Admin can save
+// it as the club style). Any colour can be typed as a hex code; a code that
 // matches a named colour shows as that name.
 
 import { useEffect, useState } from 'react';
@@ -51,9 +52,9 @@ export function HonoursBoardStyleEditor({ value, onChange }: { value: BoardStyle
         <p className="text-xs text-gray-700 mt-1">Each sets all the colours below; you can then change any of them.</p>
       </div>
 
-      {/* 1. Background */}
+      {/* The sheet */}
       <fieldset className="space-y-2">
-        <legend className="font-medium text-gray-900">Background</legend>
+        <legend className="font-medium text-gray-900">Sheet</legend>
         <ColourField
           label="Sheet colour"
           value={value.background}
@@ -72,27 +73,46 @@ export function HonoursBoardStyleEditor({ value, onChange }: { value: BoardStyle
         </label>
       </fieldset>
 
-      {/* 2. Stripes */}
+      {/* The title: club name, board name and the "(continued)" line */}
       <fieldset className="space-y-2">
-        <legend className="font-medium text-gray-900">Stripes</legend>
-        <ColourField label="Alternate years" value={value.stripes} presets={STRIPE_PRESETS} allowNone onChange={(hex) => set({ stripes: hex })} />
-      </fieldset>
-
-      {/* 3. Lines */}
-      <fieldset className="space-y-2">
-        <legend className="font-medium text-gray-900">Lines</legend>
-        <ColourField label="Fine line between years" value={value.yearLines} presets={LINE_PRESETS} allowNone onChange={(hex) => set({ yearLines: hex })} />
-        <ColourField label="Line above each decade" value={value.decadeLines} presets={LINE_PRESETS} allowNone onChange={(hex) => set({ decadeLines: hex })} />
-      </fieldset>
-
-      {/* Text and headings */}
-      <fieldset className="space-y-2">
-        <legend className="font-medium text-gray-900">Text and headings</legend>
-        <ColourField label="Names and years" value={value.text} presets={TEXT_PRESETS} onChange={(hex) => hex && set({ text: hex })} />
-        <ColourField label="Title" value={value.title} presets={TEXT_PRESETS} onChange={(hex) => hex && set({ title: hex })} />
+        <legend className="font-medium text-gray-900">Title</legend>
+        <ColourField label="Font colour" value={value.title} presets={TEXT_PRESETS} onChange={(hex) => hex && set({ title: hex })} />
+        <FontRow slot="titles" value={value} setFont={setFont} />
         <ColourField label="Line under the title" value={value.underline} presets={LINE_PRESETS} allowNone onChange={(hex) => set({ underline: hex })} />
-        <ColourField label="Heading band" value={value.headingBand} presets={BAND_PRESETS} onChange={(hex) => hex && set({ headingBand: hex })} />
-        <ColourField label="Heading text" value={value.headingText} presets={TEXT_PRESETS} onChange={(hex) => hex && set({ headingText: hex })} />
+      </fieldset>
+
+      {/* Column headings (on the band) and the years (on the sheet) share a font */}
+      <fieldset className="space-y-2">
+        <legend className="font-medium text-gray-900">Headings and years</legend>
+        <ColourField label="Band colour" value={value.headingBand} presets={BAND_PRESETS} onChange={(hex) => hex && set({ headingBand: hex })} />
+        <ColourField label="Heading font colour" value={value.headingText} presets={TEXT_PRESETS} onChange={(hex) => hex && set({ headingText: hex })} />
+        <ColourField label="Year font colour" value={value.years} presets={TEXT_PRESETS} onChange={(hex) => hex && set({ years: hex })} />
+        <FontRow slot="headings" value={value} setFont={setFont} />
+        <p className="text-xs text-gray-700">The headings sit on the band and the years on the sheet, so each has its own colour.</p>
+      </fieldset>
+
+      {/* The names, and the stripes and lines that separate their rows */}
+      <fieldset className="space-y-2">
+        <legend className="font-medium text-gray-900">Names</legend>
+        <ColourField label="Font colour" value={value.text} presets={TEXT_PRESETS} onChange={(hex) => hex && set({ text: hex })} />
+        <FontRow slot="names" value={value} setFont={setFont} />
+        <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
+          <span className="sm:col-span-4 text-gray-900">In their column</span>
+          <div className="sm:col-span-8 flex flex-wrap gap-4">
+            {NAME_ALIGNS.map((a) => (
+              <label key={a.value} className="flex items-center gap-2 cursor-pointer">
+                <input type="radio" name="honoursNameAlign" checked={value.nameAlign === a.value} onChange={() => set({ nameAlign: a.value })} className="h-4 w-4" />
+                <span className="text-gray-900">{a.label}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+        <ColourField label="Alternate years colour" value={value.stripes} presets={STRIPE_PRESETS} allowNone onChange={(hex) => set({ stripes: hex })} />
+        <ColourField label="Fine line between years" value={value.yearLines} presets={LINE_PRESETS} allowNone onChange={(hex) => set({ yearLines: hex })} />
+        <ColourField label="Line between decades" value={value.decadeLines} presets={LINE_PRESETS} allowNone onChange={(hex) => set({ decadeLines: hex })} />
+        <p className="text-xs text-gray-700">
+          Custom fonts take any font from fonts.google.com by name; they&apos;re fetched when printing and embedded in the PDF.
+        </p>
       </fieldset>
 
       {/* Club crest (and centenary pin) beside the title */}
@@ -119,30 +139,16 @@ export function HonoursBoardStyleEditor({ value, onChange }: { value: BoardStyle
         <p className="text-xs text-gray-700">On the first sheet of each board only, in the space beside the title.</p>
       </fieldset>
 
-      {/* Names left, centred or right in their columns */}
+      {/* Test prints: a note of how each sheet was printed, so prints can be compared */}
       <fieldset className="space-y-2">
-        <legend className="font-medium text-gray-900">Names in their column</legend>
-        <div className="flex flex-wrap gap-4">
-          {NAME_ALIGNS.map((a) => (
-            <label key={a.value} className="flex items-center gap-2 cursor-pointer">
-              <input type="radio" name="honoursNameAlign" checked={value.nameAlign === a.value} onChange={() => set({ nameAlign: a.value })} className="h-4 w-4" />
-              <span className="text-gray-900">{a.label}</span>
-            </label>
-          ))}
-        </div>
-        <p className="text-xs text-gray-700">The years and the column headings stay centred.</p>
-      </fieldset>
-
-      {/* Fonts */}
-      <fieldset className="space-y-3">
-        <legend className="font-medium text-gray-900">Fonts</legend>
-        {FONT_SLOTS.map(({ slot, label, hint, sample }) => (
-          <FontField key={slot} label={label} hint={hint} sample={sample} value={value.fonts[slot]} onChange={(changes) => setFont(slot, changes)} />
-        ))}
-        <p className="text-xs text-gray-700">
-          The years default to Lora SemiBold — the serif used for the titles. Custom takes any font
-          from fonts.google.com by name; it&apos;s fetched when printing and embedded in the PDF.
-        </p>
+        <legend className="font-medium text-gray-900">Test prints</legend>
+        <label className="flex items-start gap-2 cursor-pointer">
+          <input type="checkbox" checked={value.printNote} onChange={(e) => set({ printNote: e.target.checked })} className="h-4 w-4 mt-0.5" />
+          <span>
+            <span className="text-gray-900">Print settings note</span>
+            <span className="text-gray-700"> — the fonts, row control, line spacing, name size and date, in small print at the bottom of every sheet. The last row of names (two if the rows are very small) is left off to make room. Not for the wall.</span>
+          </span>
+        </label>
       </fieldset>
 
       {warnings.length > 0 && (
@@ -160,8 +166,15 @@ export function HonoursBoardStyleEditor({ value, onChange }: { value: BoardStyle
   );
 }
 
-/** One colour: a named colour, none (where allowed) or any hex code. */
-function ColourField({ label, value, presets, allowNone = false, onChange }: {
+/** The font setting for one section (title, headings and years, or names). */
+function FontRow({ slot, value, setFont }: { slot: FontSlot; value: BoardStyleSettings; setFont: (slot: FontSlot, changes: Partial<FontChoice>) => void }) {
+  const info = FONT_SLOTS.find((f) => f.slot === slot);
+  if (!info) return null;
+  return <FontField label={info.label} hint={info.hint} sample={info.sample} value={value.fonts[slot]} onChange={(changes) => setFont(slot, changes)} />;
+}
+
+/** One colour: a named colour, none (where allowed) or any hex code. Also used by the photo plaque. */
+export function ColourField({ label, value, presets, allowNone = false, onChange }: {
   label: string;
   value: string | null;
   presets: ColourPreset[];

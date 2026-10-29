@@ -134,3 +134,26 @@ export async function createHonoursPhotoUploadSession(
 export async function deleteHonoursPhoto(fileId: string): Promise<void> {
   await deleteFileFromDrive(fileId);
 }
+
+export interface HonoursPhotoContent {
+  name: string;
+  mimeType: string;
+  data: ArrayBuffer;
+}
+
+/**
+ * One honours photo's bytes, for the photo plaque on the print page. Only an image that is
+ * really in that season's Honours folder is returned (null otherwise), so a file id can't be
+ * used to read anything else on the Drive.
+ */
+export async function getHonoursPhotoContent(year: number, fileId: string): Promise<HonoursPhotoContent | null> {
+  const folderId = await findYearFolder('Honours', year);
+  if (!folderId) return null;
+  const drive = getGoogleDriveClient();
+  const meta = await drive.files.get({ fileId, fields: 'name, mimeType, parents, trashed' });
+  const file = meta.data;
+  // Not an image, not in this year's folder, or in the bin: treat as not found
+  if (file.trashed || !file.mimeType?.startsWith('image/') || !file.parents?.includes(folderId)) return null;
+  const res = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'arraybuffer' });
+  return { name: file.name ?? 'photo.jpg', mimeType: file.mimeType, data: res.data as ArrayBuffer };
+}

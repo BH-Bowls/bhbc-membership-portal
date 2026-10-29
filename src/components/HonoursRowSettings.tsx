@@ -1,7 +1,7 @@
 // src/components/HonoursRowSettings.tsx
 // Row control and line spacing for the printed honours boards, side by side, with one hint
 // that works out what they give for a board's layout: row height, name size, the years on each
-// sheet and the spare years left. Used in Config > Honours Boards and on the print page.
+// sheet and the spare years left. Used on the Print Honours Boards page.
 
 'use client';
 
