@@ -1,7 +1,7 @@
 {
   "name": "bhbc-membership-portal",
   "version": "2.7.0",
-  "previewVersion": "35",
+  "previewVersion": "36",
   "private": true,
   "scripts": {
     "dev": "dotenv -e .env.dev.local -- next dev --port 3001 --webpack",
