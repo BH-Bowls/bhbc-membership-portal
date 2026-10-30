@@ -176,6 +176,8 @@ async function fetchRenewalsRows(): Promise<ReportRow[]> {
     sub_drawn_triples: str(r.sub_drawn_triples),
     club_200_entries: str(r.club_200_entries),
     club_200_preferred_numbers: str(r.club_200_preferred_numbers),
+    // Numbers picked on the renewal form (spec §9) — given out on Submit
+    club_200_picked_numbers: Array.isArray(r.club_200_picked_numbers) ? r.club_200_picked_numbers.join(', ') : '',
     cleaning_dates_to_avoid: str(r.cleaning_dates_to_avoid),
     tea_dates_to_avoid: str(r.tea_dates_to_avoid),
     outstanding: str(r.outstanding),
@@ -209,6 +211,7 @@ const RENEWALS_COLUMNS: SchemaColumn[] = [
   col('comp_handicap', "Handicap Comp"), col('comp_oldlands', "Oldlands"), col('comp_veterans', "Veterans"),
   col('sub_drawn_pairs', "Drawn Pairs Sub"), col('sub_australian_pairs', "Australian Pairs Sub"), col('sub_drawn_triples', "Drawn Triples Sub"),
   col('club_200_entries', '200 Club Entries'), col('club_200_preferred_numbers', '200 Club Preferred Numbers'),
+  col('club_200_picked_numbers', '200 Club Picked Numbers'),
   col('cleaning_dates_to_avoid', 'Cleaning Dates To Avoid'), col('tea_dates_to_avoid', 'Tea Dates To Avoid'),
   col('outstanding', 'Outstanding'), col('banking', 'Banking'), col('donations', 'Donations'), col('difference', 'Difference'),
   col('bank_transfer', 'Bank Transfer'), col('card_machine', 'Card Machine'), col('cheque', 'Cheque'), col('cash', 'Cash'),

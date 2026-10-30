@@ -10,7 +10,9 @@ interface Member { username: string; name: string; }
 const MAX_PRIZES = 10;
 const DEFAULT_NUMBERS = 200;
 interface Winner { season: string; date: string; position: number; number: string; member: string; amount: number; }
-interface Data { season: string; seasons: string[]; settings: Settings | null; entries: Entry[]; winners: Winner[]; members: Member[]; }
+// A submitted renewal asking for 200 Club entries (GMC/Admin only)
+interface RenewalRequest { userName: string; fullName: string; entries: number; }
+interface Data { season: string; seasons: string[]; settings: Settings | null; entries: Entry[]; winners: Winner[]; members: Member[]; renewalRequests: RenewalRequest[]; }
 
 const gbp = (n: number) => `£${Number(n || 0).toLocaleString('en-GB', { maximumFractionDigits: 2 })}`;
 const ordinal = (p: number) => (p === 1 ? '1st' : p === 2 ? '2nd' : p === 3 ? '3rd' : `${p}th`);
@@ -102,6 +104,31 @@ export default function TwoHundredClubPage() {
     return poolNumbers.filter(e => e.number.toLowerCase().includes(q) || e.member.toLowerCase().includes(q));
   }, [poolNumbers, search]);
 
+  // Renewals asking for more entries than the numbers the member holds — "Any number"
+  // entries (or picks lost while paying online) waiting to be given a number by hand.
+  // Worked out from the entries on screen, so it updates as numbers are assigned.
+  const stillToAllocate = useMemo(() => {
+    const heldByUser = new Map<string, string[]>();
+    for (const e of entries) {
+      if (!e.username) continue;
+      const key = e.username.toLowerCase();
+      const list = heldByUser.get(key) || [];
+      list.push(e.number);
+      heldByUser.set(key, list);
+    }
+    const list: { userName: string; fullName: string; entries: number; held: string[]; toAllocate: number }[] = [];
+    const requests = data ? data.renewalRequests || [] : [];
+    for (const r of requests) {
+      const held = heldByUser.get(r.userName.toLowerCase()) || [];
+      if (r.entries > held.length) {
+        const sortedHeld = held.slice();
+        sortedHeld.sort((a, b) => Number(a) - Number(b));
+        list.push({ userName: r.userName, fullName: r.fullName, entries: r.entries, held: sortedHeld, toAllocate: r.entries - held.length });
+      }
+    }
+    return list;
+  }, [entries, data]);
+
   // GMC/Admin: edit who holds a number.
   const [editingNumber, setEditingNumber] = useState<string | null>(null);
   const [assignSaving, setAssignSaving] = useState(false);
@@ -190,6 +217,38 @@ export default function TwoHundredClubPage() {
             )}
             {canManage && panel === 'draw' && (
               <DrawForm season={data.season} numPrizes={settings?.amounts.length ?? 3} entries={entries} onDone={() => { setPanel('none'); load(data.season); }} />
+            )}
+
+            {/* Still to allocate (renewals spec §9.2) */}
+            {canManage && stillToAllocate.length > 0 && (
+              <section className="mb-8">
+                <h2 className="mb-1 text-lg font-semibold text-gray-900">Still to allocate</h2>
+                <p className="mb-3 text-sm text-gray-700">
+                  These members asked for more entries on their renewal than the numbers they hold. Give them a number with Assign in the list below.
+                </p>
+                <div className="overflow-hidden rounded-xl border border-amber-200 bg-white shadow-sm">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-amber-100 bg-amber-50 text-left text-gray-700">
+                        <th className="px-4 py-2 font-medium">Member</th>
+                        <th className="px-4 py-2 font-medium">Entries</th>
+                        <th className="px-4 py-2 font-medium">Holds</th>
+                        <th className="px-4 py-2 font-medium text-right">To allocate</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stillToAllocate.map((r) => (
+                        <tr key={r.userName} className="border-b border-gray-50 last:border-0">
+                          <td className="px-4 py-2 text-gray-900">{r.fullName}</td>
+                          <td className="px-4 py-2 text-gray-700">{r.entries}</td>
+                          <td className="px-4 py-2 text-gray-700">{r.held.length > 0 ? r.held.join(', ') : 'none'}</td>
+                          <td className="px-4 py-2 text-right font-semibold text-amber-800">{r.toAllocate}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
             )}
 
             {/* Winners */}

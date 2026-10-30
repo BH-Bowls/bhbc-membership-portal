@@ -26,6 +26,7 @@ import {
 } from './renewals-supabase';
 import { getAppUrl } from './app-url';
 import { toUkDate } from './renewals-xero';
+import { claimPickedNumbers } from './renewals-200-club';
 
 // Stripe's minimum is 30 minutes; anything longer just holds a draft for longer
 const CHECKOUT_MINUTES = 30;
@@ -287,7 +288,33 @@ export async function handleCheckoutCompleted(session: Stripe.Checkout.Session):
   // The confirmation email that Submit would have sent, saying it's paid
   if (isSubmit) {
     const userName = items[0].username;
-    const renewal = await getRenewalByUsername(userName);
+    let renewal = await getRenewalByUsername(userName);
+
+    // Give out the 200 Club numbers they picked (§9). They've paid, so this can't fail the
+    // Submit: any number taken while they were on the payment page becomes an "Any number"
+    // entry for GMC to allocate, and the renewal's picks are trimmed to match.
+    const picks = renewal.club200PickedNumbers || [];
+    if (picks.length > 0) {
+      try {
+        const claim = await claimPickedNumbers(userName, picks, true);
+        if (claim.taken.length > 0) {
+          console.error(`200 Club numbers ${claim.taken.join(', ')} for ${userName} were taken while they paid — left for GMC to allocate`);
+          const kept: string[] = [];
+          for (const p of picks) {
+            if (claim.taken.indexOf(p) === -1) kept.push(p);
+          }
+          const { error: trimError } = await supabase.from('renewals')
+            .update({ club_200_picked_numbers: kept })
+            .eq('username', userName)
+            .eq('season_year', Number(metadata.season));
+          if (trimError) console.error(`Failed to update 200 Club picks for ${userName}:`, trimError.message);
+          renewal = await getRenewalByUsername(userName);
+        }
+      } catch (err) {
+        console.error(`Failed to give 200 Club numbers to ${userName} — GMC can allocate them by hand:`, err);
+      }
+    }
+
     const fees: FeeBreakdown = {
       membershipFee: renewal.playingFees + renewal.socialFees,
       compsFee: renewal.compsFee,

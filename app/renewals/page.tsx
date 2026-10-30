@@ -20,6 +20,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { SearchableSelect } from '@/components/SearchableSelect';
 import { formatOrdinalDate } from '@/lib/date-utils';
 import type { BankDetails } from '@/lib/bank-details';
+import Club200NumberPicker, { type Club200Info } from '@/components/Club200NumberPicker';
 
 interface UserProfile {
   userName: string;
@@ -38,6 +39,7 @@ interface Renewal {
   renewingMembership: boolean;
   number200ClubEntries: number;
   pref200Club?: string;
+  club200PickedNumbers?: string[]; // 200 Club numbers chosen (spec §9), given out on Submit
   cleaningDatesToAvoid?: string;
   teaDatesToAvoid?: string;
   drivingAwayMatches?: string;
@@ -126,6 +128,8 @@ export default function RenewalsPage() {
   const [successMessage, setSuccessMessage] = useState('');
   const [emailSent, setEmailSent] = useState(true); // Track if confirmation email was sent
   const [emailWarning, setEmailWarning] = useState(''); // Warning if email failed
+  // 200 Club (spec §9): this season's price and numbers, which are taken, and which this member holds
+  const [club200, setClub200] = useState<Club200Info | null>(null);
   const [eligibility, setEligibility] = useState<{
     canEnterCompetitions: boolean;
     friendliesRequired: number;
@@ -217,7 +221,7 @@ export default function RenewalsPage() {
         setFees(newFees);
       }
     }
-  }, [profile, renewal, editedRenewal, ageDemographic, editedAgeDemographic, memberType, editedMemberType, fullTimeEducation, isEditing]);
+  }, [profile, renewal, editedRenewal, ageDemographic, editedAgeDemographic, memberType, editedMemberType, fullTimeEducation, isEditing, club200]);
 
   // Scroll to top when error is displayed
   useEffect(() => {
@@ -261,6 +265,7 @@ export default function RenewalsPage() {
       setRenewal(loadedRenewal);
       setFees(data.fees);
       setEligibility(data.eligibility);
+      setClub200(data.club200 || null);
       setBankDetails(data.bankDetails);
       setPaymentReference(data.paymentReference || '');
       setStripeEnabled(data.stripeEnabled === true);
@@ -353,6 +358,14 @@ export default function RenewalsPage() {
     setEditedRenewal({ ...editedRenewal, [field]: value });
   };
 
+  // Fewer entries than picks — drop the highest picks so there's never more picks than entries
+  const handle200ClubEntriesChange = (entries: number) => {
+    if (!editedRenewal) return;
+    const picks = editedRenewal.club200PickedNumbers || [];
+    const kept = picks.slice(0, Math.max(0, entries));
+    setEditedRenewal({ ...editedRenewal, number200ClubEntries: entries, club200PickedNumbers: kept });
+  };
+
   const handleSave = async (action: SaveAction) => {
     if (!editedRenewal) return;
 
@@ -391,6 +404,11 @@ export default function RenewalsPage() {
 
       if (!response.ok) {
         const data = await response.json();
+        // A picked 200 Club number has gone since the form loaded — show it crossed out
+        // so the member can choose another. Nothing was submitted.
+        if (Array.isArray(data.club200Taken) && data.club200) {
+          setClub200(data.club200);
+        }
         if (response.status === 409) {
           // Submitted elsewhere (another tab, or a buddy) — show the locked renewal.
           if (draftOwner) {
@@ -416,6 +434,7 @@ export default function RenewalsPage() {
       }
 
       setFees(data.fees);
+      if (data.club200) setClub200(data.club200);
 
       // Track email status
       setEmailSent(data.emailSent !== false); // Default to true if not specified
@@ -668,6 +687,10 @@ export default function RenewalsPage() {
     }
   };
 
+  // The season's 200 Club price per entry (£6 until the settings have loaded)
+  let club200Price = 6;
+  if (club200 && club200.open) club200Price = club200.price;
+
   // Client-side fee calculation (mirrors backend logic)
   const calculateFeesClient = (
     profile: UserProfile,
@@ -709,8 +732,8 @@ export default function RenewalsPage() {
       membershipFee = 25;
     }
 
-    // Calculate 200 Club fees
-    const club200Fee = renewal.number200ClubEntries * 6;
+    // Calculate 200 Club fees — the season's price from the 200 Club settings (spec §9.3)
+    const club200Fee = renewal.number200ClubEntries * club200Price;
 
     // Calculate competition fees
     const competitions = [
@@ -888,6 +911,16 @@ export default function RenewalsPage() {
                     <span className="text-gray-600">200 Club:</span>
                     <span className="font-medium">{formatCurrency(fees.club200Fee)}</span>
                   </div>
+                  {club200 && renewal.number200ClubEntries > 0 && (
+                    <Club200NumberPicker
+                      info={club200}
+                      entries={renewal.number200ClubEntries}
+                      picks={renewal.club200PickedNumbers || []}
+                      disabled={true}
+                      submitted={true}
+                      onChange={() => {}}
+                    />
+                  )}
                   <div className="flex justify-between">
                     <span className="text-gray-600">Competitions:</span>
                     <span className="font-medium">{formatCurrency(fees.compsFee)}</span>
@@ -1272,38 +1305,40 @@ export default function RenewalsPage() {
                 {/* 200 Club Section */}
                 <div className="mb-8 pb-8 border-b">
                   <h3 className="text-lg font-medium text-gray-900 mb-2">200 Club</h3>
-                  <p className="text-sm text-gray-600 mb-4">
-                    A 200 club entry costs £6 per year for a monthly draw for cash prizes throughout the playing season. Please enter the total number of 200 club entries required.
+                  <p className="text-sm text-gray-700 mb-4">
+                    A 200 club entry costs {formatCurrency(club200Price)} per year for a monthly draw for cash prizes throughout the playing season. Please enter the total number of 200 club entries required.
                   </p>
+                  {/* Entries need the season's 200 Club settings (spec §9.3) — an existing
+                      count is still shown so it can be set back to 0 */}
+                  {club200 && !club200.open && (
+                    <p className="mb-4 text-sm font-medium text-amber-800">
+                      200 Club entries for {club200.season} are not open yet.
+                    </p>
+                  )}
                   <div className="space-y-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Number of entries (£6 per entry)
+                        Number of entries ({formatCurrency(club200Price)} per entry)
                       </label>
                       <input
                         type="number"
                         min="0"
                         max="10"
                         value={currentRenewal?.number200ClubEntries}
-                        onChange={(e) => handleChange('number200ClubEntries', parseInt(e.target.value) || 0)}
-                        disabled={isFormDisabled}
+                        onChange={(e) => handle200ClubEntriesChange(parseInt(e.target.value) || 0)}
+                        disabled={isFormDisabled || (club200 !== null && !club200.open && !(currentRenewal?.number200ClubEntries > 0))}
                         className="block w-32 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                       />
                     </div>
-                    {currentRenewal?.number200ClubEntries > 0 && (
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Preferred numbers (optional)
-                        </label>
-                        <input
-                          type="text"
-                          value={currentRenewal?.pref200Club || ''}
-                          onChange={(e) => handleChange('pref200Club', e.target.value)}
-                          placeholder="e.g., 7, 23, 45"
-                          disabled={isFormDisabled}
-                          className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
-                        />
-                      </div>
+                    {club200 && club200.open && currentRenewal?.number200ClubEntries > 0 && (
+                      <Club200NumberPicker
+                        info={club200}
+                        entries={currentRenewal.number200ClubEntries}
+                        picks={currentRenewal.club200PickedNumbers || []}
+                        disabled={isFormDisabled}
+                        submitted={isLocked}
+                        onChange={(picks) => handleChange('club200PickedNumbers', picks)}
+                      />
                     )}
                     <div className="flex justify-between items-center pt-2">
                       <span className="text-sm font-medium text-gray-700">200 Club Fee:</span>
