@@ -75,14 +75,23 @@ export default function Club200NumberPicker({ info, entries, picks, disabled, su
       onChange(next);
       return;
     }
-    if (picks.length >= entries) return;
-    const next = picks.slice();
+    // A pick someone else has since taken doesn't hold a slot — the new number replaces it
+    const next: string[] = [];
+    let replaced = false;
+    for (const p of picks) {
+      if (!replaced && picks.length >= entries && takenPicks.indexOf(p) !== -1) {
+        replaced = true;
+        continue;
+      }
+      next.push(p);
+    }
+    if (next.length >= entries) return;
     next.push(n);
     next.sort((a, b) => Number(a) - Number(b));
     onChange(next);
   }
 
-  const full = picks.length >= entries;
+  const full = picks.length - takenPicks.length >= entries;
   const numbers: string[] = [];
   for (let i = 1; i <= info.poolSize; i++) numbers.push(String(i));
 
@@ -103,7 +112,7 @@ export default function Club200NumberPicker({ info, entries, picks, disabled, su
       </div>
       {takenPicks.length > 0 && (
         <p className="mb-2 text-sm font-medium text-red-700">
-          {takenPicks.length === 1 ? `Number ${takenPicks[0]} has` : `Numbers ${listNumbers(takenPicks)} have`} been taken — tap to remove, then choose another.
+          {takenPicks.length === 1 ? `Number ${takenPicks[0]} has` : `Numbers ${listNumbers(takenPicks)} have`} been taken — tap a free number to replace {takenPicks.length === 1 ? 'it' : 'them'}.
         </p>
       )}
       <div className="grid grid-cols-8 sm:grid-cols-10 gap-1 max-h-72 overflow-y-auto rounded-md border border-gray-200 p-2 bg-white">

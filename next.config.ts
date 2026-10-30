@@ -1,5 +1,7 @@
 import type { NextConfig } from "next";
 import withPWAInit from "@ducanh2912/next-pwa";
+import { readFileSync } from "fs";
+import path from "path";
 
 const withPWA = withPWAInit({
   dest: "public",
@@ -30,7 +32,18 @@ const withPWA = withPWAInit({
   },
 });
 
+// Vercel preview builds (the staging branch) show their package.json previewVersion
+// beside the version number, so it's clear which preview is on screen. Blank elsewhere.
+const packageJson = JSON.parse(readFileSync(path.join(process.cwd(), "package.json"), "utf8"));
+const previewVersion = process.env.VERCEL_ENV === "preview" && packageJson.previewVersion
+  ? String(packageJson.previewVersion)
+  : "";
+
 const nextConfig: NextConfig = {
+  env: {
+    NEXT_PUBLIC_PREVIEW_VERSION: previewVersion,
+  },
+
   // handlebars registers require.extensions internally (used for email templating,
   // server-only) — webpack doesn't support that pattern and warns on every recompile.
   // Excluding it from bundling avoids the warning entirely: Node resolves it directly
