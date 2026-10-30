@@ -1,19 +1,16 @@
 'use client';
 
 // src/components/HonoursBoardsPanel.tsx
-// Admin > Config > Honours Boards: the printed honours boards for the clubhouse wall —
-// the years shared by every board, each board's layout and columns (add / edit / delete),
-// and the club's print style. See supabase/migrations/0078 to 0082 and 0088.
+// Setup on the Print Honours Boards page (Admin only): the start year shared by every board,
+// what each layout gives with the saved row settings, and each board's layout and columns
+// (add / edit / delete). The row control, line spacing and print style are saved from the
+// preview panels on the same page. See supabase/migrations/0078 to 0082, 0088 and 0089.
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { getButtonClasses, getInputClasses } from '@/config/theme-helpers';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
-import { HonoursBoardStyleEditor } from '@/components/HonoursBoardStyleEditor';
-import { STYLE_KEY, parseBoardStyle, sameStyle } from '@/types/honours-board-style';
-import { HonoursRowSettings } from '@/components/HonoursRowSettings';
-import type { BoardStyleSettings } from '@/types/honours-board-style';
 import {
-  BOARD_LAYOUTS, HONOURS_BOARD_FIELDS, LINE_SPACING_KEY, START_YEAR_KEY, YEARS_PER_SET_KEY, parseLineSpacing,
+  BOARD_LAYOUTS, HONOURS_BOARD_FIELDS, LINE_SPACINGS, START_YEAR_KEY,
   fieldLabel, layoutLabel, sheetForYear, sheetGeometry, sheetLabel, sheetsUpTo, validateBoard, validateSheetSettings,
 } from '@/types/honours-boards';
 import type { BoardLayout, HonoursBoard, HonoursBoardInput, LineSpacing } from '@/types/honours-boards';
@@ -54,18 +51,19 @@ function fromForm(form: BoardForm): HonoursBoardInput {
   };
 }
 
-export function HonoursBoardsPanel() {
-  const [boards, setBoards] = useState<HonoursBoard[]>([]);
-  const [loading, setLoading] = useState(true);
+interface Props {
+  boards: HonoursBoard[];
+  startYear: number;
+  yearsPerSet: number;       // saved row control
+  lineSpacing: LineSpacing;  // saved line spacing
+  onChanged: () => Promise<void>; // reloads the page's boards and settings after a save
+}
+
+export function HonoursBoardsPanel({ boards, startYear, yearsPerSet, lineSpacing, onChanged }: Props) {
   const [error, setError] = useState('');
 
-  // Shared year settings, as saved and as being edited
-  const [startYear, setStartYear] = useState('');
-  const [yearsPerSet, setYearsPerSet] = useState('');
+  // The start year, as being edited
   const [editStartYear, setEditStartYear] = useState('');
-  const [editYearsPerSet, setEditYearsPerSet] = useState('');
-  const [lineSpacing, setLineSpacing] = useState<LineSpacing>('snug');
-  const [editLineSpacing, setEditLineSpacing] = useState<LineSpacing>('snug');
   const [isEditingSheets, setIsEditingSheets] = useState(false);
   const [savingSheets, setSavingSheets] = useState(false);
   const [sheetsError, setSheetsError] = useState('');
@@ -77,49 +75,9 @@ export function HonoursBoardsPanel() {
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<HonoursBoard | null>(null);
 
-  // The club's print style, as saved and as being edited
-  const [savedStyle, setSavedStyle] = useState<BoardStyleSettings>(parseBoardStyle(''));
-  const [editStyle, setEditStyle] = useState<BoardStyleSettings>(parseBoardStyle(''));
-  const [savingStyle, setSavingStyle] = useState(false);
-  const [styleMessage, setStyleMessage] = useState('');
-
-  async function load() {
-    try {
-      const [boardsRes, configRes] = await Promise.all([fetch('/api/admin/honours-boards'), fetch('/api/admin/config')]);
-      const boardsData = await boardsRes.json();
-      const configData = await configRes.json();
-      if (!boardsRes.ok) {
-        setError(boardsData.error || 'Failed to load honours boards');
-        return;
-      }
-      if (!configRes.ok) {
-        setError(configData.error || 'Failed to load honours board settings');
-        return;
-      }
-      setBoards(boardsData.boards);
-      setStartYear(configData.config[START_YEAR_KEY] || '');
-      setYearsPerSet(configData.config[YEARS_PER_SET_KEY] || '');
-      setLineSpacing(parseLineSpacing(configData.config[LINE_SPACING_KEY]));
-      const style = parseBoardStyle(configData.config[STYLE_KEY]);
-      setSavedStyle(style);
-      setEditStyle(style);
-      setError('');
-    } catch {
-      setError('Failed to load honours boards');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  // Runs once on mount: load the boards and year settings
-  useEffect(() => {
-    load();
-  }, []);
-
   async function saveSheets() {
     const start = Number(editStartYear);
-    const perSet = Number(editYearsPerSet);
-    const invalid = validateSheetSettings(start, perSet);
+    const invalid = validateSheetSettings(start, yearsPerSet);
     if (invalid) {
       setSheetsError(invalid);
       return;
@@ -130,36 +88,15 @@ export function HonoursBoardsPanel() {
       const res = await fetch('/api/admin/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [START_YEAR_KEY]: String(start), [YEARS_PER_SET_KEY]: String(perSet), [LINE_SPACING_KEY]: editLineSpacing }),
+        body: JSON.stringify({ [START_YEAR_KEY]: String(start) }),
       });
       if (!res.ok) throw new Error();
-      setStartYear(String(start));
-      setYearsPerSet(String(perSet));
-      setLineSpacing(editLineSpacing);
       setIsEditingSheets(false);
+      await onChanged();
     } catch {
-      setSheetsError('Failed to save sheet settings');
+      setSheetsError('Failed to save the start year');
     } finally {
       setSavingSheets(false);
-    }
-  }
-
-  async function saveStyle() {
-    setSavingStyle(true);
-    setStyleMessage('');
-    try {
-      const res = await fetch('/api/admin/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [STYLE_KEY]: JSON.stringify(editStyle) }),
-      });
-      if (!res.ok) throw new Error();
-      setSavedStyle(editStyle);
-      setStyleMessage('Saved — the print page now starts from this style.');
-    } catch {
-      setStyleMessage('Failed to save the print style');
-    } finally {
-      setSavingStyle(false);
     }
   }
 
@@ -207,7 +144,7 @@ export function HonoursBoardsPanel() {
         return;
       }
       setEditingId(null);
-      await load();
+      await onChanged();
     } catch {
       setFormError('Failed to save board');
     } finally {
@@ -227,17 +164,15 @@ export function HonoursBoardsPanel() {
         return;
       }
       if (editingId === board.id) setEditingId(null);
-      await load();
+      await onChanged();
     } catch {
       setError('Failed to delete board');
     }
   }
 
-  if (loading) return <p className="text-sm text-gray-700">Loading honours boards…</p>;
-
   const thisYear = new Date().getFullYear();
-  const start = Number(startYear);
-  const perSet = Number(yearsPerSet);
+  const start = startYear;
+  const perSet = yearsPerSet;
   const settingsValid = validateSheetSettings(start, perSet) === null;
 
   /** One line per sheet of a layout, up to the one holding this year — only that last one still changes. */
@@ -268,7 +203,7 @@ export function HonoursBoardsPanel() {
           <h3 className="text-sm font-medium text-gray-900">Sheets</h3>
           {!isEditingSheets ? (
             <button
-              onClick={() => { setEditStartYear(startYear); setEditYearsPerSet(yearsPerSet); setEditLineSpacing(lineSpacing); setSheetsError(''); setIsEditingSheets(true); }}
+              onClick={() => { setEditStartYear(String(startYear)); setSheetsError(''); setIsEditingSheets(true); }}
               className="text-sm text-blue-600 hover:text-blue-800"
             >
               Edit
@@ -304,19 +239,12 @@ export function HonoursBoardsPanel() {
             )}
             <p className="text-xs text-gray-700 mt-1">The first year on the wall. Raise it later to roll the oldest years off instead of adding a second set.</p>
           </div>
+          <div>
+            <span className="block text-gray-900 mb-1">Row control and line spacing</span>
+            <span className="text-gray-900">{perSet || '—'} · {LINE_SPACINGS.find((l) => l.value === lineSpacing)?.label}</span>
+            <p className="text-xs text-gray-700 mt-1">Set and saved under Rows in &quot;Preview or print one sheet&quot;, where you can see the result.</p>
+          </div>
         </div>
-
-        {/* Row control and line spacing go together: one hint says what they give */}
-        <HonoursRowSettings
-          rowControl={isEditingSheets ? editYearsPerSet : yearsPerSet}
-          onRowControl={setEditYearsPerSet}
-          lineSpacing={isEditingSheets ? editLineSpacing : lineSpacing}
-          onLineSpacing={setEditLineSpacing}
-          startYear={Number(isEditingSheets ? editStartYear : startYear)}
-          layout={boards.length > 0 ? boards[0].layout : 'a2_plus_a3'}
-          editable={isEditingSheets}
-          radioName="honoursConfigLineSpacing"
-        />
 
         {/* What each layout gives with these settings */}
         {settingsValid && (
@@ -393,31 +321,6 @@ export function HonoursBoardsPanel() {
           Column widths are relative: 1 suits a single name, about 1.5 a pair, about 2 a triple.
           Headings are what&apos;s printed, so they can differ from the names used on the website.
         </p>
-        <p className="text-sm">
-          <a href="/admin/website/honours-boards" className="text-blue-600 hover:text-blue-800">Print the boards →</a>
-        </p>
-      </div>
-
-      {/* The club's print style — the print page starts from it, and can change it for one print */}
-      <div className="space-y-3">
-        <h3 className="text-sm font-medium text-gray-900">Print style</h3>
-        <p className="text-xs text-gray-700">
-          How every board looks when printed. The print page starts from this; changes made there
-          are for that preview or print only.
-        </p>
-        <HonoursBoardStyleEditor value={editStyle} onChange={(s) => { setEditStyle(s); setStyleMessage(''); }} />
-        {styleMessage && <p className="text-sm text-gray-900">{styleMessage}</p>}
-        <div className="flex gap-2">
-          <button onClick={saveStyle} disabled={savingStyle || sameStyle(editStyle, savedStyle)} className={getButtonClasses('primary', 'sm')}>
-            {savingStyle ? 'Saving…' : 'Save print style'}
-          </button>
-          {/* Only offered once something has changed */}
-          {!sameStyle(editStyle, savedStyle) && (
-            <button onClick={() => setEditStyle(savedStyle)} disabled={savingStyle} className={getButtonClasses('secondary', 'sm')}>
-              Undo changes
-            </button>
-          )}
-        </div>
       </div>
 
       <ConfirmDialog

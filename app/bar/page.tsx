@@ -13,9 +13,13 @@
 //     an empty wallet. Their transaction history lives on My Account
 //     (app/account/page.tsx), not here.
 //   - Cash/Card (non-member): Pay by Cash / Pay by Card, priced at basePricePence.
-// "Who's serving" is no longer a blocking gate — it's only asked for when opening a
-// Cash/Card tab or a Top Up (see openCashCardTab/openTopUp/pendingAction), since a
-// Cash/Card tab is held/resumed by staff name rather than by a member. A basket left
+// "Who's serving" is asked once, when the till is opened after a PIN login, and then
+// shown in the header ("Serving: Anne") for the rest of the session. Tapping it opens
+// ServerPicker: the names that have served this session, plus "+ Someone else" for the
+// rest of the bar people. Top Up, Cash/Card, Dayend, Cash Movement and Membership Fees
+// all use whoever's serving without asking again. The session list is cleared on the
+// next PIN login (the till's session ends after 4h idle / 24h — see src/lib/auth.ts).
+// A Cash/Card tab is held/resumed by staff name rather than by a member. A basket left
 // via "← Back" is parked in heldOrders and resumed if that same member/tab is reopened.
 
 'use client';
@@ -58,19 +62,16 @@ function categoryColorFor(categoryKey: string, categories: BarCategoryRow[]): st
   return categoryColorClasses(found.colorKey).tile;
 }
 
-// Rotating border colours for the volunteer picker — just visual variety, no meaning per colour.
-const ACCENT_BORDERS = [
-  'border-blue-300 hover:border-blue-500',
-  'border-emerald-300 hover:border-emerald-500',
-  'border-amber-300 hover:border-amber-500',
-  'border-pink-300 hover:border-pink-500',
-  'border-purple-300 hover:border-purple-500',
-  'border-cyan-300 hover:border-cyan-500',
-  'border-rose-300 hover:border-rose-500',
-  'border-lime-400 hover:border-lime-600',
-];
-
 const fmt = (pence: number) => `£${(pence / 100).toFixed(2)}`;
+
+// Kept on the iPad so a page reload doesn't ask again; cleared whenever the till is
+// signed out, so the next PIN login starts a fresh session.
+const SERVED_BY_KEY = 'bar_served_by';
+const SESSION_SERVERS_KEY = 'bar_session_servers';
+// Held orders (and the basket on screen) as { orderKey: [{ productId, qty }] }, so a
+// refresh mid-rush doesn't lose them. Short-term memory only — cleared on sign-out.
+const HELD_ORDERS_KEY = 'bar_held_orders';
+type ServerAction = 'cashcard' | 'topup' | 'endofday' | 'cashmovement' | 'membership';
 
 type View = 'volunteer' | 'person' | 'sale' | 'topup' | 'report' | 'sales' | 'products' | 'cashmovement' | 'membership';
 interface BasketLine { product: BarProduct; qty: number }
@@ -96,8 +97,8 @@ export default function BarTillPage() {
   // so it needs its own way to sign out — see the Logout button on the Home screen.
   const isBarTillLogin = role === 'Bar';
 
-  // Starts straight on the person picker — "who's serving" is no longer a
-  // mandatory front gate, only asked for contextually (see chooseVolunteer).
+  // Starts on the person picker; switches to Who's Serving once the bar people have
+  // loaded if no one is serving yet this session (see the effect below).
   const [view, setView] = useState<View>('person');
   const [products, setProducts] = useState<BarProduct[]>([]);
   const [categories, setCategories] = useState<BarCategoryRow[]>([]);
@@ -106,10 +107,14 @@ export default function BarTillPage() {
   const [allMembers, setAllMembers] = useState<MemberOption[]>([]);
   const [barPersons, setBarPersons] = useState<BarPerson[]>([]);
   const [volunteer, setVolunteer] = useState<string>('');   // username of the bar person serving
-  // What to do once a name is tapped on the volunteer picker — set when it's opened
-  // to identify a Cash/Card tab or to attribute a Top Up, rather than just to change
-  // who's marked as serving (the plain 'Change' link leaves this null).
-  const [pendingAction, setPendingAction] = useState<'cashcard' | 'topup' | 'endofday' | 'cashmovement' | 'membership' | null>(null);
+  // Everyone who's served since the PIN login, in the order they were picked —
+  // the quick choices on ServerPicker.
+  const [sessionServers, setSessionServers] = useState<string[]>([]);
+  const [showServerPicker, setShowServerPicker] = useState(false);
+  const [confirmLogout, setConfirmLogout] = useState(false);
+  // What to do once a name is tapped on the volunteer picker — only set if an action
+  // needs a server and no one is serving yet (see withServer).
+  const [pendingAction, setPendingAction] = useState<ServerAction | null>(null);
   const [personSearch, setPersonSearch] = useState('');
   const [showScanner, setShowScanner] = useState(false);
   const [error, setError] = useState('');
@@ -233,10 +238,70 @@ export default function BarTillPage() {
   useEffect(() => { if (allowed) load(); }, [allowed, load]);
   useEffect(() => { window.scrollTo(0, 0); }, [view]);
   useEffect(() => {
-    // Pre-fills who to highlight on the volunteer picker — doesn't skip the picker itself.
-    const s = localStorage.getItem('bar_served_by');
-    if (s) setVolunteer(s);
-  }, []);
+    // Signed out (Logout, or the session expired) — the next PIN login is a new session.
+    if (status === 'unauthenticated') {
+      try {
+        localStorage.removeItem(SERVED_BY_KEY); localStorage.removeItem(SESSION_SERVERS_KEY); localStorage.removeItem(HELD_ORDERS_KEY);
+      } catch { /* ignore */ }
+      setVolunteer(''); setSessionServers([]); setHeldOrders(new Map()); setBasket([]);
+      return;
+    }
+    if (status !== 'authenticated') return;
+    try {
+      const s = localStorage.getItem(SERVED_BY_KEY);
+      if (s) setVolunteer(s);
+      const list = localStorage.getItem(SESSION_SERVERS_KEY);
+      if (list) setSessionServers(JSON.parse(list));
+    } catch { /* ignore corrupt/missing data */ }
+  }, [status]);
+  // Held orders: restored once the product list has loaded (at today's prices, dropping
+  // anything since removed or made inactive), then saved on every change. The basket
+  // on screen is saved under its own key too, so after a refresh it's simply a held
+  // order to reopen. Nothing is saved until the restore has run, so an empty first
+  // render can't overwrite what's stored.
+  const heldRestored = useRef(false);
+  useEffect(() => {
+    if (status !== 'authenticated' || heldRestored.current || products.length === 0) return;
+    heldRestored.current = true;
+    try {
+      const raw = localStorage.getItem(HELD_ORDERS_KEY);
+      if (!raw) return;
+      const stored = JSON.parse(raw) as Record<string, { productId: string; qty: number }[]>;
+      const byId = new Map(products.map((p) => [p.id, p]));
+      const restored = new Map<string, BasketLine[]>();
+      for (const key of Object.keys(stored)) {
+        const lines: BasketLine[] = [];
+        for (const l of stored[key]) {
+          const product = byId.get(l.productId);
+          if (product && product.active && l.qty > 0) lines.push({ product, qty: l.qty });
+        }
+        if (lines.length > 0) restored.set(key, lines);
+      }
+      setHeldOrders(restored);
+    } catch { /* ignore corrupt data */ }
+  }, [status, products]);
+  useEffect(() => {
+    if (!heldRestored.current) return;
+    const toSave: Record<string, { productId: string; qty: number }[]> = {};
+    heldOrders.forEach((lines, key) => {
+      toSave[key] = lines.map((l) => ({ productId: l.product.id, qty: l.qty }));
+    });
+    const onScreenKey = view === 'sale' ? currentOrderKey() : null;
+    if (onScreenKey) {
+      if (basket.length > 0) toSave[onScreenKey] = basket.map((l) => ({ productId: l.product.id, qty: l.qty }));
+      else delete toSave[onScreenKey];
+    }
+    try {
+      if (Object.keys(toSave).length > 0) localStorage.setItem(HELD_ORDERS_KEY, JSON.stringify(toSave));
+      else localStorage.removeItem(HELD_ORDERS_KEY);
+    } catch { /* ignore */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [heldOrders, basket, view, member, volunteer]);
+
+  // Ask who's serving as soon as the till opens, if no one is yet this session.
+  useEffect(() => {
+    if (allowed && barPersons.length > 0 && !volunteer && view === 'person') setView('volunteer');
+  }, [allowed, barPersons, volunteer, view]);
   // Key for parking/resuming the basket currently on screen — null if there's
   // nothing to park it under (no member and no one marked as serving yet).
   function currentOrderKey(): string | null {
@@ -255,30 +320,63 @@ export default function BarTillPage() {
     setHeldOrders((prev) => { if (!prev.has(key)) return prev; const next = new Map(prev); next.delete(key); return next; });
   }
 
-  // Tapping a name always sets who's serving, then either resumes/starts whatever
-  // it was opened for (a Cash/Card tab or a Top Up) or, from the plain 'Change'
-  // link (no pendingAction), just returns to the till.
-  function chooseVolunteer(u: string) {
-    setVolunteer(u); localStorage.setItem('bar_served_by', u);
-    if (pendingAction === 'cashcard') {
-      setPendingAction(null);
-      setMember(null); setBasket(heldOrders.get(`staff:${u}`) ?? []); setActiveCat('beer'); setView('sale');
-    } else if (pendingAction === 'topup') {
-      setPendingAction(null);
+  // Marks who's serving and adds them to this session's list (ServerPicker's quick choices).
+  function setServer(u: string) {
+    setVolunteer(u);
+    try { localStorage.setItem(SERVED_BY_KEY, u); } catch { /* ignore */ }
+    setSessionServers((prev) => {
+      if (prev.includes(u)) return prev;
+      const next = [...prev, u];
+      try { localStorage.setItem(SESSION_SERVERS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  }
+
+  // Changing who's serving from the header chip. On a Cash/Card basket, that tab
+  // belongs to the old server — park it under them and bring up the new server's.
+  function switchServer(u: string) {
+    if (view === 'sale' && !member && volunteer && u !== volunteer) {
+      const oldKey = `staff:${volunteer}`;
+      setHeldOrders((prev) => {
+        const next = new Map(prev);
+        if (basket.length > 0) next.set(oldKey, basket); else next.delete(oldKey);
+        return next;
+      });
+      setBasket(heldOrders.get(`staff:${u}`) ?? []);
+    }
+    setServer(u);
+  }
+
+  function startAction(action: ServerAction, server: string) {
+    if (action === 'cashcard') {
+      setMember(null); setBasket(heldOrders.get(`staff:${server}`) ?? []); setActiveCat('beer'); setView('sale');
+    } else if (action === 'topup') {
       setView('topup');
-    } else if (pendingAction === 'endofday') {
-      setPendingAction(null);
+    } else if (action === 'endofday') {
       setDayEndSuccess(null);
       loadReport();
-    } else if (pendingAction === 'cashmovement') {
-      setPendingAction(null);
+    } else if (action === 'cashmovement') {
       setView('cashmovement');
-    } else if (pendingAction === 'membership') {
-      setPendingAction(null);
-      setView('membership');
     } else {
-      setView('person');
+      setView('membership');
     }
+  }
+
+  // Actions that are recorded against whoever's serving — straight in if someone is,
+  // otherwise via Who's Serving first.
+  function withServer(action: ServerAction) {
+    if (volunteer) { startAction(action, volunteer); return; }
+    setPendingAction(action);
+    setView('volunteer');
+  }
+
+  // A name tapped on the full-screen Who's Serving picker.
+  function chooseVolunteer(u: string) {
+    setServer(u);
+    const action = pendingAction;
+    setPendingAction(null);
+    if (action) startAction(action, u);
+    else setView('person');
   }
 
   // Returns to the till (person picker) for the next customer, parking whatever
@@ -331,11 +429,9 @@ export default function BarTillPage() {
     setMember(m); setBasket(heldOrders.get(`member:${m.userName}`) ?? []); setActiveCat('beer');
     setShowRefund(false); setView('sale');
   }
-  // Cash/Card always asks who's serving — that's also the key for which held tab
-  // to resume (see chooseVolunteer's 'cashcard' branch).
+  // Cash/Card resumes whoever's serving's held tab, if they have one (see startAction).
   function openCashCardTab() {
-    setPendingAction('cashcard');
-    setView('volunteer');
+    withServer('cashcard');
   }
 
   // The single "← Back" button's destination depends on how the current screen was
@@ -412,12 +508,10 @@ export default function BarTillPage() {
     } catch (err: any) { setError(err.message); } finally { setBusy(false); }
   }
 
-  // Always asks who's serving, every time — a top-up is stored against that staff
-  // id for audit (see doTopUp), so it's confirmed fresh rather than silently reused
-  // from an earlier selection.
+  // A top-up is stored against whoever's serving for audit (see doTopUp) — the name
+  // is in the header, so a wrong one is visible without asking every time.
   function openTopUp() {
-    setPendingAction('topup');
-    setView('volunteer');
+    withServer('topup');
   }
 
   async function doTopUp(amountPence: number, paymentMethod: 'cash' | 'card') {
@@ -448,11 +542,10 @@ export default function BarTillPage() {
     const data = await fetch('/api/bar/report').then((r) => r.json());
     setReport(data.report ?? null); setView('report');
   }
-  // End of Day always asks who's serving — the cash-up is done by, and stored
-  // against, that person (see bar_create_day_end() in 0063_bar_day_ends.sql).
+  // The cash-up is done by, and stored against, whoever's serving (see
+  // bar_create_day_end() in 0063_bar_day_ends.sql) — ReportView shows the name.
   function openEndOfDay() {
-    setPendingAction('endofday');
-    setView('volunteer');
+    withServer('endofday');
   }
   async function submitDayEnd(cashRemovedPence: number, carryForward: boolean, reason: string) {
     setDayEndSubmitting(true); setError('');
@@ -467,17 +560,15 @@ export default function BarTillPage() {
   }
 
   // Cash added to or removed from the till for a non-sale reason (float top-up,
-  // petty cash, etc.) -- discouraged but needed, so it still asks who's serving
+  // petty cash, etc.) -- discouraged but needed, stored against whoever's serving
   // for audit, same as a Top Up. See bar_cash_movement() in 0064_bar_cash_movements.sql.
-  // Membership fees (renewals spec §8) — asks who's serving, stored on the payment for audit
+  // Membership fees (renewals spec §8) — whoever's serving is stored on the payment for audit
   function openMembershipFees() {
-    setPendingAction('membership');
-    setView('volunteer');
+    withServer('membership');
   }
 
   function openCashMovement() {
-    setPendingAction('cashmovement');
-    setView('volunteer');
+    withServer('cashmovement');
   }
   async function doCashMovement(productId: string, amountPence: number, direction: 'in' | 'out', reason: string) {
     if (offline) { setError('Cash movements need a live connection.'); return; }
@@ -536,6 +627,11 @@ export default function BarTillPage() {
   // account otherwise), filtered by the search box, and sorted so existing
   // cash members (lowest balance first, then name — a top-up reminder) come
   // before the much larger block of members who've never opened one (A-Z).
+  function barPersonName(userName: string): string {
+    const found = barPersons.find((b) => b.userName === userName);
+    return found ? found.fullName : userName;
+  }
+
   const balanceByUser = new Map(accounts.map((a) => [a.userName.toLowerCase(), a.balancePence]));
   const q = personSearch.trim().toLowerCase();
   const sortedPeople = allMembers
@@ -600,7 +696,13 @@ export default function BarTillPage() {
         <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
           <h1 className="text-lg font-bold text-gray-900">{SCREEN_TITLES[view]}</h1>
           <div className="flex flex-wrap items-center gap-2">
-            {view !== 'person' && (
+            {view !== 'volunteer' && volunteer && (
+              <button onClick={() => setShowServerPicker(true)} title="Change who's serving"
+                className="px-3 py-2 text-sm rounded-full border border-blue-200 bg-blue-50 text-blue-900 hover:bg-blue-100">
+                Serving: <span className="font-semibold">{barPersonName(volunteer)}</span> <span className="text-blue-700 underline">Change</span>
+              </button>
+            )}
+            {view !== 'person' && !(view === 'volunteer' && !volunteer && barPersons.length > 0) && (
               <button onClick={handleBack}
                 className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">← Back</button>
             )}
@@ -612,7 +714,9 @@ export default function BarTillPage() {
                 <button onClick={openCashMovement} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50">Cash Movement</button>
                 <button onClick={openMembershipFees} disabled={offline} className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 disabled:opacity-50">Membership Fees</button>
                 {isBarTillLogin && (
-                  <button onClick={() => signOut({ callbackUrl: '/bar' })}
+                  // Sits where Back is on every other screen, so a double tap would sign the
+                  // till out — and that also clears who's serving for the session.
+                  <button onClick={() => setConfirmLogout(true)}
                     className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 text-red-600">Logout</button>
                 )}
               </>
@@ -622,17 +726,50 @@ export default function BarTillPage() {
 
         {error && <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded">{error}</div>}
 
+        {confirmLogout && (
+          <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setConfirmLogout(false)}>
+            <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+              <h2 className="text-lg font-bold text-gray-900 mb-2">Log out of the bar till?</h2>
+              <p className="text-sm text-gray-700 mb-5">
+                You&apos;ll need the PIN to get back in.
+                {heldOrders.size > 0 && (
+                  <span className="block mt-2 font-medium text-amber-800">
+                    {heldOrders.size === 1 ? '1 held order' : `${heldOrders.size} held orders`} will be cleared.
+                  </span>
+                )}
+              </p>
+              <div className="flex gap-3">
+                <button onClick={() => setConfirmLogout(false)}
+                  className="flex-1 py-3 rounded-lg border border-gray-300 bg-white font-medium text-gray-900 hover:bg-gray-50">Stay logged in</button>
+                <button onClick={() => signOut({ callbackUrl: '/bar' })}
+                  className="flex-1 py-3 rounded-lg bg-red-600 text-white font-semibold hover:bg-red-700">Log out</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showServerPicker && (
+          <ServerPicker
+            barPersons={barPersons}
+            sessionServers={sessionServers}
+            current={volunteer}
+            heldTabFor={(u) => heldOrders.has(`staff:${u}`)}
+            onChoose={(u) => { switchServer(u); setShowServerPicker(false); }}
+            onClose={() => setShowServerPicker(false)}
+          />
+        )}
+
         {/* ── VOLUNTEER: opened for a Cash/Card tab, or a Top Up ──────────────── */}
         {view === 'volunteer' && (
-          <div className="max-w-5xl mx-auto">
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-              {barPersons.map((b, i) => (
+          <div className="max-w-3xl mx-auto">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+              {barPersons.map((b) => (
                 <button key={b.userName} onClick={() => chooseVolunteer(b.userName)}
-                  className={`relative py-8 rounded-xl border-2 bg-white font-semibold text-lg text-gray-900 hover:shadow-md transition-colors ${
-                    b.userName === volunteer ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : ACCENT_BORDERS[i % ACCENT_BORDERS.length]
+                  className={`relative py-4 rounded-xl border-2 font-semibold text-gray-900 hover:shadow-md transition-colors ${
+                    b.userName === volunteer ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-300 bg-white hover:border-blue-400'
                   }`}>
                   {pendingAction === 'cashcard' && heldOrders.has(`staff:${b.userName}`) && (
-                    <span title="Tab waiting" className="absolute top-2 right-2 h-2.5 w-2.5 rounded-full bg-amber-400" />
+                    <span title="Order waiting" className="absolute top-2 right-2 h-2.5 w-2.5 rounded-full bg-amber-400" />
                   )}
                   {b.fullName}
                 </button>
@@ -660,7 +797,10 @@ export default function BarTillPage() {
             {showScanner && <QrScanModal onScan={handleScan} onClose={() => setShowScanner(false)} />}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
               <button onClick={openCashCardTab}
-                className="p-4 rounded-xl border-2 border-amber-300 bg-amber-50 text-left hover:border-amber-500 hover:shadow-md transition-colors">
+                className="relative p-4 rounded-xl border-2 border-amber-300 bg-amber-50 text-left hover:border-amber-500 hover:shadow-md transition-colors">
+                {volunteer && heldOrders.has(`staff:${volunteer}`) && (
+                  <span title="Order waiting" className="absolute top-2 right-2 h-2.5 w-2.5 rounded-full bg-amber-500" />
+                )}
                 <div className="font-semibold text-amber-900">Cash / Card</div>
                 <div className="text-sm text-amber-700">No member account</div>
               </button>
@@ -812,7 +952,8 @@ export default function BarTillPage() {
 
         {/* ── REPORT ───────────────────────────────────────────────────────── */}
         {view === 'report' && report && (
-          <ReportView report={report} submitting={dayEndSubmitting} success={dayEndSuccess} onSubmit={submitDayEnd} />
+          <ReportView report={report} submitting={dayEndSubmitting} success={dayEndSuccess} onSubmit={submitDayEnd}
+            serverName={barPersonName(volunteer)} onChangeServer={() => setShowServerPicker(true)} />
         )}
 
         {/* ── SALES (void) ─────────────────────────────────────────────────── */}
@@ -1054,6 +1195,62 @@ function QrScanModal({ onScan, onClose }: { onScan: (value: string) => void; onC
         </div>
         <canvas ref={canvasRef} className="hidden" />
         {scanError && <p className="text-sm text-red-600 mt-2">{scanError}</p>}
+      </div>
+    </div>
+  );
+}
+
+// Change who's serving: this session's servers as big one-tap buttons, and
+// "+ Someone else" expanding the same dialog to the rest of the bar people.
+function ServerPicker({ barPersons, sessionServers, current, heldTabFor, onChoose, onClose }: {
+  barPersons: BarPerson[];
+  sessionServers: string[];
+  current: string;
+  heldTabFor: (userName: string) => boolean;
+  onChoose: (userName: string) => void;
+  onClose: () => void;
+}) {
+  const [showAll, setShowAll] = useState(false);
+  const session: BarPerson[] = [];
+  for (const u of sessionServers) {
+    const found = barPersons.find((b) => b.userName === u);
+    if (found) session.push(found);
+  }
+  const others = barPersons.filter((b) => !sessionServers.includes(b.userName));
+
+  const nameButton = (b: BarPerson, big: boolean) => (
+    <button key={b.userName} onClick={() => onChoose(b.userName)}
+      className={`relative ${big ? 'py-6 text-lg' : 'py-4'} rounded-xl border-2 font-semibold text-gray-900 hover:shadow-md transition-colors ${
+        b.userName === current ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-300 bg-white hover:border-blue-400'
+      }`}>
+      {heldTabFor(b.userName) && (
+        <span title="Cash/Card order waiting" className="absolute top-2 right-2 h-2.5 w-2.5 rounded-full bg-amber-500" />
+      )}
+      {b.fullName}
+    </button>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-xl p-5 w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <h2 className="text-lg font-bold text-gray-900 mb-4">Who&apos;s serving?</h2>
+        <div className="grid grid-cols-2 gap-3">
+          {session.map((b) => nameButton(b, true))}
+        </div>
+        {!showAll && others.length > 0 && (
+          <button onClick={() => setShowAll(true)}
+            className="mt-3 w-full py-4 rounded-xl border-2 border-dashed border-gray-300 text-gray-700 font-medium hover:border-blue-400 hover:text-blue-800">
+            + Someone else
+          </button>
+        )}
+        {showAll && (
+          <div className="mt-4 pt-4 border-t">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {others.map((b) => nameButton(b, false))}
+            </div>
+          </div>
+        )}
+        <button onClick={onClose} className="mt-4 w-full py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
       </div>
     </div>
   );
@@ -1359,7 +1556,7 @@ function CashMovementView({ categories, products, busy, onConfirm }: {
 
 type DrillKind = 'wallet_sales' | 'card_sales' | 'cash_sales' | 'cash_movements' | 'cash_topups' | 'card_topups' | 'refunds' | 'renewal_cash' | 'renewal_card';
 
-function ReportView({ report, submitting, success, onSubmit }: { report: BarReport; submitting: boolean; success: BarDayEnd | null; onSubmit: (cashRemovedPence: number, carryForward: boolean, reason: string) => void }) {
+function ReportView({ report, submitting, success, onSubmit, serverName, onChangeServer }: { report: BarReport; submitting: boolean; success: BarDayEnd | null; onSubmit: (cashRemovedPence: number, carryForward: boolean, reason: string) => void; serverName: string; onChangeServer: () => void }) {
   // Default suggests removing everything expected, but never a negative amount —
   // you can't physically remove negative cash (see the -£5 expected example: the
   // suggestion there is £0, not "-£5.00").
@@ -1483,6 +1680,13 @@ function ReportView({ report, submitting, success, onSubmit }: { report: BarRepo
             />
           </div>
         )}
+        <div className="flex justify-between text-sm">
+          <span className="text-gray-700">Cashing up</span>
+          <span>
+            <span className="font-medium text-gray-900">{serverName}</span>{' '}
+            <button onClick={onChangeServer} className="text-blue-700 underline">Change</button>
+          </span>
+        </div>
         <button
           onClick={() => onSubmit(cashRemovedPence, carryForward, reason)}
           disabled={submitting || cashRemovedPence < 0 || (reasonRequired && reason.trim() === '')}

@@ -6,6 +6,10 @@
 // existed). Once a renewal is submitted, every further change is refused with 409 — for
 // every role, Admin included. The one exception is 'reopen' on a submitted
 // "not renewing" renewal (§3.7).
+//
+// 200 Club numbers (§9): the picks are saved with the draft and given out on Submit;
+// if one has gone since the form loaded, Submit is refused (400, club200Taken) and
+// nothing is submitted. The price per entry comes from the season's 200 Club settings.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
@@ -30,6 +34,14 @@ import { getBankDetails } from '@/lib/bank-details';
 import { getCompetitionEligibility } from '@/lib/competition-eligibility';
 import { isStripePaymentsEnabled } from '@/lib/stripe';
 import { createSubmitCheckout, isCheckoutHeld, reconcileCheckoutSession } from '@/lib/stripe-payments';
+import {
+  getRenewal200ClubInfo,
+  cleanPicks,
+  picksTaken,
+  takenMessage,
+  claimPickedNumbers,
+  releaseNumbers,
+} from '@/lib/renewals-200-club';
 
 // The competitions that carry an entry and need eligibility (subs are covered too).
 const COMPETITION_FIELDS = [
@@ -112,6 +124,8 @@ export async function GET(request: NextRequest) {
       otherSkills: profile.otherSkills,
     };
 
+    const club200 = await getRenewal200ClubInfo(targetUserName);
+
     // Calculate current fees
     const fees = calculateFees(
       {
@@ -120,7 +134,8 @@ export async function GET(request: NextRequest) {
         fullTimeEducation: false, // TODO: Add this field to profile if needed
         honorary: profile.honorary,
       },
-      renewal
+      renewal,
+      club200.price
     );
 
     // Club competitions: available for at least N friendlies last season (counted live
@@ -142,6 +157,7 @@ export async function GET(request: NextRequest) {
       renewal: renewalWithVolunteering,
       fees,
       eligibility,
+      club200,
       bankDetails: await getBankDetails(),
       paymentReference: getPaymentReference(profile.userName),
       stripeEnabled: await isStripePaymentsEnabled(),
@@ -167,6 +183,9 @@ export async function PUT(request: NextRequest) {
   let profileUpdated = false;
   let renewalUpdated = false;
   let emailSent = false;
+  // 200 Club numbers given out by this Submit — taken back if the Submit then fails
+  let claimedNumbers: string[] = [];
+  let claimedFor = '';
 
   try {
     const session = await getServerSession(authOptions);
@@ -307,6 +326,30 @@ export async function PUT(request: NextRequest) {
       }
     }
 
+    // 200 Club (§9): entries need the season's settings row; picks must be real, free numbers
+    const club200 = await getRenewal200ClubInfo(targetUserName);
+    let club200Picks: string[] = [];
+    if (data.renewingMembership === true) {
+      const entries = Number(data.number200ClubEntries) || 0;
+      if (entries > 0 && !club200.open) {
+        return NextResponse.json(
+          { error: `200 Club entries for ${club200.season} are not open yet. Please set the number of entries to 0.` },
+          { status: 400 }
+        );
+      }
+      const cleaned = cleanPicks(data.club200PickedNumbers, entries, club200);
+      if (cleaned.error) {
+        return NextResponse.json({ error: cleaned.error }, { status: 400 });
+      }
+      club200Picks = cleaned.picks;
+      if (isSubmit || isPay) {
+        const taken = picksTaken(club200Picks, club200);
+        if (taken.length > 0) {
+          return NextResponse.json({ error: takenMessage(taken), club200Taken: taken, club200 }, { status: 400 });
+        }
+      }
+    }
+
     // Who actually pressed Submit — the real Admin when impersonating, never the member.
     let submittedBy = session.user.userName;
     if (session.user.isImpersonating && session.user.originalAdmin && session.user.originalAdmin.userName) {
@@ -360,6 +403,9 @@ export async function PUT(request: NextRequest) {
     delete renewalData.paidAtSubmission;
     delete renewalData.pendingCheckoutSessionId;
     delete renewalData.pendingCheckoutExpiresAt;
+    // 200 Club: the cleaned picks are set below; the old free-text box isn't written any more
+    delete renewalData.club200PickedNumbers;
+    delete renewalData.pref200Club;
 
     // Filter payment fields (admin-only edit)
     if (!canEditPaymentFields(session.user.role)) {
@@ -375,7 +421,8 @@ export async function PUT(request: NextRequest) {
         fullTimeEducation: false, // TODO: Add this field to profile if needed
         honorary: profile.honorary,
       },
-      renewalData
+      renewalData,
+      club200.price
     );
 
     // Update volunteering preferences in Users sheet (profile)
@@ -415,7 +462,7 @@ export async function PUT(request: NextRequest) {
         banking: null,
         dateReceived: null,
         number200ClubEntries: 0,
-        pref200Club: null,
+        club200PickedNumbers: [],
         cleaningDatesToAvoid: null,
         teaDatesToAvoid: null,
         mensChampionship: false,
@@ -458,6 +505,7 @@ export async function PUT(request: NextRequest) {
         fee200Club: fees.club200Fee,
         totalPayment: fees.total,
         outstanding: validatedOutstanding,
+        club200PickedNumbers: club200Picks,
       };
     }
 
@@ -471,8 +519,25 @@ export async function PUT(request: NextRequest) {
       renewalUpdates.pendingCheckoutExpiresAt = null;
     }
 
+    // Give out the picked 200 Club numbers — all or none. Someone may have taken one
+    // since the check above; then nothing is submitted.
+    if (isSubmit && data.renewingMembership === true && club200Picks.length > 0) {
+      const claim = await claimPickedNumbers(targetUserName, club200Picks, false);
+      if (claim.taken.length > 0) {
+        const fresh = await getRenewal200ClubInfo(targetUserName);
+        return NextResponse.json({ error: takenMessage(claim.taken), club200Taken: claim.taken, club200: fresh }, { status: 400 });
+      }
+      claimedNumbers = claim.claimed;
+      claimedFor = targetUserName;
+    }
+
     // Update renewal data — only while it's still a draft (the lock, §3.4)
     const result = await updateRenewal(targetUserName, renewalUpdates, { onlyIfDraft: true });
+
+    if (result.locked || !result.success) {
+      await releaseNumbers(claimedFor, claimedNumbers);
+      claimedNumbers = [];
+    }
 
     if (result.locked) {
       return NextResponse.json({ error: RENEWAL_LOCKED_MESSAGE, locked: true }, { status: 409 });
@@ -495,6 +560,7 @@ export async function PUT(request: NextRequest) {
 
     // Track that renewal update succeeded
     renewalUpdated = true;
+    claimedNumbers = []; // submitted — the numbers are theirs now
 
     // Get updated renewal data
     const updatedRenewal = await getRenewalByUsername(targetUserName);
@@ -581,6 +647,7 @@ export async function PUT(request: NextRequest) {
           partialSuccess: true,
           renewal: updatedRenewal,
           fees,
+          club200: await getRenewal200ClubInfo(targetUserName),
           profileUpdated: true,
           renewalUpdated: true,
           emailSent: false,
@@ -607,6 +674,7 @@ export async function PUT(request: NextRequest) {
           partialSuccess: true,
           renewal: updatedRenewal,
           fees,
+          club200: await getRenewal200ClubInfo(targetUserName),
           profileUpdated: true,
           renewalUpdated: true,
           emailSent: false,
@@ -623,6 +691,7 @@ export async function PUT(request: NextRequest) {
       submitted: true,
       renewal: updatedRenewal,
       fees,
+      club200: await getRenewal200ClubInfo(targetUserName),
       emailSent: true,
       message: data.renewingMembership
         ? 'Renewal submitted successfully. Confirmation email sent.'
@@ -630,6 +699,9 @@ export async function PUT(request: NextRequest) {
     });
   } catch (error) {
     console.error('Error updating renewal:', error);
+    if (claimedNumbers.length > 0) {
+      await releaseNumbers(claimedFor, claimedNumbers);
+    }
 
     // Provide detailed error information including what was successfully updated
     const partialSuccess = profileUpdated || renewalUpdated || emailSent;

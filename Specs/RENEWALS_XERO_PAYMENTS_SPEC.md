@@ -203,6 +203,53 @@ Without `--api-key`, the CLI can be linked to a different test environment from 
 - The cash confirmation is a tick box too, not just a Confirm button.
 - **Bar Reconciliation** shows the lines but has no separate "Renewal payments" list. The drill-down gives the member, staff and amount instead.
 
+### 2.11 Phase 7 — 200 Club numbers on the renewal form (built 30 Oct 2026, same branch, uncommitted)
+
+**Migration and code:**
+- **Migration:** `0090_renewals_200_club_picks.sql` adds `renewals.club_200_picked_numbers` (text[]). **Apply before deploying.**
+- **Code:**
+  - `src/lib/renewals-200-club.ts`: the season's 200 Club info, checking picks, giving out numbers, and the list of renewals asking for entries;
+  - `src/components/Club200NumberPicker.tsx`: the number grid.
+
+**On the form:**
+- **Number of entries** stays as it was.
+- Below it, a grid of the season's numbers (1 to `numbers` from `two_hundred_club_settings`):
+  - taken numbers are crossed out;
+  - tapping a free number picks it, up to one per entry;
+  - tapping it again unpicks it.
+- Entries without a pick are "Any number".
+- Lowering the number of entries drops the highest picks.
+- **Picks are saved with the draft** in `club_200_picked_numbers`, so they come back when the form is reopened, but nothing is held until Submit. The draft email lists the picks and says they aren't held yet.
+- **Price:** the season's `two_hundred_club_settings.price`, used both in the form and by `calculateFees()`. It falls back to £6 only if no price is passed.
+- **No settings row for the season:** the form says "200 Club entries for {year} are not open yet", and the API refuses any entries.
+
+**On Submit:**
+- Picks are inserted into `two_hundred_club_entries` in one INSERT, so either all are given out or none are. Numbers the member already holds are skipped.
+- **If any number has gone:** the Submit is refused (400 with `club200Taken`) and nothing is submitted. The form crosses the number out, shows "Number 23 has just been taken — please choose another", and the member removes it and picks again.
+- If the renewal save then fails, the numbers are given back.
+- The confirmation email's "Your Numbers" line lists the picks, for example "23 and 45, plus 1 to be given a number". It replaces "Preferred Numbers".
+- The "submitted" screen and the locked form show the numbers held, plus how many are still to be given out.
+
+**Submit and pay online:**
+- **When the payment page opens:** the picks are checked, but not held.
+- **When the payment comes through (webhook):**
+  - the picks are given out, skipping any taken while the member was paying;
+  - those become "Any number" entries, and the renewal's picks are trimmed to match;
+  - the member has already paid, so this never fails the payment.
+
+**`/200-club`, GMC and Admin only:**
+- A **Still to allocate** list shows submitted renewals asking for more entries than the numbers the member holds this season: member, entries, numbers held, and how many are left.
+- The list is worked out from the numbers on screen, so it shrinks as numbers are assigned with the existing **Assign** button.
+- Drafts are ignored. Voided renewals stay in, because GMC deals with those by hand.
+
+**Other changes:**
+- `club_200_preferred_numbers` is no longer written; the API drops it from the form data.
+- The data export has a new **200 Club Picked Numbers** column.
+
+**Differences from §9 as written:**
+- §9.1 described a separate choice per entry ("pick a number or Any number"). The build uses one grid instead, and any entries left unpicked are "Any number".
+- Picks are kept on the draft in the new column, so they aren't lost between Save Draft and Submit.
+
 ### 2.5 Competitions eligibility from the friendlies data (built 26 Oct 2026, same branch)
 
 - **Rule:** a playing member can enter club competitions if they made themselves available for at least `min_friendlies_for_competitions` friendlies in the previous season. The setting already existed (Admin config → General) but nothing read it. It's seeded at 8 and is **to be set to 6** for 2027.

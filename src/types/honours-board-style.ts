@@ -107,14 +107,14 @@ export interface FontChoice {
   customName: string;
 }
 
-/** The three places a font is used. */
-export type FontSlot = 'titles' | 'years' | 'names';
+/** The three places a font is used: the title, the column headings and years, and the names. */
+export type FontSlot = 'titles' | 'headings' | 'names';
 
 // sample: the example line shown under each font choice
 export const FONT_SLOTS: { slot: FontSlot; label: string; hint: string; sample: string }[] = [
-  { slot: 'titles', label: 'Titles and headings', hint: 'Club name, board name and column headings', sample: "Men's Championship, Veterans Cup" },
-  { slot: 'years', label: 'Years', hint: 'The year at the start of each row', sample: '1986, 2013, 2045' },
-  { slot: 'names', label: 'Names', hint: 'The winners', sample: '1987 J. Smith & A. N. Other' },
+  { slot: 'titles', label: 'Font', hint: 'Club name, board name and the "(continued)" line', sample: 'Burgess Hill Bowls Club' },
+  { slot: 'headings', label: 'Font', hint: 'Column headings and the year at the start of each row', sample: "Men's Championship, Veterans Cup · 1986, 2013, 2045" },
+  { slot: 'names', label: 'Font', hint: 'The winners', sample: '1987 J. Smith & A. N. Other' },
 ];
 
 // ── The whole style ──
@@ -166,7 +166,8 @@ export interface BoardStyleSettings {
   stripes: string | null;      // alternate-year tint, hex; null = no stripes
   yearLines: string | null;    // fine line between years, hex; null = none
   decadeLines: string | null;  // stronger line above each new decade, hex; null = none
-  text: string;                // names and years
+  text: string;                // names
+  years: string;               // the year at the start of each row (on the sheet, not the band)
   title: string;               // club name, board name, "(continued)" line
   underline: string | null;    // short line under the board name; null = none
   headingBand: string;
@@ -174,6 +175,7 @@ export interface BoardStyleSettings {
   logo: LogoPlace;             // pictures beside the title
   logoPanel: boolean;          // a white panel behind each picture
   nameAlign: NameAlign;        // names left, centred or right in their column
+  printNote: boolean;          // test prints: a note of the settings in place of the last row
   fonts: Record<FontSlot, FontChoice>;
 }
 
@@ -185,6 +187,7 @@ export const DEFAULT_STYLE: BoardStyleSettings = {
   yearLines: null,
   decadeLines: DARK_GREEN.hex,
   text: NEAR_BLACK.hex,
+  years: NEAR_BLACK.hex,
   title: DARK_GREEN.hex,
   underline: null,
   headingBand: DARK_GREEN.hex,
@@ -192,21 +195,22 @@ export const DEFAULT_STYLE: BoardStyleSettings = {
   logo: 'none',
   logoPanel: false,
   nameAlign: 'center',
+  printNote: false,
   fonts: {
     titles: { font: 'lora', bold: true, customName: '' },
-    years: { font: 'lora', bold: true, customName: '' },
+    headings: { font: 'lora', bold: true, customName: '' },
     names: { font: 'atkinson', bold: false, customName: '' },
   },
 };
 
 /** Ready-made combinations — picking one sets every colour, leaving the fonts alone. */
-export const STYLE_SCHEMES: { name: string; hint: string; colours: Omit<BoardStyleSettings, 'fonts' | 'logo' | 'nameAlign'> }[] = [
+export const STYLE_SCHEMES: { name: string; hint: string; colours: Omit<BoardStyleSettings, 'fonts' | 'logo' | 'nameAlign' | 'printNote'> }[] = [
   {
     name: 'White and green',
     hint: 'Stone stripes, green headings',
     colours: {
       background: WHITE.hex, bleed: false, stripes: STONE.hex, yearLines: null, decadeLines: DARK_GREEN.hex,
-      text: NEAR_BLACK.hex, title: DARK_GREEN.hex, underline: null, headingBand: DARK_GREEN.hex, headingText: WHITE.hex, logoPanel: false,
+      text: NEAR_BLACK.hex, years: NEAR_BLACK.hex, title: DARK_GREEN.hex, underline: null, headingBand: DARK_GREEN.hex, headingText: WHITE.hex, logoPanel: false,
     },
   },
   {
@@ -214,7 +218,7 @@ export const STYLE_SCHEMES: { name: string; hint: string; colours: Omit<BoardSty
     hint: 'Warm off-white, fine lines, gold line under the title',
     colours: {
       background: IVORY.hex, bleed: true, stripes: null, yearLines: LINE_IVORY.hex, decadeLines: DARK_GREEN.hex,
-      text: NEAR_BLACK.hex, title: DARK_GREEN.hex, underline: WEB_GOLD.hex, headingBand: DARK_GREEN.hex, headingText: WHITE.hex, logoPanel: false,
+      text: NEAR_BLACK.hex, years: NEAR_BLACK.hex, title: DARK_GREEN.hex, underline: WEB_GOLD.hex, headingBand: DARK_GREEN.hex, headingText: WHITE.hex, logoPanel: false,
     },
   },
   {
@@ -222,7 +226,7 @@ export const STYLE_SCHEMES: { name: string; hint: string; colours: Omit<BoardSty
     hint: 'The playing kit: navy sheet, gold names, lighter navy stripes — bold names read better on navy',
     colours: {
       background: NAVY.hex, bleed: true, stripes: LIGHTER_NAVY.hex, yearLines: null, decadeLines: KIT_GOLD.hex,
-      text: KIT_GOLD.hex, title: KIT_GOLD_BRIGHT.hex, underline: KIT_GOLD.hex, headingBand: KIT_GOLD.hex, headingText: NAVY.hex, logoPanel: false,
+      text: KIT_GOLD.hex, years: KIT_GOLD.hex, title: KIT_GOLD_BRIGHT.hex, underline: KIT_GOLD.hex, headingBand: KIT_GOLD.hex, headingText: NAVY.hex, logoPanel: false,
     },
   },
 ];
@@ -250,10 +254,11 @@ export function parseBoardStyle(raw: string | null | undefined): BoardStyleSetti
     return typeof v === 'string' ? normaliseHex(v) ?? fallback : fallback;
   }
   /** A saved font choice, or the default for that slot. */
-  function font(slot: FontSlot): FontChoice {
+  function font(slot: FontSlot, olderName?: string): FontChoice {
     const fallback = DEFAULT_STYLE.fonts[slot];
     const fonts = saved.fonts as Record<string, Partial<FontChoice>> | undefined;
-    const v = fonts && typeof fonts === 'object' ? fonts[slot] : undefined;
+    // Styles saved before a slot was renamed keep their choice under the old name
+    const v = fonts && typeof fonts === 'object' ? fonts[slot] ?? (olderName ? fonts[olderName] : undefined) : undefined;
     if (!v || typeof v !== 'object') return fallback;
     const known = v.font === 'custom' || FONT_OPTIONS.some((f) => f.key === v.font);
     return {
@@ -271,6 +276,8 @@ export function parseBoardStyle(raw: string | null | undefined): BoardStyleSetti
     yearLines: optionalColour('yearLines', d.yearLines),
     decadeLines: optionalColour('decadeLines', d.decadeLines),
     text: colour('text', d.text),
+    // Styles saved before years had their own colour used the names colour for them
+    years: colour('years', colour('text', d.text)),
     title: colour('title', d.title),
     underline: optionalColour('underline', d.underline),
     headingBand: colour('headingBand', d.headingBand),
@@ -278,7 +285,8 @@ export function parseBoardStyle(raw: string | null | undefined): BoardStyleSetti
     logo: LOGO_PLACES.some((p) => p.value === saved.logo) ? (saved.logo as LogoPlace) : d.logo,
     logoPanel: typeof saved.logoPanel === 'boolean' ? saved.logoPanel : d.logoPanel,
     nameAlign: NAME_ALIGNS.some((a) => a.value === saved.nameAlign) ? (saved.nameAlign as NameAlign) : d.nameAlign,
-    fonts: { titles: font('titles'), years: font('years'), names: font('names') },
+    printNote: typeof saved.printNote === 'boolean' ? saved.printNote : d.printNote,
+    fonts: { titles: font('titles'), headings: font('headings', 'years'), names: font('names') },
   };
 }
 
@@ -297,14 +305,20 @@ export function contrastWarnings(style: BoardStyleSettings): string[] {
     [style.headingText, style.headingBand, 'Headings on the heading band'],
   ];
   if (style.stripes) checks.push([style.text, style.stripes, 'Names on the stripes']);
+  // The years only need their own check when they're a different colour from the names
+  if (style.years !== style.text) {
+    checks.push([style.years, style.background, 'Years on the background']);
+    if (style.stripes) checks.push([style.years, style.stripes, 'Years on the stripes']);
+  }
   for (const [fore, back, what] of checks) {
     const ratio = contrastRatio(fore, back);
     if (ratio < 4.5) warnings.push(`${what}: contrast ${ratio.toFixed(1)} to 1 — may be hard to read (4.5 or more is best)`);
   }
   // Fonts set to Custom with no name fall back to the default
-  for (const { slot, label } of FONT_SLOTS) {
+  const section: Record<FontSlot, string> = { titles: 'Title font', headings: 'Headings and years font', names: 'Names font' };
+  for (const { slot } of FONT_SLOTS) {
     const f = style.fonts[slot];
-    if (f.font === 'custom' && f.customName.trim() === '') warnings.push(`${label}: no Google font name given`);
+    if (f.font === 'custom' && f.customName.trim() === '') warnings.push(`${section[slot]}: no Google font name given`);
   }
   return warnings;
 }
@@ -349,4 +363,37 @@ export function nearestWeight(weights: number[], bold: boolean): number {
 /** Address of a custom font's file on the Fontsource CDN (WOFF — the PDF library can't read WOFF2). */
 export function customFontUrl(info: CustomFontInfo, weight: number): string {
   return `https://cdn.jsdelivr.net/fontsource/fonts/${info.id}@latest/latin-${weight}-normal.woff`;
+}
+
+/** A font setting worked out to one file: the family name to use, its weight and where the file is. */
+export interface FontFile {
+  family: string;
+  weight: number;
+  url: string;
+}
+
+/**
+ * Works out the file for a font setting: one bundled in /public/fonts/honours-boards, or a
+ * Google font looked up by name. Throws an Error whose message can be shown as it is.
+ */
+export async function fontFileFor(choice: FontChoice, origin: string): Promise<FontFile> {
+  // A Google font, fetched from the free Fontsource catalogue
+  if (choice.font === 'custom') {
+    const name = choice.customName.trim();
+    if (!name) throw new Error('A font is set to Custom but no Google font name has been given.');
+    let info;
+    try {
+      info = await lookupCustomFont(name);
+    } catch {
+      throw new Error(`Couldn't look up the font "${name}". Check the internet connection and try again.`);
+    }
+    if (!info) throw new Error(`"${name}" isn't a Google font. Check the spelling on fonts.google.com.`);
+    const weight = nearestWeight(info.weights, choice.bold);
+    // A prefix keeps a custom font apart from a bundled one of the same name
+    return { family: `Custom ${info.family}`, weight, url: customFontUrl(info, weight) };
+  }
+  // A font bundled with the portal (licences alongside)
+  const option = FONT_OPTIONS.find((f) => f.key === choice.font) ?? FONT_OPTIONS[0];
+  const weight = choice.bold ? option.bold : option.regular;
+  return { family: option.family, weight, url: `${origin}/fonts/honours-boards/${option.file}-${weight}-normal.woff` };
 }

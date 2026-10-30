@@ -41,6 +41,8 @@ const MEMBERSHIP_FEES = {
   HONORARY: 0,
 } as const;
 
+// Fallback only — the price normally comes from the season's two_hundred_club_settings row
+// (spec §9.3), passed to calculateFees() by the renewals API.
 const CLUB_200_ENTRY_FEE = 6;
 const COMPETITION_ENTRY_FEE = 2;
 
@@ -64,6 +66,7 @@ export interface Renewal {
   dateReceived?: string | null;
   number200ClubEntries: number;
   pref200Club?: string | null;
+  club200PickedNumbers?: string[]; // numbers chosen on the form (spec §9), given out on Submit
   cleaningDatesToAvoid?: string | null;
   teaDatesToAvoid?: string | null;
   mensChampionship: boolean;
@@ -259,6 +262,7 @@ function mapRow(row: any): Renewal {
     dateReceived: row.date_paid,
     number200ClubEntries: Number(row.club_200_entries) || 0,
     pref200Club: row.club_200_preferred_numbers,
+    club200PickedNumbers: Array.isArray(row.club_200_picked_numbers) ? row.club_200_picked_numbers.map(String) : [],
     cleaningDatesToAvoid: row.cleaning_dates_to_avoid,
     teaDatesToAvoid: row.tea_dates_to_avoid,
     mensChampionship: row.comp_mens_championship === true,
@@ -305,6 +309,7 @@ const FIELD_TO_COLUMN: Record<string, string> = {
   dateReceived: 'date_paid',
   number200ClubEntries: 'club_200_entries',
   pref200Club: 'club_200_preferred_numbers',
+  club200PickedNumbers: 'club_200_picked_numbers',
   cleaningDatesToAvoid: 'cleaning_dates_to_avoid',
   teaDatesToAvoid: 'tea_dates_to_avoid',
   mensChampionship: 'comp_mens_championship',
@@ -640,7 +645,8 @@ export function calculateMembershipFee(
 /**
  * Calculate fees based on renewal data.
  * Membership fee: based on member type, age, and honorary status.
- * 200 Club fee: £6 per entry. Competition fee: £2 per competition entered (subs are free).
+ * 200 Club fee: club200Price per entry (the season's 200 Club settings price; £6 if not
+ * given). Competition fee: £2 per competition entered (subs are free).
  */
 export function calculateFees(
   profile: {
@@ -649,7 +655,8 @@ export function calculateFees(
     fullTimeEducation?: boolean;
     honorary?: string | null;
   },
-  renewal: Partial<Renewal>
+  renewal: Partial<Renewal>,
+  club200Price: number = CLUB_200_ENTRY_FEE
 ): FeeBreakdown {
   const { ageDemographic, memberType, fullTimeEducation, honorary } = profile;
 
@@ -664,7 +671,7 @@ export function calculateFees(
   if (num200ClubEntries === undefined || num200ClubEntries === null) {
     num200ClubEntries = 0;
   }
-  const club200Fee = num200ClubEntries * CLUB_200_ENTRY_FEE;
+  const club200Fee = num200ClubEntries * club200Price;
 
   const competitions = [
     'mensChampionship', 'ladiesMaynard', 'mensTwoWood', 'ladiesTwoWood',
@@ -689,6 +696,37 @@ export function calculateFees(
     compsFee,
     total,
   };
+}
+
+/**
+ * The 200 Club numbers on a renewal, for emails: "23 and 45", "23, plus 1 to be given a
+ * number", or "To be given a number" when none were picked. Null with no entries.
+ */
+export function describe200ClubNumbers(renewal: Partial<Renewal>): string | null {
+  const entries = renewal.number200ClubEntries || 0;
+  if (entries <= 0) return null;
+  const picks: string[] = [];
+  if (renewal.club200PickedNumbers) {
+    for (const p of renewal.club200PickedNumbers) picks.push(p);
+  }
+  picks.sort((a, b) => Number(a) - Number(b));
+  const anyCount = entries - picks.length;
+  if (picks.length === 0) return 'To be given a number by the 200 Club organiser';
+  let text = picks.length === 1 ? picks[0] : picks.slice(0, picks.length - 1).join(', ') + ' and ' + picks[picks.length - 1];
+  if (anyCount > 0) text += `, plus ${anyCount} to be given a number`;
+  return text;
+}
+
+/** The draft email's 200 Club line — picks aren't held until Submit, so it says so. */
+function describeDraft200Club(renewal: Partial<Renewal>): string {
+  const entries = renewal.number200ClubEntries || 0;
+  if (entries <= 0) return 'none';
+  let text = entries === 1 ? '1 entry' : `${entries} entries`;
+  const picks = renewal.club200PickedNumbers || [];
+  if (picks.length > 0) {
+    text += ` — chose ${picks.join(', ')}, not held until you submit`;
+  }
+  return text;
 }
 
 /**
@@ -816,7 +854,7 @@ export async function sendRenewalConfirmation(
           paymentReference: getPaymentReference(user.userName),
           memberType: user.memberType,
           number200Club: renewal.number200ClubEntries > 0 ? renewal.number200ClubEntries.toString() : 'None',
-          pref200Club: renewal.pref200Club || null,
+          club200Numbers: describe200ClubNumbers(renewal),
           printedMembershipBook,
           competitions: buildCompetitionsHtml(renewal),
           substitutes: substitutesText ? '• ' + substitutesText : null,
@@ -899,7 +937,7 @@ export async function sendRenewalDraftEmail(
           compsFee: formatCurrency(fees.compsFee),
           club200Fee: formatCurrency(fees.club200Fee),
           totalFee: formatCurrency(fees.total),
-          number200Club: renewal.number200ClubEntries > 0 ? renewal.number200ClubEntries.toString() + ' entries' : 'none',
+          number200Club: describeDraft200Club(renewal),
           competitions: buildCompetitionsHtml(renewal),
           renewalsUrl: `${appUrl}/renewals`,
         }

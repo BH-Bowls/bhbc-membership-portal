@@ -12,9 +12,9 @@
 // out of the server bundle.
 
 import { Document, Font, Image, Page, Text, View, pdf } from '@react-pdf/renderer';
-import { sheetGeometry, sheetLabel } from '@/types/honours-boards';
+import { LINE_SPACINGS, sheetGeometry, sheetLabel } from '@/types/honours-boards';
 import type { BoardSheet, HonoursBoard, LineSpacing } from '@/types/honours-boards';
-import { FONT_OPTIONS, customFontUrl, lookupCustomFont, nearestWeight, titlePictures } from '@/types/honours-board-style';
+import { findPreset, fontFileFor, titlePictures } from '@/types/honours-board-style';
 import type { BoardStyleSettings, FontChoice, FontSlot, TitlePicture } from '@/types/honours-board-style';
 
 /** One season's honours: year, plus winner names keyed by website.honours_internal column. */
@@ -118,40 +118,29 @@ async function loadFontFile(family: string, weight: number, url: string): Promis
 
 /** Works out and loads the font for one place on the sheet: bundled, or a Google font by name. */
 async function resolveFont(choice: FontChoice): Promise<ResolvedFont> {
-  // A Google font, fetched from the free Fontsource catalogue
-  if (choice.font === 'custom') {
-    const name = choice.customName.trim();
-    if (!name) throw new HonoursFontError('A font is set to Custom but no Google font name has been given.');
-    let info;
-    try {
-      info = await lookupCustomFont(name);
-    } catch {
-      throw new HonoursFontError(`Couldn't look up the font "${name}". Check the internet connection and try again.`);
-    }
-    if (!info) throw new HonoursFontError(`"${name}" isn't a Google font. Check the spelling on fonts.google.com.`);
-    const weight = nearestWeight(info.weights, choice.bold);
-    // A prefix keeps a custom font apart from a bundled one of the same name
-    return loadFontFile(`Custom ${info.family}`, weight, customFontUrl(info, weight));
+  let file;
+  try {
+    file = await fontFileFor(choice, window.location.origin);
+  } catch (err) {
+    // A missing or misspelt font: the message says what's wrong
+    throw new HonoursFontError(err instanceof Error ? err.message : "Couldn't load a font.");
   }
-  // A font bundled in /public/fonts/honours-boards (licences alongside)
-  const option = FONT_OPTIONS.find((f) => f.key === choice.font) ?? FONT_OPTIONS[0];
-  const weight = choice.bold ? option.bold : option.regular;
-  return loadFontFile(option.family, weight, `${window.location.origin}/fonts/honours-boards/${option.file}-${weight}-normal.woff`);
+  return loadFontFile(file.family, file.weight, file.url);
 }
 
-/** Loads the fonts for titles, years and names. */
+/** Loads the fonts for the title, the headings and years, and the names. */
 async function resolveFonts(style: BoardStyleSettings): Promise<ResolvedFonts> {
   // Never hyphenate — a name split across lines with a hyphen reads like a different name
   if (!hyphenationOff) {
     Font.registerHyphenationCallback((word) => [word]);
     hyphenationOff = true;
   }
-  const [titles, years, names] = await Promise.all([
+  const [titles, headings, names] = await Promise.all([
     resolveFont(style.fonts.titles),
-    resolveFont(style.fonts.years),
+    resolveFont(style.fonts.headings),
     resolveFont(style.fonts.names),
   ]);
-  return { titles, years, names };
+  return { titles, headings, names };
 }
 
 let measureContext: CanvasRenderingContext2D | null = null;
@@ -172,6 +161,48 @@ function fitSize(font: ResolvedFont, text: string, roomMm: number, standardPt: n
   const room = roomMm * MM * FIT_SAFETY;
   if (em * standardPt <= room) return standardPt;
   return Math.max(MIN_NAME_PT, room / em);
+}
+
+// Print settings note on test prints: text size (pt, A3 base size)
+const INFO_PT = 6.5;
+const WEIGHT_NAMES: Record<number, string> = { 300: 'Light', 400: 'Regular', 500: 'Medium', 600: 'SemiBold', 700: 'Bold', 800: 'ExtraBold' };
+
+/** A font in note form, e.g. "Lora SemiBold 600" or "EB Garamond (Google) Bold 700". */
+function fontNote(font: ResolvedFont, choice: FontChoice): string {
+  const family = font.family.startsWith('Custom ') ? `${font.family.slice(7)} (Google)` : font.family;
+  return `${family} ${WEIGHT_NAMES[font.weight] ?? ''} ${font.weight} (${choice.bold ? 'bold' : 'regular'})`.replace(/  +/g, ' ');
+}
+
+/** A colour in note form: its preset name, or the code for a custom colour; "none" when switched off. */
+function colourNote(hex: string | null): string {
+  if (!hex) return 'none';
+  return findPreset(hex)?.name ?? hex;
+}
+
+/** How a sheet was printed, in note form: the fonts and their colours, then the sheet and rows. */
+function printNote(fonts: ResolvedFonts, style: BoardStyleSettings, yearsPerSet: number, lineSpacing: LineSpacing, namePt: number, rowHeightMm: number, paper: string, sheetName: string): [string, string] {
+  const spacing = LINE_SPACINGS.find((l) => l.value === lineSpacing)?.label ?? lineSpacing;
+  const align = style.nameAlign === 'center' ? 'centred' : style.nameAlign;
+  const printed = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  const f = style.fonts;
+  return [
+    [
+      `Print settings — Title: ${fontNote(fonts.titles, f.titles)}, ${colourNote(style.title)}`,
+      `Headings & years: ${fontNote(fonts.headings, f.headings)}; headings ${colourNote(style.headingText)} on ${colourNote(style.headingBand)}, years ${colourNote(style.years)}`,
+      `Names: ${fontNote(fonts.names, f.names)}, ${colourNote(style.text)}, ${align}`,
+    ].join('  ·  '),
+    [
+      `Sheet ${colourNote(style.background)}`,
+      `alternate years ${colourNote(style.stripes)}`,
+      `year lines ${colourNote(style.yearLines)}`,
+      `decade lines ${colourNote(style.decadeLines)}`,
+      `title line ${colourNote(style.underline)}`,
+      `row control ${yearsPerSet}, ${spacing}`,
+      `rows ${rowHeightMm.toFixed(1)}mm, names ${namePt.toFixed(1)}pt`,
+      `${paper}, ${sheetName}`,
+      `printed ${printed}`,
+    ].join('  ·  '),
+  ];
 }
 
 interface SheetProps {
@@ -233,6 +264,16 @@ function BoardSheetDocument({ board, sheet, yearsPerSet, lineSpacing, rowsByYear
   const years: number[] = [];
   for (let y = sheet.firstYear; y <= sheet.lastYear; y++) years.push(y);
 
+  // Test prints: the settings note takes the place of the last row (or two, if the rows are
+  // too small for it), so nothing else on the sheet moves
+  const note = style.printNote
+    ? printNote(fonts, style, yearsPerSet, lineSpacing, g.namePt, g.rowHeightMm, `${g.paper} ${g.orientation}${style.bleed ? ' with bleed' : ''}`, sheet.position === 'Single' ? 'single sheet' : `set ${sheet.set}, ${sheetLabel(board.layout, sheet)}`)
+    : null;
+  const noteLines = note ? note.reduce((n, line) => n + Math.min(3, Math.ceil((textWidthEm(fonts.names, line) * INFO_PT * s) / (tableW * MM * FIT_SAFETY))), 0) : 0;
+  const noteHeightMm = (noteLines * INFO_PT * s * 1.35) / MM + 2 * s;
+  const noteRows = note ? Math.min(years.length, Math.max(1, Math.ceil(noteHeightMm / rowH))) : 0;
+  const shownYears = years.slice(0, years.length - noteRows);
+
   return (
     <Document title={`${clubName} — ${board.name} — ${sheet.firstYear}–${sheet.lastYear}`} author={clubName}>
       {/* wrap={false}: one sheet is always exactly one page — rows that fill it to the last
@@ -279,18 +320,18 @@ function BoardSheetDocument({ board, sheet, yearsPerSet, lineSpacing, rowsByYear
         {g.headerHeightMm > 0 && (
           <View style={{ flexDirection: 'row', height: g.headerHeightMm * MM, backgroundColor: style.headingBand }}>
             <View style={{ width: yearColW * MM, justifyContent: 'center', alignItems: 'center' }}>
-              <Text style={{ fontFamily: fonts.titles.family, fontWeight: fonts.titles.weight, fontSize: fitSize(fonts.titles, 'Year', yearColW, headingPt), color: style.headingText }}>Year</Text>
+              <Text style={{ fontFamily: fonts.headings.family, fontWeight: fonts.headings.weight, fontSize: fitSize(fonts.headings, 'Year', yearColW, headingPt), color: style.headingText }}>Year</Text>
             </View>
             {board.columns.map((col, i) => (
               <View key={col.field} style={{ width: columnWidths[i] * MM, paddingHorizontal: pad * MM, justifyContent: 'center', alignItems: 'center' }}>
-                <Text style={{ fontFamily: fonts.titles.family, fontWeight: fonts.titles.weight, fontSize: headingPt, color: style.headingText, textAlign: 'center' }}>{col.heading}</Text>
+                <Text style={{ fontFamily: fonts.headings.family, fontWeight: fonts.headings.weight, fontSize: headingPt, color: style.headingText, textAlign: 'center' }}>{col.heading}</Text>
               </View>
             ))}
           </View>
         )}
 
         {/* One row per year on this sheet; years not yet played are left as blank rows */}
-        {years.map((year) => {
+        {shownYears.map((year) => {
           const played = year <= lastYearShown;
           const record = played ? rowsByYear.get(year) : undefined;
           // Stripes go by year rather than row position, so they carry on across sheets and every reprint
@@ -312,7 +353,7 @@ function BoardSheetDocument({ board, sheet, yearsPerSet, lineSpacing, rowsByYear
               {decade && style.decadeLines && <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: DECADE_LINE_PT * s, backgroundColor: style.decadeLines }} />}
               {ruled && style.yearLines && <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: ROW_RULE_PT * s, backgroundColor: style.yearLines }} />}
               <View style={{ width: yearColW * MM, justifyContent: 'center', alignItems: 'center' }}>
-                <Text style={{ fontFamily: fonts.years.family, fontWeight: fonts.years.weight, fontSize: fitSize(fonts.years, String(year), yearColW, g.namePt), lineHeight: ROW_LINE_HEIGHT, color: style.text }}>{played ? String(year) : ''}</Text>
+                <Text style={{ fontFamily: fonts.headings.family, fontWeight: fonts.headings.weight, fontSize: fitSize(fonts.headings, String(year), yearColW, g.namePt), lineHeight: ROW_LINE_HEIGHT, color: style.years }}>{played ? String(year) : ''}</Text>
               </View>
               {board.columns.map((col, i) => {
                 const raw = record ? record[col.field] : null;
@@ -328,6 +369,15 @@ function BoardSheetDocument({ board, sheet, yearsPerSet, lineSpacing, rowsByYear
             </View>
           );
         })}
+
+        {/* Test prints: how the sheet was printed, where its last row (or two) would be */}
+        {note && (
+          <View style={{ height: noteRows * rowH * MM, justifyContent: 'center', alignItems: 'center', paddingHorizontal: pad * MM }}>
+            {note.map((line) => (
+              <Text key={line} style={{ fontFamily: fonts.names.family, fontWeight: fonts.names.weight, fontSize: INFO_PT * s, lineHeight: 1.35, color: style.text, opacity: 0.8, textAlign: 'center' }}>{line}</Text>
+            ))}
+          </View>
+        )}
       </Page>
     </Document>
   );
