@@ -72,8 +72,8 @@ export function HonoursRowSettings({ rowControl, onRowControl, lineSpacing, onLi
   );
 }
 
-/** One plain-English sentence on what a row control and line spacing give for a layout. */
-function rowSummary(perSet: number, spacing: LineSpacing, startYear: number, layout: BoardLayout): string {
+/** One plain-English sentence on what a row control and line spacing give for a layout (also used in the print spec). */
+export function rowSummary(perSet: number, spacing: LineSpacing, startYear: number, layout: BoardLayout): string {
   const invalid = validateSheetSettings(startYear, perSet);
   if (invalid) return invalid;
 
