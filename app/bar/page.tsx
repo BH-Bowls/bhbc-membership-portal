@@ -31,6 +31,7 @@ import { canUseBarTill } from '@/lib/role-utils';
 import { priceItem, type BarPricingConfig, type BarProduct, type BarCategoryRow, type BarAccount, type BarPerson, type BarReport, type BarSaleSummary, type BarDayEnd, type BarDayEndLedgerRow } from '@/lib/bar-supabase';
 import { useOnlineStatus } from '@/hooks/useOnlineStatus';
 import { enqueue, listQueued, dequeue, newQueueId, type QueuedEntry } from '@/lib/bar-offline-queue';
+import BarTerminalPayment, { type TerminalCheckout } from '@/components/BarTerminalPayment';
 
 const OFFLINE_WALLET_DELTAS_KEY = 'bar_offline_wallet_deltas';
 
@@ -120,6 +121,24 @@ export default function BarTillPage() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
+  // Square Terminal (renewals spec §10): when one is paired, card payments are sent to
+  // it and the "waiting for the card" dialog shows until Square says paid or cancelled.
+  const [terminalEnabled, setTerminalEnabled] = useState(false);
+  const [terminalPay, setTerminalPay] = useState<{
+    checkout: TerminalCheckout;
+    notice?: string;
+    onPaid?: (c: TerminalCheckout) => void;   // not set for a picked-up payment (see resumedTerminalPaid)
+    onManual?: () => void;
+  } | null>(null);
+  const terminalResumed = useRef(false);
+  // Offline card payment: the till can't reach the Terminal, so staff take it on the
+  // Terminal's keypad (it queues offline too) and confirm before it's recorded.
+  const [offlineCard, setOfflineCard] = useState<{ amountPence: number; onConfirm: () => void } | null>(null);
+  // Cash payment: confirm it really was cash (easy to tap instead of Card) and work out the change
+  const [cashDue, setCashDue] = useState<{ amountPence: number; onConfirm: () => void } | null>(null);
+  // Pay by Account: confirm the amount and show what's left on the account
+  const [walletDue, setWalletDue] = useState<{ amountPence: number; balancePence: number; onConfirm: () => void } | null>(null);
+
   // selection / flow state
   const [member, setMember] = useState<BarAccount | null>(null); // null + view 'sale' means non-member
   const [basket, setBasket] = useState<BasketLine[]>([]);
@@ -133,6 +152,9 @@ export default function BarTillPage() {
   const [dayEndSuccess, setDayEndSuccess] = useState<BarDayEnd | null>(null);
   const [sales, setSales] = useState<BarSaleSummary[] | null>(null);
   const [expandedSaleId, setExpandedSaleId] = useState<string | null>(null);
+  // Void confirm: what will happen for this payment type, then the result
+  const [refundConfirmPence, setRefundConfirmPence] = useState<number | null>(null);   // account cash refund awaiting confirm
+  const [voidDialog, setVoidDialog] = useState<{ sale: BarSaleSummary; done: string | null; error: string | null } | null>(null);
   const [showRefund, setShowRefund] = useState(false);
   const [refundAmt, setRefundAmt] = useState('');
 
@@ -181,7 +203,77 @@ export default function BarTillPage() {
       if (c.pricingConfig) setPricingConfig(c.pricingConfig);
       if (cat.categories) setCategories(cat.categories);
     } catch { setError('Failed to load bar data'); }
+
+    // Separately, so a Square problem never stops the till loading
+    try {
+      const sq = await fetch('/api/bar/square').then((r) => r.json());
+      setTerminalEnabled(!!sq.enabled);
+      // A payment still on the Terminal after a refresh — show it again so it's not lost
+      if (sq.open && !terminalResumed.current) {
+        terminalResumed.current = true;
+        setTerminalPay({ checkout: sq.open, notice: 'The Terminal is still working on this payment.' });
+      }
+      terminalResumed.current = true;
+    } catch { setTerminalEnabled(false); }
   }, []);
+
+  /** Send a card payment to the Terminal and show the waiting dialog. */
+  async function startTerminal(body: Record<string, unknown>, onPaid: (c: TerminalCheckout) => void, onManual?: () => void) {
+    setBusy(true); setError('');
+    try {
+      const res = await fetch('/api/bar/square', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (res.status === 409 && data.checkout) {
+        setTerminalPay({
+          checkout: data.checkout,
+          notice: 'The Terminal was already waiting for this payment — finish or cancel it, then try again.',
+        });
+        return;
+      }
+      if (!res.ok) throw new Error(data.error || 'Could not send the payment to the Terminal');
+      setTerminalPay({ checkout: data.checkout, onPaid: onPaid, onManual: onManual });
+    } catch (err: any) { setError(err.message); } finally { setBusy(false); }
+  }
+
+  /** True if a basket holds exactly the items a Terminal sale was sent with. */
+  function basketMatches(lines: BasketLine[], items: unknown): boolean {
+    if (!Array.isArray(items) || items.length !== lines.length) return false;
+    for (const item of items) {
+      const line = lines.find((l) => l.product.id === item.productId);
+      if (!line || line.qty !== item.qty) return false;
+    }
+    return true;
+  }
+
+  // A payment picked up after a refresh (or found already on the Terminal) was paid.
+  // The till that started it has gone, so tidy up here: a sale's basket is still held
+  // (and may be on screen), and must go — or it could be charged again.
+  function resumedTerminalPaid(c: TerminalCheckout) {
+    setTerminalPay(null);
+    const payload = c.payload || {};
+    if (c.kind === 'sale') {
+      let key: string | null = null;
+      if (payload.userName) key = `member:${payload.userName}`;
+      else if (payload.staff) key = `staff:${payload.staff}`;
+      if (key) {
+        const onScreen = view === 'sale' && currentOrderKey() === key;
+        const lines = onScreen ? basket : (heldOrders.get(key) || []);
+        if (basketMatches(lines, payload.items)) {
+          clearHeldOrder(key);
+          if (onScreen) { setBasket([]); backToPersonPicker(true); }
+        } else if (lines.length > 0) {
+          setError(`The Terminal took ${fmt(c.amountPence)} for an earlier version of this order — check what's still owed before taking payment again.`);
+        }
+      }
+    }
+    if (c.kind === 'topup' && member && member.userName === payload.userName && c.result) {
+      const balance = c.result.balancePence;
+      if (typeof balance === 'number') setMember({ ...member, balancePence: balance });
+    }
+    load();
+  }
 
   // Drains the offline queue in order on reconnect — re-verifies the session/device
   // is still valid first (a revoked device or expired session must not silently sync),
@@ -418,13 +510,13 @@ export default function BarTillPage() {
 
   // ── actions ─────────────────────────────────────────────────────────────────
   // Still used by doVoid/doRefund below — those reversal actions keep the hard
-  // requirement. Ordinary sales no longer do (see selectMember/openCashCardTab).
+  // requirement. Sales just use whoever's serving (asked when the till opens).
   function requireVolunteer(): boolean {
     if (!volunteer) { setError('Select the bar volunteer first.'); return false; }
     setError(''); return true;
   }
 
-  // No staff prompt for a wallet sale — resumes that member's held order if any.
+  // Opens a member's basket — resumes their held order if any.
   function selectMember(m: BarAccount) {
     setMember(m); setBasket(heldOrders.get(`member:${m.userName}`) ?? []); setActiveCat('beer');
     setShowRefund(false); setView('sale');
@@ -454,15 +546,47 @@ export default function BarTillPage() {
     backToPersonPicker();
   }
 
-  async function completeSale(mode: 'wallet' | 'card' | 'cash') {
+  // ask false = staff have already confirmed (the cash dialog, the offline card dialog,
+  // or taken on the Terminal's own keypad) — record it straight away. Terminal sales are
+  // recorded by the server itself.
+  async function completeSale(mode: 'wallet' | 'card' | 'cash', ask = true) {
     if (basket.length === 0) return;
-    setBusy(true); setError('');
     const items = basket.map((l) => ({ productId: l.product.id, qty: l.qty }));
-    // A member account sale (wallet, or "Pay by Card" for a known member) doesn't
-    // need a staff id stored against it. Only a genuine no-member-account sale does
-    // — that's the one case we ask who's serving for (see openCashCardTab), so it's
-    // always available here to store for audit.
-    const staffForSale = member ? '' : volunteer;
+    // Every sale is stored against whoever's serving — the till asks as soon as it opens.
+    const staffForSale = volunteer;
+
+    if (mode === 'cash' && ask) {
+      setCashDue({ amountPence: basketTotal, onConfirm: () => { setCashDue(null); completeSale('cash', false); } });
+      return;
+    }
+    if (mode === 'wallet' && ask && member) {
+      setWalletDue({ amountPence: basketTotal, balancePence: availableBalancePence, onConfirm: () => { setWalletDue(null); completeSale('wallet', false); } });
+      return;
+    }
+    if (mode === 'card' && ask && offline) {
+      setOfflineCard({ amountPence: basketTotal, onConfirm: () => { setOfflineCard(null); completeSale('card', false); } });
+      return;
+    }
+    if (mode === 'card' && ask && terminalEnabled && !offline) {
+      const orderKey = currentOrderKey();
+      await startTerminal(
+        { kind: 'sale', expectedPence: basketTotal, staff: staffForSale, userName: member ? member.userName : undefined, items },
+        () => {
+          setTerminalPay(null);
+          clearHeldOrder(orderKey);
+          setBasket([]);
+          load();
+          backToPersonPicker(true);
+        },
+        () => {
+          setTerminalPay(null);
+          completeSale('card', false);
+        },
+      );
+      return;
+    }
+
+    setBusy(true); setError('');
     try {
       if (offline) {
         if (mode === 'wallet') {
@@ -514,8 +638,33 @@ export default function BarTillPage() {
     withServer('topup');
   }
 
-  async function doTopUp(amountPence: number, paymentMethod: 'cash' | 'card') {
+  async function doTopUp(amountPence: number, paymentMethod: 'cash' | 'card', ask = true) {
     if (!member || !requireVolunteer()) return;
+    if (paymentMethod === 'cash' && ask) {
+      setCashDue({ amountPence: amountPence, onConfirm: () => { setCashDue(null); doTopUp(amountPence, 'cash', false); } });
+      return;
+    }
+    if (paymentMethod === 'card' && ask && offline) {
+      setOfflineCard({ amountPence: amountPence, onConfirm: () => { setOfflineCard(null); doTopUp(amountPence, 'card', false); } });
+      return;
+    }
+    if (paymentMethod === 'card' && ask && terminalEnabled && !offline) {
+      await startTerminal(
+        { kind: 'topup', expectedPence: amountPence, staff: volunteer, userName: member.userName },
+        (c) => {
+          setTerminalPay(null);
+          const balance = c.result ? c.result.balancePence : undefined;
+          if (typeof balance === 'number') setMember((m) => (m ? { ...m, balancePence: balance } : m));
+          load();
+          setView('sale');
+        },
+        () => {
+          setTerminalPay(null);
+          doTopUp(amountPence, 'card', false);
+        },
+      );
+      return;
+    }
     setBusy(true); setError('');
     try {
       if (offline) {
@@ -588,29 +737,42 @@ export default function BarTillPage() {
     const data = await fetch('/api/bar/sales?limit=40').then((r) => r.json());
     setSales(data.sales ?? []);
   }
-  async function doVoid(saleId: string) {
+  function askVoid(sale: BarSaleSummary) {
     if (offline) { setError('Voiding needs a live connection.'); return; }
     if (!requireVolunteer()) return;
-    if (!confirm('Void this sale? If it was charged to an account, the balance is refunded.')) return;
+    setVoidDialog({ sale: sale, done: null, error: null });
+  }
+  async function doVoid(sale: BarSaleSummary) {
     setBusy(true); setError('');
     try {
       const res = await fetch('/api/bar/void', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ saleId, staff: volunteer }) });
+        body: JSON.stringify({ saleId: sale.id, staff: volunteer }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Void failed');
+      let done = 'Sale voided.';
+      if (data.cardRefundPence > 0) done = `Sale voided, and ${fmt(data.cardRefundPence)} refunded to the customer’s card. It can take a few days to show on their statement.`;
+      else if (sale.paymentMethod === 'wallet' && sale.memberName) done = `Sale voided, and ${fmt(sale.totalPence)} put back on ${sale.memberName}’s account.`;
+      setVoidDialog({ sale: sale, done: done, error: null });
       const s = await fetch('/api/bar/sales?limit=40').then((r) => r.json());
       setSales(s.sales ?? []);
       await load(); // balances may have changed
-    } catch (err: any) { setError(err.message); } finally { setBusy(false); }
+    } catch (err: any) {
+      setVoidDialog({ sale: sale, done: null, error: err.message });
+    } finally { setBusy(false); }
   }
-  async function doRefund() {
+  function askRefund() {
     if (offline) { setError('Refunds need a live connection.'); return; }
     if (!member || !requireVolunteer()) return;
     const pence = Math.round(parseFloat(refundAmt || '0') * 100);
     if (!Number.isFinite(pence) || pence <= 0 || pence > member.balancePence) {
       setError('Enter a refund amount up to the balance.'); return;
     }
-    if (!confirm(`Refund ${fmt(pence)} cash to ${member.fullName}?`)) return;
+    setError('');
+    setRefundConfirmPence(pence);
+  }
+  async function doRefund(pence: number) {
+    if (!member) return;
+    setRefundConfirmPence(null);
     setBusy(true); setError('');
     try {
       const res = await fetch('/api/bar/refund', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -670,6 +832,98 @@ export default function BarTillPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-5 max-w-7xl">
+
+        {terminalPay && (
+          <BarTerminalPayment
+            key={terminalPay.checkout.id}
+            checkout={terminalPay.checkout}
+            notice={terminalPay.notice}
+            onPaid={terminalPay.onPaid ? terminalPay.onPaid : resumedTerminalPaid}
+            onCancelled={() => setTerminalPay(null)}
+            onManual={terminalPay.onManual}
+          />
+        )}
+
+        {voidDialog && (
+          <VoidSaleDialog sale={voidDialog.sale} done={voidDialog.done} error={voidDialog.error} busy={busy}
+            onConfirm={() => doVoid(voidDialog.sale)} onClose={() => setVoidDialog(null)} />
+        )}
+
+        {walletDue && member && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <div className="w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
+              <p className="text-sm text-gray-700">Pay by account — {member.fullName}</p>
+              <p className="text-4xl font-bold text-gray-900 my-2">{fmt(walletDue.amountPence)}</p>
+              <div className="mt-3 rounded-lg border border-gray-200 p-3 text-sm text-gray-900 space-y-1">
+                <div className="flex justify-between"><span>On the account now</span><span>{fmt(walletDue.balancePence)}</span></div>
+                <div className="flex justify-between"><span>This sale</span><span>−{fmt(walletDue.amountPence)}</span></div>
+                <div className="flex justify-between border-t border-gray-200 pt-1 font-semibold">
+                  <span>Left after this sale</span><span>{fmt(walletDue.balancePence - walletDue.amountPence)}</span>
+                </div>
+              </div>
+              <div className="mt-5 flex flex-col gap-2">
+                <button onClick={walletDue.onConfirm} disabled={busy}
+                  className="py-3 rounded-lg bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-50">
+                  Pay {fmt(walletDue.amountPence)} from the account
+                </button>
+                <button onClick={() => setWalletDue(null)} disabled={busy}
+                  className="py-2 rounded-lg border border-gray-300 bg-white font-medium text-gray-900 hover:bg-gray-50 disabled:opacity-50">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {refundConfirmPence !== null && member && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <div className="w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
+              <p className="text-sm text-gray-700">Refund cash from {member.fullName}&apos;s account?</p>
+              <p className="text-4xl font-bold text-gray-900 my-2">{fmt(refundConfirmPence)}</p>
+              <p className="text-sm text-gray-900 text-left">
+                Hand <strong>{fmt(refundConfirmPence)}</strong> cash from the till to {member.fullName}. Their account
+                goes from {fmt(member.balancePence)} to {fmt(member.balancePence - refundConfirmPence)}.
+              </p>
+              <div className="mt-5 flex flex-col gap-2">
+                <button onClick={() => doRefund(refundConfirmPence)} disabled={busy}
+                  className="py-3 rounded-lg bg-red-600 text-white font-semibold hover:bg-red-700 disabled:opacity-50">
+                  Refund {fmt(refundConfirmPence)}
+                </button>
+                <button onClick={() => setRefundConfirmPence(null)} disabled={busy}
+                  className="py-2 rounded-lg border border-gray-300 bg-white font-medium text-gray-900 hover:bg-gray-50 disabled:opacity-50">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {cashDue && (
+          <CashChangeDialog amountPence={cashDue.amountPence} onConfirm={cashDue.onConfirm} onCancel={() => setCashDue(null)} />
+        )}
+
+        {offlineCard && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <div className="w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
+              <p className="text-sm text-gray-700">Card payment — till offline</p>
+              <p className="text-4xl font-bold text-gray-900 my-2">{fmt(offlineCard.amountPence)}</p>
+              <p className="text-sm text-gray-900 text-left">
+                The till can&apos;t send this to the Terminal while it&apos;s offline. Key{' '}
+                <strong>{fmt(offlineCard.amountPence)}</strong> in on the Terminal and take the card. The Terminal
+                works offline too, and sends the payment to Square when it&apos;s back online.
+              </p>
+              <p className="mt-2 text-sm text-gray-900 text-left">Only confirm once the Terminal says it&apos;s approved.</p>
+              <div className="mt-5 flex flex-col gap-2">
+                <button onClick={offlineCard.onConfirm} className="py-3 rounded-lg bg-green-600 text-white font-semibold hover:bg-green-700">
+                  Payment taken — record it
+                </button>
+                <button onClick={() => setOfflineCard(null)} className="py-2 rounded-lg border border-gray-300 bg-white font-medium text-gray-900 hover:bg-gray-50">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Offline / queued-sales banner — separate from the site-wide OfflineBanner,
             since this one also shows the queue and offers a manual sync. */}
@@ -914,7 +1168,7 @@ export default function BarTillPage() {
                       <span className="text-sm text-gray-600">£</span>
                       <input value={refundAmt} onChange={(e) => setRefundAmt(e.target.value)} inputMode="decimal" placeholder="0.00"
                         className="border border-gray-300 rounded px-2 py-1.5 text-sm w-24" />
-                      <button onClick={doRefund} disabled={busy} className="px-3 py-1.5 bg-red-600 text-white rounded text-sm font-medium disabled:opacity-50">
+                      <button onClick={askRefund} disabled={busy} className="px-3 py-1.5 bg-red-600 text-white rounded text-sm font-medium disabled:opacity-50">
                         {busy ? 'Refunding…' : 'Refund cash'}
                       </button>
                       <button onClick={() => setShowRefund(false)} className="text-sm text-gray-500">Cancel</button>
@@ -947,7 +1201,7 @@ export default function BarTillPage() {
 
         {/* ── MEMBERSHIP FEES: a submitted renewal paid in full, card or cash ──── */}
         {view === 'membership' && (
-          <MembershipFeesView staff={volunteer} offline={offline} onDone={() => backToPersonPicker(true)} />
+          <MembershipFeesView staff={volunteer} offline={offline} terminalEnabled={terminalEnabled} onDone={() => backToPersonPicker(true)} />
         )}
 
         {/* ── REPORT ───────────────────────────────────────────────────────── */}
@@ -979,12 +1233,13 @@ export default function BarTillPage() {
                           </div>
                           <div className="text-xs text-gray-500">
                             {new Date(s.createdAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                            {s.staffName ? ` · served by ${s.staffName}` : ''}
                           </div>
                         </div>
                         {s.voided ? (
-                          <span className="text-xs text-red-600 font-medium shrink-0">Voided</span>
-                        ) : (
-                          <button onClick={() => doVoid(s.id)} disabled={busy || offline}
+                          <span className="text-xs text-red-600 font-medium shrink-0">{s.cardRefunded ? 'Voided · card refunded' : 'Voided'}</span>
+                        ) : s.inDayEnd ? null : (
+                          <button onClick={() => askVoid(s)} disabled={busy || offline}
                             className="shrink-0 px-3 py-1.5 text-sm text-red-600 border border-red-200 rounded hover:bg-red-50 disabled:opacity-50">Void</button>
                         )}
                       </div>
@@ -1312,8 +1567,130 @@ interface TillRenewalDue {
   outstanding: number;
 }
 
-function MembershipFeesView({ staff, offline, onDone }: { staff: string; offline: boolean; onDone: () => void }) {
+// Confirm a void, saying what happens to the money for this kind of sale, then the result.
+function VoidSaleDialog({ sale, done, error, busy, onConfirm, onClose }: {
+  sale: BarSaleSummary; done: string | null; error: string | null; busy: boolean; onConfirm: () => void; onClose: () => void;
+}) {
+  let effect = '';
+  if (sale.isCashMovement) {
+    effect = 'The cash movement is cancelled — put the cash back as it was.';
+  } else if (sale.paymentMethod === 'wallet') {
+    effect = `${fmt(sale.totalPence)} goes back on ${sale.memberName || 'the member'}’s account.`;
+  } else if (sale.paymentMethod === 'cash') {
+    effect = `Hand ${fmt(sale.totalPence)} cash back to the customer if they’ve paid. Nothing else changes.`;
+  } else if (sale.onTerminal) {
+    effect = `${fmt(sale.totalPence)} is refunded to the customer’s card through Square straight away.`;
+  } else {
+    effect = `This card payment wasn’t taken through the till, so it isn’t refunded automatically. Refund ${fmt(sale.totalPence)} on the Terminal or in the Square Dashboard.`;
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
+        {done ? (
+          <>
+            <p className="text-lg font-semibold text-gray-900">Voided</p>
+            <p className="mt-2 text-sm text-gray-900">{done}</p>
+            <button onClick={onClose} className="mt-5 w-full py-3 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700">OK</button>
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-gray-700">Void this sale?</p>
+            <p className="text-4xl font-bold text-gray-900 my-2">{fmt(sale.totalPence)}</p>
+            <p className="text-sm text-gray-700">
+              {sale.paymentMethod}{sale.memberName ? ` · ${sale.memberName}` : ''} ·{' '}
+              {new Date(sale.createdAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+            </p>
+            <p className="mt-3 text-sm text-gray-900 text-left">{effect}</p>
+            {error && <div className="mt-3 p-3 bg-red-50 border border-red-200 text-red-800 rounded-lg text-sm text-left">{error}</div>}
+            <div className="mt-5 flex flex-col gap-2">
+              <button onClick={onConfirm} disabled={busy} className="py-3 rounded-lg bg-red-600 text-white font-semibold hover:bg-red-700 disabled:opacity-50">
+                {busy ? 'Voiding…' : 'Void sale'}
+              </button>
+              <button onClick={onClose} disabled={busy} className="py-2 rounded-lg border border-gray-300 bg-white font-medium text-gray-900 hover:bg-gray-50 disabled:opacity-50">
+                Keep it
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Pops up when Cash is pressed — it's easy to hit Cash instead of Card, so staff confirm,
+// and can enter what they were handed to see the change. The tendered amount is only a
+// helper on screen; nothing about it is stored.
+function CashChangeDialog({ amountPence, onConfirm, onCancel }: { amountPence: number; onConfirm: () => void; onCancel: () => void }) {
+  const [tendered, setTendered] = useState('');
+
+  const notes = [500, 1000, 2000, 5000];
+  const quick: number[] = [];
+  for (const n of notes) {
+    if (n > amountPence) quick.push(n);
+  }
+
+  let tenderedPence: number | null = null;
+  if (tendered.trim() !== '') {
+    const value = Math.round(parseFloat(tendered) * 100);
+    if (Number.isFinite(value) && value > 0) tenderedPence = value;
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
+        <p className="text-sm text-gray-700">Cash payment</p>
+        <p className="text-4xl font-bold text-gray-900 my-2">{fmt(amountPence)}</p>
+
+        <p className="mt-3 text-sm text-gray-900 text-left">Cash handed over (optional):</p>
+        <div className="mt-2 grid grid-cols-4 gap-2">
+          {quick.map((n) => (
+            <button key={n} onClick={() => setTendered((n / 100).toFixed(2))}
+              className={`py-2 rounded-lg border text-sm font-semibold ${tenderedPence === n ? 'border-blue-600 bg-blue-600 text-white' : 'border-gray-300 bg-white text-gray-900 hover:bg-gray-50'}`}>
+              {fmt(n).replace('.00', '')}
+            </button>
+          ))}
+        </div>
+        <div className="mt-2 flex items-center gap-2">
+          <span className="text-gray-900">£</span>
+          <input type="number" inputMode="decimal" min="0" step="0.01" value={tendered} placeholder="Other amount"
+            onChange={(e) => setTendered(e.target.value)}
+            className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-gray-900" />
+        </div>
+
+        {tenderedPence !== null && (
+          tenderedPence >= amountPence ? (
+            <div className="mt-3 p-3 rounded-lg bg-green-50 border border-green-200">
+              <p className="text-sm text-gray-900">Change to give</p>
+              <p className="text-3xl font-bold text-green-800">{fmt(tenderedPence - amountPence)}</p>
+            </div>
+          ) : (
+            <div className="mt-3 p-3 rounded-lg bg-red-50 border border-red-200 text-red-800">
+              <p className="font-semibold">Short by {fmt(amountPence - tenderedPence)}</p>
+            </div>
+          )
+        )}
+
+        <div className="mt-5 flex flex-col gap-2">
+          <button onClick={onConfirm} className="py-3 rounded-lg bg-green-600 text-white font-semibold hover:bg-green-700">
+            Cash taken — record it
+          </button>
+          <button onClick={onCancel} className="py-2 rounded-lg border border-gray-300 bg-white font-medium text-gray-900 hover:bg-gray-50">
+            Cancel — not cash
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MembershipFeesView({ staff, offline, terminalEnabled, onDone }: { staff: string; offline: boolean; terminalEnabled: boolean; onDone: () => void }) {
   const [due, setDue] = useState<TillRenewalDue[] | null>(null);
+  // With a Terminal paired, card goes to the Terminal; manualCard = taken on its keypad
+  // instead, confirmed with the tick box as before.
+  const [manualCard, setManualCard] = useState(false);
+  const [terminalCheckout, setTerminalCheckout] = useState<TerminalCheckout | null>(null);
+  const [terminalNotice, setTerminalNotice] = useState('');
   const [loadError, setLoadError] = useState('');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<TillRenewalDue | null>(null);
@@ -1336,7 +1713,49 @@ function MembershipFeesView({ staff, offline, onDone }: { staff: string; offline
   useEffect(() => { load(); }, [load]);
 
   function choose(r: TillRenewalDue) {
-    setSelected(r); setMethod(null); setConfirmed(false); setSaveError('');
+    setSelected(r); setMethod(null); setConfirmed(false); setSaveError(''); setManualCard(false);
+  }
+
+  const useTerminal = method === 'card' && terminalEnabled && !manualCard;
+
+  async function sendToTerminal() {
+    if (!selected) return;
+    setSaving(true); setSaveError(''); setTerminalNotice('');
+    try {
+      const res = await fetch('/api/bar/square', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'membership', userName: selected.userName, expectedPence: Math.round(selected.outstanding * 100), staff }),
+      });
+      const data = await res.json();
+      if (res.status === 409 && data.checkout) {
+        setTerminalNotice('The Terminal was already waiting for this payment — finish or cancel it, then try again.');
+        setTerminalCheckout(data.checkout);
+        return;
+      }
+      if (!res.ok) {
+        setSaveError(data.error || 'Could not send the payment to the Terminal');
+        load();
+        return;
+      }
+      setTerminalCheckout(data.checkout);
+    } catch {
+      setSaveError('Could not reach the Terminal — check the connection and try again');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function terminalPaid(c: TerminalCheckout) {
+    setTerminalCheckout(null);
+    if (terminalNotice) {
+      // It was a different payment the Terminal was finishing — just refresh
+      setTerminalNotice('');
+      load();
+      return;
+    }
+    if (selected) setPaid({ name: selected.fullName, amount: c.amountPence / 100, method: 'card' });
+    setSelected(null);
+    load();
   }
 
   async function record() {
@@ -1400,13 +1819,33 @@ function MembershipFeesView({ staff, offline, onDone }: { staff: string; offline
         </div>
 
         <div className="grid grid-cols-2 gap-3 mt-5">
-          <button onClick={() => { setMethod('card'); setConfirmed(false); }}
+          <button onClick={() => { setMethod('card'); setConfirmed(false); setManualCard(false); }}
             className={`py-3 rounded-lg font-semibold border ${method === 'card' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-900 border-gray-300 hover:bg-gray-50'}`}>Card</button>
           <button onClick={() => { setMethod('cash'); setConfirmed(false); }}
             className={`py-3 rounded-lg font-semibold border ${method === 'cash' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-900 border-gray-300 hover:bg-gray-50'}`}>Cash</button>
         </div>
 
-        {method && (
+        {terminalCheckout && (
+          <BarTerminalPayment
+            key={terminalCheckout.id}
+            checkout={terminalCheckout}
+            notice={terminalNotice || undefined}
+            onPaid={terminalPaid}
+            onCancelled={() => { setTerminalCheckout(null); setTerminalNotice(''); }}
+            onManual={terminalNotice ? undefined : () => { setTerminalCheckout(null); setManualCard(true); setConfirmed(false); }}
+          />
+        )}
+
+        {useTerminal && (
+          <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-gray-900">
+            <p><strong>{pounds(selected.outstanding)}</strong> will be sent to the Square Terminal for the member to pay.</p>
+            <button type="button" onClick={() => { setManualCard(true); setConfirmed(false); }} className="mt-1 text-gray-700 underline">
+              Taken on the Terminal&apos;s keypad instead…
+            </button>
+          </div>
+        )}
+
+        {method && !useTerminal && (
           <label className="flex items-start gap-3 mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg cursor-pointer">
             <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} className="mt-1 h-5 w-5" />
             <span className="text-sm text-gray-900">
@@ -1421,10 +1860,17 @@ function MembershipFeesView({ staff, offline, onDone }: { staff: string; offline
 
         <div className="mt-4 flex gap-3">
           <button onClick={() => setSelected(null)} disabled={saving} className="flex-1 py-3 rounded-lg border border-gray-300 bg-white font-medium hover:bg-gray-50 disabled:opacity-50">Back</button>
-          <button onClick={record} disabled={saving || offline || !method || !confirmed}
-            className="flex-1 py-3 rounded-lg bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-50">
-            {saving ? 'Recording…' : 'Record payment'}
-          </button>
+          {useTerminal ? (
+            <button onClick={sendToTerminal} disabled={saving || offline}
+              className="flex-1 py-3 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700 disabled:opacity-50">
+              {saving ? 'Sending…' : 'Send to Terminal'}
+            </button>
+          ) : (
+            <button onClick={record} disabled={saving || offline || !method || !confirmed}
+              className="flex-1 py-3 rounded-lg bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-50">
+              {saving ? 'Recording…' : 'Record payment'}
+            </button>
+          )}
         </div>
       </div>
     );

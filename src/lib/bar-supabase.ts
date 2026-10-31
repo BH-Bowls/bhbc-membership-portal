@@ -454,10 +454,42 @@ export async function cashMovement(productId: string, amountPence: number, direc
   return { saleId: data.sale_id, totalPence: data.total_pence };
 }
 
-export async function voidSale(saleId: string, staff: string): Promise<void> {
+/** Void a sale. A wallet sale goes back on the balance (in bar_void_sale); a Square
+ * Terminal card sale is refunded to the card first. A sale already in a Day End can't be
+ * voided — checked here and again in bar_void_sale. Returns the amount refunded to a card. */
+export async function voidSale(saleId: string, staff: string): Promise<{ cardRefundPence: number }> {
   const supabase = getSupabaseClient();
+  const { data: sale, error: loadError } = await supabase
+    .from('bar_sales')
+    .select('id, payment_method, total_pence, voided, day_end_id, square_payment_id, square_refund_id')
+    .eq('id', saleId).maybeSingle();
+  if (loadError) throw new Error(`Failed to load the sale: ${loadError.message}`);
+  if (!sale) throw new Error('Sale not found');
+  if (sale.voided) throw new Error('Sale already voided');
+  if (sale.day_end_id) throw new Error('This sale is in a Day End that has been done, so it can’t be voided');
+
+  // Refund first, then void: if the void then fails, trying again returns the same
+  // refund (same idempotency key) rather than refunding twice.
+  let cardRefundPence = 0;
+  if (sale.payment_method === 'card' && sale.square_payment_id && sale.total_pence > 0) {
+    if (!sale.square_refund_id) {
+      // Loaded here, not at the top: the till page imports this file for its types/pricing
+      const { refundPayment } = await import('./square');
+      const refund = await refundPayment({
+        idempotencyKey: `void-${saleId}`,
+        paymentId: sale.square_payment_id,
+        amountPence: sale.total_pence,
+        reason: 'Bar sale voided',
+      });
+      const { error: refundError } = await supabase.from('bar_sales').update({ square_refund_id: refund.id }).eq('id', saleId);
+      if (refundError) throw new Error(`Refunded on Square (${refund.id}) but couldn’t save it: ${refundError.message}`);
+    }
+    cardRefundPence = sale.total_pence;
+  }
+
   const { error } = await supabase.rpc('bar_void_sale', { p_sale_id: saleId, p_staff: staff });
   if (error) throw new Error(error.message);
+  return { cardRefundPence: cardRefundPence };
 }
 
 export async function refund(userName: string, amountPence: number, staff: string, note?: string): Promise<number> {
@@ -793,7 +825,7 @@ export async function getDayEndSales(dayEndId: string | null, method: 'wallet' |
   const supabase = getSupabaseClient();
   let query = supabase
     .from('bar_sales')
-    .select('id, created_at, payment_method, user_name, total_pence, gross_total_pence, discount_pence, voided, is_cash_movement, reason, bar_sale_items ( qty, unit_price_pence, bar_products ( name ) )')
+    .select('id, created_at, payment_method, user_name, staff, total_pence, gross_total_pence, discount_pence, voided, is_cash_movement, reason, day_end_id, square_payment_id, square_refund_id, bar_sale_items ( qty, unit_price_pence, bar_products ( name ) )')
     .eq('payment_method', method).eq('voided', false);
   if (cashMovementsOnly !== undefined) query = query.eq('is_cash_movement', cashMovementsOnly);
   query = dayEndId === null ? query.is('day_end_id', null) : query.eq('day_end_id', dayEndId);
@@ -806,10 +838,14 @@ export async function getDayEndSales(dayEndId: string | null, method: 'wallet' |
     paymentMethod: s.payment_method,
     userName: s.user_name,
     memberName: s.user_name ? (names.get(s.user_name.toLowerCase()) || s.user_name) : null,
+    staffName: s.staff ? (names.get(s.staff.toLowerCase()) || s.staff) : null,
     totalPence: s.total_pence,
     grossTotalPence: s.gross_total_pence,
     discountPence: s.discount_pence,
     voided: s.voided,
+    inDayEnd: !!s.day_end_id,
+    onTerminal: !!s.square_payment_id,
+    cardRefunded: !!s.square_refund_id,
     isCashMovement: s.is_cash_movement,
     reason: s.reason,
     items: (s.bar_sale_items ?? []).map((i: any) => ({ name: i.bar_products?.name ?? 'Item', qty: i.qty, unitPricePence: i.unit_price_pence })),
@@ -882,10 +918,14 @@ export interface BarSaleSummary {
   paymentMethod: 'wallet' | 'card' | 'cash';
   userName: string | null;
   memberName: string | null;   // null for visitor sales
+  staffName: string | null;    // who served; null on older member sales, which didn't store it
   totalPence: number;
   grossTotalPence: number;
   discountPence: number;
   voided: boolean;
+  inDayEnd: boolean;           // already in a Day End — can't be voided
+  onTerminal: boolean;         // paid on the Square Terminal — voiding refunds the card
+  cardRefunded: boolean;       // refunded to the card on Square when voided
   isCashMovement: boolean;
   reason: string | null;       // Cash Movement only
   items: BarSaleItem[];
@@ -895,7 +935,7 @@ export async function getRecentSales(limit = 40): Promise<BarSaleSummary[]> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
     .from('bar_sales')
-    .select('id, created_at, payment_method, user_name, total_pence, gross_total_pence, discount_pence, voided, is_cash_movement, reason, bar_sale_items ( qty, unit_price_pence, bar_products ( name ) )')
+    .select('id, created_at, payment_method, user_name, staff, total_pence, gross_total_pence, discount_pence, voided, is_cash_movement, reason, day_end_id, square_payment_id, square_refund_id, bar_sale_items ( qty, unit_price_pence, bar_products ( name ) )')
     .order('created_at', { ascending: false })
     .limit(limit);
   if (error) throw new Error(`Failed to load sales: ${error.message}`);
@@ -906,10 +946,14 @@ export async function getRecentSales(limit = 40): Promise<BarSaleSummary[]> {
     paymentMethod: s.payment_method,
     userName: s.user_name,
     memberName: s.user_name ? (names.get(s.user_name.toLowerCase()) || s.user_name) : null,
+    staffName: s.staff ? (names.get(s.staff.toLowerCase()) || s.staff) : null,
     totalPence: s.total_pence,
     grossTotalPence: s.gross_total_pence,
     discountPence: s.discount_pence,
     voided: s.voided,
+    inDayEnd: !!s.day_end_id,
+    onTerminal: !!s.square_payment_id,
+    cardRefunded: !!s.square_refund_id,
     isCashMovement: s.is_cash_movement,
     reason: s.reason,
     items: (s.bar_sale_items ?? []).map((i: any) => ({ name: i.bar_products?.name ?? 'Item', qty: i.qty, unitPricePence: i.unit_price_pence })),

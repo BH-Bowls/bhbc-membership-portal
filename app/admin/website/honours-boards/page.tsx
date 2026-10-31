@@ -19,9 +19,11 @@ import { LINE_SPACING_KEY, YEARS_PER_SET_KEY } from '@/types/honours-boards';
 import type { BoardLayout, BoardSheet, HonoursBoard, LineSpacing } from '@/types/honours-boards';
 import type { HonoursYearRow } from '@/lib/honours-board-pdf';
 import { HonoursBoardStyleEditor } from '@/components/HonoursBoardStyleEditor';
-import { HonoursRowSettings } from '@/components/HonoursRowSettings';
+import { HonoursRowSettings, rowSummary } from '@/components/HonoursRowSettings';
 import { HonoursPhotoPlaque } from '@/components/HonoursPhotoPlaque';
 import { HonoursBoardsPanel } from '@/components/HonoursBoardsPanel';
+import { HonoursPrintSpec } from '@/components/HonoursPrintSpec';
+import { honoursPrintSpec } from '@/lib/honours-print-spec';
 import { DEFAULT_STYLE, STYLE_KEY, sameStyle } from '@/types/honours-board-style';
 import type { BoardStyleSettings } from '@/types/honours-board-style';
 
@@ -64,6 +66,8 @@ export default function PrintHonoursBoardsPage() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  // The print spec pop-up (the rows and style in use, to paste into an email)
+  const [specOpen, setSpecOpen] = useState(false);
   // Keeps the latest preview URL so it can be released when replaced or on leaving the page
   const previewUrlRef = useRef<string | null>(null);
 
@@ -562,7 +566,26 @@ export default function PrintHonoursBoardsPage() {
                 <button onClick={download} disabled={working || !sheet} className={getButtonClasses('primary', 'md')}>
                   Download PDF
                 </button>
+                <button onClick={() => setSpecOpen(true)} className={getButtonClasses('secondary', 'md')}>
+                  Print Spec
+                </button>
               </div>
+
+              {/* The rows and style in use, as text to paste into an email */}
+              {specOpen && (
+                <HonoursPrintSpec
+                  text={honoursPrintSpec({
+                    style,
+                    rowControl: yearsPerSet,
+                    lineSpacing,
+                    startYear,
+                    layout: board.layout,
+                    rowResult: rowSummary(yearsPerSet, lineSpacing, startYear, board.layout),
+                    saved: !rowsChanged && sameStyle(style, savedStyle),
+                  })}
+                  onClose={() => setSpecOpen(false)}
+                />
+              )}
 
               {previewUrl && (
                 <iframe

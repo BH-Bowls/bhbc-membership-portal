@@ -1,5 +1,6 @@
 // app/api/bar/void/route.ts
-// POST — void a sale (refunds the wallet if it was a wallet sale). { saleId, staff }
+// POST — void a sale (refunds the wallet if it was a wallet sale, or the card if it was
+// paid on the Square Terminal; refused once the sale is in a Day End). { saleId, staff }
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
@@ -14,8 +15,8 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   if (!body.saleId) return NextResponse.json({ error: 'saleId required' }, { status: 400 });
   try {
-    await voidSale(body.saleId, body.staff || '');
-    return NextResponse.json({ ok: true });
+    const result = await voidSale(body.saleId, body.staff || '');
+    return NextResponse.json({ ok: true, cardRefundPence: result.cardRefundPence });
   } catch (err: any) {
     return NextResponse.json({ error: err.message || 'Void failed' }, { status: 400 });
   }
