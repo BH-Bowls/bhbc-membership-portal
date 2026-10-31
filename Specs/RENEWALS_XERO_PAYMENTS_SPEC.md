@@ -250,6 +250,108 @@ Without `--api-key`, the CLI can be linked to a different test environment from 
 - §9.1 described a separate choice per entry ("pick a number or Any number"). The build uses one grid instead, and any entries left unpicked are "Any number".
 - Picks are kept on the draft in the new column, so they aren't lost between Save Draft and Submit.
 
+**Fixes after testing (30 Oct 2026, `d39d4cb`):**
+- A pick someone else has since taken no longer holds one of the entries. Tapping a free number replaces it.
+- **Assign** on `/200-club` lists the members still to allocate first.
+- Assign and Clear send the holder the page showed, and are refused (409, then the page reloads) if the number has changed hands since. This stops a stale page overwriting numbers a member claimed on Submit.
+
+### 2.12 Phase 8 — Square Terminal (built 30 Oct 2026, same branch, uncommitted)
+
+**Migration and code:**
+- **Migration:** `0091_bar_square_terminal.sql`. **Apply before deploying.** It adds:
+  - the `square_checkouts` table, one row per payment sent to the Terminal, holding what to record once it's paid;
+  - `bar_sales.square_payment_id`;
+  - config keys `square_device_id` and `square_device_name`;
+  - `bar_quote_sale()`, a basket's total at current prices, using the same `bar_price_item()` as `bar_visitor_sale()`.
+- **Code:**
+  - `src/lib/square.ts`: the Square REST calls (no SDK) and the webhook signature check;
+  - `src/lib/bar-square.ts`: starting, checking, cancelling and recording Terminal payments;
+  - `src/components/BarTerminalPayment.tsx`: the till's "waiting for the card" dialog;
+  - `src/components/SquareTerminalSetup.tsx`: pairing, on `/admin/bar-devices`.
+- **Routes:**
+  - `/api/bar/square`: GET status, POST start a payment;
+  - `/api/bar/square/[id]`: GET check, POST cancel;
+  - `/api/webhooks/square`: public, signature-checked;
+  - `/api/admin/square-terminal`: pairing.
+
+**Environment:**
+- `SQUARE_ENVIRONMENT` (`sandbox` or `production`, default sandbox)
+- `SQUARE_ACCESS_TOKEN`
+- `SQUARE_LOCATION_ID`
+- `SQUARE_WEBHOOK_SIGNATURE_KEY`
+- `SQUARE_WEBHOOK_URL`: the exact notification URL registered with Square, because it's part of the signature.
+
+Without the token and location, or with no Terminal paired, the till works exactly as it did before Phase 8.
+
+**Scope:** every card payment on the till goes to the Terminal: Cash/Card sales, "Pay by Card" for a member, **card top-ups**, and Membership fees. §10 named only sales and renewal payments; card top-ups were added because they're the same money through the same device.
+
+**Flow:**
+1. **Staff press the card button.** The server works out the amount itself:
+   - a basket at current prices;
+   - a top-up amount;
+   - a renewal's amount due.
+   It refuses if that differs from what the till showed. It then sends the amount to the Terminal (`POST /v2/terminals/checkouts`, 5-minute deadline, GBP) and stores the row.
+2. **The till shows the amount and "waiting for the card…"**, and checks every 2 seconds. Staff can **Cancel**.
+3. **When Square says COMPLETED,** the server records the payment from the stored row, whether it hears from the till's check or the webhook first. The row is claimed first, so it's recorded exactly once:
+   - **sale:** `bar_visitor_sale('card', …)`, plus `square_payment_id`;
+   - **top-up:** `bar_topup(…, 'card')` with the note "Square {payment id}";
+   - **membership:** `renewals_record_till_payment()`, with the reference `TILL {username} SQ {payment id}`.
+   The till then clears the basket or updates the balance, as before.
+4. **CANCELED** (customer cancelled, staff cancelled or timed out): nothing is recorded, and the basket is kept.
+   - "Taken on the Terminal's keypad instead…" records it the old way, after a confirm.
+   - On Membership fees, the same link is offered before sending, and brings back the tick box.
+
+**Safety nets:**
+- **One payment at a time:** while the Terminal has a payment open, a new one is refused (409) and the dialog for the open one is shown instead.
+- **Refreshed till:** a payment still open from the last 10 minutes shows again.
+- **Offline till:** card sales are queued as before, with the money taken on the Terminal's keypad. They never go through the Terminal.
+- **Paid but not recorded:** for example, a renewal paid by bank transfer while the customer was at the Terminal.
+  - The row keeps `record_error`, and the till says "Don't take the payment again".
+  - It's listed under **Card payments needing attention** on `/admin/bar-devices` until an Admin marks it dealt with.
+  - A recording that failed is retried on each check, since nothing was written.
+  - A sale whose prices changed mid-payment is recorded at the new price and flagged the same way.
+
+**Pairing (`/admin/bar-devices`, Admin):**
+- **Pair a Terminal:** gets a device code (Devices API, `TERMINAL_API`). Enter it on the Terminal under "Sign in with device code". The page checks every 5 seconds and saves the device id once it's paired.
+- **Stop using this Terminal:** clears the device, and the till goes back to the tick box.
+- **Sandbox:** there's no real device, so pick one of Square's simulated Terminals instead:
+  - success;
+  - customer cancels;
+  - timed out;
+  - offline.
+  Sandbox card payments over £25.00 aren't approved, so they stay waiting until they time out.
+
+**Fixes after testing (31 Oct 2026):**
+- **Paid screen:** a green "Paid £x.xx" screen stays up until the bar person taps OK. Before, the dialog just closed.
+- **Not picked up:** if the payment is still PENDING after 20 seconds, the dialog says to check the Terminal is on, awake and on the Wi-Fi, or press Cancel. It then checks every 5 seconds instead of every 2.
+- **Failed check:** a failed check no longer stops the polling.
+- **Picked-up payment paid:** a payment picked up again after a refresh, once paid, clears the held order it paid for if the items match. If the order was changed in the meantime, it's left alone and the till warns staff.
+- **Offline card payment:** a card sale or card top-up taken while the till is offline asks staff to key the amount in on the Terminal, which queues offline too. Staff then confirm "Payment taken — record it" before it's queued.
+- **Cash dialog:** Pay by Cash and cash top-ups now pop up the amount, because Cash is easy to hit instead of Card.
+  - Staff can enter what they were handed, or tap £5, £10, £20 or £50, and the dialog shows the change to give.
+  - The tendered amount isn't stored.
+  - "Cash taken — record it" records the payment, and "Cancel — not cash" keeps the basket.
+- **Voiding a sale (migration `0092_bar_void_rules.sql`):**
+  - **Void dialog:** replaces the browser's `confirm()`. It shows the sale and says what happens to the money for that payment type:
+    - account sales go back on the balance;
+    - for cash, staff hand it back;
+    - a Terminal card sale is refunded to the card;
+    - for a keypad card sale, refund it on the Terminal or Dashboard.
+    It then confirms what was done.
+  - **Terminal card sales refund automatically:** voiding calls Square's Refunds API (`POST /v2/refunds`) for the sale's `square_payment_id` before voiding.
+    - The idempotency key is `void-{saleId}`, so a retry returns the same refund.
+    - The refund id is kept in `bar_sales.square_refund_id`, and the Sales list shows "Voided · card refunded".
+  - **No voids after Day End:** a sale with a `day_end_id` has no Void button. The server refuses too, in `voidSale()` and in `bar_void_sale()`.
+- **Pay by Account dialog:** shows the sale amount, what's on the account now, and what's left after the sale. "Pay £x from the account" records it, and "Cancel" keeps the basket. When the till is offline, the balance shown is what's been topped up this session.
+- **Account refund dialog:** replaces the browser's `confirm()` too. It shows the amount, the cash to hand over, and the balance before and after. The till no longer uses `confirm()` anywhere.
+- **Staff on every sale:** every sale, including account sales and Pay by Card for a member, now stores whoever's serving. The till's Sales list shows "served by …".
+
+Tested in the sandbox: success, customer cancels, timed out and offline; a card sale and a card top-up.
+
+**Not covered:**
+- **Refunds and voids:** card top-ups and membership fees paid on the Terminal aren't refunded from the portal. Refund them in the Square Dashboard. Voiding a Terminal card *sale* does refund it (see Fixes after testing).
+- **Itemised receipts** (`order_id`) aren't sent, so receipts show the total only. Test with the real device (§10).
+
 ### 2.5 Competitions eligibility from the friendlies data (built 26 Oct 2026, same branch)
 
 - **Rule:** a playing member can enter club competitions if they made themselves available for at least `min_friendlies_for_competitions` friendlies in the previous season. The setting already existed (Admin config → General) but nothing read it. It's seeded at 8 and is **to be set to 6** for 2027.

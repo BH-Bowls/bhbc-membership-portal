@@ -85,6 +85,10 @@ function isPublicRoute(pathname: string): boolean {
   // (specs/RENEWALS_XERO_PAYMENTS_SPEC.md §11.4).
   if (pathname === '/api/webhooks/stripe') return true;
 
+  // POST /api/webhooks/square — the same for Square's Terminal checkout events: the
+  // handler checks x-square-hmacsha256-signature against SQUARE_WEBHOOK_SIGNATURE_KEY (§10).
+  if (pathname === '/api/webhooks/square') return true;
+
   // /api/leagues/[leagueId] and sub-paths — public
   if (pathname.startsWith('/api/leagues/')) return true;
 
@@ -133,6 +137,7 @@ function isPinExempt(pathname: string): boolean {
   if (pathname === '/bar') return true;
   if (pathname === '/api/bar/devices') return true;
   if (pathname === '/api/webhooks/stripe') return true; // Stripe has no PIN cookie
+  if (pathname === '/api/webhooks/square') return true; // nor does Square
   if (pathname === '/rowland' || pathname.startsWith('/rowland/')) return true;
   if (pathname.startsWith('/api/rowland')) return true;
   // Competition rules — a public page linked from the club website, plus the single
