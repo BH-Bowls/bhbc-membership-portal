@@ -2,7 +2,9 @@
 
 // app/account/page.tsx
 // My Account — two functions: a history of the member's own bar wallet
-// transactions, and a membership card (tap to flip to a QR for the till).
+// transactions, and a membership card (tap to flip to a QR for the till). Under the
+// card the member sets their bar PIN, or resets their card if it's lost
+// (src/lib/bar-card.ts).
 
 import { useState, useEffect, useRef } from 'react';
 import { useSession } from 'next-auth/react';
@@ -25,6 +27,9 @@ interface MembershipCardData {
   fullName: string;
   honorary: boolean;
   latestRenewedSeasonYear: number | null;
+  cardCode: string | null;   // null if the QR couldn't be made
+  hasPin: boolean;
+  pinLocked: boolean;
 }
 
 // Membership fee card (specs/RENEWALS_XERO_PAYMENTS_SPEC.md §7) — one entry for the
@@ -70,6 +75,66 @@ export default function MyAccountPage() {
   const [cardError, setCardError] = useState('');
   const [showQr, setShowQr] = useState(false);
   const qrCanvasRef = useRef<HTMLCanvasElement>(null);
+
+  // Bar PIN and card reset (under the card)
+  const [newPin, setNewPin] = useState('');
+  const [confirmPin, setConfirmPin] = useState('');
+  const [pinSaving, setPinSaving] = useState(false);
+  const [pinMessage, setPinMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [resetMessage, setResetMessage] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const savePin = async () => {
+    setPinMessage(null);
+    if (!/^\d{4}$/.test(newPin)) {
+      setPinMessage({ ok: false, text: 'Your PIN must be 4 digits.' });
+      return;
+    }
+    if (newPin !== confirmPin) {
+      setPinMessage({ ok: false, text: 'The two PINs don’t match.' });
+      return;
+    }
+    setPinSaving(true);
+    try {
+      const res = await fetch('/api/account/membership-card', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'set_pin', pin: newPin }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to save your PIN');
+      setNewPin('');
+      setConfirmPin('');
+      setCard((c) => (c ? { ...c, hasPin: true, pinLocked: false } : c));
+      setPinMessage({ ok: true, text: 'PIN saved.' });
+    } catch (err) {
+      setPinMessage({ ok: false, text: err instanceof Error ? err.message : 'Failed to save your PIN' });
+    } finally {
+      setPinSaving(false);
+    }
+  };
+
+  const resetCard = async () => {
+    setResetMessage(null);
+    setResetting(true);
+    try {
+      const res = await fetch('/api/account/membership-card', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'reset_card' }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to reset your card');
+      setCard((c) => (c ? { ...c, cardCode: data.cardCode } : c));
+      setConfirmReset(false);
+      setResetMessage({ ok: true, text: 'Done — your old card no longer works. The QR code above is your new one.' });
+    } catch (err) {
+      setResetMessage({ ok: false, text: err instanceof Error ? err.message : 'Failed to reset your card' });
+    } finally {
+      setResetting(false);
+    }
+  };
 
   const [fees, setFees] = useState<RenewalFeesData | null>(null);
   const [copiedReference, setCopiedReference] = useState<string | null>(null);
@@ -217,11 +282,12 @@ export default function MyAccountPage() {
     }
   }
 
+  const cardCode = card ? card.cardCode : null;
   useEffect(() => {
-    if (showQr && qrCanvasRef.current && session && session.user && session.user.userName) {
-      QRCode.toCanvas(qrCanvasRef.current, session.user.userName, { width: 220 }).catch(() => {});
+    if (showQr && qrCanvasRef.current && cardCode) {
+      QRCode.toCanvas(qrCanvasRef.current, cardCode, { width: 220 }).catch(() => {});
     }
-  }, [showQr, session]);
+  }, [showQr, cardCode]);
 
   if (status === 'loading') {
     return (
@@ -317,12 +383,84 @@ export default function MyAccountPage() {
                     </div>
                   ) : (
                     <div className="bg-white border border-gray-200 rounded-2xl shadow-lg p-6 aspect-[16/10] flex flex-col items-center justify-center">
-                      <canvas ref={qrCanvasRef} />
-                      <p className="text-xs text-gray-500 mt-3">Show this to bar staff to be found on the till instantly.</p>
+                      {card.cardCode ? (
+                        <>
+                          <canvas ref={qrCanvasRef} />
+                          <p className="text-xs text-gray-500 mt-3">Scan this at the bar to pay from or top up your account.</p>
+                        </>
+                      ) : (
+                        <p className="text-sm text-gray-700 text-center">Your QR code isn&apos;t available at the moment — use your PIN at the bar.</p>
+                      )}
                     </div>
                   )}
                 </button>
                 <p className="text-xs text-gray-500 mt-2 text-center">Tap the card to {showQr ? 'show your details' : 'show your QR code'}.</p>
+
+                <div className="bg-white shadow rounded-lg p-5 mt-6 space-y-5">
+                  <div>
+                    <h2 className="text-lg font-semibold text-gray-900">Bar PIN</h2>
+                    <p className="text-sm text-gray-700 mt-1">
+                      To pay from or top up your bar account, scan your card at the bar or type your 4-digit PIN.
+                    </p>
+                    <p className="text-sm text-gray-900 mt-2">
+                      {card.pinLocked
+                        ? 'Your PIN is locked after too many wrong tries. Set a new one below.'
+                        : card.hasPin
+                          ? 'You have a PIN. You can change it below.'
+                          : 'You haven’t set a PIN yet.'}
+                    </p>
+                    <div className="mt-3 flex flex-wrap items-end gap-3">
+                      <div>
+                        <label className="block text-sm text-gray-700 mb-1">New PIN</label>
+                        <input type="password" inputMode="numeric" maxLength={4} value={newPin}
+                          onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))}
+                          className="w-24 border border-gray-300 rounded-md px-3 py-2 text-center tracking-widest" />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-gray-700 mb-1">Same again</label>
+                        <input type="password" inputMode="numeric" maxLength={4} value={confirmPin}
+                          onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ''))}
+                          className="w-24 border border-gray-300 rounded-md px-3 py-2 text-center tracking-widest" />
+                      </div>
+                      <button onClick={savePin} disabled={pinSaving}
+                        className="px-4 py-2 rounded-md bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+                        {pinSaving ? 'Saving…' : card.hasPin ? 'Change PIN' : 'Set PIN'}
+                      </button>
+                    </div>
+                    {pinMessage && (
+                      <p className={'text-sm mt-2 ' + (pinMessage.ok ? 'text-green-700' : 'text-red-600')}>{pinMessage.text}</p>
+                    )}
+                  </div>
+
+                  <div className="border-t border-gray-100 pt-5">
+                    <h2 className="text-lg font-semibold text-gray-900">Lost your card or phone?</h2>
+                    <p className="text-sm text-gray-700 mt-1">
+                      Reset your card so nobody else can use it. Your old QR code and any printed cards stop working
+                      straight away. The new QR code shows here; a printed card needs reprinting — ask the committee.
+                    </p>
+                    {!confirmReset ? (
+                      <button onClick={() => { setResetMessage(null); setConfirmReset(true); }}
+                        className="mt-3 px-4 py-2 rounded-md border border-red-300 text-red-700 text-sm font-medium hover:bg-red-50">
+                        Reset my card
+                      </button>
+                    ) : (
+                      <div className="mt-3 flex flex-wrap items-center gap-3">
+                        <span className="text-sm text-gray-900">Reset your card now?</span>
+                        <button onClick={resetCard} disabled={resetting}
+                          className="px-4 py-2 rounded-md bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-50">
+                          {resetting ? 'Resetting…' : 'Yes, reset it'}
+                        </button>
+                        <button onClick={() => setConfirmReset(false)} disabled={resetting}
+                          className="px-4 py-2 rounded-md border border-gray-300 text-gray-900 text-sm font-medium hover:bg-gray-50">
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+                    {resetMessage && (
+                      <p className={'text-sm mt-2 ' + (resetMessage.ok ? 'text-green-700' : 'text-red-600')}>{resetMessage.text}</p>
+                    )}
+                  </div>
+                </div>
                 {validUntilLabel(card).renewalDue && !selfHasFeeItem && (
                   <p className="text-sm text-gray-700 mt-4 text-center">
                     <Link href="/renewals" className="text-blue-600 hover:text-blue-800 font-medium">Renew your membership</Link>

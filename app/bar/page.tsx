@@ -21,12 +21,19 @@
 // next PIN login (the till's session ends after 4h idle / 24h — see src/lib/auth.ts).
 // A Cash/Card tab is held/resumed by staff name rather than by a member. A basket left
 // via "← Back" is parked in heldOrders and resumed if that same member/tab is reopened.
+//
+// Card or PIN (src/lib/bar-card.ts): Pay by Account and Top Up need the member to scan
+// their membership card or enter their bar PIN, when the Config setting says they must
+// (bar_account_proof: off / Testing role only / everyone). A scan from the person picker
+// counts; otherwise ProofDialog asks. The proof lasts while that member's basket is open,
+// and goes with the payment so the server checks it too. Offline, only a card scan
+// works (checked against the hashes from /api/bar/cards) — a PIN needs the server.
 
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useSession, signIn, signOut } from 'next-auth/react';
-import jsQR from 'jsqr';
+import QrScanModal from '@/components/QrScanModal';
 import { canUseBarTill } from '@/lib/role-utils';
 import { priceItem, type BarPricingConfig, type BarProduct, type BarCategoryRow, type BarAccount, type BarPerson, type BarReport, type BarSaleSummary, type BarDayEnd, type BarDayEndLedgerRow } from '@/lib/bar-supabase';
 import { useOnlineStatus } from '@/hooks/useOnlineStatus';
@@ -77,6 +84,17 @@ type ServerAction = 'cashcard' | 'topup' | 'endofday' | 'cashmovement' | 'member
 type View = 'volunteer' | 'person' | 'sale' | 'topup' | 'report' | 'sales' | 'products' | 'cashmovement' | 'membership';
 interface BasketLine { product: BarProduct; qty: number }
 interface MemberOption { userName: string; fullName: string }
+// One member's card/PIN details from /api/bar/cards (TillCard in src/lib/bar-card.ts)
+interface TillCard { userName: string; userId: string; cardHash: string; hasPin: boolean; pinLocked: boolean; proofRequired: boolean }
+// Proof that the member on screen is really here — sent with Pay by Account / Top Up.
+// A PIN is only held here while their basket is open, and is checked again each payment.
+interface MemberProof { userName: string; cardCode?: string; pin?: string }
+
+async function sha256Hex(text: string): Promise<string | null> {
+  if (!crypto.subtle) return null; // only on HTTPS or localhost
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
 
 const SCREEN_TITLES: Record<View, string> = {
   person: 'Home',
@@ -118,6 +136,13 @@ export default function BarTillPage() {
   const [pendingAction, setPendingAction] = useState<ServerAction | null>(null);
   const [personSearch, setPersonSearch] = useState('');
   const [showScanner, setShowScanner] = useState(false);
+  // Card/PIN (see the header comment). proofRef mirrors proof so a payment that carries
+  // on straight after ProofDialog sees it without waiting for a re-render.
+  const [tillCards, setTillCards] = useState<TillCard[]>([]);
+  const [proof, setProof] = useState<MemberProof | null>(null);
+  const proofRef = useRef<MemberProof | null>(null);
+  const [proofDialog, setProofDialog] = useState<{ purpose: 'pay' | 'topup'; onProven: () => void } | null>(null);
+  const [showSetPin, setShowSetPin] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -204,6 +229,13 @@ export default function BarTillPage() {
       if (cat.categories) setCategories(cat.categories);
     } catch { setError('Failed to load bar data'); }
 
+    // Separately, so a card problem never stops the till loading — card scans just
+    // aren't recognised, and the server still checks payments
+    try {
+      const cardData = await fetch('/api/bar/cards').then((r) => r.json());
+      if (cardData.cards) setTillCards(cardData.cards);
+    } catch { /* keep the last list */ }
+
     // Separately, so a Square problem never stops the till loading
     try {
       const sq = await fetch('/api/bar/square').then((r) => r.json());
@@ -232,7 +264,7 @@ export default function BarTillPage() {
         });
         return;
       }
-      if (!res.ok) throw new Error(data.error || 'Could not send the payment to the Terminal');
+      if (!res.ok) { handleProofRefused(data); throw new Error(data.error || 'Could not send the payment to the Terminal'); }
       setTerminalPay({ checkout: data.checkout, onPaid: onPaid, onManual: onManual });
     } catch (err: any) { setError(err.message); } finally { setBusy(false); }
   }
@@ -295,12 +327,16 @@ export default function BarTillPage() {
         if (entry.kind === 'sale') {
           res = await fetch('/api/bar/sale', { method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ method: entry.method, items: entry.items, staff: entry.staff, userName: entry.userName }) });
-        } else if (entry.kind === 'topup') {
-          res = await fetch('/api/bar/topup', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userName: entry.userName, amountPence: entry.amountPence, staff: entry.staff, paymentMethod: entry.paymentMethod }) });
         } else {
-          res = await fetch('/api/bar/purchase', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userName: entry.userName, items: entry.items, staff: entry.staff }) });
+          // The card scanned when it was queued still counts if it's been reset since
+          const replayProof = entry.cardCode ? { cardCode: entry.cardCode, offlineReplay: true } : undefined;
+          if (entry.kind === 'topup') {
+            res = await fetch('/api/bar/topup', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ userName: entry.userName, amountPence: entry.amountPence, staff: entry.staff, paymentMethod: entry.paymentMethod, proof: replayProof }) });
+          } else {
+            res = await fetch('/api/bar/purchase', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ userName: entry.userName, items: entry.items, staff: entry.staff, proof: replayProof }) });
+          }
         }
         if (!res.ok) {
           const data = await res.json().catch(() => ({}) as any);
@@ -480,6 +516,7 @@ export default function BarTillPage() {
     if (!skipHold) holdCurrentOrder();
     setView('person'); setMember(null); setBasket([]); setPersonSearch('');
     setShowRefund(false); setRefundAmt('');
+    setMemberProof(null);
   }
 
   // ── basket / pricing helpers ─────────────────────────────────────────────────
@@ -516,10 +553,48 @@ export default function BarTillPage() {
     setError(''); return true;
   }
 
-  // Opens a member's basket — resumes their held order if any.
-  function selectMember(m: BarAccount) {
+  // Opens a member's basket — resumes their held order if any. withProof is set when
+  // they were found by scanning their card.
+  function selectMember(m: BarAccount, withProof: MemberProof | null = null) {
     setMember(m); setBasket(heldOrders.get(`member:${m.userName}`) ?? []); setActiveCat('beer');
     setShowRefund(false); setView('sale');
+    setMemberProof(withProof);
+  }
+
+  // ── card / PIN proof (see the header comment) ──────────────────────────────
+  function setMemberProof(p: MemberProof | null) {
+    proofRef.current = p;
+    setProof(p);
+  }
+  function tillCardFor(userName: string): TillCard | undefined {
+    return tillCards.find((c) => c.userName === userName);
+  }
+  // Offline, only a scanned card will do — a PIN check can't reach the server, and a
+  // queued payment has to carry the card to be accepted when it syncs.
+  function hasProof(userName: string): boolean {
+    const p = proofRef.current;
+    if (!p || p.userName !== userName) return false;
+    return !!p.cardCode || (!offline && !!p.pin);
+  }
+  function needsProof(userName: string): boolean {
+    const card = tillCardFor(userName);
+    return !!card && card.proofRequired && !hasProof(userName);
+  }
+  // Runs action now if the member on screen doesn't need (or already has) proof,
+  // otherwise once they've scanned their card or entered their PIN.
+  function withProof(purpose: 'pay' | 'topup', action: () => void) {
+    if (!member || !needsProof(member.userName)) { action(); return; }
+    setProofDialog({ purpose: purpose, onProven: () => { setProofDialog(null); action(); } });
+  }
+  // The server said the proof wasn't good enough (e.g. a PIN check expired) — ask again next time
+  function handleProofRefused(data: { proofRequired?: boolean }) {
+    if (data.proofRequired) setMemberProof(null);
+  }
+  // What goes with a payment for this member (the server ignores it if not needed)
+  function proofFor(userName: string): { cardCode?: string; pin?: string } | undefined {
+    const p = proofRef.current;
+    if (!p || p.userName !== userName) return undefined;
+    return { cardCode: p.cardCode, pin: p.pin };
   }
   // Cash/Card resumes whoever's serving's held tab, if they have one (see startAction).
   function openCashCardTab() {
@@ -557,6 +632,10 @@ export default function BarTillPage() {
 
     if (mode === 'cash' && ask) {
       setCashDue({ amountPence: basketTotal, onConfirm: () => { setCashDue(null); completeSale('cash', false); } });
+      return;
+    }
+    if (mode === 'wallet' && ask && member && needsProof(member.userName)) {
+      withProof('pay', () => completeSale('wallet'));
       return;
     }
     if (mode === 'wallet' && ask && member) {
@@ -598,7 +677,7 @@ export default function BarTillPage() {
             setError('Insufficient offline balance — only top-ups made this session can be spent while offline.');
             return;
           }
-          await enqueue({ id: newQueueId(), createdAt: Date.now(), kind: 'purchase', userName: member.userName, staff: staffForSale, amountPence: -basketTotal, items });
+          await enqueue({ id: newQueueId(), createdAt: Date.now(), kind: 'purchase', userName: member.userName, staff: staffForSale, amountPence: -basketTotal, items, cardCode: proofFor(member.userName)?.cardCode });
           addOfflineWalletDelta(member.userName, -basketTotal);
         } else {
           // Cash/card never touches a balance, so it's always safe to queue offline
@@ -616,7 +695,7 @@ export default function BarTillPage() {
       if (mode === 'wallet') {
         if (!member) return;
         res = await fetch('/api/bar/purchase', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userName: member.userName, items, staff: staffForSale }) });
+          body: JSON.stringify({ userName: member.userName, items, staff: staffForSale, proof: proofFor(member.userName) }) });
       } else {
         // member is only ever set here for "Pay by Card" — attributes the sale to
         // them (member pricing, history) without touching their wallet.
@@ -624,7 +703,7 @@ export default function BarTillPage() {
           body: JSON.stringify({ method: mode, items, staff: staffForSale, userName: member?.userName }) });
       }
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Sale failed');
+      if (!res.ok) { handleProofRefused(data); throw new Error(data.error || 'Sale failed'); }
       clearHeldOrder(currentOrderKey());
       setBasket([]);
       await load();
@@ -635,7 +714,7 @@ export default function BarTillPage() {
   // A top-up is stored against whoever's serving for audit (see doTopUp) — the name
   // is in the header, so a wrong one is visible without asking every time.
   function openTopUp() {
-    withServer('topup');
+    withProof('topup', () => withServer('topup'));
   }
 
   async function doTopUp(amountPence: number, paymentMethod: 'cash' | 'card', ask = true) {
@@ -650,7 +729,7 @@ export default function BarTillPage() {
     }
     if (paymentMethod === 'card' && ask && terminalEnabled && !offline) {
       await startTerminal(
-        { kind: 'topup', expectedPence: amountPence, staff: volunteer, userName: member.userName },
+        { kind: 'topup', expectedPence: amountPence, staff: volunteer, userName: member.userName, proof: proofFor(member.userName) },
         (c) => {
           setTerminalPay(null);
           const balance = c.result ? c.result.balancePence : undefined;
@@ -668,16 +747,16 @@ export default function BarTillPage() {
     setBusy(true); setError('');
     try {
       if (offline) {
-        await enqueue({ id: newQueueId(), createdAt: Date.now(), kind: 'topup', userName: member.userName, staff: volunteer, amountPence, paymentMethod });
+        await enqueue({ id: newQueueId(), createdAt: Date.now(), kind: 'topup', userName: member.userName, staff: volunteer, amountPence, paymentMethod, cardCode: proofFor(member.userName)?.cardCode });
         addOfflineWalletDelta(member.userName, amountPence);
         refreshQueuedCount();
         setView('sale');
         return;
       }
       const res = await fetch('/api/bar/topup', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userName: member.userName, amountPence, staff: volunteer, paymentMethod }) });
+        body: JSON.stringify({ userName: member.userName, amountPence, staff: volunteer, paymentMethod, proof: proofFor(member.userName) }) });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Top-up failed');
+      if (!res.ok) { handleProofRefused(data); throw new Error(data.error || 'Top-up failed'); }
       // Back to the product list (not the person picker) with the fresh balance —
       // topping up is usually followed straight by a purchase for the same member,
       // and the basket (if anything was already tapped) stays intact.
@@ -795,27 +874,52 @@ export default function BarTillPage() {
   }
 
   const balanceByUser = new Map(accounts.map((a) => [a.userName.toLowerCase(), a.balancePence]));
+  const allPeople = allMembers.map((m) => {
+    const bal = balanceByUser.get(m.userName.toLowerCase());
+    return { userName: m.userName, fullName: m.fullName, balancePence: bal ?? 0, hasAccount: bal !== undefined };
+  });
   const q = personSearch.trim().toLowerCase();
-  const sortedPeople = allMembers
+  const sortedPeople = allPeople
     .filter((m) => !q || m.fullName.toLowerCase().includes(q))
-    .map((m) => {
-      const bal = balanceByUser.get(m.userName.toLowerCase());
-      return { userName: m.userName, fullName: m.fullName, balancePence: bal ?? 0, hasAccount: bal !== undefined };
-    })
     .sort((a, b) => {
       if (a.hasAccount !== b.hasAccount) return a.hasAccount ? -1 : 1;
       if (a.hasAccount) return a.balancePence - b.balancePence || a.fullName.localeCompare(b.fullName);
       return a.fullName.localeCompare(b.fullName);
     });
 
-  // A scanned QR just carries the member's userName (same trust level as picking
-  // them from the list — selecting a member here has never required proof of
-  // identity, so this introduces no new risk).
-  function handleScan(value: string) {
+  // Who a scanned QR is, and whether it proves they're here. A current membership card
+  // (BHBC1.…) is proof; it's checked against the hash of each member's current card, so
+  // it works offline. An old card that's been reset, or an old-style QR holding just the
+  // username, finds the member (same as picking them from the list) but isn't proof.
+  async function readScan(value: string): Promise<{ person?: BarAccount; proof?: MemberProof; message?: string }> {
+    const code = value.trim();
+    if (code.startsWith('BHBC1.')) {
+      const card = tillCards.find((c) => c.userId === code.split('.')[1]);
+      const person = card ? allPeople.find((m) => m.userName === card.userName) : undefined;
+      if (!card || !person) return { message: 'Card not recognised.' };
+      const hash = await sha256Hex(code);
+      if (hash === null) return { person: person, message: 'This device can’t check cards — the till needs to be on its https:// address.' };
+      if (hash !== card.cardHash) {
+        return { person: person, message: `That card for ${person.fullName} has been replaced — ask for their current card, or use their PIN.` };
+      }
+      return { person: person, proof: { userName: person.userName, cardCode: code } };
+    }
+    const person = allPeople.find((m) => m.userName === code);
+    if (person) {
+      const oldCard = tillCards.find((c) => c.userName === person.userName);
+      if (oldCard && oldCard.proofRequired) {
+        return { person: person, message: `That’s an old-style card for ${person.fullName} — it doesn’t count for paying from the account. Ask for their new card from My Account, or their PIN.` };
+      }
+      return { person: person };
+    }
+    return { message: 'QR code did not match a member.' };
+  }
+
+  async function handleScan(value: string) {
     setShowScanner(false);
-    const found = sortedPeople.find((m) => m.userName === value.trim());
-    if (found) selectMember(found);
-    else setError('QR code did not match a member.');
+    const result = await readScan(value);
+    if (result.person) selectMember(result.person, result.proof ?? null);
+    setError(result.message ?? '');
   }
 
   // ── guards ──────────────────────────────────────────────────────────────────
@@ -847,6 +951,28 @@ export default function BarTillPage() {
         {voidDialog && (
           <VoidSaleDialog sale={voidDialog.sale} done={voidDialog.done} error={voidDialog.error} busy={busy}
             onConfirm={() => doVoid(voidDialog.sale)} onClose={() => setVoidDialog(null)} />
+        )}
+
+        {proofDialog && member && (
+          <ProofDialog
+            member={member}
+            card={tillCardFor(member.userName)}
+            purpose={proofDialog.purpose}
+            offline={offline}
+            readScan={readScan}
+            onPinLocked={() => setTillCards((prev) => prev.map((c) => (c.userName === member.userName ? { ...c, pinLocked: true } : c)))}
+            onProven={(p) => { setMemberProof(p); proofDialog.onProven(); }}
+            onClose={() => setProofDialog(null)}
+          />
+        )}
+
+        {showSetPin && member && proof && proof.userName === member.userName && proof.cardCode && (
+          <SetPinDialog
+            member={member}
+            cardCode={proof.cardCode}
+            onDone={() => setTillCards((prev) => prev.map((c) => (c.userName === member.userName ? { ...c, hasPin: true, pinLocked: false } : c)))}
+            onClose={() => setShowSetPin(false)}
+          />
         )}
 
         {walletDue && member && (
@@ -1103,6 +1229,18 @@ export default function BarTillPage() {
               <div className="text-sm font-semibold text-gray-700 mb-2">
                 {member ? `Charge to ${member.fullName}` : 'Non-member sale'}
               </div>
+              {member && proof && proof.userName === member.userName ? (
+                <div className="-mt-1 mb-2 text-xs text-green-700">
+                  ✓ {proof.cardCode ? 'Card scanned' : 'PIN entered'}
+                  {proof.cardCode && !offline && (
+                    <button onClick={() => setShowSetPin(true)} className="ml-2 text-blue-700 underline">
+                      {tillCardFor(member.userName)?.hasPin ? 'Change PIN' : 'Set PIN'}
+                    </button>
+                  )}
+                </div>
+              ) : member && tillCardFor(member.userName)?.proofRequired ? (
+                <div className="-mt-1 mb-2 text-xs text-gray-600">Card or PIN needed to pay from or top up the account</div>
+              ) : null}
               {basket.length === 0 ? <p className="text-gray-400 text-sm py-4">Tap items to add.</p> : (
                 <div className="space-y-2">
                   {basket.map((l) => (
@@ -1387,69 +1525,168 @@ function BarPinLogin() {
   );
 }
 
-// Camera modal for scanning a member's QR (their userName, shown to them on
-// /profile). Decodes with jsQR against captured video frames rather than the
-// native BarcodeDetector API, which isn't available on iPad Safari.
-function QrScanModal({ onScan, onClose }: { onScan: (value: string) => void; onClose: () => void }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [scanError, setScanError] = useState('');
+// A 4-digit PIN keypad. Also takes digits typed on a keyboard — e.g. a plug-in number
+// keypad facing the member, so the bar staff don't see the PIN.
+function PinPad({ value, onChange, disabled }: { value: string; onChange: (v: string) => void; disabled: boolean }) {
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (disabled) return;
+      if (/^\d$/.test(e.key) && value.length < 4) onChange(value + e.key);
+      else if (e.key === 'Backspace') onChange(value.slice(0, -1));
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [value, disabled, onChange]);
+
+  function press(k: string) {
+    if (disabled) return;
+    if (k === '⌫') onChange(value.slice(0, -1));
+    else if (value.length < 4) onChange(value + k);
+  }
+  return (
+    <div>
+      <div className="flex justify-center gap-3 my-4">
+        {[0, 1, 2, 3].map((i) => (
+          <span key={i} className={`h-4 w-4 rounded-full border-2 ${i < value.length ? 'bg-gray-900 border-gray-900' : 'border-gray-400'}`} />
+        ))}
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        {['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫'].map((k, i) => (
+          k === '' ? <span key={i} /> : (
+            <button key={i} onClick={() => press(k)} disabled={disabled}
+              className="py-4 rounded-lg bg-gray-100 text-xl font-medium hover:bg-gray-200 disabled:opacity-50">{k}</button>
+          )
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Pay by Account / Top Up for a member who must prove they're here: scan their card,
+// or enter their PIN (online only — see the header comment).
+function ProofDialog({ member, card, purpose, offline, readScan, onPinLocked, onProven, onClose }: {
+  member: BarAccount;
+  card: TillCard | undefined;
+  purpose: 'pay' | 'topup';
+  offline: boolean;
+  readScan: (value: string) => Promise<{ person?: BarAccount; proof?: MemberProof; message?: string }>;
+  onPinLocked: () => void;
+  onProven: (proof: MemberProof) => void;
+  onClose: () => void;
+}) {
+  const [pin, setPin] = useState('');
+  const [checking, setChecking] = useState(false);
+  const [message, setMessage] = useState('');
+  const [scanning, setScanning] = useState(false);
+  const [locked, setLocked] = useState(!!card && card.pinLocked);
+
+  const canUsePin = !!card && card.hasPin && !locked && !offline;
+  let pinNote = '';
+  if (offline) pinNote = 'PINs can’t be checked while the till is offline — scan their card.';
+  else if (!card || !card.hasPin) pinNote = `${member.fullName} hasn’t set a PIN yet. They can set one in My Account, or here once their card is scanned.`;
+  else if (locked) pinNote = 'The PIN is locked after too many wrong tries — scan their card. They can then set a new PIN.';
 
   useEffect(() => {
-    let stream: MediaStream | null = null;
-    let rafId = 0;
-    let stopped = false;
+    if (pin.length !== 4 || checking) return;
+    setChecking(true); setMessage('');
+    fetch('/api/bar/pin/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userName: member.userName, pin: pin }) })
+      .then(async (res) => {
+        const data = await res.json();
+        if (res.ok) { onProven({ userName: member.userName, pin: pin }); return; }
+        if (data.reason === 'locked') { setLocked(true); onPinLocked(); }
+        setMessage(data.error || 'PIN check failed');
+        setPin('');
+      })
+      .catch(() => { setMessage('Couldn’t check the PIN — check the connection.'); setPin(''); })
+      .finally(() => setChecking(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pin]);
 
-    function tick() {
-      if (stopped) return;
-      const video = videoRef.current, canvas = canvasRef.current;
-      if (video && canvas && video.readyState === video.HAVE_ENOUGH_DATA) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const code = jsQR(imageData.data, imageData.width, imageData.height);
-          if (code?.data) { onScan(code.data); return; }
-        }
-      }
-      rafId = requestAnimationFrame(tick);
-    }
-
-    (async () => {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-        if (stopped) { stream.getTracks().forEach((t) => t.stop()); return; }
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
-        }
-        tick();
-      } catch {
-        setScanError('Camera unavailable — check permissions.');
-      }
-    })();
-
-    return () => {
-      stopped = true;
-      cancelAnimationFrame(rafId);
-      stream?.getTracks().forEach((t) => t.stop());
-    };
-  }, [onScan]);
+  async function scanned(value: string) {
+    setScanning(false);
+    const result = await readScan(value);
+    if (result.proof && result.proof.userName === member.userName) { onProven(result.proof); return; }
+    if (result.person && result.person.userName !== member.userName) setMessage(`That’s ${result.person.fullName}’s card, not ${member.fullName}’s.`);
+    else setMessage(result.message || 'That card can’t be used — try their PIN.');
+  }
 
   return (
-    <div className="fixed inset-0 bg-black/70 z-[100] flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-xl p-4 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
-        <div className="flex justify-between items-center mb-2">
-          <h3 className="font-semibold text-gray-900">Scan member QR</h3>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-700 text-xl leading-none">✕</button>
-        </div>
-        <div className="relative aspect-square rounded-lg overflow-hidden bg-black">
-          <video ref={videoRef} className="w-full h-full object-cover" muted playsInline />
-        </div>
-        <canvas ref={canvasRef} className="hidden" />
-        {scanError && <p className="text-sm text-red-600 mt-2">{scanError}</p>}
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
+        <h2 className="text-lg font-bold text-gray-900 text-center">Card or PIN needed</h2>
+        <p className="text-sm text-gray-700 text-center mt-1">
+          To {purpose === 'pay' ? 'pay from' : 'top up'} {member.fullName}&apos;s account, scan their membership card or enter their PIN.
+        </p>
+        <button onClick={() => { setMessage(''); setScanning(true); }}
+          className="mt-4 w-full py-3 rounded-lg border-2 border-blue-300 bg-blue-50 text-blue-800 font-semibold hover:bg-blue-100">
+          Scan card
+        </button>
+        {canUsePin ? (
+          <PinPad value={pin} onChange={(v) => { setMessage(''); setPin(v); }} disabled={checking} />
+        ) : (
+          <p className="mt-4 text-sm text-gray-700">{pinNote}</p>
+        )}
+        {message && <p className="mt-3 text-sm text-red-600 font-medium text-center">{message}</p>}
+        <button onClick={onClose} className="mt-4 w-full py-2 rounded-lg border border-gray-300 bg-white font-medium text-gray-900 hover:bg-gray-50">
+          Cancel
+        </button>
+      </div>
+      {scanning && <QrScanModal title={`Scan ${member.fullName}’s card`} onScan={scanned} onClose={() => setScanning(false)} />}
+    </div>
+  );
+}
+
+// Set (or change) a member's PIN at the till — only offered once their card has been
+// scanned, which is the proof it's really them (see /api/bar/pin/set).
+function SetPinDialog({ member, cardCode, onDone, onClose }: {
+  member: BarAccount;
+  cardCode: string;
+  onDone: () => void;
+  onClose: () => void;
+}) {
+  const [first, setFirst] = useState<string | null>(null);
+  const [pin, setPin] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    if (pin.length !== 4) return;
+    if (first === null) { setFirst(pin); setPin(''); return; }
+    if (pin !== first) { setMessage('The PINs didn’t match — start again.'); setFirst(null); setPin(''); return; }
+    setSaving(true);
+    fetch('/api/bar/pin/set', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userName: member.userName, cardCode: cardCode, pin: pin }) })
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to set the PIN');
+        setSaved(true);
+        onDone();
+      })
+      .catch((err: Error) => { setMessage(err.message); setFirst(null); setPin(''); })
+      .finally(() => setSaving(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pin]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
+        <h2 className="text-lg font-bold text-gray-900 text-center">PIN for {member.fullName}</h2>
+        {saved ? (
+          <p className="mt-3 text-sm text-gray-900 text-center">PIN saved. {member.fullName} can use it at the bar instead of their card.</p>
+        ) : (
+          <>
+            <p className="text-sm text-gray-700 text-center mt-1">
+              {first === null ? 'Ask the member to enter a new 4-digit PIN.' : 'Enter the same PIN again.'}
+            </p>
+            <PinPad value={pin} onChange={(v) => { setMessage(''); setPin(v); }} disabled={saving} />
+            {message && <p className="mt-3 text-sm text-red-600 font-medium text-center">{message}</p>}
+          </>
+        )}
+        <button onClick={onClose} className="mt-4 w-full py-2 rounded-lg border border-gray-300 bg-white font-medium text-gray-900 hover:bg-gray-50">
+          {saved ? 'Done' : 'Cancel'}
+        </button>
       </div>
     </div>
   );

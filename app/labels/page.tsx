@@ -37,6 +37,8 @@ interface LabelMember {
   userName: string;
   honorary: boolean;
   latestRenewedSeasonYear: number | null;
+  // The member's card code (src/lib/bar-card.ts) — null if it couldn't be loaded
+  cardCode?: string | null;
   // Set on locker labels only (built from the Locker Register)
   locker?: { room: LockerRoom; lockerNumber: number };
 }
@@ -151,7 +153,8 @@ const CARD_INSET_MM = 1;
 // credit-card width, and credit-card height when the label is tall enough
 // (otherwise as tall as the label allows). Without it, the card fills the whole
 // label — for card-sized sheets, or a sticker that goes onto a blank plastic card.
-// The QR encodes the username, same as the on-screen card, for the till lookup.
+// The QR is the member's card code, same as the on-screen card — the till's proof it's
+// really them (src/lib/bar-card.ts). No QR is printed if the code couldn't be made.
 function CardLabel({ member, qrSrc, widthMm, heightMm, outline }: { member: LabelMember; qrSrc: string | undefined; widthMm: number; heightMm: number; outline: boolean }) {
   const validity = validUntilLabel(member);
   let cardW = widthMm;
@@ -354,13 +357,13 @@ export default function LabelsPage() {
 
   useEffect(() => {
     if (labelType !== 'card') return;
-    const missing = selectedMembers.map((m) => m.userName).filter((u) => u && !qrCodes[u]);
+    const missing = selectedMembers.filter((m) => m.userName && m.cardCode && !qrCodes[m.userName]);
     if (missing.length === 0) return;
     let cancelled = false;
     Promise.all(
-      missing.map((u) =>
-        QRCode.toString(u, { type: 'svg', margin: 0 })
-          .then((svg) => [u, 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg)] as const)
+      missing.map((m) =>
+        QRCode.toString(m.cardCode as string, { type: 'svg', margin: 0 })
+          .then((svg) => [m.userName, 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg)] as const)
           .catch(() => null)
       )
     ).then((results) => {

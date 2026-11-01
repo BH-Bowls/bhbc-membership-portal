@@ -3,15 +3,17 @@
 // GET  — is the Terminal set up, and is it still working on a payment (so a refreshed
 //        till can pick it back up)?
 // POST — send a card payment to the Terminal.
-//        { kind: 'sale' | 'topup' | 'membership', expectedPence, staff, userName?, items? }
+//        { kind: 'sale' | 'topup' | 'membership', expectedPence, staff, userName?, items?, proof? }
 //        expectedPence is what the till showed; the server works the amount out itself
 //        and refuses if it differs. 409 + { checkout } if the Terminal is already busy.
+//        A top-up needs proof (card scan or PIN token) when the member needs one.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { canUseBarTill } from '@/lib/role-utils';
 import { getTerminalSetup, getOpenCheckout, startTerminalCheckout, TerminalBusyError } from '@/lib/bar-square';
+import { checkAccountProof } from '@/lib/bar-card';
 
 export async function GET() {
   const session = await getServerSession(authOptions);
@@ -53,6 +55,10 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    if (body.kind === 'topup') {
+      const proofError = await checkAccountProof(typeof body.userName === 'string' ? body.userName.trim() : '', body.proof);
+      if (proofError) return NextResponse.json({ error: proofError, proofRequired: true }, { status: 403 });
+    }
     const checkout = await startTerminalCheckout({
       kind: body.kind,
       expectedPence: expectedPence,

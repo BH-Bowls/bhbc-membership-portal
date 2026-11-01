@@ -32,6 +32,15 @@ const BAR_PRICING_MODES: [string, string, string][] = [
   ['member_product_discount', 'Member product discount', 'One price per product; the discount rate below applies by default, but any product can override it (including to 0%) in Products.'],
 ];
 
+// Who must scan their membership card or enter their PIN to Pay by Account or Top Up on
+// the till (src/lib/bar-card.ts) — switched on in stages: Testing role first, then everyone
+const BAR_PROOF_MODES: [string, string, string][] = [
+  // value, label, hint
+  ['off', 'No one', 'The till works as before. Members can still set a PIN and get their new QR code in My Account.'],
+  ['testing', 'Members with the Testing role', 'Trial it with a few members before switching it on for everyone.'],
+  ['all', 'Everyone', 'Every member must scan their card or enter their PIN.'],
+];
+
 const ROWLAND_FIELDS: [string, string, string][] = [
   // key, label, hint
   ['rowland_entry_fee', 'Entry fee per team (£)', 'Charged per team on the Rowland Cup entry form.'],
@@ -222,6 +231,7 @@ export default function AdminConfigPage() {
     try {
       const updates: Record<string, string> = {
         bar_pricing_mode: editBar.bar_pricing_mode ?? 'member_product_discount',
+        bar_account_proof: editBar.bar_account_proof ?? 'off',
         bar_member_discount_percent: String(rate),
         bar_till_float_pence: String(Math.round(floatPounds * 100)),
         bar_cash_carried_forward_pence: String(Math.round(carriedPounds * 100)),
@@ -577,6 +587,24 @@ export default function AdminConfigPage() {
             <p className="text-xs text-gray-700">Club-wide — controls how every product on the bar till (/bar) is priced.</p>
 
             <div className="space-y-4 text-sm">
+              <div>
+                <label className="block text-gray-900 mb-1">Card or PIN needed for Pay by Account and Top Up</label>
+                {isEditingBar ? (
+                  <select
+                    value={editBar.bar_account_proof ?? 'off'}
+                    onChange={(e) => setEditBar((prev) => ({ ...prev, bar_account_proof: e.target.value }))}
+                    className={`${getInputClasses()} max-w-sm`}
+                  >
+                    {BAR_PROOF_MODES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                  </select>
+                ) : (
+                  <span className="text-gray-900">{BAR_PROOF_MODES.find(([v]) => v === (config.bar_account_proof || 'off'))?.[1] || '—'}</span>
+                )}
+                <p className="text-xs text-gray-700 mt-1">
+                  {BAR_PROOF_MODES.find(([v]) => v === ((isEditingBar ? editBar.bar_account_proof : config.bar_account_proof) || 'off'))?.[2]}
+                </p>
+              </div>
+
               <div>
                 <label className="block text-gray-900 mb-1">Pricing mode</label>
                 {isEditingBar ? (
