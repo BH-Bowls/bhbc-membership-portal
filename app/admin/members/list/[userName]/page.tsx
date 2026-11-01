@@ -11,6 +11,7 @@ import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { getButtonClasses, getInputClasses, getCardClasses } from '@/config/theme-helpers';
 import { ASSIGNABLE_ROLES } from '@/lib/role-utils';
+import QrScanModal from '@/components/QrScanModal';
 
 // The editable fields we send on save (must match the API whitelist).
 interface MemberForm {
@@ -73,6 +74,64 @@ export default function MemberDetailPage() {
   const [lockerNo, setLockerNo] = useState('');
   // Other members, for the buddy selector
   const [memberOptions, setMemberOptions] = useState<{ userName: string; name: string }[]>([]);
+
+  // Membership card and bar PIN (src/lib/bar-card.ts) — saved straight away, not with Save Changes
+  const [barCard, setBarCard] = useState<{ hasPin: boolean; pinLocked: boolean } | null>(null);
+  const [cardBusy, setCardBusy] = useState(false);
+  const [cardMessage, setCardMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [cardConfirm, setCardConfirm] = useState<'reset_card' | 'clear_pin' | null>(null);
+  const [scanningCard, setScanningCard] = useState(false);
+  // A found card scanned for restoring, waiting for the admin to confirm
+  const [restoreCode, setRestoreCode] = useState<{ code: string; isCurrent: boolean } | null>(null);
+
+  const loadBarCard = () => {
+    fetch(`/api/admin/members/${encodeURIComponent(userNameParam)}/bar-card`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (!data.error) setBarCard({ hasPin: data.hasPin, pinLocked: data.pinLocked });
+      })
+      .catch(() => {});
+  };
+  useEffect(loadBarCard, [userNameParam]);
+
+  const barCardAction = async (body: Record<string, string>, done: string) => {
+    setCardBusy(true);
+    setCardMessage(null);
+    try {
+      const res = await fetch(`/api/admin/members/${encodeURIComponent(userNameParam)}/bar-card`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to update the card');
+      setCardMessage({ ok: true, text: done });
+      setCardConfirm(null);
+      setRestoreCode(null);
+      loadBarCard();
+    } catch (err) {
+      setCardMessage({ ok: false, text: err instanceof Error ? err.message : 'Failed to update the card' });
+    } finally {
+      setCardBusy(false);
+    }
+  };
+
+  const cardScanned = async (code: string) => {
+    setScanningCard(false);
+    setCardMessage(null);
+    try {
+      const res = await fetch(`/api/admin/members/${encodeURIComponent(userNameParam)}/bar-card`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'check_card', code: code }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Couldn’t check the card');
+      setRestoreCode({ code: code, isCurrent: data.status === 'current' });
+    } catch (err) {
+      setCardMessage({ ok: false, text: err instanceof Error ? err.message : 'Couldn’t check the card' });
+    }
+  };
 
   // Load the member's current details
   useEffect(() => {
@@ -462,6 +521,93 @@ export default function MemberDetailPage() {
                   </>
                 )}
               </div>
+            </div>
+
+            {/* Membership card and bar PIN — each button saves straight away */}
+            <div className={`${getCardClasses('md')} mb-4`}>
+              <h2 className="text-base font-semibold text-gray-900 mb-1">Bar Card &amp; PIN</h2>
+              <p className="text-sm text-gray-700 mb-3">
+                {barCard === null
+                  ? 'Loading…'
+                  : barCard.pinLocked
+                    ? 'PIN locked after too many wrong tries.'
+                    : barCard.hasPin
+                      ? 'Has a bar PIN.'
+                      : 'No bar PIN set.'}
+                {' '}These buttons take effect straight away — no need to Save Changes.
+              </p>
+
+              {cardConfirm === null && restoreCode === null && (
+                <div className="flex flex-wrap gap-2">
+                  <button className={getButtonClasses('secondary', 'sm')} disabled={cardBusy}
+                    onClick={() => { setCardMessage(null); setCardConfirm('reset_card'); }}>
+                    Reset card
+                  </button>
+                  <button className={getButtonClasses('secondary', 'sm')} disabled={cardBusy || barCard === null || (!barCard.hasPin && !barCard.pinLocked)}
+                    onClick={() => { setCardMessage(null); setCardConfirm('clear_pin'); }}>
+                    Clear PIN
+                  </button>
+                  <button className={getButtonClasses('secondary', 'sm')} disabled={cardBusy}
+                    onClick={() => { setCardMessage(null); setScanningCard(true); }}>
+                    Restore a found card…
+                  </button>
+                </div>
+              )}
+
+              {cardConfirm === 'reset_card' && (
+                <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-gray-900">
+                  <p>Reset {userNameParam}&apos;s card? Their QR code on My Account and every printed card stop working. My Account shows the new QR straight away; a printed card needs reprinting.</p>
+                  <div className="flex gap-2 mt-3">
+                    <button className={getButtonClasses('danger', 'sm')} disabled={cardBusy}
+                      onClick={() => barCardAction({ action: 'reset_card' }, 'Card reset. Old cards no longer work.')}>
+                      {cardBusy ? 'Resetting…' : 'Reset card'}
+                    </button>
+                    <button className={getButtonClasses('secondary', 'sm')} disabled={cardBusy} onClick={() => setCardConfirm(null)}>Cancel</button>
+                  </div>
+                </div>
+              )}
+
+              {cardConfirm === 'clear_pin' && (
+                <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-gray-900">
+                  <p>Clear {userNameParam}&apos;s PIN? Until they set a new one (My Account, or at the till after scanning their card) they&apos;ll need their card to use their bar account.</p>
+                  <div className="flex gap-2 mt-3">
+                    <button className={getButtonClasses('danger', 'sm')} disabled={cardBusy}
+                      onClick={() => barCardAction({ action: 'clear_pin' }, 'PIN cleared.')}>
+                      {cardBusy ? 'Clearing…' : 'Clear PIN'}
+                    </button>
+                    <button className={getButtonClasses('secondary', 'sm')} disabled={cardBusy} onClick={() => setCardConfirm(null)}>Cancel</button>
+                  </div>
+                </div>
+              )}
+
+              {restoreCode !== null && (
+                <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-gray-900">
+                  {restoreCode.isCurrent ? (
+                    <>
+                      <p>That card is already {userNameParam}&apos;s current card — nothing to restore.</p>
+                      <button className={`${getButtonClasses('secondary', 'sm')} mt-3`} onClick={() => setRestoreCode(null)}>OK</button>
+                    </>
+                  ) : (
+                    <>
+                      <p>This is one of {userNameParam}&apos;s old cards. Restore it? It works again, and their current card (and its QR on My Account) stops working.</p>
+                      <div className="flex gap-2 mt-3">
+                        <button className={getButtonClasses('primary', 'sm')} disabled={cardBusy}
+                          onClick={() => barCardAction({ action: 'restore_card', code: restoreCode.code }, 'Card restored.')}>
+                          {cardBusy ? 'Restoring…' : 'Restore card'}
+                        </button>
+                        <button className={getButtonClasses('secondary', 'sm')} disabled={cardBusy} onClick={() => setRestoreCode(null)}>Cancel</button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {cardMessage && (
+                <p className={`text-sm mt-2 ${cardMessage.ok ? 'text-green-700' : 'text-red-600'}`}>{cardMessage.text}</p>
+              )}
+              {scanningCard && (
+                <QrScanModal title={`Scan ${userNameParam}’s found card`} onScan={cardScanned} onClose={() => setScanningCard(false)} />
+              )}
             </div>
 
             {/* Volunteering */}

@@ -3,15 +3,18 @@
 // GET  — is the Terminal set up, and is it still working on a payment (so a refreshed
 //        till can pick it back up)?
 // POST — send a card payment to the Terminal.
-//        { kind: 'sale' | 'topup' | 'membership', expectedPence, staff, userName?, items? }
+//        { kind: 'sale' | 'topup' | 'membership', expectedPence, staff, userName?, items?, proof? }
 //        expectedPence is what the till showed; the server works the amount out itself
 //        and refuses if it differs. 409 + { checkout } if the Terminal is already busy.
+//        A top-up needs proof (the member's card or PIN, or the bar person serving
+//        approving it with theirs) when the member needs one.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { canUseBarTill } from '@/lib/role-utils';
 import { getTerminalSetup, getOpenCheckout, startTerminalCheckout, TerminalBusyError } from '@/lib/bar-square';
+import { checkAccountProof, logApproval } from '@/lib/bar-card';
 
 export async function GET() {
   const session = await getServerSession(authOptions);
@@ -53,6 +56,12 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    let approvedBy: 'pin' | 'card' | undefined;
+    if (body.kind === 'topup') {
+      const proof = await checkAccountProof(typeof body.userName === 'string' ? body.userName.trim() : '', body.proof, staff);
+      if (proof.error) return NextResponse.json({ error: proof.error, proofRequired: true }, { status: 403 });
+      approvedBy = proof.approvedBy;
+    }
     const checkout = await startTerminalCheckout({
       kind: body.kind,
       expectedPence: expectedPence,
@@ -61,6 +70,10 @@ export async function POST(req: NextRequest) {
       items: Array.isArray(body.items) ? body.items : undefined,
       createdBy: session.user.userName || 'till',
     });
+    if (approvedBy) {
+      await logApproval({ kind: 'account', staff: staff, method: approvedBy, userName: body.userName.trim(),
+        amountPence: expectedPence, note: 'Square top-up started' });
+    }
     return NextResponse.json({ checkout });
   } catch (err) {
     if (err instanceof TerminalBusyError) {
