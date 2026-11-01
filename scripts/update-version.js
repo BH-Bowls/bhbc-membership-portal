@@ -22,12 +22,15 @@ export const version = {
   buildDate: '${buildDate}', // This gets auto-updated by the update-version script
 } as const;
 
+// Set on Vercel preview builds only (next.config.ts) — the package.json previewVersion.
+const previewVersion = process.env.NEXT_PUBLIC_PREVIEW_VERSION || '';
+
 export function getVersionString(): string {
-  return \`v\${version.number}\`;
+  return previewVersion ? \`v\${version.number} · preview \${previewVersion}\` : \`v\${version.number}\`;
 }
 
 export function getFullVersionString(): string {
-  return \`v\${version.number} (\${version.buildDate})\`;
+  return \`\${getVersionString()} (\${version.buildDate})\`;
 }
 `;
 

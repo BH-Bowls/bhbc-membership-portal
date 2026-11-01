@@ -10,7 +10,9 @@ interface Member { username: string; name: string; }
 const MAX_PRIZES = 10;
 const DEFAULT_NUMBERS = 200;
 interface Winner { season: string; date: string; position: number; number: string; member: string; amount: number; }
-interface Data { season: string; seasons: string[]; settings: Settings | null; entries: Entry[]; winners: Winner[]; members: Member[]; }
+// A submitted renewal asking for 200 Club entries (GMC/Admin only)
+interface RenewalRequest { userName: string; fullName: string; entries: number; }
+interface Data { season: string; seasons: string[]; settings: Settings | null; entries: Entry[]; winners: Winner[]; members: Member[]; renewalRequests: RenewalRequest[]; }
 
 const gbp = (n: number) => `£${Number(n || 0).toLocaleString('en-GB', { maximumFractionDigits: 2 })}`;
 const ordinal = (p: number) => (p === 1 ? '1st' : p === 2 ? '2nd' : p === 3 ? '3rd' : `${p}th`);
@@ -102,19 +104,55 @@ export default function TwoHundredClubPage() {
     return poolNumbers.filter(e => e.number.toLowerCase().includes(q) || e.member.toLowerCase().includes(q));
   }, [poolNumbers, search]);
 
+  // Renewals asking for more entries than the numbers the member holds — "Any number"
+  // entries (or picks lost while paying online) waiting to be given a number by hand.
+  // Worked out from the entries on screen, so it updates as numbers are assigned.
+  const stillToAllocate = useMemo(() => {
+    const heldByUser = new Map<string, string[]>();
+    for (const e of entries) {
+      if (!e.username) continue;
+      const key = e.username.toLowerCase();
+      const list = heldByUser.get(key) || [];
+      list.push(e.number);
+      heldByUser.set(key, list);
+    }
+    const list: { userName: string; fullName: string; entries: number; held: string[]; toAllocate: number }[] = [];
+    const requests = data ? data.renewalRequests || [] : [];
+    for (const r of requests) {
+      const held = heldByUser.get(r.userName.toLowerCase()) || [];
+      if (r.entries > held.length) {
+        const sortedHeld = held.slice();
+        sortedHeld.sort((a, b) => Number(a) - Number(b));
+        list.push({ userName: r.userName, fullName: r.fullName, entries: r.entries, held: sortedHeld, toAllocate: r.entries - held.length });
+      }
+    }
+    return list;
+  }, [entries, data]);
+
   // GMC/Admin: edit who holds a number.
   const [editingNumber, setEditingNumber] = useState<string | null>(null);
   const [assignSaving, setAssignSaving] = useState(false);
+  const [assignError, setAssignError] = useState('');
 
   const assign = useCallback(async (number: string, username: string) => {
     if (!data) return;
     setAssignSaving(true);
+    setAssignError('');
     try {
+      const current = data.entries.find(e => e.number === number);
+      const expected = current ? current.username : '';
       const res = await fetch('/api/200-club/assign', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ season: data.season, number, username }),
+        body: JSON.stringify({ season: data.season, number, username, expected }),
       });
-      if (res.ok) {
+      if (res.status === 409) {
+        const body = await res.json().catch(() => ({}));
+        setAssignError(body.error || `Number ${number} has changed since this page loaded.`);
+        setEditingNumber(null);
+        await load(data.season);
+      } else if (!res.ok) {
+        setAssignError(`Couldn't update number ${number}. Please try again.`);
+      } else {
         // Optimistic update so the list doesn't flash a full reload.
         setData(prev => {
           if (!prev) return prev;
@@ -128,7 +166,7 @@ export default function TwoHundredClubPage() {
     } finally {
       setAssignSaving(false);
     }
-  }, [data]);
+  }, [data, load]);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -192,6 +230,38 @@ export default function TwoHundredClubPage() {
               <DrawForm season={data.season} numPrizes={settings?.amounts.length ?? 3} entries={entries} onDone={() => { setPanel('none'); load(data.season); }} />
             )}
 
+            {/* Still to allocate (renewals spec §9.2) */}
+            {canManage && stillToAllocate.length > 0 && (
+              <section className="mb-8">
+                <h2 className="mb-1 text-lg font-semibold text-gray-900">Still to allocate</h2>
+                <p className="mb-3 text-sm text-gray-700">
+                  These members asked for more entries on their renewal than the numbers they hold. Give them a number with Assign in the list below — they&apos;re listed first when you do.
+                </p>
+                <div className="overflow-hidden rounded-xl border border-amber-200 bg-white shadow-sm">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-amber-100 bg-amber-50 text-left text-gray-700">
+                        <th className="px-4 py-2 font-medium">Member</th>
+                        <th className="px-4 py-2 font-medium">Entries</th>
+                        <th className="px-4 py-2 font-medium">Holds</th>
+                        <th className="px-4 py-2 font-medium text-right">To allocate</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stillToAllocate.map((r) => (
+                        <tr key={r.userName} className="border-b border-gray-50 last:border-0">
+                          <td className="px-4 py-2 text-gray-900">{r.fullName}</td>
+                          <td className="px-4 py-2 text-gray-700">{r.entries}</td>
+                          <td className="px-4 py-2 text-gray-700">{r.held.length > 0 ? r.held.join(', ') : 'none'}</td>
+                          <td className="px-4 py-2 text-right font-semibold text-amber-800">{r.toAllocate}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            )}
+
             {/* Winners */}
             <section className="mb-8">
               <h2 className="mb-3 text-lg font-semibold text-gray-900">Winners</h2>
@@ -231,6 +301,9 @@ export default function TwoHundredClubPage() {
                   className="rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-green-600 focus:outline-none"
                 />
               </div>
+              {assignError && (
+                <p className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-800">{assignError}</p>
+              )}
               {filteredNumbers.length === 0 ? (
                 <p className="text-sm text-gray-700">No numbers{search ? ' match your search' : ''}.</p>
               ) : (
@@ -254,6 +327,7 @@ export default function TwoHundredClubPage() {
                               {editing ? (
                                 <MemberPicker
                                   members={data.members}
+                                  waiting={stillToAllocate}
                                   saving={assignSaving}
                                   onPick={(username) => assign(e.number, username)}
                                   onCancel={() => setEditingNumber(null)}
@@ -304,13 +378,23 @@ function Stat({ label, value, sub, highlight }: { label: string; value: string; 
 }
 
 // Searchable member dropdown for assigning a number's holder.
-function MemberPicker({ members, saving, onPick, onCancel }: { members: Member[]; saving: boolean; onPick: (username: string) => void; onCancel: () => void }) {
+// Members still to be given a number are listed first (all of them before any search).
+function MemberPicker({ members, waiting, saving, onPick, onCancel }: { members: Member[]; waiting: { userName: string; toAllocate: number }[]; saving: boolean; onPick: (username: string) => void; onCancel: () => void }) {
   const [q, setQ] = useState('');
   const matches = useMemo(() => {
     const query = q.trim().toLowerCase();
-    const base = query ? members.filter(m => m.name.toLowerCase().includes(query)) : members;
-    return base.slice(0, 8);
-  }, [q, members]);
+    const toAllocate = new Map<string, number>();
+    for (const w of waiting) toAllocate.set(w.userName.toLowerCase(), w.toAllocate);
+    const first: { member: Member; toAllocate: number }[] = [];
+    const rest: { member: Member; toAllocate: number }[] = [];
+    for (const m of members) {
+      if (query && !m.name.toLowerCase().includes(query)) continue;
+      const count = toAllocate.get(m.username.toLowerCase()) || 0;
+      if (count > 0) first.push({ member: m, toAllocate: count });
+      else if (query) rest.push({ member: m, toAllocate: 0 });
+    }
+    return first.concat(rest.slice(0, 8));
+  }, [q, members, waiting]);
 
   return (
     <div className="relative">
@@ -327,18 +411,24 @@ function MemberPicker({ members, saving, onPick, onCancel }: { members: Member[]
       </div>
       {matches.length > 0 && (
         <div className="absolute z-10 mt-1 max-h-56 w-64 overflow-auto rounded-md border border-gray-200 bg-white shadow-lg">
-          {matches.map(m => (
+          {matches.map(({ member: m, toAllocate }) => (
             <button
               key={m.username}
               type="button"
               onClick={() => onPick(m.username)}
               disabled={saving}
-              className="block w-full px-3 py-1.5 text-left text-sm text-gray-900 hover:bg-green-50 disabled:opacity-50"
+              className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm text-gray-900 hover:bg-green-50 disabled:opacity-50"
             >
-              {m.name}
+              <span>{m.name}</span>
+              {toAllocate > 0 && (
+                <span className="text-xs font-medium text-amber-800">{toAllocate} to allocate</span>
+              )}
             </button>
           ))}
         </div>
+      )}
+      {!q.trim() && matches.length === 0 && (
+        <p className="mt-1 text-xs text-gray-700">Type a name to search all members.</p>
       )}
     </div>
   );
@@ -457,6 +547,7 @@ function DrawForm({ season, numPrizes, entries, onDone }: { season: string; numP
   const positions = Array.from({ length: Math.max(1, numPrizes) }, (_, i) => i + 1);
   const [date, setDate] = useState('');
   const [numbers, setNumbers] = useState<{ [pos: number]: string }>({});
+  const [emailWinners, setEmailWinners] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -469,7 +560,7 @@ function DrawForm({ season, numPrizes, entries, onDone }: { season: string; numP
     try {
       const picks = positions.map(pos => ({ position: pos, number: valueAt(pos) })).filter(p => p.number.trim());
       const res = await fetch('/api/200-club/draw', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ season, date: friendlyDate(date), picks }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ season, date: friendlyDate(date), picks, emailWinners }),
       });
       const d = await res.json();
       if (res.ok) onDone(); else setError(d.error || 'Failed to record draw');
@@ -500,6 +591,11 @@ function DrawForm({ season, numPrizes, entries, onDone }: { season: string; numP
           </div>
         ))}
       </div>
+      <label className="mt-3 flex items-center gap-2 text-sm text-gray-700">
+        <input type="checkbox" checked={emailWinners} onChange={(e) => setEmailWinners(e.target.checked)}
+          className="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-600" />
+        Email the winners
+      </label>
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
       <div className="mt-3 flex gap-2">
         <button type="submit" disabled={saving || !date.trim()} className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-50">

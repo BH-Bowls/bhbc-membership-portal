@@ -1,18 +1,19 @@
 'use client';
 
 // src/components/HonoursBoardsPanel.tsx
-// Admin > Config > Honours Boards: the printed honours boards for the clubhouse wall —
-// the years shared by every board, and each board's layout and columns
-// (add / edit / delete). See supabase/migrations/0078 to 0080.
+// Setup on the Print Honours Boards page (Admin only): the start year shared by every board,
+// what each layout gives with the saved row settings, and each board's layout and columns
+// (add / edit / delete). The row control, line spacing and print style are saved from the
+// preview panels on the same page. See supabase/migrations/0078 to 0082, 0088 and 0089.
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { getButtonClasses, getInputClasses } from '@/config/theme-helpers';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import {
-  BOARD_LAYOUTS, HONOURS_BOARD_FIELDS, START_YEAR_KEY, YEARS_PER_SET_KEY,
-  fieldLabel, layoutLabel, sheetForYear, sheetGeometry, sheetsUpTo, validateBoard, validateSheetSettings,
+  BOARD_LAYOUTS, HONOURS_BOARD_FIELDS, LINE_SPACINGS, START_YEAR_KEY,
+  fieldLabel, layoutLabel, sheetForYear, sheetGeometry, sheetLabel, sheetsUpTo, validateBoard, validateSheetSettings,
 } from '@/types/honours-boards';
-import type { BoardLayout, HonoursBoard, HonoursBoardInput } from '@/types/honours-boards';
+import type { BoardLayout, HonoursBoard, HonoursBoardInput, LineSpacing } from '@/types/honours-boards';
 
 // The form edits numbers as text, so a half-typed value doesn't jump about
 interface ColumnForm {
@@ -28,7 +29,7 @@ interface BoardForm {
   columns: ColumnForm[];
 }
 
-const EMPTY_FORM: BoardForm = { name: '', displayOrder: '0', layout: 'stacked', columns: [] };
+const EMPTY_FORM: BoardForm = { name: '', displayOrder: '0', layout: 'a2_plus_a3', columns: [] };
 
 function toForm(board: HonoursBoard): BoardForm {
   return {
@@ -50,16 +51,19 @@ function fromForm(form: BoardForm): HonoursBoardInput {
   };
 }
 
-export function HonoursBoardsPanel() {
-  const [boards, setBoards] = useState<HonoursBoard[]>([]);
-  const [loading, setLoading] = useState(true);
+interface Props {
+  boards: HonoursBoard[];
+  startYear: number;
+  yearsPerSet: number;       // saved row control
+  lineSpacing: LineSpacing;  // saved line spacing
+  onChanged: () => Promise<void>; // reloads the page's boards and settings after a save
+}
+
+export function HonoursBoardsPanel({ boards, startYear, yearsPerSet, lineSpacing, onChanged }: Props) {
   const [error, setError] = useState('');
 
-  // Shared year settings, as saved and as being edited
-  const [startYear, setStartYear] = useState('');
-  const [yearsPerSet, setYearsPerSet] = useState('');
+  // The start year, as being edited
   const [editStartYear, setEditStartYear] = useState('');
-  const [editYearsPerSet, setEditYearsPerSet] = useState('');
   const [isEditingSheets, setIsEditingSheets] = useState(false);
   const [savingSheets, setSavingSheets] = useState(false);
   const [sheetsError, setSheetsError] = useState('');
@@ -71,39 +75,9 @@ export function HonoursBoardsPanel() {
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<HonoursBoard | null>(null);
 
-  async function load() {
-    try {
-      const [boardsRes, configRes] = await Promise.all([fetch('/api/admin/honours-boards'), fetch('/api/admin/config')]);
-      const boardsData = await boardsRes.json();
-      const configData = await configRes.json();
-      if (!boardsRes.ok) {
-        setError(boardsData.error || 'Failed to load honours boards');
-        return;
-      }
-      if (!configRes.ok) {
-        setError(configData.error || 'Failed to load honours board settings');
-        return;
-      }
-      setBoards(boardsData.boards);
-      setStartYear(configData.config[START_YEAR_KEY] || '');
-      setYearsPerSet(configData.config[YEARS_PER_SET_KEY] || '');
-      setError('');
-    } catch {
-      setError('Failed to load honours boards');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  // Runs once on mount: load the boards and year settings
-  useEffect(() => {
-    load();
-  }, []);
-
   async function saveSheets() {
     const start = Number(editStartYear);
-    const perSet = Number(editYearsPerSet);
-    const invalid = validateSheetSettings(start, perSet);
+    const invalid = validateSheetSettings(start, yearsPerSet);
     if (invalid) {
       setSheetsError(invalid);
       return;
@@ -114,14 +88,13 @@ export function HonoursBoardsPanel() {
       const res = await fetch('/api/admin/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [START_YEAR_KEY]: String(start), [YEARS_PER_SET_KEY]: String(perSet) }),
+        body: JSON.stringify({ [START_YEAR_KEY]: String(start) }),
       });
       if (!res.ok) throw new Error();
-      setStartYear(String(start));
-      setYearsPerSet(String(perSet));
       setIsEditingSheets(false);
+      await onChanged();
     } catch {
-      setSheetsError('Failed to save sheet settings');
+      setSheetsError('Failed to save the start year');
     } finally {
       setSavingSheets(false);
     }
@@ -171,7 +144,7 @@ export function HonoursBoardsPanel() {
         return;
       }
       setEditingId(null);
-      await load();
+      await onChanged();
     } catch {
       setFormError('Failed to save board');
     } finally {
@@ -191,17 +164,15 @@ export function HonoursBoardsPanel() {
         return;
       }
       if (editingId === board.id) setEditingId(null);
-      await load();
+      await onChanged();
     } catch {
       setError('Failed to delete board');
     }
   }
 
-  if (loading) return <p className="text-sm text-gray-700">Loading honours boards…</p>;
-
   const thisYear = new Date().getFullYear();
-  const start = Number(startYear);
-  const perSet = Number(yearsPerSet);
+  const start = startYear;
+  const perSet = yearsPerSet;
   const settingsValid = validateSheetSettings(start, perSet) === null;
 
   /** One line per sheet of a layout, up to the one holding this year — only that last one still changes. */
@@ -211,7 +182,7 @@ export function HonoursBoardsPanel() {
     return sheetsUpTo(thisYear, start, layout, perSet).map((s) => ({
       sheet: s,
       isCurrent: current !== null && s.firstYear === current.firstYear,
-      namePt: Math.round(sheetGeometry(layout, s, perSet).namePt),
+      namePt: Math.round(sheetGeometry(layout, s, perSet, lineSpacing).namePt),
     }));
   }
 
@@ -232,7 +203,7 @@ export function HonoursBoardsPanel() {
           <h3 className="text-sm font-medium text-gray-900">Sheets</h3>
           {!isEditingSheets ? (
             <button
-              onClick={() => { setEditStartYear(startYear); setEditYearsPerSet(yearsPerSet); setSheetsError(''); setIsEditingSheets(true); }}
+              onClick={() => { setEditStartYear(String(startYear)); setSheetsError(''); setIsEditingSheets(true); }}
               className="text-sm text-blue-600 hover:text-blue-800"
             >
               Edit
@@ -269,13 +240,9 @@ export function HonoursBoardsPanel() {
             <p className="text-xs text-gray-700 mt-1">The first year on the wall. Raise it later to roll the oldest years off instead of adding a second set.</p>
           </div>
           <div>
-            <label className="block text-gray-900 mb-1">Years per set</label>
-            {isEditingSheets ? (
-              <input type="text" inputMode="numeric" value={editYearsPerSet} onChange={(e) => setEditYearsPerSet(e.target.value)} className={`${getInputClasses()} max-w-[10rem]`} />
-            ) : (
-              <span className="text-gray-900">{yearsPerSet || '—'}</span>
-            )}
-            <p className="text-xs text-gray-700 mt-1">For two-sheet boards: sets the row spacing (71 gives names about 21pt, the first set running 1976–2046). More years means smaller text. Changing it moves every sheet&apos;s years, so all the printed sheets would need reprinting.</p>
+            <span className="block text-gray-900 mb-1">Row control and line spacing</span>
+            <span className="text-gray-900">{perSet || '—'} · {LINE_SPACINGS.find((l) => l.value === lineSpacing)?.label}</span>
+            <p className="text-xs text-gray-700 mt-1">Set and saved under Rows in &quot;Preview or print one sheet&quot;, where you can see the result.</p>
           </div>
         </div>
 
@@ -289,7 +256,7 @@ export function HonoursBoardsPanel() {
                   {layoutSheets(l.value).map(({ sheet: s, isCurrent, namePt }) => (
                     <li key={s.firstYear} className="p-2 flex flex-wrap justify-between gap-2">
                       <span className="text-gray-900">
-                        {s.position === 'Single' ? '' : `Set ${s.set} · ${s.position} · `}{s.firstYear}–{s.lastYear} · names about {namePt}pt
+                        {s.position === 'Single' ? '' : `Set ${s.set} · ${sheetLabel(l.value, s)} · `}{s.firstYear}–{s.lastYear} · names about {namePt}pt
                       </span>
                       {s.position === 'Single' ? (
                         <span className="text-blue-800">Reprinted each season, a little smaller each time</span>
@@ -353,9 +320,6 @@ export function HonoursBoardsPanel() {
         <p className="text-xs text-gray-700">
           Column widths are relative: 1 suits a single name, about 1.5 a pair, about 2 a triple.
           Headings are what&apos;s printed, so they can differ from the names used on the website.
-        </p>
-        <p className="text-sm">
-          <a href="/admin/website/honours-boards" className="text-blue-600 hover:text-blue-800">Print the boards →</a>
         </p>
       </div>
 

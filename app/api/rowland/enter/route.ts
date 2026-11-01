@@ -24,6 +24,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import Handlebars from 'handlebars';
 import { getAppUrl } from '@/lib/app-url';
+import { getBankDetails } from '@/lib/bank-details';
 
 // Rate limiting - simple in-memory store, same pattern as /api/apply
 const submissionTimes: Map<string, number> = new Map();
@@ -149,6 +150,8 @@ export async function POST(request: NextRequest) {
     // Update rate limit tracker
     submissionTimes.set(ip, now);
 
+    const bankDetails = await getBankDetails();
+
     // Create an access token per team, and send one confirmation email per unique
     // contact address, listing every team that address is the contact for.
     if (isEmailConfigured()) {
@@ -192,6 +195,7 @@ export async function POST(request: NextRequest) {
             paymentReference: result.paymentReference,
             deadline: deadline ? formatOrdinalDate(deadline) : '',
             contactEmail: CLUB_EMAIL,
+            ...bankDetails,
           });
           const processedHtml = processEmailTemplate(html);
 
@@ -214,6 +218,7 @@ export async function POST(request: NextRequest) {
       success: true,
       amountDue: (result.amountDuePence / 100).toFixed(2),
       paymentReference: result.paymentReference,
+      bankDetails,
     });
   } catch (error) {
     console.error('[rowland/enter] POST error:', error);

@@ -140,6 +140,15 @@ export async function recordDraw(
   return { recorded: rows.length, winners };
 }
 
+/** Who holds a number for a season ('' = nobody). */
+export async function getHolder(season: string, number: string): Promise<string> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.from('two_hundred_club_entries')
+    .select('username').eq('season', season).eq('number', number.toString().trim()).maybeSingle();
+  if (error) throw new Error(`Failed to fetch 200 Club number: ${error.message}`);
+  return data && data.username ? data.username : '';
+}
+
 /** Assign (or clear) a number's holder for a season. `username` empty = clear
  *  (removes the row entirely — an absent row and a blank-holder row mean the
  *  same "unassigned" thing, since the page renders the 1..numbers pool itself

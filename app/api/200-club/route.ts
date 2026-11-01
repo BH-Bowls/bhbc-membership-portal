@@ -7,6 +7,7 @@ import { authOptions } from '@/lib/auth';
 import { hasRole } from '@/lib/role-utils';
 import { getAllUsers } from '@/lib/members-supabase';
 import { getEntries, getWinners, getAllSettings, getCurrentSeason } from '@/lib/two-hundred-club-supabase';
+import { getRenewal200ClubRequests, type Renewal200ClubRequest } from '@/lib/renewals-200-club';
 
 export async function GET(request: NextRequest) {
   try {
@@ -30,9 +31,12 @@ export async function GET(request: NextRequest) {
     const seasons = [...new Set([...allSettings.map(s => s.season), ...allWinners.map(w => w.season), season].filter(Boolean))]
       .sort().reverse();
 
-    // Member list for the assign picker — only GMC/Admin can edit, so only they need it.
+    // Member list for the assign picker, and the renewals asking for entries (for the
+    // still-to-allocate list, renewals spec §9.2) — only GMC/Admin can edit, so only they need them.
     let members: { username: string; name: string }[] = [];
+    let renewalRequests: Renewal200ClubRequest[] = [];
     if (hasRole(session.user.role, 'GMC', 'Admin')) {
+      renewalRequests = await getRenewal200ClubRequests(season);
       const users = await getAllUsers();
       members = users
         .filter(u => u.userName)
@@ -43,7 +47,7 @@ export async function GET(request: NextRequest) {
         .sort((a, b) => a.name.localeCompare(b.name));
     }
 
-    return NextResponse.json({ season, seasons, settings, entries, winners, members });
+    return NextResponse.json({ season, seasons, settings, entries, winners, members, renewalRequests });
   } catch (error) {
     console.error('[GET /api/200-club]', error);
     return NextResponse.json({ error: 'Failed to load 200 Club data' }, { status: 500 });

@@ -27,8 +27,8 @@ function mapBoard(row: BoardRow): HonoursBoard {
       });
     }
   }
-  // The database check only allows known layouts, but fall back to stacked just in case
-  const layout = isBoardLayout(row.layout) ? row.layout : 'stacked';
+  // The database check only allows known layouts, but fall back to the default just in case
+  const layout = isBoardLayout(row.layout) ? row.layout : 'a2_plus_a3';
   return { id: row.id, name: row.name, displayOrder: row.display_order, layout, columns };
 }
 

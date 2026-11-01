@@ -21,7 +21,7 @@ const fmt = (pence: number) => `£${(pence / 100).toFixed(2)}`;
 const fmtDate = (iso: string) => new Date(iso).toLocaleString('en-GB');
 const today = () => new Date().toISOString().slice(0, 10);
 
-type DrillKind = 'wallet_sales' | 'card_sales' | 'cash_sales' | 'cash_movements' | 'cash_topups' | 'card_topups' | 'refunds';
+type DrillKind = 'wallet_sales' | 'card_sales' | 'cash_sales' | 'cash_movements' | 'cash_topups' | 'card_topups' | 'refunds' | 'renewal_cash' | 'renewal_card';
 
 const DRILL_LABELS: Record<DrillKind, string> = {
   wallet_sales: 'Wallet sales',
@@ -31,6 +31,8 @@ const DRILL_LABELS: Record<DrillKind, string> = {
   cash_topups: 'Top-ups taken (cash in)',
   card_topups: 'Top-ups taken (by card)',
   refunds: 'Refunds paid (cash out)',
+  renewal_cash: 'Membership fees (cash)',
+  renewal_card: 'Membership fees (by card)',
 };
 
 interface MemberOption { userName: string; fullName: string }
@@ -763,6 +765,12 @@ function DayEndDetail({ dayEnd, onDrill, activeDrillKind }: { dayEnd: BarDayEnd;
         {row('Top-ups taken (cash in)', dayEnd.cashTopupsPence, 'cash_topups')}
         {row('Top-ups taken (by card)', dayEnd.cardTopupsPence, 'card_topups')}
         {row('Refunds paid (cash out)', dayEnd.refundsPence, 'refunds')}
+        {/* Membership fees taken at the till (renewals spec §8.3) — counted in cash expected, journalled by renewals */}
+        {dayEnd.renewalCashPence !== 0 && row('Membership fees (cash)', dayEnd.renewalCashPence, 'renewal_cash')}
+        {dayEnd.renewalCardPence !== 0 && row('Membership fees (by card)', dayEnd.renewalCardPence, 'renewal_card')}
+        {(dayEnd.renewalCashPence !== 0 || dayEnd.renewalCardPence !== 0) && (
+          <div className="py-1 px-2 text-xs text-gray-700">Membership fees are in the renewals journal, not this one.</div>
+        )}
       </div>
       <div>
         {row('Till float', dayEnd.floatPence)}

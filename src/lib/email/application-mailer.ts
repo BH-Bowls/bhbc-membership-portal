@@ -6,6 +6,7 @@
 
 import { sendTemplateEmail, withEmailLogContext } from './mailer';
 import { getAppUrl } from '../app-url';
+import { getBankDetails } from '../bank-details';
 import type { Application } from '../applications-supabase';
 
 // Club inbox copied on the payment request and used as the applicant contact.
@@ -67,7 +68,7 @@ function buildPaymentReference(application: Application): string {
 
 /**
  * Send the membership payment-request email to an applicant.
- * Copies the club inbox. Bank details are fixed in the template.
+ * Copies the club inbox. Bank details come from config (getBankDetails).
  *
  * @param application The approved application
  * @param feeAmount The fee the applicant should pay (after any manual pro-rata)
@@ -92,6 +93,7 @@ export async function sendApplicationPaymentEmail(
       memberType: getMemberTypeLabel(application),
       paymentReference: buildPaymentReference(application),
       contactEmail: CLUB_EMAIL,
+      ...(await getBankDetails()),
     },
     { cc: CLUB_EMAIL }
   );

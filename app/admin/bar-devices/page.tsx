@@ -11,6 +11,7 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { hasRole } from '@/lib/role-utils';
 import { getInputClasses, getCardClasses, getAlertClasses } from '@/config/theme-helpers';
+import SquareTerminalSetup from '@/components/SquareTerminalSetup';
 
 interface BarTrustedDevice {
   id: string;
@@ -156,6 +157,8 @@ export default function BarDevicesPage() {
             </div>
           ))}
         </div>
+
+        <SquareTerminalSetup />
 
         {revoked.length > 0 && (
           <div className={`${getCardClasses('md')} space-y-3`}>

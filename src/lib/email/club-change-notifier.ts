@@ -5,6 +5,12 @@ import { sendEmail } from './mailer';
 
 const NOTIFY_ADDRESS = 'burgesshillbc@gmail.com';
 
+// Disabled (club details 2026-09-28, contacts too 2026-10-31, at Liam's request) —
+// every club/contact edit on /clubs, including the Friendly Planning Notes quick-save
+// on the Season Planning Club Info page, was emailing NOTIFY_ADDRESS a change summary.
+// One switch for all four event types; flip back to true to resume.
+const CLUB_CHANGE_NOTIFICATIONS_ENABLED = false;
+
 export type ClubChangeEvent =
   | { type: 'club_updated'; clubName: string; changes: Record<string, { from: string | null; to: string | null }> }
   | { type: 'contact_added'; clubName: string; contact: Record<string, string> }
@@ -32,6 +38,8 @@ export async function sendClubChangeNotification(
   event: ClubChangeEvent,
   actor: { name: string; userName: string; role: string },
 ): Promise<void> {
+  if (!CLUB_CHANGE_NOTIFICATIONS_ENABLED) return;
+
   let subject: string;
   let body: string;
   const timestamp = new Date().toLocaleString('en-GB', { timeZone: 'Europe/London' });

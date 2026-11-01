@@ -9,6 +9,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { canUseBarTill } from '@/lib/role-utils';
 import { getDayEndSales, getDayEndLedger } from '@/lib/bar-supabase';
+import { getTillRenewalLedgerRows } from '@/lib/renewals-till';
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -34,6 +35,10 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ ledger: await getDayEndLedger(null, 'topup', 'card') });
       case 'refunds':
         return NextResponse.json({ ledger: await getDayEndLedger(null, 'refund') });
+      case 'renewal_cash':
+        return NextResponse.json({ ledger: await getTillRenewalLedgerRows(null, 'cash') });
+      case 'renewal_card':
+        return NextResponse.json({ ledger: await getTillRenewalLedgerRows(null, 'card') });
       default:
         return NextResponse.json({ error: 'Unknown kind' }, { status: 400 });
     }

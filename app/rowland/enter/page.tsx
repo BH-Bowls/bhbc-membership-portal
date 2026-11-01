@@ -6,6 +6,7 @@
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { formatOrdinalDate } from '@/lib/date-utils';
+import type { BankDetails } from '@/lib/bank-details';
 
 interface ContactForm {
   contactName: string;
@@ -59,7 +60,7 @@ function RowlandEnterForm() {
   // UI state
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [result, setResult] = useState<{ amountDue: string; paymentReference: string } | null>(null);
+  const [result, setResult] = useState<{ amountDue: string; paymentReference: string; bankDetails: BankDetails } | null>(null);
 
   useEffect(() => {
     fetch('/api/rowland/enter')
@@ -143,7 +144,7 @@ function RowlandEnterForm() {
         throw new Error(data.error || 'Failed to submit entry');
       }
 
-      setResult({ amountDue: data.amountDue, paymentReference: data.paymentReference });
+      setResult({ amountDue: data.amountDue, paymentReference: data.paymentReference, bankDetails: data.bankDetails });
     } catch (err: any) {
       setError(err.message || 'An error occurred. Please try again.');
     } finally {
@@ -182,10 +183,10 @@ function RowlandEnterForm() {
           </div>
 
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-2 text-sm">
-            <div className="flex justify-between"><span className="text-gray-700">Bank:</span><span className="text-gray-900 font-medium">HSBC</span></div>
-            <div className="flex justify-between"><span className="text-gray-700">Sort Code:</span><span className="text-gray-900 font-medium">40-15-16</span></div>
-            <div className="flex justify-between"><span className="text-gray-700">Account Number:</span><span className="text-gray-900 font-medium">81554948</span></div>
-            <div className="flex justify-between"><span className="text-gray-700">Account Name:</span><span className="text-gray-900 font-medium">Burgess Hill Bowls Club</span></div>
+            <div className="flex justify-between"><span className="text-gray-700">Bank:</span><span className="text-gray-900 font-medium">{result.bankDetails.bankName}</span></div>
+            <div className="flex justify-between"><span className="text-gray-700">Sort Code:</span><span className="text-gray-900 font-medium">{result.bankDetails.bankSortCode}</span></div>
+            <div className="flex justify-between"><span className="text-gray-700">Account Number:</span><span className="text-gray-900 font-medium">{result.bankDetails.bankAccountNumber}</span></div>
+            <div className="flex justify-between"><span className="text-gray-700">Account Name:</span><span className="text-gray-900 font-medium">{result.bankDetails.bankAccountName}</span></div>
             <div className="flex justify-between"><span className="text-gray-700">Reference:</span><span className="text-red-600 font-bold">{result.paymentReference}</span></div>
           </div>
 

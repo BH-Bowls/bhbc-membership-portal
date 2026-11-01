@@ -63,7 +63,7 @@ function validateProfileField(field: string, value: any): string | undefined {
     if (!validStatuses.includes(value)) return 'renewStatus must be Renew-Email or Renew-Post';
   }
 
-  const booleanFields = ['socialEmails', 'handbookEntry', 'competitionsEligibleOverride'];
+  const booleanFields = ['socialEmails', 'handbookEntry', 'competitionsEligibleOverride', 'printedMembershipBook'];
   if (booleanFields.includes(field) && value !== undefined && value !== null) {
     if (typeof value !== 'boolean') return `${field} must be a boolean value`;
   }
@@ -103,6 +103,7 @@ const FIELD_TO_COLUMN: Record<string, string> = {
   lastName: 'last_name',
   knownAs: 'known_as',
   competitionsEligibleOverride: 'competitions_eligible_override',
+  printedMembershipBook: 'printed_membership_book',
 };
 
 export async function updateUserProfile(
@@ -120,7 +121,7 @@ export async function updateUserProfile(
       'honorary', 'handicap', 'include', 'gmc', 'renewStatus', 'socialEmails',
       'handbookEntry', 'drivingAwayMatches', 'drivingAdditionalInfo', 'greenMaintenance',
       'greenAdditionalInfo', 'barDuty', 'barAdditionalInfo', 'otherSkills',
-      'competitionsEligibleOverride',
+      'competitionsEligibleOverride', 'printedMembershipBook',
     ];
 
     for (const field of allowedFields) {

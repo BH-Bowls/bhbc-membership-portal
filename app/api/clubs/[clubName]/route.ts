@@ -135,11 +135,8 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
         if (from !== to) changes[label] = { from, to };
       }
     }
-    // Disabled for now (2026-09-28, at Liam's request) — every club edit, including the
-    // Friendly Planning Notes quick-save on the Season Planning Club Info page, was
-    // emailing burgesshillbc@gmail.com a change summary. Flip back to true to resume.
-    const CLUB_CHANGE_NOTIFICATIONS_ENABLED = false;
-    if (CLUB_CHANGE_NOTIFICATIONS_ENABLED && Object.keys(changes).length > 0) {
+    // Currently a no-op — see CLUB_CHANGE_NOTIFICATIONS_ENABLED in club-change-notifier.ts
+    if (Object.keys(changes).length > 0) {
       sendClubChangeNotification(
         { type: 'club_updated', clubName: decodedClubName, changes },
         { name: session.user.name ?? session.user.userName, userName: session.user.userName, role },

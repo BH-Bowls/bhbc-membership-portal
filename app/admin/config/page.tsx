@@ -2,8 +2,8 @@
 
 // app/admin/config/page.tsx
 // App-wide settings — General (maintenance mode, age anchor, competitions threshold)
-// Labels (print-label layout config, moved here from /labels), Rowland, Bar, and
-// Honours Boards (printed honours board layouts). Admin only.
+// Labels (print-label layout config, moved here from /labels), Rowland and Bar. Admin only.
+// (Honours board setup lives on the Print Honours Boards page.)
 
 import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
@@ -11,9 +11,8 @@ import { useRouter } from 'next/navigation';
 import { hasRole } from '@/lib/role-utils';
 import { getInputClasses, getCardClasses, getAlertClasses } from '@/config/theme-helpers';
 import { LabelLayoutsPanel } from '@/components/LabelLayoutsPanel';
-import { HonoursBoardsPanel } from '@/components/HonoursBoardsPanel';
 
-type Tab = 'general' | 'labels' | 'rowland' | 'bar' | 'honours';
+type Tab = 'general' | 'labels' | 'rowland' | 'bar';
 
 const BAR_NOMINAL_FIELDS: [string, string][] = [
   ['bar_nominal_cash_account', 'Cash-in-hand'],
@@ -33,11 +32,36 @@ const BAR_PRICING_MODES: [string, string, string][] = [
   ['member_product_discount', 'Member product discount', 'One price per product; the discount rate below applies by default, but any product can override it (including to 0%) in Products.'],
 ];
 
+// Who must scan their membership card or enter their PIN to Pay by Account or Top Up on
+// the till (src/lib/bar-card.ts) — switched on in stages: Testing role first, then everyone
+const BAR_PROOF_MODES: [string, string, string][] = [
+  // value, label, hint
+  ['off', 'No one', 'The till works as before. Members can still set a PIN and get their new QR code in My Account.'],
+  ['testing', 'Members with the Testing role', 'Trial it with a few members before switching it on for everyone.'],
+  ['all', 'Everyone', 'Every member must scan their card or enter their PIN.'],
+];
+
+// Who, as the bar person serving, must confirm with their own card or PIN before a Day
+// End, Void, Refund or Cash Movement (bar_staff_proof). Switch on once they've set PINs.
+const BAR_STAFF_PROOF_MODES: [string, string, string][] = [
+  // value, label, hint
+  ['off', 'No one', 'The till works as before.'],
+  ['testing', 'Bar people with the Testing role', 'Trial it with a few bar people before switching it on for everyone.'],
+  ['all', 'Every bar person', 'Whoever is serving confirms with their card or PIN each time. Make sure every bar person has set a PIN first.'],
+];
+
 const ROWLAND_FIELDS: [string, string, string][] = [
   // key, label, hint
   ['rowland_entry_fee', 'Entry fee per team (£)', 'Charged per team on the Rowland Cup entry form.'],
   ['rowland_entry_deadline', 'Entry deadline (YYYY-MM-DD)', 'Shown on the entry form and confirmation email, and used as the access-token expiry.'],
   ['rowland_entry_season', 'Entry season', 'Which season new entry-form submissions get tagged with, e.g. "2027".'],
+];
+
+const BANK_FIELDS: [string, string][] = [
+  ['bank_name', 'Bank'],
+  ['bank_sort_code', 'Sort code'],
+  ['bank_account_number', 'Account number'],
+  ['bank_account_name', 'Account name'],
 ];
 
 // Sheet measurements live on the named layouts (LabelLayoutsPanel), not here
@@ -85,7 +109,7 @@ export default function AdminConfigPage() {
   // Runs once on mount: open the tab named in ?tab= (e.g. Print Labels links to ?tab=labels)
   useEffect(() => {
     const requested = new URLSearchParams(window.location.search).get('tab');
-    if (requested === 'general' || requested === 'labels' || requested === 'rowland' || requested === 'bar' || requested === 'honours') setTab(requested);
+    if (requested === 'general' || requested === 'labels' || requested === 'rowland' || requested === 'bar') setTab(requested);
   }, []);
 
   // Load config
@@ -118,14 +142,16 @@ export default function AdminConfigPage() {
 
     setSavingGeneral(true);
     try {
-      const updates = {
+      const updates: Record<string, string> = {
         maintenance_mode: editGeneral.maintenance_mode ?? 'false',
         age_reference_date: ageAnchor,
         min_friendlies_for_competitions: editGeneral.min_friendlies_for_competitions ?? '',
+        stripe_payments_enabled: editGeneral.stripe_payments_enabled === 'true' ? 'true' : 'false',
         season_planning_green_total_rinks: editGeneral.season_planning_green_total_rinks ?? '',
         season_planning_capacity_warning_threshold: editGeneral.season_planning_capacity_warning_threshold ?? '',
         season_planning_max_players_per_day: editGeneral.season_planning_max_players_per_day ?? '',
       };
+      for (const [key] of BANK_FIELDS) updates[key] = editGeneral[key] ?? '';
       const res = await fetch('/api/admin/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -214,6 +240,8 @@ export default function AdminConfigPage() {
     try {
       const updates: Record<string, string> = {
         bar_pricing_mode: editBar.bar_pricing_mode ?? 'member_product_discount',
+        bar_account_proof: editBar.bar_account_proof ?? 'off',
+        bar_staff_proof: editBar.bar_staff_proof ?? 'off',
         bar_member_discount_percent: String(rate),
         bar_till_float_pence: String(Math.round(floatPounds * 100)),
         bar_cash_carried_forward_pence: String(Math.round(carriedPounds * 100)),
@@ -261,7 +289,7 @@ export default function AdminConfigPage() {
 
         {/* Tabs */}
         <div className="border-b border-gray-200 flex gap-6">
-          {(['general', 'labels', 'rowland', 'bar', 'honours'] as Tab[]).map((t) => (
+          {(['general', 'labels', 'rowland', 'bar'] as Tab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -269,7 +297,7 @@ export default function AdminConfigPage() {
                 tab === t ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
               }`}
             >
-              {t === 'general' ? 'General' : t === 'labels' ? 'Labels' : t === 'rowland' ? 'Rowland' : t === 'bar' ? 'Bar' : 'Honours Boards'}
+              {t === 'general' ? 'General' : t === 'labels' ? 'Labels' : t === 'rowland' ? 'Rowland' : 'Bar'}
             </button>
           ))}
         </div>
@@ -351,7 +379,22 @@ export default function AdminConfigPage() {
                 ) : (
                   <span className="text-gray-900">{config.min_friendlies_for_competitions || '—'}</span>
                 )}
-                <p className="text-xs text-gray-700 mt-1">Not yet used anywhere in the app — Renewals' eligibility check still reads this threshold from Sheets.</p>
+                <p className="text-xs text-gray-700 mt-1">Renewal form — a playing member can enter club competitions if they made themselves available for at least this many friendlies last season. An Admin can override it per member on the member&apos;s page.</p>
+              </div>
+
+              {/* Stripe online payments (renewals spec §11.9) */}
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    disabled={!isEditingGeneral}
+                    checked={(isEditingGeneral ? editGeneral.stripe_payments_enabled : config.stripe_payments_enabled) === 'true'}
+                    onChange={(e) => setEditGeneral((prev) => ({ ...prev, stripe_payments_enabled: e.target.checked ? 'true' : 'false' }))}
+                    className="h-4 w-4 text-blue-600 border-gray-300 rounded"
+                  />
+                  <span className="font-medium text-gray-900">Online renewal payments (Stripe)</span>
+                </label>
+                <p className="text-xs text-gray-700 mt-1 ml-6">Shows &quot;Submit and pay online&quot; on the renewal form and &quot;Pay online&quot; on My Account. Also needs the Stripe keys set on the server.</p>
               </div>
 
               {/* Season Planning capacity */}
@@ -401,6 +444,32 @@ export default function AdminConfigPage() {
                   <span className="text-gray-900">{config.season_planning_max_players_per_day || '—'}</span>
                 )}
                 <p className="text-xs text-gray-700 mt-1">Season Planning — not enforced, just a warning. Covers all fixtures that day (Home and Away both need a full team), unlike the rinks check above which only counts Home.</p>
+              </div>
+
+              {/* Bank details */}
+              <div className="pt-2 border-t border-gray-200">
+                <h3 className="text-sm font-medium text-gray-700 mb-2">Bank details</h3>
+                <p className="text-xs text-gray-700 mb-3">
+                  Shown in payment instructions — the Renewals page and confirmation email, the
+                  membership application payment email, and the Rowland Cup entry page and email.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {BANK_FIELDS.map(([key, label]) => (
+                    <div key={key}>
+                      <label className="block text-gray-900 mb-1">{label}</label>
+                      {isEditingGeneral ? (
+                        <input
+                          type="text"
+                          value={editGeneral[key] ?? ''}
+                          onChange={(e) => setEditGeneral((prev) => ({ ...prev, [key]: e.target.value }))}
+                          className={`${getInputClasses()} w-full`}
+                        />
+                      ) : (
+                        <span className="text-gray-900">{config[key] || '—'}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
@@ -529,6 +598,43 @@ export default function AdminConfigPage() {
 
             <div className="space-y-4 text-sm">
               <div>
+                <label className="block text-gray-900 mb-1">Card or PIN needed for Pay by Account and Top Up</label>
+                {isEditingBar ? (
+                  <select
+                    value={editBar.bar_account_proof ?? 'off'}
+                    onChange={(e) => setEditBar((prev) => ({ ...prev, bar_account_proof: e.target.value }))}
+                    className={`${getInputClasses()} max-w-sm`}
+                  >
+                    {BAR_PROOF_MODES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                  </select>
+                ) : (
+                  <span className="text-gray-900">{BAR_PROOF_MODES.find(([v]) => v === (config.bar_account_proof || 'off'))?.[1] || '—'}</span>
+                )}
+                <p className="text-xs text-gray-700 mt-1">
+                  {BAR_PROOF_MODES.find(([v]) => v === ((isEditingBar ? editBar.bar_account_proof : config.bar_account_proof) || 'off'))?.[2]}
+                  {' '}A member who can&apos;t show their card or PIN can be approved by the person serving, with theirs — it&apos;s logged.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-gray-900 mb-1">Person serving confirms with card or PIN for Day End, Void, Refund and Cash Movement</label>
+                {isEditingBar ? (
+                  <select
+                    value={editBar.bar_staff_proof ?? 'off'}
+                    onChange={(e) => setEditBar((prev) => ({ ...prev, bar_staff_proof: e.target.value }))}
+                    className={`${getInputClasses()} max-w-sm`}
+                  >
+                    {BAR_STAFF_PROOF_MODES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                  </select>
+                ) : (
+                  <span className="text-gray-900">{BAR_STAFF_PROOF_MODES.find(([v]) => v === (config.bar_staff_proof || 'off'))?.[1] || '—'}</span>
+                )}
+                <p className="text-xs text-gray-700 mt-1">
+                  {BAR_STAFF_PROOF_MODES.find(([v]) => v === ((isEditingBar ? editBar.bar_staff_proof : config.bar_staff_proof) || 'off'))?.[2]}
+                </p>
+              </div>
+
+              <div>
                 <label className="block text-gray-900 mb-1">Pricing mode</label>
                 {isEditingBar ? (
                   <select
@@ -627,13 +733,6 @@ export default function AdminConfigPage() {
                 </div>
               </div>
             </div>
-          </div>
-        )}
-
-        {/* ── Honours Boards tab ── */}
-        {tab === 'honours' && (
-          <div className={getCardClasses('md')}>
-            <HonoursBoardsPanel />
           </div>
         )}
       </main>

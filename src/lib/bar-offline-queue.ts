@@ -33,6 +33,8 @@ export interface QueuedWalletEntry {
   amountPence: number;     // signed: +topup, -purchase (mirrors bar_ledger.amount_pence)
   paymentMethod?: 'cash' | 'card'; // 'topup' only
   items?: { productId: string; qty: number }[]; // 'purchase' only, for replay as a real wallet sale
+  cardCode?: string;       // the member's card, scanned as proof (src/lib/bar-card.ts) — sent on replay
+  approvalCardCode?: string; // or the card of the person serving, who approved it instead
 }
 
 export type QueuedEntry = QueuedSaleEntry | QueuedWalletEntry;

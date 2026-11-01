@@ -24,10 +24,12 @@ interface ActiveMember {
   drivingAwayMatches: string;
   barDuty: string;
   gmc: string;
+  printedMembershipBook: boolean | null;
 }
 
-// Same options as /members' filter — kept in sync deliberately.
-type FilterType = 'none' | 'greenMaintenance' | 'drivingAway' | 'barDuty' | 'gmc';
+// Same options as /members' filter — kept in sync deliberately — plus Printed Book,
+// which is admin-only (the print-run list for the membership book).
+type FilterType = 'none' | 'greenMaintenance' | 'drivingAway' | 'barDuty' | 'gmc' | 'printedBook';
 
 // Build today's date as YYYY-MM-DD for the archive date input default.
 function todayInput(): string {
@@ -139,6 +141,9 @@ export default function MembersListPage() {
         case 'gmc':
           matchesFilter = m.gmc === 'GMC';
           break;
+        case 'printedBook':
+          matchesFilter = m.printedMembershipBook === true;
+          break;
       }
       if (matchesSearch && matchesFilter) {
         filtered.push(m);
@@ -190,8 +195,14 @@ export default function MembersListPage() {
               <option value="drivingAway">Driving Away Matches</option>
               <option value="barDuty">Bar Duty</option>
               <option value="gmc">GMC (Committee)</option>
+              <option value="printedBook">Printed Membership Book</option>
             </select>
           </div>
+          {filter === 'printedBook' && members !== null ? (
+            <p className="text-sm text-gray-700 mb-3">
+              {filtered.length} {filtered.length === 1 ? 'member wants' : 'members want'} a printed membership book.
+            </p>
+          ) : null}
           {members === null ? (
             <p className="text-sm text-gray-700">Loading members…</p>
           ) : filtered.length === 0 ? (

@@ -41,13 +41,15 @@ export async function POST(request: NextRequest) {
 
     const result = await recordDraw(season, date, picks);
 
-    // Email each winner. Don't fail the draw if email has a hiccup.
+    // Email each winner unless the form opted out. Don't fail the draw if email has a hiccup.
     let emailed = 0;
-    try {
-      const sendResult = await sendWinnerEmails(season, result.winners);
-      emailed = sendResult.sent;
-    } catch (emailError) {
-      console.error('[POST /api/200-club/draw] winner emails failed', emailError);
+    if (body.emailWinners !== false) {
+      try {
+        const sendResult = await sendWinnerEmails(season, result.winners);
+        emailed = sendResult.sent;
+      } catch (emailError) {
+        console.error('[POST /api/200-club/draw] winner emails failed', emailError);
+      }
     }
 
     return NextResponse.json({ ok: true, recorded: result.recorded, emailed });
