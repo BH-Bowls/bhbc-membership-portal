@@ -929,6 +929,7 @@ export interface BarSaleSummary {
   isCashMovement: boolean;
   reason: string | null;       // Cash Movement only
   items: BarSaleItem[];
+  serverApproved?: boolean;    // Pay by Account approved by the bar person serving (set by /api/bar/sales)
 }
 
 export async function getRecentSales(limit = 40): Promise<BarSaleSummary[]> {

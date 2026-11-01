@@ -9,7 +9,11 @@
 // production restored to dev keeps every card working there. The till checks scans
 // offline against a SHA-256 of each member's current code (getTillCards).
 //
-// A PIN typed at the till is sent with each payment and checked here every time.
+// A PIN (4 to 6 digits) typed at the till is sent with each payment and checked here
+// every time. The bar person serving uses their own card or PIN the same way — to
+// approve an account payment for a member who can't show theirs, and before a Day End,
+// Void, Refund or Cash Movement (bar_staff_proof). Their approvals are logged in
+// bar_staff_approvals.
 //
 // Server only.
 
@@ -23,12 +27,18 @@ const PIN_MAX_FAILURES = 5;
 
 export type AccountProofMode = 'off' | 'testing' | 'all';
 
-/** What the till sends with Pay by Account / Top Up. */
-export interface AccountProof {
+/** One person's card scan or typed PIN. */
+export interface PersonProof {
   cardCode?: string;
   pin?: string;
-  // Set by the till when syncing a sale it queued while offline — a card of this
-  // member's that has been reset since still counts.
+}
+
+/** What the till sends with Pay by Account / Top Up. */
+export interface AccountProof extends PersonProof {
+  // The bar person serving approving it with their own card or PIN, instead of the member
+  serverApproval?: PersonProof;
+  // Set by the till when syncing a sale it queued while offline — a card that has been
+  // reset since still counts.
   offlineReplay?: boolean;
 }
 
@@ -139,11 +149,11 @@ export async function restoreCard(userName: string, code: string): Promise<void>
 // ── PINs ──────────────────────────────────────────────────────────────────────
 
 export function isValidPin(pin: unknown): pin is string {
-  return typeof pin === 'string' && /^\d{4}$/.test(pin);
+  return typeof pin === 'string' && /^\d{4,6}$/.test(pin);
 }
 
 export async function setPin(userName: string, pin: string): Promise<void> {
-  if (!isValidPin(pin)) throw new Error('The PIN must be 4 digits');
+  if (!isValidPin(pin)) throw new Error('The PIN must be 4 to 6 digits');
   const user = await getCardUser('username', userName);
   if (!user) throw new Error('Member not found');
   await updateCardUser(user.id, { bar_pin_hash: await bcrypt.hash(pin, 10), bar_pin_failures: 0 });
@@ -186,9 +196,12 @@ export async function verifyPin(userName: string, pin: string): Promise<PinCheck
 
 // ── Proof at the till ─────────────────────────────────────────────────────────
 
-export async function getProofMode(): Promise<AccountProofMode> {
-  const value = (await getConfig()).bar_account_proof;
+function modeFrom(value: string | undefined): AccountProofMode {
   return value === 'testing' || value === 'all' ? value : 'off';
+}
+
+export async function getProofMode(): Promise<AccountProofMode> {
+  return modeFrom((await getConfig()).bar_account_proof);
 }
 
 async function getRoles(userId: string): Promise<string[]> {
@@ -199,37 +212,120 @@ async function getRoles(userId: string): Promise<string[]> {
 }
 
 /**
- * Null if the till may charge or top up this member's account, otherwise the reason it
- * can't — checked by every route that does (purchase, topup, Square top-up), so the
- * till screen isn't the only thing standing in the way.
+ * Checks one person's card or PIN. Null if it's good, otherwise why not. A wrong PIN
+ * counts towards their lockout; a current card clears it.
  */
-export async function checkAccountProof(userName: string, proof: AccountProof | undefined): Promise<string | null> {
-  const mode = await getProofMode();
-  if (mode === 'off') return null;
-  const user = await getCardUser('username', userName);
-  if (!user) return 'Member not found';
-  if (mode === 'testing' && !(await getRoles(user.id)).includes('Testing')) return null;
-
+async function checkPersonProof(user: CardUserRow, proof: PersonProof | undefined, offlineReplay: boolean): Promise<string | null> {
   if (proof && typeof proof.cardCode === 'string') {
     const parsed = parseCardCode(proof.cardCode);
     if (parsed && parsed.userId === user.id) {
       if (parsed.token === user.card_token) {
-        // Scanning the card also clears a PIN lockout
         if (user.bar_pin_failures > 0) await updateCardUser(user.id, { bar_pin_failures: 0 });
         return null;
       }
-      if (proof.offlineReplay) return null;
-      return 'This card has been replaced — scan the member’s current card or enter their PIN.';
+      if (offlineReplay) return null;
+      return 'This card has been replaced — scan the current card or enter the PIN.';
     }
   }
   if (proof && typeof proof.pin === 'string') {
     const result = await verifyPin(user.username, proof.pin);
     if (result.ok) return null;
-    if (result.reason === 'locked') return 'The PIN is locked after too many wrong tries — scan the member’s card.';
-    if (result.reason === 'no_pin') return 'This member has no PIN — scan their card.';
+    if (result.reason === 'locked') return 'The PIN is locked after too many wrong tries — scan the card instead.';
+    if (result.reason === 'no_pin') return 'No PIN has been set — scan the card instead.';
     return 'Wrong PIN — enter it again.';
   }
-  return 'Scan the member’s card or enter their PIN first.';
+  return 'Scan the card or enter the PIN first.';
+}
+
+/**
+ * May the till charge or top up this member's account? Checked by every route that does
+ * (purchase, topup, Square top-up), so the till screen isn't the only thing in the way.
+ * Passes with the member's own card or PIN, or — when they can't show either — with the
+ * bar person serving (staff) approving it with theirs; approvedBy then says how, for
+ * logApproval.
+ */
+export async function checkAccountProof(
+  userName: string,
+  proof: AccountProof | undefined,
+  staff: string,
+): Promise<{ error: string | null; approvedBy?: 'pin' | 'card' }> {
+  const mode = await getProofMode();
+  if (mode === 'off') return { error: null };
+  const user = await getCardUser('username', userName);
+  if (!user) return { error: 'Member not found' };
+  if (mode === 'testing' && !(await getRoles(user.id)).includes('Testing')) return { error: null };
+
+  const offlineReplay = !!(proof && proof.offlineReplay);
+  if (proof && proof.serverApproval) {
+    if (!staff) return { error: 'Select who’s serving first.' };
+    const server = await getCardUser('username', staff);
+    if (!server) return { error: 'The bar person serving wasn’t found.' };
+    const error = await checkPersonProof(server, proof.serverApproval, offlineReplay);
+    if (error) return { error: `Approval by the person serving: ${error}` };
+    return { error: null, approvedBy: proof.serverApproval.cardCode ? 'card' : 'pin' };
+  }
+  const error = await checkPersonProof(user, proof, offlineReplay);
+  return { error: error };
+}
+
+export async function getStaffProofMode(): Promise<AccountProofMode> {
+  return modeFrom((await getConfig()).bar_staff_proof);
+}
+
+/**
+ * Before a Day End, Void, Refund or Cash Movement: the bar person serving (staff)
+ * confirms with their own card or PIN, when the bar_staff_proof setting says they must.
+ * method is how they confirmed (for logApproval), or null if they didn't need to.
+ */
+export async function checkStaffProof(
+  staff: string,
+  proof: PersonProof | undefined,
+): Promise<{ error: string | null; method: 'pin' | 'card' | null }> {
+  const mode = await getStaffProofMode();
+  if (mode === 'off') return { error: null, method: null };
+  if (!staff) return { error: 'Select who’s serving first.', method: null };
+  const server = await getCardUser('username', staff);
+  if (!server) return { error: 'The bar person serving wasn’t found.', method: null };
+  if (mode === 'testing' && !(await getRoles(server.id)).includes('Testing')) return { error: null, method: null };
+  const error = await checkPersonProof(server, proof, false);
+  if (error) return { error: error, method: null };
+  return { error: null, method: proof && proof.cardCode ? 'card' : 'pin' };
+}
+
+/** Records a bar person's approval (see 0095_bar_staff_approvals.sql). Never throws. */
+export async function logApproval(entry: {
+  kind: 'account' | 'day_end' | 'void' | 'refund' | 'cash_movement';
+  staff: string;
+  method: 'pin' | 'card';
+  userName?: string;
+  amountPence?: number;
+  saleId?: string;
+  note?: string;
+}): Promise<void> {
+  try {
+    const supabase = getSupabaseClient();
+    const { error } = await supabase.from('bar_staff_approvals').insert({
+      kind: entry.kind,
+      staff: entry.staff,
+      method: entry.method,
+      user_name: entry.userName ?? null,
+      amount_pence: entry.amountPence ?? null,
+      sale_id: entry.saleId ?? null,
+      note: entry.note ?? null,
+    });
+    if (error) throw new Error(error.message);
+  } catch (err) {
+    console.error('[bar-card] Failed to log a staff approval:', err);
+  }
+}
+
+/** Sale ids (of those given) that the bar person serving approved — for the till's Sales list. */
+export async function getApprovedSaleIds(saleIds: string[]): Promise<Set<string>> {
+  if (saleIds.length === 0) return new Set();
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.from('bar_staff_approvals').select('sale_id').eq('kind', 'account').in('sale_id', saleIds);
+  if (error) throw new Error(`Failed to load approvals: ${error.message}`);
+  return new Set((data ?? []).map((r: { sale_id: string }) => r.sale_id));
 }
 
 export interface TillCard {
@@ -238,32 +334,36 @@ export interface TillCard {
   cardHash: string;      // SHA-256 of the current card code
   hasPin: boolean;
   pinLocked: boolean;
-  proofRequired: boolean;
+  proofRequired: boolean;       // as a member: for Pay by Account / Top Up
+  staffProofRequired: boolean;  // as the bar person serving: for Day End, Void, Refund, Cash Movement
 }
 
 /**
  * Everything the till needs to check scans (including offline) and know who needs a
  * card or PIN. Holds no secrets: the hashes can't be turned back into card codes.
  */
-export async function getTillCards(): Promise<{ mode: AccountProofMode; cards: TillCard[] }> {
-  const mode = await getProofMode();
+export async function getTillCards(): Promise<{ cards: TillCard[] }> {
+  const config = await getConfig();
+  const mode = modeFrom(config.bar_account_proof);
+  const staffMode = modeFrom(config.bar_staff_proof);
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
     .from('users')
     .select('id, username, card_token, bar_pin_hash, bar_pin_failures, user_roles(role)')
     .eq('is_active', true);
   if (error) throw new Error(`Failed to load cards: ${error.message}`);
-  const rows = (data ?? []) as (Omit<CardUserRow, 'bar_pin_failures'> & { bar_pin_failures: number; user_roles: { role: string }[] | null })[];
+  const rows = (data ?? []) as (CardUserRow & { user_roles: { role: string }[] | null })[];
   const cards = rows.map((row) => {
-    const roles = (row.user_roles ?? []).map((r) => r.role);
+    const testing = (row.user_roles ?? []).some((r) => r.role === 'Testing');
     return {
       userName: row.username,
       userId: compactId(row.id),
       cardHash: hashCode(buildCardCode(row.id, row.card_token)),
       hasPin: !!row.bar_pin_hash,
       pinLocked: row.bar_pin_failures >= PIN_MAX_FAILURES,
-      proofRequired: mode === 'all' || (mode === 'testing' && roles.includes('Testing')),
+      proofRequired: mode === 'all' || (mode === 'testing' && testing),
+      staffProofRequired: staffMode === 'all' || (staffMode === 'testing' && testing),
     };
   });
-  return { mode: mode, cards: cards };
+  return { cards: cards };
 }

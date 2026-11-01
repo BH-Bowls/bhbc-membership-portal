@@ -41,6 +41,15 @@ const BAR_PROOF_MODES: [string, string, string][] = [
   ['all', 'Everyone', 'Every member must scan their card or enter their PIN.'],
 ];
 
+// Who, as the bar person serving, must confirm with their own card or PIN before a Day
+// End, Void, Refund or Cash Movement (bar_staff_proof). Switch on once they've set PINs.
+const BAR_STAFF_PROOF_MODES: [string, string, string][] = [
+  // value, label, hint
+  ['off', 'No one', 'The till works as before.'],
+  ['testing', 'Bar people with the Testing role', 'Trial it with a few bar people before switching it on for everyone.'],
+  ['all', 'Every bar person', 'Whoever is serving confirms with their card or PIN each time. Make sure every bar person has set a PIN first.'],
+];
+
 const ROWLAND_FIELDS: [string, string, string][] = [
   // key, label, hint
   ['rowland_entry_fee', 'Entry fee per team (£)', 'Charged per team on the Rowland Cup entry form.'],
@@ -232,6 +241,7 @@ export default function AdminConfigPage() {
       const updates: Record<string, string> = {
         bar_pricing_mode: editBar.bar_pricing_mode ?? 'member_product_discount',
         bar_account_proof: editBar.bar_account_proof ?? 'off',
+        bar_staff_proof: editBar.bar_staff_proof ?? 'off',
         bar_member_discount_percent: String(rate),
         bar_till_float_pence: String(Math.round(floatPounds * 100)),
         bar_cash_carried_forward_pence: String(Math.round(carriedPounds * 100)),
@@ -602,6 +612,25 @@ export default function AdminConfigPage() {
                 )}
                 <p className="text-xs text-gray-700 mt-1">
                   {BAR_PROOF_MODES.find(([v]) => v === ((isEditingBar ? editBar.bar_account_proof : config.bar_account_proof) || 'off'))?.[2]}
+                  {' '}A member who can&apos;t show their card or PIN can be approved by the person serving, with theirs — it&apos;s logged.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-gray-900 mb-1">Person serving confirms with card or PIN for Day End, Void, Refund and Cash Movement</label>
+                {isEditingBar ? (
+                  <select
+                    value={editBar.bar_staff_proof ?? 'off'}
+                    onChange={(e) => setEditBar((prev) => ({ ...prev, bar_staff_proof: e.target.value }))}
+                    className={`${getInputClasses()} max-w-sm`}
+                  >
+                    {BAR_STAFF_PROOF_MODES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                  </select>
+                ) : (
+                  <span className="text-gray-900">{BAR_STAFF_PROOF_MODES.find(([v]) => v === (config.bar_staff_proof || 'off'))?.[1] || '—'}</span>
+                )}
+                <p className="text-xs text-gray-700 mt-1">
+                  {BAR_STAFF_PROOF_MODES.find(([v]) => v === ((isEditingBar ? editBar.bar_staff_proof : config.bar_staff_proof) || 'off'))?.[2]}
                 </p>
               </div>
 

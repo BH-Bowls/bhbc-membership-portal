@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
   if (!body.userName || typeof body.cardCode !== 'string') {
     return NextResponse.json({ error: 'userName and cardCode are required' }, { status: 400 });
   }
-  if (!isValidPin(body.pin)) return NextResponse.json({ error: 'The PIN must be 4 digits' }, { status: 400 });
+  if (!isValidPin(body.pin)) return NextResponse.json({ error: 'The PIN must be 4 to 6 digits' }, { status: 400 });
   try {
     const card = await checkCard(body.cardCode);
     if (card.status !== 'current' || card.userName !== body.userName) {

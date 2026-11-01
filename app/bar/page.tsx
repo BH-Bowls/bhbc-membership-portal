@@ -28,6 +28,12 @@
 // counts; otherwise ProofDialog asks. The proof lasts while that member's basket is open,
 // and goes with the payment so the server checks it too. Offline, only a card scan
 // works (checked against the hashes from /api/bar/cards) — a PIN needs the server.
+// A member who can't show either (forgotten card, no PIN) can be approved by the person
+// serving, with their own card or PIN — logged, and marked on the Sales list.
+// Day End, Void, Refund and Cash Movement: the person serving confirms with their own
+// card or PIN as the action starts, every time, when bar_staff_proof covers them
+// (requireStaff / StaffProofDialog); who's serving is then fixed on that screen.
+// Changing who's serving needs nothing, so on a busy day only these exceptions ask.
 
 'use client';
 
@@ -80,15 +86,24 @@ const SESSION_SERVERS_KEY = 'bar_session_servers';
 // refresh mid-rush doesn't lose them. Short-term memory only — cleared on sign-out.
 const HELD_ORDERS_KEY = 'bar_held_orders';
 type ServerAction = 'cashcard' | 'topup' | 'endofday' | 'cashmovement' | 'membership';
+// Actions the person serving confirms with their own card or PIN before starting (requireStaff)
+type StaffAction = 'dayend' | 'cashmovement' | 'void' | 'refund';
 
 type View = 'volunteer' | 'person' | 'sale' | 'topup' | 'report' | 'sales' | 'products' | 'cashmovement' | 'membership';
 interface BasketLine { product: BarProduct; qty: number }
 interface MemberOption { userName: string; fullName: string }
 // One member's card/PIN details from /api/bar/cards (TillCard in src/lib/bar-card.ts)
-interface TillCard { userName: string; userId: string; cardHash: string; hasPin: boolean; pinLocked: boolean; proofRequired: boolean }
+interface TillCard {
+  userName: string; userId: string; cardHash: string; hasPin: boolean; pinLocked: boolean;
+  proofRequired: boolean;        // as a member: Pay by Account / Top Up
+  staffProofRequired: boolean;   // as the person serving: Day End, Void, Refund, Cash Movement
+}
+// One person's card scan or typed PIN
+interface PersonProof { cardCode?: string; pin?: string }
 // Proof that the member on screen is really here — sent with Pay by Account / Top Up.
-// A PIN is only held here while their basket is open, and is checked again each payment.
-interface MemberProof { userName: string; cardCode?: string; pin?: string }
+// Their own card or PIN, or the person serving's (serverApproval) when they can't show
+// either. A PIN is only held here while the basket is open, and is checked each payment.
+interface MemberProof extends PersonProof { userName: string; serverApproval?: PersonProof }
 
 async function sha256Hex(text: string): Promise<string | null> {
   if (!crypto.subtle) return null; // only on HTTPS or localhost
@@ -143,6 +158,11 @@ export default function BarTillPage() {
   const proofRef = useRef<MemberProof | null>(null);
   const [proofDialog, setProofDialog] = useState<{ purpose: 'pay' | 'topup'; onProven: () => void } | null>(null);
   const [showSetPin, setShowSetPin] = useState(false);
+  // Day End / Void / Refund / Cash Movement waiting for the person serving to confirm,
+  // and their confirmation for the one in progress (see requireStaff)
+  const [staffDialog, setStaffDialog] = useState<{ label: string; server: string; onProven: (p: PersonProof) => void } | null>(null);
+  const [staffSession, setStaffSessionState] = useState<{ action: StaffAction; server: string; proof: PersonProof | null } | null>(null);
+  const staffSessionRef = useRef<{ action: StaffAction; server: string; proof: PersonProof | null } | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -329,7 +349,9 @@ export default function BarTillPage() {
             body: JSON.stringify({ method: entry.method, items: entry.items, staff: entry.staff, userName: entry.userName }) });
         } else {
           // The card scanned when it was queued still counts if it's been reset since
-          const replayProof = entry.cardCode ? { cardCode: entry.cardCode, offlineReplay: true } : undefined;
+          let replayProof: Record<string, unknown> | undefined;
+          if (entry.cardCode) replayProof = { cardCode: entry.cardCode, offlineReplay: true };
+          else if (entry.approvalCardCode) replayProof = { serverApproval: { cardCode: entry.approvalCardCode }, offlineReplay: true };
           if (entry.kind === 'topup') {
             res = await fetch('/api/bar/topup', { method: 'POST', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ userName: entry.userName, amountPence: entry.amountPence, staff: entry.staff, paymentMethod: entry.paymentMethod, proof: replayProof }) });
@@ -450,6 +472,10 @@ export default function BarTillPage() {
 
   // Marks who's serving and adds them to this session's list (ServerPicker's quick choices).
   function setServer(u: string) {
+    if (staffSessionRef.current && staffSessionRef.current.server !== u) {
+      setStaffSession(null);
+      setShowRefund(false);
+    }
     setVolunteer(u);
     try { localStorage.setItem(SERVED_BY_KEY, u); } catch { /* ignore */ }
     setSessionServers((prev) => {
@@ -481,10 +507,9 @@ export default function BarTillPage() {
     } else if (action === 'topup') {
       setView('topup');
     } else if (action === 'endofday') {
-      setDayEndSuccess(null);
-      loadReport();
+      requireStaff('dayend', 'Day End', server, () => { setDayEndSuccess(null); loadReport(); });
     } else if (action === 'cashmovement') {
-      setView('cashmovement');
+      requireStaff('cashmovement', 'Cash Movement', server, () => setView('cashmovement'));
     } else {
       setView('membership');
     }
@@ -517,6 +542,7 @@ export default function BarTillPage() {
     setView('person'); setMember(null); setBasket([]); setPersonSearch('');
     setShowRefund(false); setRefundAmt('');
     setMemberProof(null);
+    setStaffSession(null);
   }
 
   // ── basket / pricing helpers ─────────────────────────────────────────────────
@@ -569,12 +595,16 @@ export default function BarTillPage() {
   function tillCardFor(userName: string): TillCard | undefined {
     return tillCards.find((c) => c.userName === userName);
   }
+  function markPinLocked(userName: string) {
+    setTillCards((prev) => prev.map((c) => (c.userName === userName ? { ...c, pinLocked: true } : c)));
+  }
   // Offline, only a scanned card will do — a PIN check can't reach the server, and a
   // queued payment has to carry the card to be accepted when it syncs.
   function hasProof(userName: string): boolean {
     const p = proofRef.current;
     if (!p || p.userName !== userName) return false;
-    return !!p.cardCode || (!offline && !!p.pin);
+    const proven = p.serverApproval ? p.serverApproval : p;
+    return !!proven.cardCode || (!offline && !!proven.pin);
   }
   function needsProof(userName: string): boolean {
     const card = tillCardFor(userName);
@@ -591,10 +621,42 @@ export default function BarTillPage() {
     if (data.proofRequired) setMemberProof(null);
   }
   // What goes with a payment for this member (the server ignores it if not needed)
-  function proofFor(userName: string): { cardCode?: string; pin?: string } | undefined {
+  function proofFor(userName: string): { cardCode?: string; pin?: string; serverApproval?: PersonProof } | undefined {
     const p = proofRef.current;
     if (!p || p.userName !== userName) return undefined;
-    return { cardCode: p.cardCode, pin: p.pin };
+    return { cardCode: p.cardCode, pin: p.pin, serverApproval: p.serverApproval };
+  }
+  // A card scanned as proof, for a payment queued offline — the member's own, or the
+  // approving server's — so it's accepted when it syncs
+  function queuedCards(userName: string): { cardCode?: string; approvalCardCode?: string } {
+    const p = proofFor(userName);
+    if (!p) return {};
+    if (p.serverApproval) return { approvalCardCode: p.serverApproval.cardCode };
+    return { cardCode: p.cardCode };
+  }
+
+  // Day End, Cash Movement, Void and Refund: the person serving (server — passed in, as
+  // it may have only just been picked) confirms with their own card or PIN before the
+  // action starts, every time, when the bar_staff_proof setting covers them. The
+  // confirmation goes with the request when it's saved (staffProofFor), and the server
+  // checks it again. While it's held, who's serving can't be changed on that screen.
+  function setStaffSession(next: { action: StaffAction; server: string; proof: PersonProof | null } | null) {
+    staffSessionRef.current = next;
+    setStaffSessionState(next);
+  }
+  function requireStaff(action: StaffAction, label: string, server: string, run: () => void) {
+    const card = server ? tillCardFor(server) : undefined;
+    if (!card || !card.staffProofRequired) { setStaffSession({ action: action, server: server, proof: null }); run(); return; }
+    setStaffDialog({ label: label, server: server, onProven: (p) => {
+      setStaffDialog(null);
+      setStaffSession({ action: action, server: server, proof: p });
+      run();
+    } });
+  }
+  function staffProofFor(action: StaffAction): PersonProof | undefined {
+    const current = staffSessionRef.current;
+    if (!current || current.action !== action || !current.proof) return undefined;
+    return current.proof;
   }
   // Cash/Card resumes whoever's serving's held tab, if they have one (see startAction).
   function openCashCardTab() {
@@ -677,7 +739,7 @@ export default function BarTillPage() {
             setError('Insufficient offline balance — only top-ups made this session can be spent while offline.');
             return;
           }
-          await enqueue({ id: newQueueId(), createdAt: Date.now(), kind: 'purchase', userName: member.userName, staff: staffForSale, amountPence: -basketTotal, items, cardCode: proofFor(member.userName)?.cardCode });
+          await enqueue({ id: newQueueId(), createdAt: Date.now(), kind: 'purchase', userName: member.userName, staff: staffForSale, amountPence: -basketTotal, items, ...queuedCards(member.userName) });
           addOfflineWalletDelta(member.userName, -basketTotal);
         } else {
           // Cash/card never touches a balance, so it's always safe to queue offline
@@ -747,7 +809,7 @@ export default function BarTillPage() {
     setBusy(true); setError('');
     try {
       if (offline) {
-        await enqueue({ id: newQueueId(), createdAt: Date.now(), kind: 'topup', userName: member.userName, staff: volunteer, amountPence, paymentMethod, cardCode: proofFor(member.userName)?.cardCode });
+        await enqueue({ id: newQueueId(), createdAt: Date.now(), kind: 'topup', userName: member.userName, staff: volunteer, amountPence, paymentMethod, ...queuedCards(member.userName) });
         addOfflineWalletDelta(member.userName, amountPence);
         refreshQueuedCount();
         setView('sale');
@@ -779,7 +841,7 @@ export default function BarTillPage() {
     setDayEndSubmitting(true); setError('');
     try {
       const res = await fetch('/api/bar/day-end', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ staff: volunteer, cashRemovedPence, carryForward, reason: reason || undefined }) });
+        body: JSON.stringify({ staff: volunteer, cashRemovedPence, carryForward, reason: reason || undefined, staffProof: staffProofFor('dayend') }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to record day end');
       setDayEndSuccess(data.dayEnd);
@@ -804,7 +866,7 @@ export default function BarTillPage() {
     setBusy(true); setError('');
     try {
       const res = await fetch('/api/bar/cash-movement', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ productId, amountPence, direction, reason, staff: volunteer }) });
+        body: JSON.stringify({ productId, amountPence, direction, reason, staff: volunteer, staffProof: staffProofFor('cashmovement') }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to record cash movement');
       await load();
@@ -819,13 +881,13 @@ export default function BarTillPage() {
   function askVoid(sale: BarSaleSummary) {
     if (offline) { setError('Voiding needs a live connection.'); return; }
     if (!requireVolunteer()) return;
-    setVoidDialog({ sale: sale, done: null, error: null });
+    requireStaff('void', 'Void sale', volunteer, () => setVoidDialog({ sale: sale, done: null, error: null }));
   }
   async function doVoid(sale: BarSaleSummary) {
     setBusy(true); setError('');
     try {
       const res = await fetch('/api/bar/void', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ saleId: sale.id, staff: volunteer }) });
+        body: JSON.stringify({ saleId: sale.id, staff: volunteer, staffProof: staffProofFor('void') }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Void failed');
       let done = 'Sale voided.';
@@ -855,11 +917,12 @@ export default function BarTillPage() {
     setBusy(true); setError('');
     try {
       const res = await fetch('/api/bar/refund', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userName: member.userName, amountPence: pence, staff: volunteer }) });
+        body: JSON.stringify({ userName: member.userName, amountPence: pence, staff: volunteer, staffProof: staffProofFor('refund') }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Refund failed');
       setMember({ ...member, balancePence: data.balancePence });
       setShowRefund(false); setRefundAmt('');
+      setStaffSession(null);
       await load();
     } catch (err: any) { setError(err.message); } finally { setBusy(false); }
   }
@@ -922,6 +985,9 @@ export default function BarTillPage() {
     setError(result.message ?? '');
   }
 
+  // On a Day End or Cash Movement the person serving has confirmed it's them — keep it them
+  const serverLocked = !!staffSession && !!staffSession.proof && (view === 'report' || view === 'cashmovement');
+
   // ── guards ──────────────────────────────────────────────────────────────────
   if (status === 'loading') return null;
   if (status === 'unauthenticated') return <BarPinLogin />;
@@ -950,19 +1016,33 @@ export default function BarTillPage() {
 
         {voidDialog && (
           <VoidSaleDialog sale={voidDialog.sale} done={voidDialog.done} error={voidDialog.error} busy={busy}
-            onConfirm={() => doVoid(voidDialog.sale)} onClose={() => setVoidDialog(null)} />
+            onConfirm={() => doVoid(voidDialog.sale)} onClose={() => { setVoidDialog(null); setStaffSession(null); }} />
         )}
 
         {proofDialog && member && (
           <ProofDialog
             member={member}
-            card={tillCardFor(member.userName)}
+            server={volunteer ? { userName: volunteer, fullName: barPersonName(volunteer) } : null}
+            cards={tillCards}
             purpose={proofDialog.purpose}
             offline={offline}
             readScan={readScan}
-            onPinLocked={() => setTillCards((prev) => prev.map((c) => (c.userName === member.userName ? { ...c, pinLocked: true } : c)))}
+            onPinLocked={markPinLocked}
             onProven={(p) => { setMemberProof(p); proofDialog.onProven(); }}
             onClose={() => setProofDialog(null)}
+          />
+        )}
+
+        {staffDialog && (
+          <StaffProofDialog
+            server={{ userName: staffDialog.server, fullName: barPersonName(staffDialog.server) }}
+            card={tillCardFor(staffDialog.server)}
+            action={staffDialog.label}
+            offline={offline}
+            readScan={readScan}
+            onPinLocked={() => markPinLocked(staffDialog.server)}
+            onProven={staffDialog.onProven}
+            onClose={() => { setStaffDialog(null); if (view === 'volunteer') setView('person'); }}
           />
         )}
 
@@ -1076,7 +1156,12 @@ export default function BarTillPage() {
         <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
           <h1 className="text-lg font-bold text-gray-900">{SCREEN_TITLES[view]}</h1>
           <div className="flex flex-wrap items-center gap-2">
-            {view !== 'volunteer' && volunteer && (
+            {view !== 'volunteer' && volunteer && serverLocked && (
+              <span className="px-3 py-2 text-sm rounded-full border border-gray-200 bg-gray-50 text-gray-900">
+                Serving: <span className="font-semibold">{barPersonName(volunteer)}</span>
+              </span>
+            )}
+            {view !== 'volunteer' && volunteer && !serverLocked && (
               <button onClick={() => setShowServerPicker(true)} title="Change who's serving"
                 className="px-3 py-2 text-sm rounded-full border border-blue-200 bg-blue-50 text-blue-900 hover:bg-blue-100">
                 Serving: <span className="font-semibold">{barPersonName(volunteer)}</span> <span className="text-blue-700 underline">Change</span>
@@ -1231,7 +1316,7 @@ export default function BarTillPage() {
               </div>
               {member && proof && proof.userName === member.userName ? (
                 <div className="-mt-1 mb-2 text-xs text-green-700">
-                  ✓ {proof.cardCode ? 'Card scanned' : 'PIN entered'}
+                  ✓ {proof.serverApproval ? `Approved by ${barPersonName(volunteer)}` : proof.cardCode ? 'Card scanned' : 'PIN entered'}
                   {proof.cardCode && !offline && (
                     <button onClick={() => setShowSetPin(true)} className="ml-2 text-blue-700 underline">
                       {tillCardFor(member.userName)?.hasPin ? 'Change PIN' : 'Set PIN'}
@@ -1299,7 +1384,7 @@ export default function BarTillPage() {
                     {busy ? 'Saving…' : `Pay by Card`}
                   </button>
                   {!showRefund ? (
-                    <button onClick={() => { setShowRefund(true); setRefundAmt(''); setError(''); }} disabled={offline}
+                    <button onClick={() => requireStaff('refund', 'Refund cash', volunteer, () => { setShowRefund(true); setRefundAmt(''); setError(''); })} disabled={offline}
                       className="col-span-3 py-2 text-sm text-red-600 font-medium disabled:opacity-50" title={offline ? 'Refunds need a live connection' : undefined}>Refund cash…</button>
                   ) : (
                     <div className="col-span-3 flex items-center gap-2 flex-wrap pt-1">
@@ -1309,7 +1394,7 @@ export default function BarTillPage() {
                       <button onClick={askRefund} disabled={busy} className="px-3 py-1.5 bg-red-600 text-white rounded text-sm font-medium disabled:opacity-50">
                         {busy ? 'Refunding…' : 'Refund cash'}
                       </button>
-                      <button onClick={() => setShowRefund(false)} className="text-sm text-gray-500">Cancel</button>
+                      <button onClick={() => { setShowRefund(false); setStaffSession(null); }} className="text-sm text-gray-500">Cancel</button>
                     </div>
                   )}
                 </div>
@@ -1345,7 +1430,7 @@ export default function BarTillPage() {
         {/* ── REPORT ───────────────────────────────────────────────────────── */}
         {view === 'report' && report && (
           <ReportView report={report} submitting={dayEndSubmitting} success={dayEndSuccess} onSubmit={submitDayEnd}
-            serverName={barPersonName(volunteer)} onChangeServer={() => setShowServerPicker(true)} />
+            serverName={barPersonName(volunteer)} onChangeServer={serverLocked ? undefined : () => setShowServerPicker(true)} />
         )}
 
         {/* ── SALES (void) ─────────────────────────────────────────────────── */}
@@ -1372,6 +1457,7 @@ export default function BarTillPage() {
                           <div className="text-xs text-gray-500">
                             {new Date(s.createdAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
                             {s.staffName ? ` · served by ${s.staffName}` : ''}
+                            {s.serverApproved && <span className="text-amber-700 font-medium"> · approved by server (no card/PIN)</span>}
                           </div>
                         </div>
                         {s.voided ? (
@@ -1525,54 +1611,61 @@ function BarPinLogin() {
   );
 }
 
-// A 4-digit PIN keypad. Also takes digits typed on a keyboard — e.g. a plug-in number
-// keypad facing the member, so the bar staff don't see the PIN.
-function PinPad({ value, onChange, disabled }: { value: string; onChange: (v: string) => void; disabled: boolean }) {
+// A PIN keypad (4 to 6 digits, then OK). Also takes digits, Backspace and Enter typed
+// on a keyboard — e.g. a plug-in number keypad facing the member, so the bar staff don't
+// see the PIN. Those keys are kept from the browser, where Backspace can go back a page.
+function PinPad({ value, onChange, onSubmit, disabled }: {
+  value: string;
+  onChange: (v: string) => void;
+  onSubmit: () => void;
+  disabled: boolean;
+}) {
+  const ready = value.length >= 4;
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      if (/^\d$/.test(e.key) || e.key === 'Backspace' || e.key === 'Enter') e.preventDefault();
       if (disabled) return;
-      if (/^\d$/.test(e.key) && value.length < 4) onChange(value + e.key);
+      if (/^\d$/.test(e.key) && value.length < 6) onChange(value + e.key);
       else if (e.key === 'Backspace') onChange(value.slice(0, -1));
+      else if (e.key === 'Enter' && value.length >= 4) onSubmit();
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [value, disabled, onChange]);
+  }, [value, disabled, onChange, onSubmit]);
 
   function press(k: string) {
     if (disabled) return;
     if (k === '⌫') onChange(value.slice(0, -1));
-    else if (value.length < 4) onChange(value + k);
+    else if (value.length < 6) onChange(value + k);
   }
   return (
     <div>
-      <div className="flex justify-center gap-3 my-4">
-        {[0, 1, 2, 3].map((i) => (
+      <div className="flex justify-center gap-3 my-4 h-4">
+        {Array.from({ length: Math.max(4, value.length) }, (_, i) => (
           <span key={i} className={`h-4 w-4 rounded-full border-2 ${i < value.length ? 'bg-gray-900 border-gray-900' : 'border-gray-400'}`} />
         ))}
       </div>
       <div className="grid grid-cols-3 gap-2">
-        {['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫'].map((k, i) => (
-          k === '' ? <span key={i} /> : (
-            <button key={i} onClick={() => press(k)} disabled={disabled}
-              className="py-4 rounded-lg bg-gray-100 text-xl font-medium hover:bg-gray-200 disabled:opacity-50">{k}</button>
-          )
+        {['1', '2', '3', '4', '5', '6', '7', '8', '9', '⌫', '0'].map((k) => (
+          <button key={k} onClick={() => press(k)} disabled={disabled}
+            className="py-4 rounded-lg bg-gray-100 text-xl font-medium hover:bg-gray-200 disabled:opacity-50">{k}</button>
         ))}
+        <button onClick={onSubmit} disabled={disabled || !ready}
+          className="py-4 rounded-lg bg-green-600 text-white text-lg font-semibold hover:bg-green-700 disabled:opacity-50">OK</button>
       </div>
     </div>
   );
 }
 
-// Pay by Account / Top Up for a member who must prove they're here: scan their card,
-// or enter their PIN (online only — see the header comment).
-function ProofDialog({ member, card, purpose, offline, readScan, onPinLocked, onProven, onClose }: {
-  member: BarAccount;
+// One person proving it's them: scan their card, or type their PIN (online only — see
+// the header comment). Used for the member, and for the bar person serving.
+function PersonProofPanel({ person, card, offline, readScan, onPinLocked, onProven }: {
+  person: { userName: string; fullName: string };
   card: TillCard | undefined;
-  purpose: 'pay' | 'topup';
   offline: boolean;
   readScan: (value: string) => Promise<{ person?: BarAccount; proof?: MemberProof; message?: string }>;
   onPinLocked: () => void;
-  onProven: (proof: MemberProof) => void;
-  onClose: () => void;
+  onProven: (proof: { cardCode?: string; pin?: string }) => void;
 }) {
   const [pin, setPin] = useState('');
   const [checking, setChecking] = useState(false);
@@ -1582,57 +1675,131 @@ function ProofDialog({ member, card, purpose, offline, readScan, onPinLocked, on
 
   const canUsePin = !!card && card.hasPin && !locked && !offline;
   let pinNote = '';
-  if (offline) pinNote = 'PINs can’t be checked while the till is offline — scan their card.';
-  else if (!card || !card.hasPin) pinNote = `${member.fullName} hasn’t set a PIN yet. They can set one in My Account, or here once their card is scanned.`;
-  else if (locked) pinNote = 'The PIN is locked after too many wrong tries — scan their card. They can then set a new PIN.';
+  if (offline) pinNote = 'PINs can’t be checked while the till is offline — scan the card.';
+  else if (!card || !card.hasPin) pinNote = `${person.fullName} hasn’t set a PIN yet. They can set one in My Account, or here once their card is scanned.`;
+  else if (locked) pinNote = 'The PIN is locked after too many wrong tries — scan the card. A new PIN can then be set.';
 
-  useEffect(() => {
-    if (pin.length !== 4 || checking) return;
+  async function checkPin() {
+    if (pin.length < 4 || checking) return;
     setChecking(true); setMessage('');
-    fetch('/api/bar/pin/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userName: member.userName, pin: pin }) })
-      .then(async (res) => {
-        const data = await res.json();
-        if (res.ok) { onProven({ userName: member.userName, pin: pin }); return; }
-        if (data.reason === 'locked') { setLocked(true); onPinLocked(); }
-        setMessage(data.error || 'PIN check failed');
-        setPin('');
-      })
-      .catch(() => { setMessage('Couldn’t check the PIN — check the connection.'); setPin(''); })
-      .finally(() => setChecking(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pin]);
+    try {
+      const res = await fetch('/api/bar/pin/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userName: person.userName, pin: pin }) });
+      const data = await res.json();
+      if (res.ok) { onProven({ pin: pin }); return; }
+      if (data.reason === 'locked') { setLocked(true); onPinLocked(); }
+      setMessage(data.error || 'PIN check failed');
+      setPin('');
+    } catch {
+      setMessage('Couldn’t check the PIN — check the connection.');
+      setPin('');
+    } finally {
+      setChecking(false);
+    }
+  }
 
   async function scanned(value: string) {
     setScanning(false);
     const result = await readScan(value);
-    if (result.proof && result.proof.userName === member.userName) { onProven(result.proof); return; }
-    if (result.person && result.person.userName !== member.userName) setMessage(`That’s ${result.person.fullName}’s card, not ${member.fullName}’s.`);
-    else setMessage(result.message || 'That card can’t be used — try their PIN.');
+    if (result.proof && result.proof.userName === person.userName) { onProven({ cardCode: result.proof.cardCode }); return; }
+    if (result.person && result.person.userName !== person.userName) setMessage(`That’s ${result.person.fullName}’s card, not ${person.fullName}’s.`);
+    else setMessage(result.message || 'That card can’t be used — try the PIN.');
   }
 
   return (
+    <>
+      <button onClick={() => { setMessage(''); setScanning(true); }}
+        className="mt-4 w-full py-3 rounded-lg border-2 border-blue-300 bg-blue-50 text-blue-800 font-semibold hover:bg-blue-100">
+        Scan {person.fullName}&apos;s card
+      </button>
+      {canUsePin ? (
+        <PinPad value={pin} onChange={(v) => { setMessage(''); setPin(v); }} onSubmit={checkPin} disabled={checking} />
+      ) : (
+        <p className="mt-4 text-sm text-gray-700">{pinNote}</p>
+      )}
+      {message && <p className="mt-3 text-sm text-red-600 font-medium text-center">{message}</p>}
+      {scanning && <QrScanModal title={`Scan ${person.fullName}’s card`} onScan={scanned} onClose={() => setScanning(false)} />}
+    </>
+  );
+}
+
+// Pay by Account / Top Up for a member who must prove they're here: their card or PIN —
+// or, if they can't (forgotten card, no PIN), the bar person serving approves it with
+// their own card or PIN, which is logged against the sale.
+function ProofDialog({ member, server, cards, purpose, offline, readScan, onPinLocked, onProven, onClose }: {
+  member: BarAccount;
+  server: { userName: string; fullName: string } | null;
+  cards: TillCard[];
+  purpose: 'pay' | 'topup';
+  offline: boolean;
+  readScan: (value: string) => Promise<{ person?: BarAccount; proof?: MemberProof; message?: string }>;
+  onPinLocked: (userName: string) => void;
+  onProven: (proof: MemberProof) => void;
+  onClose: () => void;
+}) {
+  const [byServer, setByServer] = useState(false);
+  const who = byServer && server ? server : member;
+  return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
-        <h2 className="text-lg font-bold text-gray-900 text-center">Card or PIN needed</h2>
+        <h2 className="text-lg font-bold text-gray-900 text-center">
+          {byServer ? `${who.fullName} to approve` : 'Card or PIN needed'}
+        </h2>
         <p className="text-sm text-gray-700 text-center mt-1">
-          To {purpose === 'pay' ? 'pay from' : 'top up'} {member.fullName}&apos;s account, scan their membership card or enter their PIN.
+          {byServer
+            ? `${who.fullName}, scan your card or enter your PIN to ${purpose === 'pay' ? 'charge' : 'top up'} ${member.fullName}'s account. It's recorded as approved by you.`
+            : `To ${purpose === 'pay' ? 'pay from' : 'top up'} ${member.fullName}'s account, scan their membership card or enter their PIN.`}
         </p>
-        <button onClick={() => { setMessage(''); setScanning(true); }}
-          className="mt-4 w-full py-3 rounded-lg border-2 border-blue-300 bg-blue-50 text-blue-800 font-semibold hover:bg-blue-100">
-          Scan card
-        </button>
-        {canUsePin ? (
-          <PinPad value={pin} onChange={(v) => { setMessage(''); setPin(v); }} disabled={checking} />
-        ) : (
-          <p className="mt-4 text-sm text-gray-700">{pinNote}</p>
+        <PersonProofPanel
+          key={who.userName}
+          person={who}
+          card={cards.find((c) => c.userName === who.userName)}
+          offline={offline}
+          readScan={readScan}
+          onPinLocked={() => onPinLocked(who.userName)}
+          onProven={(p) => onProven(byServer
+            ? { userName: member.userName, serverApproval: p }
+            : { userName: member.userName, cardCode: p.cardCode, pin: p.pin })}
+        />
+        {server && server.userName !== member.userName && (
+          <button onClick={() => setByServer(!byServer)}
+            className="mt-4 w-full py-2 text-sm text-blue-700 underline">
+            {byServer ? `Back to ${member.fullName}'s card or PIN` : `No card or PIN? ${server.fullName} (serving) can approve it`}
+          </button>
         )}
-        {message && <p className="mt-3 text-sm text-red-600 font-medium text-center">{message}</p>}
+        <button onClick={onClose} className="mt-3 w-full py-2 rounded-lg border border-gray-300 bg-white font-medium text-gray-900 hover:bg-gray-50">
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Day End, Void, Refund or Cash Movement: the bar person serving confirms it's them with
+// their own card or PIN, every time (when the bar_staff_proof setting says they must).
+function StaffProofDialog({ server, card, action, offline, readScan, onPinLocked, onProven, onClose }: {
+  server: { userName: string; fullName: string };
+  card: TillCard | undefined;
+  action: string;
+  offline: boolean;
+  readScan: (value: string) => Promise<{ person?: BarAccount; proof?: MemberProof; message?: string }>;
+  onPinLocked: () => void;
+  onProven: (proof: { cardCode?: string; pin?: string }) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
+      <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
+        <h2 className="text-lg font-bold text-gray-900 text-center">{action}</h2>
+        <p className="text-sm text-gray-700 text-center mt-1">
+          {server.fullName} is serving — {server.fullName}, scan your card or enter your PIN to confirm.
+          If someone else is doing this, change who&apos;s serving first.
+        </p>
+        <PersonProofPanel person={server} card={card} offline={offline} readScan={readScan} onPinLocked={onPinLocked} onProven={onProven} />
         <button onClick={onClose} className="mt-4 w-full py-2 rounded-lg border border-gray-300 bg-white font-medium text-gray-900 hover:bg-gray-50">
           Cancel
         </button>
       </div>
-      {scanning && <QrScanModal title={`Scan ${member.fullName}’s card`} onScan={scanned} onClose={() => setScanning(false)} />}
     </div>
   );
 }
@@ -1651,23 +1818,25 @@ function SetPinDialog({ member, cardCode, onDone, onClose }: {
   const [message, setMessage] = useState('');
   const [saved, setSaved] = useState(false);
 
-  useEffect(() => {
-    if (pin.length !== 4) return;
+  async function submit() {
+    if (pin.length < 4 || saving) return;
     if (first === null) { setFirst(pin); setPin(''); return; }
     if (pin !== first) { setMessage('The PINs didn’t match — start again.'); setFirst(null); setPin(''); return; }
     setSaving(true);
-    fetch('/api/bar/pin/set', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userName: member.userName, cardCode: cardCode, pin: pin }) })
-      .then(async (res) => {
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Failed to set the PIN');
-        setSaved(true);
-        onDone();
-      })
-      .catch((err: Error) => { setMessage(err.message); setFirst(null); setPin(''); })
-      .finally(() => setSaving(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pin]);
+    try {
+      const res = await fetch('/api/bar/pin/set', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userName: member.userName, cardCode: cardCode, pin: pin }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to set the PIN');
+      setSaved(true);
+      onDone();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Failed to set the PIN');
+      setFirst(null); setPin('');
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -1678,9 +1847,9 @@ function SetPinDialog({ member, cardCode, onDone, onClose }: {
         ) : (
           <>
             <p className="text-sm text-gray-700 text-center mt-1">
-              {first === null ? 'Ask the member to enter a new 4-digit PIN.' : 'Enter the same PIN again.'}
+              {first === null ? 'Ask the member to enter a new PIN (4 to 6 digits), then OK.' : 'Enter the same PIN again, then OK.'}
             </p>
-            <PinPad value={pin} onChange={(v) => { setMessage(''); setPin(v); }} disabled={saving} />
+            <PinPad value={pin} onChange={(v) => { setMessage(''); setPin(v); }} onSubmit={submit} disabled={saving} />
             {message && <p className="mt-3 text-sm text-red-600 font-medium text-center">{message}</p>}
           </>
         )}
@@ -2239,7 +2408,7 @@ function CashMovementView({ categories, products, busy, onConfirm }: {
 
 type DrillKind = 'wallet_sales' | 'card_sales' | 'cash_sales' | 'cash_movements' | 'cash_topups' | 'card_topups' | 'refunds' | 'renewal_cash' | 'renewal_card';
 
-function ReportView({ report, submitting, success, onSubmit, serverName, onChangeServer }: { report: BarReport; submitting: boolean; success: BarDayEnd | null; onSubmit: (cashRemovedPence: number, carryForward: boolean, reason: string) => void; serverName: string; onChangeServer: () => void }) {
+function ReportView({ report, submitting, success, onSubmit, serverName, onChangeServer }: { report: BarReport; submitting: boolean; success: BarDayEnd | null; onSubmit: (cashRemovedPence: number, carryForward: boolean, reason: string) => void; serverName: string; onChangeServer?: () => void }) {
   // Default suggests removing everything expected, but never a negative amount —
   // you can't physically remove negative cash (see the -£5 expected example: the
   // suggestion there is £0, not "-£5.00").
@@ -2367,7 +2536,7 @@ function ReportView({ report, submitting, success, onSubmit, serverName, onChang
           <span className="text-gray-700">Cashing up</span>
           <span>
             <span className="font-medium text-gray-900">{serverName}</span>{' '}
-            <button onClick={onChangeServer} className="text-blue-700 underline">Change</button>
+            {onChangeServer && <button onClick={onChangeServer} className="text-blue-700 underline">Change</button>}
           </span>
         </div>
         <button

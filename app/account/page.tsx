@@ -62,7 +62,7 @@ const fmtPounds = (pounds: number) => '£' + pounds.toFixed(2);
 type Tab = 'transactions' | 'card';
 
 export default function MyAccountPage() {
-  const { data: session, status } = useSession();
+  const { status } = useSession();
   const [tab, setTab] = useState<Tab>('card');
 
   const [history, setHistory] = useState<BarLedgerEntry[] | null>(null);
@@ -87,8 +87,8 @@ export default function MyAccountPage() {
 
   const savePin = async () => {
     setPinMessage(null);
-    if (!/^\d{4}$/.test(newPin)) {
-      setPinMessage({ ok: false, text: 'Your PIN must be 4 digits.' });
+    if (!/^\d{4,6}$/.test(newPin)) {
+      setPinMessage({ ok: false, text: 'Your PIN must be 4 to 6 digits.' });
       return;
     }
     if (newPin !== confirmPin) {
@@ -400,7 +400,7 @@ export default function MyAccountPage() {
                   <div>
                     <h2 className="text-lg font-semibold text-gray-900">Bar PIN</h2>
                     <p className="text-sm text-gray-700 mt-1">
-                      To pay from or top up your bar account, scan your card at the bar or type your 4-digit PIN.
+                      To pay from or top up your bar account, scan your card at the bar or type your PIN (4 to 6 digits).
                     </p>
                     <p className="text-sm text-gray-900 mt-2">
                       {card.pinLocked
@@ -412,13 +412,13 @@ export default function MyAccountPage() {
                     <div className="mt-3 flex flex-wrap items-end gap-3">
                       <div>
                         <label className="block text-sm text-gray-700 mb-1">New PIN</label>
-                        <input type="password" inputMode="numeric" maxLength={4} value={newPin}
+                        <input type="password" inputMode="numeric" maxLength={6} value={newPin}
                           onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))}
                           className="w-24 border border-gray-300 rounded-md px-3 py-2 text-center tracking-widest" />
                       </div>
                       <div>
                         <label className="block text-sm text-gray-700 mb-1">Same again</label>
-                        <input type="password" inputMode="numeric" maxLength={4} value={confirmPin}
+                        <input type="password" inputMode="numeric" maxLength={6} value={confirmPin}
                           onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ''))}
                           className="w-24 border border-gray-300 rounded-md px-3 py-2 text-center tracking-widest" />
                       </div>

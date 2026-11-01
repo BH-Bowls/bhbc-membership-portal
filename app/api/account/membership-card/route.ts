@@ -4,7 +4,7 @@
 //        (the "valid until" date is derived from this on the client — see
 //        app/account/page.tsx), their card code for the QR, and whether they have a bar PIN.
 // POST — { action: 'reset_card' } gives them a new card code (every old card stops
-//        working); { action: 'set_pin', pin } sets their 4-digit bar PIN.
+//        working); { action: 'set_pin', pin } sets their bar PIN (4 to 6 digits).
 //        See src/lib/bar-card.ts.
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, cardCode: cardCode });
     }
     if (body.action === 'set_pin') {
-      if (!isValidPin(body.pin)) return NextResponse.json({ error: 'The PIN must be 4 digits' }, { status: 400 });
+      if (!isValidPin(body.pin)) return NextResponse.json({ error: 'The PIN must be 4 to 6 digits' }, { status: 400 });
       await setPin(session.user.userName, body.pin);
       return NextResponse.json({ ok: true });
     }
