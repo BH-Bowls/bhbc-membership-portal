@@ -12,6 +12,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import jsQR from 'jsqr';
+import { useCardScanner } from '@/hooks/useCardScanner';
 
 const CAMERA_KEY = 'qr_scan_camera';
 
@@ -34,6 +35,8 @@ export default function QrScanModal({ title = 'Scan member QR', onScan, onClose 
   // Kept in a ref so a parent re-render doesn't restart the camera
   const onScanRef = useRef(onScan);
   useEffect(() => { onScanRef.current = onScan; });
+  // A plug-in scanner works while the camera is open too
+  useCardScanner((code) => onScanRef.current(code));
 
   useEffect(() => {
     let stream: MediaStream | null = null;
