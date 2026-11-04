@@ -38,6 +38,8 @@
  * Order after a full Dev refresh: migrate-members -> ... -> migrate-fixtures -> this.
  */
 
+import { readFileSync } from 'fs';
+import { gunzipSync } from 'zlib';
 import { getGoogleSheetsClient } from '../src/lib/sheets';
 import { getSupabaseClient } from '../src/lib/supabase';
 import { getAllPlayerStats } from '../src/lib/fixture-groups-supabase';
@@ -45,6 +47,38 @@ import { getAllPlayerStats } from '../src/lib/fixture-groups-supabase';
 const APPLY = process.argv.includes('--apply');
 // fixture_groups.created_by is required — the username recorded as creating the imported groups
 const AS_USER = (process.argv.find(a => a.startsWith('--as=')) || '').slice('--as='.length);
+// --paired-from=backups/<file>.sql.gz — take linking from a full backup made before 0073
+// dropped fixtures.paired (used for the 2026 Prod cutover, where 0073 ran early)
+const PAIRED_FROM = (process.argv.find(a => a.startsWith('--paired-from=')) || '').slice('--paired-from='.length);
+
+/** fixture id → paired value, read from the COPY public.fixtures block of a full backup. */
+function readPairedFromBackup(file: string): Map<string, string> {
+  const sql = gunzipSync(readFileSync(file)).toString('utf8');
+  const result = new Map<string, string>();
+  const lines = sql.split('\n');
+  let idCol = -1;
+  let pairedCol = -1;
+  let inBlock = false;
+  for (const line of lines) {
+    if (!inBlock) {
+      const m = line.match(/^COPY public\.fixtures \((.*)\) FROM stdin;$/);
+      if (m) {
+        const cols = m[1].split(', ').map(c => c.replace(/"/g, ''));
+        idCol = cols.indexOf('id');
+        pairedCol = cols.indexOf('paired');
+        if (idCol < 0 || pairedCol < 0) throw new Error(`${file} has no fixtures.paired column`);
+        inBlock = true;
+      }
+      continue;
+    }
+    if (line === '\\.') break;
+    const values = line.split('\t');
+    const paired = values[pairedCol] === '\\N' ? '' : values[pairedCol];
+    result.set(values[idCol], paired.trim().toUpperCase());
+  }
+  if (result.size === 0) throw new Error(`No fixtures found in ${file}`);
+  return result;
+}
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -142,7 +176,10 @@ async function main() {
   // "<tab>-2" whose original fixture exists.
   const dbHasPaired = fixtures.length > 0 && Object.prototype.hasOwnProperty.call(fixtures[0], 'paired');
   const pairedByTab = new Map<string, string>();
-  if (!dbHasPaired) {
+  const pairedById = PAIRED_FROM && !dbHasPaired ? readPairedFromBackup(PAIRED_FROM) : null;
+  if (pairedById) {
+    console.log(`   Linking taken from backup ${PAIRED_FROM} (${pairedById.size} fixtures)`);
+  } else if (!dbHasPaired) {
     const gamesResp = await sheets.spreadsheets.values.get({ spreadsheetId, range: 'Games!A:ZZ' });
     const gamesRows = gamesResp.data.values || [];
     const gamesMap = colMapOf(gamesRows[0] || []);
@@ -155,7 +192,8 @@ async function main() {
     console.log(`   Linking taken from the Games tab (${pairedByTab.size} rows)`);
   }
   for (const f of fixtures) {
-    if (!dbHasPaired) f.paired = pairedByTab.get(f.tab_name || '') || '';
+    if (pairedById) f.paired = pairedById.get(f.id) || '';
+    else if (!dbHasPaired) f.paired = pairedByTab.get(f.tab_name || '') || '';
     f.is_reserve = !!f.tab_name && f.tab_name.endsWith('-2') && byTab.has(f.tab_name.slice(0, -2));
   }
 
