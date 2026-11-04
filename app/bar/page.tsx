@@ -153,7 +153,13 @@ export default function BarTillPage() {
   const [showScanner, setShowScanner] = useState(false);
   // Card/PIN (see the header comment). proofRef mirrors proof so a payment that carries
   // on straight after ProofDialog sees it without waiting for a re-render.
-  const [tillCards, setTillCards] = useState<TillCard[]>([]);
+  // tillCardsRef mirrors tillCards the same way, for code that carries on after waiting
+  // for the list (whenCardsReady); tillCardsLoad is the request for it, shared by anyone
+  // waiting, until it has loaded once.
+  const [tillCards, setTillCardsState] = useState<TillCard[]>([]);
+  const tillCardsRef = useRef<TillCard[]>([]);
+  const tillCardsLoaded = useRef(false);
+  const tillCardsLoad = useRef<Promise<void> | null>(null);
   const [proof, setProof] = useState<MemberProof | null>(null);
   const proofRef = useRef<MemberProof | null>(null);
   const [proofDialog, setProofDialog] = useState<{ purpose: 'pay' | 'topup'; onProven: () => void } | null>(null);
@@ -251,10 +257,7 @@ export default function BarTillPage() {
 
     // Separately, so a card problem never stops the till loading — card scans just
     // aren't recognised, and the server still checks payments
-    try {
-      const cardData = await fetch('/api/bar/cards').then((r) => r.json());
-      if (cardData.cards) setTillCards(cardData.cards);
-    } catch { /* keep the last list */ }
+    await loadTillCards();
 
     // Separately, so a Square problem never stops the till loading
     try {
@@ -267,6 +270,8 @@ export default function BarTillPage() {
       }
       terminalResumed.current = true;
     } catch { setTerminalEnabled(false); }
+  // loadTillCards only uses refs and state setters, so the first render's copy is fine
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /** Send a card payment to the Terminal and show the waiting dialog. */
@@ -592,8 +597,38 @@ export default function BarTillPage() {
     proofRef.current = p;
     setProof(p);
   }
+  function setTillCards(update: (prev: TillCard[]) => TillCard[]) {
+    tillCardsRef.current = update(tillCardsRef.current);
+    setTillCardsState(tillCardsRef.current);
+  }
+  // Fetches who needs a card or PIN. Reuses a request already on its way, so the
+  // startup load and an early button press share one.
+  function loadTillCards(): Promise<void> {
+    if (tillCardsLoad.current) return tillCardsLoad.current;
+    const request = (async () => {
+      try {
+        const cardData = await fetch('/api/bar/cards').then((r) => r.json());
+        if (cardData.cards) {
+          setTillCards(() => cardData.cards);
+          tillCardsLoaded.current = true;
+        }
+      } catch { /* keep the last list */ }
+      tillCardsLoad.current = null;
+    })();
+    tillCardsLoad.current = request;
+    return request;
+  }
+  // Until the list has loaded, the till can't tell who needs a card or PIN — a button
+  // pressed straight after the till opens (or a dev server still compiling the route)
+  // would otherwise skip the check and only be stopped by the server. So wait for it.
+  // If it can't be loaded, carry on: the server still checks every payment.
+  function whenCardsReady(run: () => void) {
+    if (tillCardsLoaded.current) { run(); return; }
+    setBusy(true);
+    loadTillCards().finally(() => { setBusy(false); run(); });
+  }
   function tillCardFor(userName: string): TillCard | undefined {
-    return tillCards.find((c) => c.userName === userName);
+    return tillCardsRef.current.find((c) => c.userName === userName);
   }
   function markPinLocked(userName: string) {
     setTillCards((prev) => prev.map((c) => (c.userName === userName ? { ...c, pinLocked: true } : c)));
@@ -613,8 +648,12 @@ export default function BarTillPage() {
   // Runs action now if the member on screen doesn't need (or already has) proof,
   // otherwise once they've scanned their card or entered their PIN.
   function withProof(purpose: 'pay' | 'topup', action: () => void) {
-    if (!member || !needsProof(member.userName)) { action(); return; }
-    setProofDialog({ purpose: purpose, onProven: () => { setProofDialog(null); action(); } });
+    const onScreen = member;
+    if (!onScreen) { action(); return; }
+    whenCardsReady(() => {
+      if (!needsProof(onScreen.userName)) { action(); return; }
+      setProofDialog({ purpose: purpose, onProven: () => { setProofDialog(null); action(); } });
+    });
   }
   // The server said the proof wasn't good enough (e.g. a PIN check expired) — ask again next time
   function handleProofRefused(data: { proofRequired?: boolean }) {
@@ -645,13 +684,15 @@ export default function BarTillPage() {
     setStaffSessionState(next);
   }
   function requireStaff(action: StaffAction, label: string, server: string, run: () => void) {
-    const card = server ? tillCardFor(server) : undefined;
-    if (!card || !card.staffProofRequired) { setStaffSession({ action: action, server: server, proof: null }); run(); return; }
-    setStaffDialog({ label: label, server: server, onProven: (p) => {
-      setStaffDialog(null);
-      setStaffSession({ action: action, server: server, proof: p });
-      run();
-    } });
+    whenCardsReady(() => {
+      const card = server ? tillCardFor(server) : undefined;
+      if (!card || !card.staffProofRequired) { setStaffSession({ action: action, server: server, proof: null }); run(); return; }
+      setStaffDialog({ label: label, server: server, onProven: (p) => {
+        setStaffDialog(null);
+        setStaffSession({ action: action, server: server, proof: p });
+        run();
+      } });
+    });
   }
   function staffProofFor(action: StaffAction): PersonProof | undefined {
     const current = staffSessionRef.current;
@@ -696,12 +737,9 @@ export default function BarTillPage() {
       setCashDue({ amountPence: basketTotal, onConfirm: () => { setCashDue(null); completeSale('cash', false); } });
       return;
     }
-    if (mode === 'wallet' && ask && member && needsProof(member.userName)) {
-      withProof('pay', () => completeSale('wallet'));
-      return;
-    }
+    // Card or PIN first if they need one, then confirm the amount
     if (mode === 'wallet' && ask && member) {
-      setWalletDue({ amountPence: basketTotal, balancePence: availableBalancePence, onConfirm: () => { setWalletDue(null); completeSale('wallet', false); } });
+      withProof('pay', () => setWalletDue({ amountPence: basketTotal, balancePence: availableBalancePence, onConfirm: () => { setWalletDue(null); completeSale('wallet', false); } }));
       return;
     }
     if (mode === 'card' && ask && offline) {
@@ -956,8 +994,9 @@ export default function BarTillPage() {
   // username, finds the member (same as picking them from the list) but isn't proof.
   async function readScan(value: string): Promise<{ person?: BarAccount; proof?: MemberProof; message?: string }> {
     const code = value.trim();
+    if (!tillCardsLoaded.current) await loadTillCards();
     if (code.startsWith('BHBC1.')) {
-      const card = tillCards.find((c) => c.userId === code.split('.')[1]);
+      const card = tillCardsRef.current.find((c) => c.userId === code.split('.')[1]);
       const person = card ? allPeople.find((m) => m.userName === card.userName) : undefined;
       if (!card || !person) return { message: 'Card not recognised.' };
       const hash = await sha256Hex(code);
@@ -969,7 +1008,7 @@ export default function BarTillPage() {
     }
     const person = allPeople.find((m) => m.userName === code);
     if (person) {
-      const oldCard = tillCards.find((c) => c.userName === person.userName);
+      const oldCard = tillCardsRef.current.find((c) => c.userName === person.userName);
       if (oldCard && oldCard.proofRequired) {
         return { person: person, message: `That’s an old-style card for ${person.fullName} — it doesn’t count for paying from the account. Ask for their new card from My Account, or their PIN.` };
       }
