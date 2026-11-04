@@ -292,6 +292,13 @@ export default withAuth(
       }
     }
 
+    // Protect /admin/backups route - Admin only (database backup health check)
+    if (pathname.startsWith('/admin/backups')) {
+      if (!token || !hasRole(token.role as string, 'Admin')) {
+        return NextResponse.redirect(new URL('/', req.url));
+      }
+    }
+
     // Protect /admin/stats routes - Admin, Captain, GMC (Treasurer excluded)
     if (pathname.startsWith('/admin/stats')) {
       if (!token || !hasRole(token.role as string, 'Admin', 'Captain', 'GMC')) {
