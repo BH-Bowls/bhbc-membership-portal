@@ -196,6 +196,7 @@ export function Navbar() {
       club.push({ name: 'Bar Reconciliation', href: '/banking/bar-reconciliation' });
       club.push({ name: 'Renewals → Xero', href: '/banking/renewals-xero' });
       club.push({ name: 'Member Accounts', href: '/banking/member-accounts' });
+      club.push({ name: 'Data Checks', href: '/banking/data-checks' });
     }
     if (isGMC || isAdmin) {
       club.push({ name: 'Member Suggestions', href: '/member-suggestions' });
