@@ -43,6 +43,7 @@ import QrScanModal from '@/components/QrScanModal';
 import { canUseBarTill } from '@/lib/role-utils';
 import { priceItem, type BarPricingConfig, type BarProduct, type BarCategoryRow, type BarAccount, type BarPerson, type BarReport, type BarSaleSummary, type BarDayEnd, type BarDayEndLedgerRow } from '@/lib/bar-supabase';
 import { useOnlineStatus } from '@/hooks/useOnlineStatus';
+import { useCardScanner } from '@/hooks/useCardScanner';
 import { enqueue, listQueued, dequeue, newQueueId, type QueuedEntry } from '@/lib/bar-offline-queue';
 import BarTerminalPayment, { type TerminalCheckout } from '@/components/BarTerminalPayment';
 
@@ -1024,6 +1025,20 @@ export default function BarTillPage() {
     setError(result.message ?? '');
   }
 
+  // A plug-in scanner (src/hooks/useCardScanner.ts). On the member list it picks the member,
+  // like the Scan button. On a member's sale their own card proves it's them, so Pay by
+  // Account won't ask again. While a card/PIN dialog is open, the dialog takes the scan.
+  useCardScanner(async (code) => {
+    if (view === 'person') { handleScan(code); return; }
+    const result = await readScan(code);
+    if (member && result.proof && result.proof.userName === member.userName) { setMemberProof(result.proof); setError(''); return; }
+    if (member && result.person && result.person.userName !== member.userName) {
+      setError(`That’s ${result.person.fullName}’s card — go back to the member list to serve them.`);
+      return;
+    }
+    setError(result.message ?? '');
+  }, (view === 'person' || (view === 'sale' && !!member)) && !proofDialog && !staffDialog && !showSetPin && !terminalPay && !voidDialog);
+
   // On a Day End or Cash Movement the person serving has confirmed it's them — keep it them
   const serverLocked = !!staffSession && !!staffSession.proof && (view === 'report' || view === 'cashmovement');
 
@@ -1744,6 +1759,7 @@ function PersonProofPanel({ person, card, offline, readScan, onPinLocked, onProv
     if (result.person && result.person.userName !== person.userName) setMessage(`That’s ${result.person.fullName}’s card, not ${person.fullName}’s.`);
     else setMessage(result.message || 'That card can’t be used — try the PIN.');
   }
+  useCardScanner(scanned);
 
   return (
     <>
