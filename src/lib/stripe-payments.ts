@@ -107,7 +107,7 @@ export async function createOutstandingCheckout(payer: string, userNames: string
     customer_email: await payerEmail(payer),
     expires_at: Math.floor(Date.now() / 1000) + CHECKOUT_MINUTES * 60,
     success_url: `${appUrl}/account?payment=processing&session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${appUrl}/account`,
+    cancel_url: `${appUrl}/account?section=fees`,
     metadata: {
       purpose: 'renewal',
       season: String(seasonYear),
