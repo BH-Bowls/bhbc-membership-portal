@@ -156,6 +156,13 @@ export default function HelpIndexPage() {
       badge: 'GMC',
     },
     {
+      title: 'Bar till',
+      description: 'Help for bar staff: serving, baskets, payments, card or PIN, membership fees, Day End and products. The till shows the same help.',
+      href: '/help/bar',
+      show: isCaptain || isTreasurer || isGMC || isAdmin,
+      badge: 'Committee',
+    },
+    {
       title: 'Banking',
       description: 'Import bank statements, match payments to renewals, and produce banking reports.',
       href: '/help/banking',

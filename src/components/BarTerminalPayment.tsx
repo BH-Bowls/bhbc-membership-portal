@@ -7,6 +7,7 @@
 // only has to show the result.
 
 import { useEffect, useRef, useState } from 'react';
+import { BarHelpLink } from '@/components/BarHelp';
 
 export interface TerminalCheckout {
   id: string;
@@ -188,7 +189,8 @@ export default function BarTerminalPayment({ checkout: initial, notice, onPaid, 
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
+      <div className="relative w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
+        <BarHelpLink topic="terminal" className="absolute top-3 right-3" />
         {notice && stillWaiting(checkout) && <p className="mb-3 text-sm font-medium text-amber-800">{notice}</p>}
         {body}
       </div>
