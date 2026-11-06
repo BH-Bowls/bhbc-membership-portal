@@ -1,5 +1,5 @@
 // src/lib/email/mailer.ts
-// Centralized email utility for sending emails via SMTP
+// Centralized email utility — sends through the Gmail API (gmail-api.ts) or Gmail SMTP
 
 import nodemailer from 'nodemailer';
 import { readFileSync } from 'fs';
@@ -7,6 +7,7 @@ import { join } from 'path';
 import Handlebars from 'handlebars';
 import { AsyncLocalStorage } from 'async_hooks';
 import { processEmailTemplate } from './template-processor';
+import { createGmailApiTransport, type MailTransport } from './gmail-api';
 
 // ── Send logging ──────────────────────────────────────────────────────────────
 // Every email the app sends should land in the member_emails audit log
@@ -78,21 +79,44 @@ function withSendLogging<T extends { sendMail: (...args: any[]) => Promise<any> 
   return transporter;
 }
 
+/** Which Gmail account to send as. The club's is the default. */
+interface SendingAccount {
+  address: string;
+  gmailRefreshToken?: string;   // Gmail API (preferred)
+  smtpPassword?: string;        // Gmail SMTP app password (fallback)
+}
+
+function clubAccount(): SendingAccount {
+  return {
+    address: String(process.env.SMTP_USER || ''),
+    gmailRefreshToken: process.env.GMAIL_REFRESH_TOKEN,
+    smtpPassword: process.env.SMTP_PASSWORD,
+  };
+}
+
 /**
- * Get configured email transporter for sending emails
- * Creates a nodemailer SMTP transport using credentials from environment variables
- * Uses TLS on port 587 (standard submission port) for secure email transmission
- * @param usePool Whether to use connection pooling (default: false)
- * @returns Configured nodemailer transporter ready to send emails
+ * Get configured email transporter for sending emails.
+ * Sends through the Gmail API when the account has a refresh token (GMAIL_REFRESH_TOKEN for
+ * the club — see gmail-api.ts), otherwise through Gmail SMTP with its app password.
+ * Either way the caller just calls sendMail / verify / close.
+ * @param usePool Whether to use SMTP connection pooling (default: false). The Gmail API has
+ *   no connection to pool, so it's ignored there — but sends must still go one at a time.
+ * @param account Another Gmail account to send from (e.g. the Rowland Cup's) — default the club's
+ * @returns A transporter ready to send emails
  */
-export function getEmailTransporter(usePool: boolean = false) {
+export function getEmailTransporter(usePool: boolean = false, account?: SendingAccount): MailTransport {
+  const sendAs = account ? account : clubAccount();
+  if (sendAs.gmailRefreshToken) {
+    return withSendLogging(createGmailApiTransport(sendAs.gmailRefreshToken));
+  }
+
   const config: any = {
     host: process.env.SMTP_HOST || 'smtp.gmail.com',
     port: parseInt(process.env.SMTP_PORT || '587'),
     secure: false,
     auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASSWORD,
+      user: sendAs.address,
+      pass: sendAs.smtpPassword,
     },
   };
 
@@ -109,27 +133,52 @@ export function getEmailTransporter(usePool: boolean = false) {
     config.keepAlive = true;
   }
 
-  return withSendLogging(nodemailer.createTransport(config));
+  return withSendLogging(nodemailer.createTransport(config) as unknown as MailTransport);
 }
 
 /**
- * Check if SMTP email service is configured
- * Verifies that both SMTP username and password are set in environment variables
+ * The Rowland Cup's own Gmail account (rowlandsbhbc@gmail.com). Rowland emails — entry
+ * confirmations and results — are sent from it when ROWLAND_EMAIL is set along with its
+ * ROWLAND_GMAIL_REFRESH_TOKEN (Gmail API) or ROWLAND_SMTP_PASSWORD (app password), so they
+ * show the Rowland address and land in its Sent folder. Otherwise they go from the club
+ * account, as before. Returns null if neither account is configured.
+ */
+export function getRowlandEmailSender(): { transporter: MailTransport; from: string; address: string } | null {
+  const address = process.env.ROWLAND_EMAIL;
+  const refreshToken = process.env.ROWLAND_GMAIL_REFRESH_TOKEN;
+  const password = process.env.ROWLAND_SMTP_PASSWORD;
+  if (address && (refreshToken || password)) {
+    return {
+      transporter: getEmailTransporter(false, { address: address, gmailRefreshToken: refreshToken, smtpPassword: password }),
+      from: `"Rowland Cup – Burgess Hill Bowls Club" <${address}>`,
+      address: address,
+    };
+  }
+  if (!isEmailConfigured()) return null;
+  return {
+    transporter: getEmailTransporter(),
+    from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
+    address: String(process.env.SMTP_USER),
+  };
+}
+
+/**
+ * Check if email is configured
+ * Needs the club address (SMTP_USER) and either GMAIL_REFRESH_TOKEN or SMTP_PASSWORD
  * Required before sending any emails to prevent authentication failures
  * @returns true if email is configured, false if missing credentials
  */
 export function isEmailConfigured(): boolean {
-  // Check if SMTP username is set
+  // The club's address (used as the From on every email)
   if (!process.env.SMTP_USER) {
     return false;
   }
 
-  // Check if SMTP password is set
-  if (!process.env.SMTP_PASSWORD) {
+  // And a way to sign in to it: the Gmail API refresh token, or the SMTP app password
+  if (!process.env.GMAIL_REFRESH_TOKEN && !process.env.SMTP_PASSWORD) {
     return false;
   }
 
-  // Both credentials are present - email is configured
   return true;
 }
 
