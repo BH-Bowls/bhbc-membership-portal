@@ -17,6 +17,7 @@
 // id (UUID) replaces the Sheets version's rowNumber throughout.
 
 import { getSupabaseClient } from './supabase';
+import { clearAllDiaryCaches } from './home-cache';
 import type { GameStatus, GameType, HomeAway } from './types/friendlies';
 
 export interface Fixture {
@@ -546,6 +547,8 @@ export async function updateTeaRotaAssignment(
     })
     .eq('id', id);
   if (error) throw new Error(`Failed to update tea rota assignment: ${error.message}`);
+  // Tea duties show in members' home-page diaries — refresh them
+  clearAllDiaryCaches();
 }
 
 export async function batchUpdateTeaRotaAssignments(
@@ -610,6 +613,7 @@ export async function swapTeaAssignment(
       .eq('id', newUserId);
     if (targetError) throw new Error(targetError.message);
   }
+  clearAllDiaryCaches();
 
   const updated = await getTeaRotaEntry(id);
   if (!updated) throw new Error('Fixture disappeared during swap');
