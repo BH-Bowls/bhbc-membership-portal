@@ -433,7 +433,7 @@ export default function MemberDetailPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Include in renewal emails</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Include in Mailings</label>
                   <select className={getInputClasses()} value={form.include} onChange={(e) => set('include', e.target.value)}>
                     <option value="Y">Yes</option>
                     <option value="N">No</option>

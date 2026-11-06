@@ -134,7 +134,7 @@ const MEMBERS_COLUMNS: SchemaColumn[] = [
   col('bar_duty', 'Bar Duty'), col('bar_additional_info', 'Bar Additional Info'), col('other_skills', 'Other Skills'),
   col('gmc', 'GMC'), col('handicap', 'Handicap'), col('is_marker', 'Is Marker'), col('is_worker', 'Is Worker'),
   col('worker_additional_info', 'Worker Additional Info'), col('max_games_per_day', 'Max Games Per Day'),
-  col('include', 'Include In Emails'), col('buddy_user_name', 'Buddy Username'), col('role', 'Role'),
+  col('include', 'Include in Mailings'), col('buddy_user_name', 'Buddy Username'), col('role', 'Role'),
   col('last_login_date', 'Last Login Date'), col('created_at', 'Created At'), col('updated_at', 'Updated At'),
 ];
 

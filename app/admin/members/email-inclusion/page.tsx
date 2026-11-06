@@ -1,6 +1,6 @@
 // app/admin/members/email-inclusion/page.tsx
-// Bulk manage the `include` (Y/N) flag that controls renewal/member email
-// recipients. Filter by name or a curated column, tick/untick the filtered view,
+// Bulk manage the `include` (Y/N) flag, shown as "Include in Mailings": who gets member
+// emails, and the labels filter. Filter by name or a curated column, tick/untick the filtered view,
 // then save changes in one batch. Admin only (middleware.ts).
 
 'use client';
@@ -32,7 +32,7 @@ const FILTER_COLUMNS = [
   { key: 'honorary', label: 'Honorary' },
   { key: 'role', label: 'Role' },
   { key: 'gmc', label: 'GMC' },
-  { key: 'include', label: 'Include' },
+  { key: 'include', label: 'Include in Mailings' },
 ];
 
 // Get a member's value for a given filter column, as a string.
@@ -246,9 +246,10 @@ export default function EmailInclusionPage() {
 
       <main className="max-w-3xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
         <Link href="/admin/members/list" className="text-sm text-gray-700 mb-2 inline-block hover:text-gray-900">← Back to members</Link>
-        <h1 className="text-2xl font-bold text-gray-900 mb-1">Email Inclusion</h1>
+        <h1 className="text-2xl font-bold text-gray-900 mb-1">Include in Mailings</h1>
         <p className="text-sm text-gray-700 mb-4">
-          Set which members are included in renewal / member emails. Filter, tick or untick the filtered list, then save.
+          Set which members are included in club mailings — member emails, and the &quot;Include in Mailings
+          only&quot; option in Print Labels. Filter, tick or untick the filtered list, then save.
         </p>
 
         {error ? (
