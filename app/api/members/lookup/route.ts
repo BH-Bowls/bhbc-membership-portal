@@ -1,11 +1,16 @@
 // app/api/members/lookup/route.ts
-// API route for member lookup - returns member contact information
-// All logged-in members can access this
+// API route for member lookup — every member's name, plus their contact details.
+//
+// This route is public (proxy.ts), because the public rota pages use it to turn
+// usernames into names. Phone numbers and email addresses are only included for a
+// logged-in member: never for a visitor (with or without the public access PIN), the
+// shared clubhouse tablet (Kiosk) or the bar till (Bar).
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getAllUsers } from '@/lib/members-supabase';
+import { hasRole } from '@/lib/role-utils';
 
 export interface MemberLookupResult {
   fullName: string;
@@ -30,6 +35,9 @@ export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
     const filter = searchParams.get('filter') || 'none';
+
+    const session = await getServerSession(authOptions);
+    const showContacts = !!session?.user && !hasRole(session.user.role, 'Kiosk', 'Bar');
 
     const users = await getAllUsers();
 
@@ -58,9 +66,9 @@ export async function GET(request: NextRequest) {
         fullName: user.fullName,
         userName: user.userName,
         memberType: user.memberType,
-        mobile: user.mobile,
-        landline: user.landline,
-        emailAddress: user.emailAddress,
+        mobile: showContacts ? user.mobile : null,
+        landline: showContacts ? user.landline : null,
+        emailAddress: showContacts ? user.emailAddress : null,
         greenMaintenance: user.greenMaintenance,
         drivingAwayMatches: user.drivingAwayMatches,
         barDuty: user.barDuty,

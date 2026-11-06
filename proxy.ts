@@ -24,7 +24,8 @@ import { isMaintenanceModeOn } from './src/lib/maintenance';
 function isPublicRoute(pathname: string): boolean {
   // Exact public pages
   const exactPages = [
-    '/fixtures', '/members', '/friendlies', '/competitions',
+    // Not /members — the member list (with contact details) needs a login
+    '/fixtures', '/friendlies', '/competitions',
     '/tea-rota', '/cleaning-rota', '/sweeping-rota', '/rowland', '/leagues',
     '/bar', // the till has its own PIN login (BarPinLogin, app/bar/page.tsx) instead of /login
   ];
