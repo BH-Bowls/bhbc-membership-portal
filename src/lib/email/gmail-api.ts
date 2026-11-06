@@ -68,8 +68,15 @@ async function getAccessToken(refreshToken: string): Promise<string> {
   });
   const data: any = await res.json().catch(() => ({}));
   if (!res.ok || !data.access_token) {
-    // invalid_grant = the token was revoked, or the account's password was changed
-    throw new Error(`Gmail sign-in failed: ${data.error_description || data.error || 'HTTP ' + res.status}`);
+    if (data.error === 'invalid_grant') {
+      throw new Error('Gmail sign-in failed: the refresh token is invalid, revoked or expired (or the account’s password was changed). '
+        + 'Get a new one with scripts/get-gmail-token.mjs and update GMAIL_REFRESH_TOKEN (or ROWLAND_GMAIL_REFRESH_TOKEN).');
+    }
+    if (data.error === 'invalid_client') {
+      throw new Error('Gmail sign-in failed: GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET are wrong.');
+    }
+    const reason = data.error ? `${data.error}${data.error_description ? ' (' + data.error_description + ')' : ''}` : 'HTTP ' + res.status;
+    throw new Error(`Gmail sign-in failed: ${reason}`);
   }
   accessTokens.set(refreshToken, { token: data.access_token, expiresAt: Date.now() + (data.expires_in || 3600) * 1000 });
   return data.access_token;
