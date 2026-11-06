@@ -9,7 +9,7 @@ import {
   updateRowlandMatch,
   propagateRowlandWinnerForMatch,
 } from '@/lib/rowland-supabase';
-import { getEmailTransporter, isEmailConfigured } from '@/lib/email/mailer';
+import { getRowlandEmailSender } from '@/lib/email/mailer';
 import { hasRole, isCommitteeMember } from '@/lib/role-utils';
 import type { RowlandCompId, RowlandMatch } from '@/types/rowland';
 import { ROWLAND_COMP_NAMES, ROWLAND_ROUND_LABELS, BHBC_CLUB_NAME } from '@/types/rowland';
@@ -99,7 +99,8 @@ export async function PATCH(
 }
 
 async function sendRowlandResultEmail(compId: string, match: RowlandMatch): Promise<void> {
-  if (!isEmailConfigured()) return;
+  const sender = getRowlandEmailSender();
+  if (!sender) return;
 
   const compName = ROWLAND_COMP_NAMES[compId as RowlandCompId] ?? compId;
   const roundLabel = ROWLAND_ROUND_LABELS[match.round] ?? match.round;
@@ -147,9 +148,8 @@ async function sendRowlandResultEmail(compId: string, match: RowlandMatch): Prom
   ${scoreSheetHtml}
 </div>`;
 
-  const transporter = getEmailTransporter();
-  await transporter.sendMail({
-    from: process.env.SMTP_USER,
+  await sender.transporter.sendMail({
+    from: sender.from,
     to: 'rowlandsbhbc@gmail.com',
     subject: `Rowland Cup Result: ${compName} ${roundLabel} — ${homeName} vs ${awayName}`,
     html,
