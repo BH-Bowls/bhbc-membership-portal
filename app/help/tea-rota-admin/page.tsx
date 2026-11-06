@@ -1,6 +1,6 @@
 'use client';
 import { useSession } from 'next-auth/react';
-import { HelpSection, Step, Body, BackLink } from '../_components';
+import { LastUpdated, HelpSection, Step, Body, BackLink } from '../_components';
 
 export default function HelpTeaRotaAdminPage() {
   const { data: session } = useSession();
@@ -12,6 +12,7 @@ export default function HelpTeaRotaAdminPage() {
           <BackLink href="/help" label="Help" />
           <h1 className="text-2xl font-bold text-gray-900">Tea Rota Admin</h1>
           <p className="text-gray-500 text-sm mt-1">Managing tea duty for friendly match days</p>
+          <LastUpdated date="2026-11-05" />
         </div>
         <div className="space-y-4">
 
@@ -27,21 +28,23 @@ export default function HelpTeaRotaAdminPage() {
           <HelpSection title="Viewing the rota">
             <Body>
               Go to Lookups → Tea Rota to see the full rota. All members can view it. The rota shows
-              the date, opponent, and the members assigned for each home game.
+              the date, opponent, and the three members on teas for each home game — Tea Lead, Tea First
+              and Tea Second. Members&apos; own duties are highlighted, and they can swap them themselves.
             </Body>
           </HelpSection>
 
           <HelpSection title="Making manual changes">
             <Step n={1}>Go to Lookups → Tea Rota.</Step>
-            <Step n={2}>As a Captain you will see edit controls on each entry.</Step>
-            <Step n={3}>Tap an entry to edit the assigned members.</Step>
-            <Step n={4}>Save your changes.</Step>
+            <Step n={2}>Tap <strong>Edit</strong> (committee members only). Each name becomes a box you can search in.</Step>
+            <Step n={3}>Pick a different member for any of the three places, or clear one.</Step>
+            <Step n={4}>Tap <strong>Save</strong> at the top (or Cancel).</Step>
           </HelpSection>
 
-          <HelpSection title="Removing an entry">
+          <HelpSection title="Cancelled games">
             <Body>
-              If a game is cancelled, the tea rota entry can be deleted from the Tea Rota page.
-              Members who received the email notification will need to be told separately.
+              The tea rota follows the fixtures. When a game is cancelled in Friendly Management it stays
+              on the rota marked <strong>Cancelled</strong>, so there is nothing to delete. Members who were
+              told about their tea duty will need to be told it is off.
             </Body>
           </HelpSection>
 

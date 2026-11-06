@@ -5,6 +5,7 @@
 // nothing is lost storing it properly.
 
 import { getSupabaseClient } from './supabase';
+import { clearAllDiaryCaches } from './home-cache';
 import type { SweepingRotaEntry } from './types/sweeping';
 
 export type { SweepingRotaEntry };
@@ -79,6 +80,8 @@ export async function addSweepingAssignment(
       .update({ username: userName })
       .eq('date', toISODate(date));
     if (error) throw new Error(error.message);
+    // Sweeping duties show in members' home-page diaries — refresh them
+    clearAllDiaryCaches();
     return { success: true };
   }
 
@@ -86,6 +89,7 @@ export async function addSweepingAssignment(
     .from('sweeping_rota')
     .insert({ date: toISODate(date), username: userName, is_blocked: false });
   if (error) throw new Error(error.message);
+  clearAllDiaryCaches();
   return { success: true };
 }
 
@@ -108,6 +112,7 @@ export async function removeSweepingAssignment(
     .update({ username: null })
     .eq('date', toISODate(date));
   if (error) throw new Error(error.message);
+  clearAllDiaryCaches();
   return { success: true };
 }
 
@@ -160,6 +165,7 @@ export async function clearSweepingEntry(date: string): Promise<{ success: boole
     .update({ username: null, is_blocked: false })
     .eq('date', toISODate(date));
   if (error) throw new Error(error.message);
+  if (existing.userName) clearAllDiaryCaches();
   return { success: true };
 }
 
@@ -197,6 +203,7 @@ export async function batchAddSweepingAssignments(
   if (toUpsert.length > 0) {
     const { error: upErr } = await supabase.from('sweeping_rota').upsert(toUpsert, { onConflict: 'date' });
     if (upErr) throw new Error(upErr.message);
+    clearAllDiaryCaches();
   }
 
   return { added, skipped };
@@ -262,6 +269,7 @@ export async function batchClearSweepingEntries(
       .update({ username: null, is_blocked: false })
       .in('date', toClear);
     if (upErr) throw new Error(upErr.message);
+    clearAllDiaryCaches();
   }
 
   return { cleared, skipped };

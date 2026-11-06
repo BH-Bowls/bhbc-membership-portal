@@ -4,7 +4,7 @@
 'use client';
 
 import { useSession } from 'next-auth/react';
-import { HelpSection, Body, BackLink } from '../_components';
+import { LastUpdated, HelpSection, Body, BackLink } from '../_components';
 
 export default function HelpDiaryPage() {
   // Get session to populate the navbar
@@ -17,6 +17,7 @@ export default function HelpDiaryPage() {
         <div className="mb-6">
           <BackLink href="/help" label="Help" />
           <h1 className="text-2xl font-bold text-gray-900">Home Page Diary &amp; Announcements</h1>
+          <LastUpdated date="2026-11-05" />
           <p className="text-gray-700 text-sm mt-1">
             Your personal upcoming schedule and club notices, all in one place
           </p>
@@ -42,7 +43,7 @@ export default function HelpDiaryPage() {
             </Body>
             <Body>
               🧹 <strong>Cleaning duties</strong> — dates where you are listed on the Cleaning
-              Rota (as lead or assistant).
+              Rota (in any of the four places).
             </Body>
             <Body>
               🌿 <strong>Sweeping duties</strong> — dates where you are assigned to sweep the
@@ -57,8 +58,16 @@ export default function HelpDiaryPage() {
               reserve status).
             </Body>
             <Body>
+              📣 <strong>Players needed</strong> — friendlies the captain has flagged as short of
+              players, if you haven&apos;t entered yet.
+            </Body>
+            <Body>
               🏆 <strong>Competitions</strong> — your pending competition matches that have
               a planned date set.
+            </Body>
+            <Body>
+              🎯 <strong>Leagues</strong> — your club league matches that are scheduled, and external
+              league games you have been selected for.
             </Body>
             <Body>
               📋 <strong>Marking duty</strong> — competition matches where you have been
@@ -72,6 +81,10 @@ export default function HelpDiaryPage() {
             <Body>
               ✅ <strong>Confirmed availability</strong> — concluded availability events where
               you said Yes, and the winning date is in the future.
+            </Body>
+            <Body>
+              📝 <strong>Membership applications</strong> (Admin only) — pinned at the top when there are
+              applications waiting for action.
             </Body>
           </HelpSection>
 
@@ -90,9 +103,12 @@ export default function HelpDiaryPage() {
               • When you respond to an availability event, the diary refreshes immediately.
             </Body>
             <Body>
-              For rota changes (cleaning and sweeping), the diary may take up to 48 hours to
-              reflect updates made by the Captain. This is because rota data is cached to keep
-              the page fast — rota changes do not trigger a cache refresh automatically.
+              • When anyone changes or swaps a tea, cleaning or sweeping duty, the diary refreshes
+              too.
+            </Body>
+            <Body>
+              If something still looks out of date, reload the home page. Very occasionally a change
+              can take a few minutes to appear.
             </Body>
           </HelpSection>
 
@@ -126,8 +142,8 @@ export default function HelpDiaryPage() {
               Withdrawn or absent entries are not shown.
             </Body>
             <Body>
-              • For rota items — allow up to 48 hours after a rota change for the diary
-              to update.
+              • For rota items — check you are on that date in the rota itself (Lookups → Tea,
+              Cleaning or Sweeping Rota).
             </Body>
             <Body>
               • For availability events — only events with an Open status appear as nudges.

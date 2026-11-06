@@ -1,10 +1,7 @@
 'use client';
-import { useSession } from 'next-auth/react';
-import { HelpSection, Step, Body, BackLink } from '../_components';
+import { LastUpdated, HelpSection, Step, Body, Note, BackLink } from '../_components';
 
 export default function HelpCompetitionsAdminPage() {
-  const { data: session } = useSession();
-  const role = session?.user?.role ?? '';
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="container mx-auto px-4 py-8 max-w-2xl">
@@ -12,49 +9,54 @@ export default function HelpCompetitionsAdminPage() {
           <BackLink href="/help" label="Help" />
           <h1 className="text-2xl font-bold text-gray-900">Competitions Admin</h1>
           <p className="text-gray-500 text-sm mt-1">Managing club competition draws and results</p>
+          <LastUpdated date="2026-11-05" />
         </div>
         <div className="space-y-4">
 
           <HelpSection title="Overview">
             <Body>
-              Competitions Admin (at Admin → Competitions Admin) lets you manage all club competitions
-              — singles, pairs, and triples. Each competition has its own draw, play-by dates, and
-              results.
+              <strong>Admin → Competitions Admin</strong> (Captain and Admin) lists every club competition
+              — singles, pairs and triples. Each has three buttons: <strong>View</strong> (the draw sheet),{' '}
+              <strong>Export Sheet</strong> and <strong>Manage</strong> (dates and draw).
             </Body>
+            <Note>
+              Entrants come from this season&apos;s renewals — members choose their competitions when they
+              renew. If the number of entrants changes after the draw is made, Manage warns you.
+            </Note>
           </HelpSection>
 
-          <HelpSection title="Setting up the draw">
-            <Step n={1}>Open a competition and go to the Draw tab.</Step>
-            <Step n={2}>Assign entrants to each slot in the bracket.</Step>
-            <Step n={3}>
-              If a slot needs a bye, leave the opposing slot empty and mark it as a bye — that player
-              advances automatically.
+          <HelpSection title="Setting up a competition (Manage)">
+            <Step n={1}>
+              <strong>Play-by dates &amp; finals</strong> — enter the date each round must be played by
+              (and the preliminary round, if there is one) and the finals date. Tap{' '}
+              <strong>Save dates &amp; continue →</strong>.
             </Step>
-            <Step n={4}>Click Save Draw when all slots are filled. The draw is now live.</Step>
-          </HelpSection>
-
-          <HelpSection title="Setting play-by dates">
-            <Step n={1}>Go to the Dates tab.</Step>
-            <Step n={2}>Enter the play-by date for each round and the finals date.</Step>
-            <Step n={3}>Save dates before working on the draw.</Step>
+            <Step n={2}>
+              <strong>The draw</strong> — choose who plays who in each match, from the entrants (or a
+              substitute or other member if needed). When there are more entrants than fit the first
+              round, a preliminary round is used and the remaining places are byes.
+            </Step>
+            <Step n={3}>Tap <strong>Save draw &amp; go to draw sheet</strong>. The draw is now live for members.</Step>
           </HelpSection>
 
           <HelpSection title="Entering results">
-            <Step n={1}>From the competition draw, tap any Pending match.</Step>
-            <Step n={2}>Enter both players&apos; names, the score, and the date played.</Step>
-            <Step n={3}>Save — the winner advances automatically to the next round.</Step>
-          </HelpSection>
-
-          <HelpSection title="Walkovers">
+            <Step n={1}>On the draw sheet (View), tap the match.</Step>
+            <Step n={2}>
+              Enter both scores (there must be a winner), the date played and, for singles, the marker.
+              Tap <strong>Save Score</strong>.
+            </Step>
+            <Step n={3}>The winner moves on to the next round automatically.</Step>
             <Body>
-              Tap the match and use Record walkover instead. Select which side advances.
+              If a player gives a walkover, tap the match and use <strong>Walkover</strong> to choose who
+              goes through. A wrong result can be fixed with <strong>Correct Score</strong>. You can also
+              save just an agreed date, without a score.
             </Body>
           </HelpSection>
 
-          <HelpSection title="Exporting results">
+          <HelpSection title="Exporting the draw">
             <Body>
-              Use the Export button on the competition page to download a spreadsheet of all matches,
-              results, and player names for your records.
+              <strong>Export Sheet</strong> on the Competitions Admin list downloads the draw as an Excel
+              workbook, for printing or the noticeboard. You can choose the line style before exporting.
             </Body>
           </HelpSection>
 

@@ -549,7 +549,7 @@ export default function LabelsPage() {
             {/* Filter */}
             {!isLocker && <>
             <div className="flex gap-4">
-              {([['all', 'All members'], ['include', 'Include = Y only'], ['manual', 'Manual selection']] as [MemberFilter, string][]).map(([v, label]) => (
+              {([['all', 'All members'], ['include', 'Include in Mailings only'], ['manual', 'Manual selection']] as [MemberFilter, string][]).map(([v, label]) => (
                 <label key={v} className="flex items-center gap-2 cursor-pointer">
                   <input type="radio" name="memberFilter" value={v} checked={memberFilter === v} onChange={() => setMemberFilter(v)} className="text-blue-600" />
                   <span className="text-sm text-gray-700">{label}</span>

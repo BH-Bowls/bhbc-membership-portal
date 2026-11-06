@@ -3,11 +3,17 @@
 // (Gladys/Edward Rowland teams, Top Clubs, Tony Alcock…). Members join or leave a league
 // squad here; a Club Team's organiser builds its squad. Captain/Admin create the league
 // squads; any member can start a Club Team and becomes its organiser.
+//
+// For now this list is Captain/Admin only (Admin menu → Games). A squad's own page
+// (/squads/[groupId]) stays open, as friendlies link back to it.
 
 'use client';
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useSession } from 'next-auth/react';
+import { useRouter } from 'next/navigation';
+import { hasRole } from '@/lib/role-utils';
 import { getButtonClasses, getAlertClasses, getBadgeClasses } from '@/config/theme-helpers';
 
 interface SquadSummary {
@@ -86,6 +92,13 @@ function MemberPicker({ members, selected, onChange }: {
 }
 
 export default function SquadsPage() {
+  const { data: session, status } = useSession();
+  const router = useRouter();
+  const allowed = hasRole(session?.user?.role, 'Admin', 'Captain');
+  useEffect(() => {
+    if (status !== 'loading' && !allowed) router.replace('/');
+  }, [status, allowed, router]);
+
   const [squads, setSquads] = useState<SquadSummary[]>([]);
   const [canCreate, setCanCreate] = useState(false);
   const [missingLeagues, setMissingLeagues] = useState<string[]>([]);
@@ -226,6 +239,8 @@ export default function SquadsPage() {
       </div>
     );
   }
+
+  if (!allowed) return null;
 
   return (
     <div className="min-h-screen bg-gray-50">

@@ -50,13 +50,13 @@ export default function HomePage() {
             <DiaryPanel />
           </div>
 
-          {/* My Account — transactions + membership card */}
+          {/* My Account — membership card, bar account, PIN and fees */}
           <Link
             href="/account"
             className="mb-6 flex items-center justify-between bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow px-5 py-4 transition-colors"
           >
             <span className="font-semibold text-lg">My Account</span>
-            <span className="text-sm text-blue-100">Membership card &amp; transactions →</span>
+            <span className="text-sm text-blue-100">Card, bar account &amp; fees →</span>
           </Link>
 
           {/* Welcome Card */}

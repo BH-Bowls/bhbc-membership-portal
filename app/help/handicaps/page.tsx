@@ -1,6 +1,6 @@
 'use client';
 import { useSession } from 'next-auth/react';
-import { HelpSection, Step, Body, Tip, BackLink } from '../_components';
+import { LastUpdated, HelpSection, Step, Body, Tip, BackLink } from '../_components';
 
 export default function HelpHandicapsPage() {
   const { data: session } = useSession();
@@ -12,6 +12,7 @@ export default function HelpHandicapsPage() {
           <BackLink href="/help" label="Help" />
           <h1 className="text-2xl font-bold text-gray-900">Handicaps</h1>
           <p className="text-gray-500 text-sm mt-1">Managing competition handicaps for playing members</p>
+          <LastUpdated date="2026-11-05" />
         </div>
         <div className="space-y-4">
 
@@ -24,7 +25,7 @@ export default function HelpHandicapsPage() {
 
           <HelpSection title="Viewing handicaps">
             <Body>
-              Go to Admin → Handicaps to see a list of all playing members — Playing Men first, then
+              Go to Admin → Handicaps (Captain and Admin) to see a list of all playing members — Playing Men first, then
               Playing Ladies — with their current handicap. Members with no handicap set show as blank.
             </Body>
           </HelpSection>
@@ -33,13 +34,13 @@ export default function HelpHandicapsPage() {
             <Step n={1}>Find the member in the list.</Step>
             <Step n={2}>Tap their current handicap value (or the blank field).</Step>
             <Step n={3}>Enter the new value (0–10, or clear to remove).</Step>
-            <Step n={4}>Tap Save All to save all changes at once.</Step>
+            <Step n={4}>Tap <strong>Save</strong> in the top bar to save all your changes at once (or Cancel to drop them).</Step>
           </HelpSection>
 
           <HelpSection title="Bulk updates">
             <Tip>
               You can update multiple members&apos; handicaps before saving. Make all your changes and
-              then tap Save All once.
+              then tap Save once. &quot;Unsaved changes&quot; shows until you do.
             </Tip>
           </HelpSection>
 

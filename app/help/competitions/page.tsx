@@ -1,7 +1,7 @@
 'use client';
 
 import { useSession } from 'next-auth/react';
-import { HelpSection, Step, Note, Body, BackLink } from '../_components';
+import { LastUpdated, HelpSection, Step, Note, Body, BackLink } from '../_components';
 
 export default function HelpCompetitionsPage() {
   const { data: session } = useSession();
@@ -13,6 +13,7 @@ export default function HelpCompetitionsPage() {
           <BackLink href="/help" label="Help" />
           <h1 className="text-2xl font-bold text-gray-900">Competitions</h1>
           <p className="text-gray-500 text-sm mt-1">Viewing the draw and tracking your progress</p>
+          <LastUpdated date="2026-11-05" />
         </div>
         <div className="space-y-4">
 
@@ -95,10 +96,10 @@ export default function HelpCompetitionsPage() {
               Tap your match card to open the <strong>Arrange Match Date</strong> dialog.
             </Step>
             <Step n={3}>
-              Select the agreed date and tap <strong>Save</strong>.
+              Select the agreed date and time and tap <strong>Save</strong>.
             </Step>
             <Body>
-              Once saved, the match will appear in the <strong>Upcoming Events</strong> panel on
+              Once saved, the match will appear in the <strong>diary</strong> on
               the home page for both you and your opponent as a reminder.
             </Body>
             <Note>

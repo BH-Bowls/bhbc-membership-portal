@@ -160,7 +160,7 @@ export default function MembersListPage() {
           <h1 className="text-2xl font-bold text-gray-900">Members</h1>
           <div className="flex gap-2 flex-shrink-0">
             <button className={getButtonClasses('secondary', 'sm')} onClick={() => router.push('/admin/members/email-inclusion')}>
-              Email Inclusion
+              Include in Mailings
             </button>
             <button className={getButtonClasses('primary', 'sm')} onClick={() => router.push('/admin/members/list/new')}>
               Add Member

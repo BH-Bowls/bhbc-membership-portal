@@ -34,6 +34,10 @@
 // card or PIN as the action starts, every time, when bar_staff_proof covers them
 // (requireStaff / StaffProofDialog); who's serving is then fixed on that screen.
 // Changing who's serving needs nothing, so on a busy day only these exceptions ask.
+//
+// Help (src/components/BarHelp.tsx): the header's Help button opens the topic for the
+// screen on show (SCREEN_HELP), and the dialogs have a "?" (BarHelpLink) for theirs. It
+// opens over the till rather than going to /help, which a Bar login can't reach.
 
 'use client';
 
@@ -43,8 +47,10 @@ import QrScanModal from '@/components/QrScanModal';
 import { canUseBarTill } from '@/lib/role-utils';
 import { priceItem, type BarPricingConfig, type BarProduct, type BarCategoryRow, type BarAccount, type BarPerson, type BarReport, type BarSaleSummary, type BarDayEnd, type BarDayEndLedgerRow } from '@/lib/bar-supabase';
 import { useOnlineStatus } from '@/hooks/useOnlineStatus';
+import { useCardScanner } from '@/hooks/useCardScanner';
 import { enqueue, listQueued, dequeue, newQueueId, type QueuedEntry } from '@/lib/bar-offline-queue';
 import BarTerminalPayment, { type TerminalCheckout } from '@/components/BarTerminalPayment';
+import { BarHelpPanel, BarHelpContext, BarHelpLink, type BarHelpTopicId } from '@/components/BarHelp';
 
 const OFFLINE_WALLET_DELTAS_KEY = 'bar_offline_wallet_deltas';
 
@@ -111,6 +117,19 @@ async function sha256Hex(text: string): Promise<string | null> {
   return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+// Where the header's Help button opens, for each screen (src/components/BarHelp.tsx)
+const SCREEN_HELP: Record<View, BarHelpTopicId> = {
+  person: 'members',
+  sale: 'baskets',
+  volunteer: 'start',
+  topup: 'topup',
+  sales: 'mistakes',
+  report: 'dayend',
+  products: 'products',
+  cashmovement: 'cashmovement',
+  membership: 'membership',
+};
+
 const SCREEN_TITLES: Record<View, string> = {
   person: 'Home',
   sale: 'Basket',
@@ -146,6 +165,8 @@ export default function BarTillPage() {
   const [sessionServers, setSessionServers] = useState<string[]>([]);
   const [showServerPicker, setShowServerPicker] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
+  // The help panel and the topic it opened at (null = the list of topics)
+  const [help, setHelp] = useState<{ topic: BarHelpTopicId | null } | null>(null);
   // What to do once a name is tapped on the volunteer picker — only set if an action
   // needs a server and no one is serving yet (see withServer).
   const [pendingAction, setPendingAction] = useState<ServerAction | null>(null);
@@ -1024,6 +1045,20 @@ export default function BarTillPage() {
     setError(result.message ?? '');
   }
 
+  // A plug-in scanner (src/hooks/useCardScanner.ts). On the member list it picks the member,
+  // like the Scan button. On a member's sale their own card proves it's them, so Pay by
+  // Account won't ask again. While a card/PIN dialog is open, the dialog takes the scan.
+  useCardScanner(async (code) => {
+    if (view === 'person') { handleScan(code); return; }
+    const result = await readScan(code);
+    if (member && result.proof && result.proof.userName === member.userName) { setMemberProof(result.proof); setError(''); return; }
+    if (member && result.person && result.person.userName !== member.userName) {
+      setError(`That’s ${result.person.fullName}’s card — go back to the member list to serve them.`);
+      return;
+    }
+    setError(result.message ?? '');
+  }, (view === 'person' || (view === 'sale' && !!member)) && !proofDialog && !staffDialog && !showSetPin && !terminalPay && !voidDialog);
+
   // On a Day End or Cash Movement the person serving has confirmed it's them — keep it them
   const serverLocked = !!staffSession && !!staffSession.proof && (view === 'report' || view === 'cashmovement');
 
@@ -1039,8 +1074,11 @@ export default function BarTillPage() {
   }
 
   return (
+    <BarHelpContext.Provider value={(topic) => setHelp({ topic: topic })}>
     <div className="min-h-screen bg-gray-50">
       <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-5 max-w-7xl">
+
+        {help && <BarHelpPanel topic={help.topic} onClose={() => setHelp(null)} />}
 
         {terminalPay && (
           <BarTerminalPayment
@@ -1096,7 +1134,8 @@ export default function BarTillPage() {
 
         {walletDue && member && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-            <div className="w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
+            <div className="relative w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
+              <BarHelpLink topic="paying" className="absolute top-3 right-3" />
               <p className="text-sm text-gray-700">Pay by account — {member.fullName}</p>
               <p className="text-4xl font-bold text-gray-900 my-2">{fmt(walletDue.amountPence)}</p>
               <div className="mt-3 rounded-lg border border-gray-200 p-3 text-sm text-gray-900 space-y-1">
@@ -1149,7 +1188,8 @@ export default function BarTillPage() {
 
         {offlineCard && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-            <div className="w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
+            <div className="relative w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
+              <BarHelpLink topic="offline" className="absolute top-3 right-3" />
               <p className="text-sm text-gray-700">Card payment — till offline</p>
               <p className="text-4xl font-bold text-gray-900 my-2">{fmt(offlineCard.amountPence)}</p>
               <p className="text-sm text-gray-900 text-left">
@@ -1195,6 +1235,8 @@ export default function BarTillPage() {
         <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
           <h1 className="text-lg font-bold text-gray-900">{SCREEN_TITLES[view]}</h1>
           <div className="flex flex-wrap items-center gap-2">
+            <button onClick={() => setHelp({ topic: SCREEN_HELP[view] })}
+              className="px-3 py-2 text-sm border border-blue-200 rounded-md bg-blue-50 text-blue-900 hover:bg-blue-100">Help</button>
             {view !== 'volunteer' && volunteer && serverLocked && (
               <span className="px-3 py-2 text-sm rounded-full border border-gray-200 bg-gray-50 text-gray-900">
                 Serving: <span className="font-semibold">{barPersonName(volunteer)}</span>
@@ -1537,6 +1579,7 @@ export default function BarTillPage() {
         {view === 'products' && <ProductsAdmin products={products} categories={categories} pricingConfig={pricingConfig} onChanged={load} />}
       </div>
     </div>
+    </BarHelpContext.Provider>
   );
 }
 
@@ -1562,6 +1605,7 @@ function BarPinLogin() {
   const [deviceId, setDeviceId] = useState('');
   const [pairingCode, setPairingCode] = useState('');
   const [registerError, setRegisterError] = useState('');
+  const [showHelp, setShowHelp] = useState(false);
 
   useEffect(() => {
     let id = localStorage.getItem(BAR_DEVICE_ID_KEY);
@@ -1646,6 +1690,8 @@ function BarPinLogin() {
       {registerError && (
         <p className="mt-3 text-amber-200 text-sm text-center max-w-xs font-medium">{registerError}</p>
       )}
+      <button type="button" onClick={() => setShowHelp(true)} className="mt-6 text-white underline text-sm">Help</button>
+      {showHelp && <BarHelpPanel topic="start" onClose={() => setShowHelp(false)} />}
     </div>
   );
 }
@@ -1744,6 +1790,7 @@ function PersonProofPanel({ person, card, offline, readScan, onPinLocked, onProv
     if (result.person && result.person.userName !== person.userName) setMessage(`That’s ${result.person.fullName}’s card, not ${person.fullName}’s.`);
     else setMessage(result.message || 'That card can’t be used — try the PIN.');
   }
+  useCardScanner(scanned);
 
   return (
     <>
@@ -1780,7 +1827,8 @@ function ProofDialog({ member, server, cards, purpose, offline, readScan, onPinL
   const who = byServer && server ? server : member;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
+      <div className="relative w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
+        <BarHelpLink topic={byServer ? 'staffproof' : 'proof'} className="absolute top-3 right-3" />
         <h2 className="text-lg font-bold text-gray-900 text-center">
           {byServer ? `${who.fullName} to approve` : 'Card or PIN needed'}
         </h2>
@@ -1828,7 +1876,8 @@ function StaffProofDialog({ server, card, action, offline, readScan, onPinLocked
 }) {
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
+      <div className="relative w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
+        <BarHelpLink topic="staffproof" className="absolute top-3 right-3" />
         <h2 className="text-lg font-bold text-gray-900 text-center">{action}</h2>
         <p className="text-sm text-gray-700 text-center mt-1">
           {server.fullName} is serving — {server.fullName}, scan your card or enter your PIN to confirm.
@@ -1879,7 +1928,8 @@ function SetPinDialog({ member, cardCode, onDone, onClose }: {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
+      <div className="relative w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
+        <BarHelpLink topic="pins" className="absolute top-3 right-3" />
         <h2 className="text-lg font-bold text-gray-900 text-center">PIN for {member.fullName}</h2>
         {saved ? (
           <p className="mt-3 text-sm text-gray-900 text-center">PIN saved. {member.fullName} can use it at the bar instead of their card.</p>
@@ -1933,7 +1983,10 @@ function ServerPicker({ barPersons, sessionServers, current, heldTabFor, onChoos
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-xl p-5 w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        <h2 className="text-lg font-bold text-gray-900 mb-4">Who&apos;s serving?</h2>
+        <div className="flex items-start justify-between gap-3 mb-4">
+          <h2 className="text-lg font-bold text-gray-900">Who&apos;s serving?</h2>
+          <BarHelpLink topic="servers" />
+        </div>
         <div className="grid grid-cols-2 gap-3">
           {session.map((b) => nameButton(b, true))}
         </div>
@@ -2031,7 +2084,8 @@ function VoidSaleDialog({ sale, done, error, busy, onConfirm, onClose }: {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
+      <div className="relative w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
+        <BarHelpLink topic="mistakes" className="absolute top-3 right-3" />
         {done ? (
           <>
             <p className="text-lg font-semibold text-gray-900">Voided</p>
@@ -2083,7 +2137,8 @@ function CashChangeDialog({ amountPence, onConfirm, onCancel }: { amountPence: n
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
+      <div className="relative w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
+        <BarHelpLink topic="paying" className="absolute top-3 right-3" />
         <p className="text-sm text-gray-700">Cash payment</p>
         <p className="text-4xl font-bold text-gray-900 my-2">{fmt(amountPence)}</p>
 

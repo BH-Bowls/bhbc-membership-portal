@@ -4,7 +4,7 @@
 'use client';
 
 import { useSession } from 'next-auth/react';
-import { HelpSection, Step, Body, BackLink } from '../_components';
+import { LastUpdated, HelpSection, Step, Body, BackLink } from '../_components';
 
 export default function HelpAvailabilityPage() {
   // Get session to populate the navbar
@@ -17,6 +17,7 @@ export default function HelpAvailabilityPage() {
         <div className="mb-6">
           <BackLink href="/help" label="Help" />
           <h1 className="text-2xl font-bold text-gray-900">Availability Planner</h1>
+          <LastUpdated date="2026-05-19" />
           <p className="text-gray-700 text-sm mt-1">Coordinate dates and times with groups of members and visitors</p>
         </div>
 

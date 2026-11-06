@@ -6,6 +6,7 @@
 // display string here so nothing above this layer needs to know or care.
 
 import { getSupabaseClient } from './supabase';
+import { clearAllDiaryCaches } from './home-cache';
 
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -84,6 +85,8 @@ export async function updateCleaningRotaAssignment(
     })
     .eq('id', id);
   if (error) throw new Error(`Failed to update cleaning rota: ${error.message}`);
+  // Cleaning duties show in members' home-page diaries — refresh them
+  clearAllDiaryCaches();
 }
 
 export async function batchUpdateCleaningRotaAssignments(
@@ -135,6 +138,7 @@ export async function swapCleaningAssignment(
       .eq('id', newUserId);
     if (err2) throw new Error(`Failed to complete cleaning swap: ${err2.message}`);
   }
+  clearAllDiaryCaches();
 
   const updated = await getCleaningRotaEntry(id);
   if (!updated) throw new Error('Failed to get updated entry');

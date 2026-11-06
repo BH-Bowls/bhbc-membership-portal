@@ -1,7 +1,7 @@
 'use client';
 
 import { useSession } from 'next-auth/react';
-import { HelpSection, Step, Note, Body, BackLink } from '../_components';
+import { LastUpdated, HelpSection, Step, Note, Body, BackLink } from '../_components';
 
 export default function HelpLeaguesPage() {
   const { data: session } = useSession();
@@ -13,6 +13,7 @@ export default function HelpLeaguesPage() {
           <BackLink href="/help" label="Help" />
           <h1 className="text-2xl font-bold text-gray-900">Club Leagues</h1>
           <p className="text-gray-500 text-sm mt-1">Entering leagues, viewing fixtures and results</p>
+          <LastUpdated date="2026-11-05" />
         </div>
         <div className="space-y-4">
 
@@ -141,6 +142,13 @@ export default function HelpLeaguesPage() {
               Tap any player&apos;s name to open their entry in Member Lookup, where you can find their
               contact details. Tap <strong>← Back</strong> at the top of that page to return to the
               Teams tab.
+            </Body>
+          </HelpSection>
+
+          <HelpSection title="Rules tab">
+            <Body>
+              The <strong>Rules</strong> tab has the league&apos;s rules and any other documents the
+              organisers have uploaded, to open or download.
             </Body>
           </HelpSection>
 

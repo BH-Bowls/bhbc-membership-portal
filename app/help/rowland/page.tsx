@@ -5,6 +5,7 @@
 
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
+import { LastUpdated } from '../_components';
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -54,6 +55,7 @@ export default function RowlandHelpPage() {
           <p className="text-gray-500 text-sm mt-1">
             Viewing draws, finding opponent contacts, and managing competitions and results
           </p>
+          <LastUpdated date="2026-11-05" />
         </div>
 
         <div className="space-y-4">
@@ -162,19 +164,19 @@ export default function RowlandHelpPage() {
               Go to <strong>Clubs</strong> and find the club.
             </Step>
             <Step n={2}>
-              Tap <strong>Edit</strong> to update the club's general details (address, phone, email).
+              Tap <strong>Edit</strong> to update the club's general details (address, phone, email), then <strong>Save</strong> at the top.
             </Step>
             <Step n={3}>
-              To add a skip or other contact, scroll to the <strong>Contacts</strong> section and tap <strong>Add Contact</strong>.
+              To add a skip or other contact, scroll to the <strong>Contacts</strong> section and tap <strong>New Contact</strong>.
             </Step>
             <Step n={4}>
-              Choose a role from the dropdown (e.g. <em>Skip</em>), fill in the person's name and phone number, and tap <strong>Save</strong>.
+              Fill in the person's name and phone number, tick their role (e.g. <em>ERowland A Skip</em>), and tap <strong>Add Contact</strong>.
             </Step>
             <Note>
               You can add as many contacts as you need — one per skip if you have multiple teams. Other clubs will be able to see these details when they look up your club.
             </Note>
             <p className="text-sm text-gray-700 leading-relaxed">
-              To remove a contact that is no longer current, tap the <strong>delete</strong> (bin) icon next to their entry.
+              To remove a contact that is no longer current, delete it from their entry and confirm.
             </p>
           </Section>
 

@@ -1,10 +1,14 @@
 'use client';
 
 // app/account/page.tsx
-// My Account — two functions: a history of the member's own bar wallet
-// transactions, and a membership card (tap to flip to a QR for the till). Under the
-// card the member sets their bar PIN, or resets their card if it's lost
-// (src/lib/bar-card.ts).
+// My Account — the membership card first (tap to flip to a QR for the till), then a
+// button for each of the rest, which opens it on its own:
+//   - Bar Account: balance and transactions
+//   - Bar PIN: set or change the PIN used at the till (src/lib/bar-card.ts)
+//   - Lost card: reset the card so the old QR stops working
+//   - Membership fees: this season's renewal fees, and paying them online
+// The section open is in the URL (?section=…), so the phone's back button returns to
+// the card, and a Stripe payment comes back to Membership fees.
 
 import { useState, useEffect, useRef } from 'react';
 import { useSession } from 'next-auth/react';
@@ -59,11 +63,54 @@ interface RenewalFeesData {
 const fmt = (pence: number) => '£' + (pence / 100).toFixed(2);
 const fmtPounds = (pounds: number) => '£' + pounds.toFixed(2);
 
-type Tab = 'transactions' | 'card';
+type Section = 'bar' | 'pin' | 'lost' | 'fees';
+const SECTIONS: Section[] = ['bar', 'pin', 'lost', 'fees'];
+const SECTION_TITLES: Record<Section, string> = {
+  bar: 'Bar Account',
+  pin: 'Bar PIN',
+  lost: 'Lost card',
+  fees: 'Membership fees',
+};
+
+function sectionFromUrl(): Section | null {
+  const value = new URLSearchParams(window.location.search).get('section');
+  for (const s of SECTIONS) {
+    if (s === value) return s;
+  }
+  return null;
+}
 
 export default function MyAccountPage() {
   const { status } = useSession();
-  const [tab, setTab] = useState<Tab>('card');
+  // null = the card and the buttons
+  const [section, setSection] = useState<Section | null>(null);
+  // Whether this page added the history entry, so Back can go back to it
+  const pushedSection = useRef(false);
+
+  useEffect(() => {
+    setSection(sectionFromUrl());
+    const onPopState = () => {
+      pushedSection.current = false;
+      setSection(sectionFromUrl());
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  const openSection = (s: Section) => {
+    window.history.pushState(null, '', '/account?section=' + s);
+    pushedSection.current = true;
+    setSection(s);
+    window.scrollTo(0, 0);
+  };
+  const backToCard = () => {
+    if (pushedSection.current) {
+      window.history.back();
+      return;
+    }
+    window.history.replaceState(null, '', '/account');
+    setSection(null);
+  };
 
   const [history, setHistory] = useState<BarLedgerEntry[] | null>(null);
   const [hasAccount, setHasAccount] = useState(false);
@@ -146,16 +193,21 @@ export default function MyAccountPage() {
   // Back from Stripe: 'waiting' until the webhook has recorded it
   const [paymentStatus, setPaymentStatus] = useState<'waiting' | 'recorded' | 'expired' | 'slow' | null>(null);
 
+  const [feesError, setFeesError] = useState(false);
+
   const loadFees = () => {
-    // The fee card is extra information — if it fails, the rest of the page still works
+    // If it fails, only Membership fees says so — the rest of the page still works
     fetch('/api/account/renewal-fees')
       .then((r) => r.json())
       .then((data) => {
         if (!data.error) {
           setFees(data);
+          setFeesError(false);
+        } else {
+          setFeesError(true);
         }
       })
-      .catch(() => {});
+      .catch(() => setFeesError(true));
   };
 
   // Returned from Stripe (?payment=processing&session_id=…) — poll until the webhook
@@ -164,7 +216,7 @@ export default function MyAccountPage() {
     const params = new URLSearchParams(window.location.search);
     const sessionId = params.get('session_id');
     if (params.get('payment') !== 'processing' || !sessionId) return;
-    setTab('card');
+    setSection('fees');
     setPaymentStatus('waiting');
     let attempts = 0;
     let stopped = false;
@@ -178,7 +230,7 @@ export default function MyAccountPage() {
           if (data.status === 'recorded') {
             setPaymentStatus('recorded');
             loadFees();
-            window.history.replaceState(null, '', '/account');
+            window.history.replaceState(null, '', '/account?section=fees');
           } else if (data.status === 'expired') {
             setPaymentStatus('expired');
           } else if (attempts >= 20) {
@@ -283,11 +335,40 @@ export default function MyAccountPage() {
   }
 
   const cardCode = card ? card.cardCode : null;
+  // section is here because the canvas is new each time the card is shown again
   useEffect(() => {
     if (showQr && qrCanvasRef.current && cardCode) {
       QRCode.toCanvas(qrCanvasRef.current, cardCode, { width: 220 }).catch(() => {});
     }
-  }, [showQr, cardCode]);
+  }, [showQr, cardCode, section]);
+
+  // What each button says underneath its name
+  let barNote = 'Loading…';
+  if (!loadingHistory) {
+    if (historyError) barNote = 'Balance and transactions';
+    else barNote = hasAccount ? 'Balance ' + fmt(balancePence) : 'No account yet';
+  }
+  let pinNote = '';
+  if (card) {
+    if (card.pinLocked) pinNote = 'Locked — set a new one';
+    else pinNote = card.hasPin ? 'PIN set — change it' : 'Not set yet';
+  }
+  let feesNote = 'Renewal fees and paying online';
+  let feesDue = false;
+  if (fees) {
+    let owed = 0;
+    let anyDraft = false;
+    let allPaid = feeItems.length > 0;
+    for (const item of feeItems) {
+      if (item.state === 'outstanding') owed += item.outstanding;
+      if (item.state === 'draft') anyDraft = true;
+      if (item.state !== 'paid') allPaid = false;
+    }
+    if (owed > 0) { feesNote = fmtPounds(owed) + ' to pay'; feesDue = true; }
+    else if (anyDraft) feesNote = 'Renewal not submitted yet';
+    else if (allPaid) feesNote = fees.seasonYear + ' paid — thank you';
+    else feesNote = 'Nothing to pay';
+  }
 
   if (status === 'loading') {
     return (
@@ -297,66 +378,40 @@ export default function MyAccountPage() {
     );
   }
 
+
+  const sectionButton = (s: Section, note: string, highlight = false) => (
+    <button
+      key={s}
+      type="button"
+      onClick={() => openSection(s)}
+      className={
+        'text-left rounded-lg border p-4 shadow-sm hover:shadow-md transition-shadow ' +
+        (highlight ? 'border-amber-300 bg-amber-50 hover:border-amber-400' : 'border-gray-200 bg-white hover:border-blue-400')
+      }
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-semibold text-gray-900">{SECTION_TITLES[s]}</span>
+        <span className="text-gray-400" aria-hidden="true">›</span>
+      </div>
+      <div className={'text-sm mt-1 ' + (highlight ? 'text-amber-900 font-medium' : 'text-gray-600')}>{note}</div>
+    </button>
+  );
+
   return (
     <div className="min-h-screen bg-gray-50">
       <main className="max-w-2xl mx-auto py-6 px-4 sm:px-6 lg:px-8 space-y-6">
-        <h1 className="text-2xl font-bold text-gray-900">My Account</h1>
-
-        <div className="border-b border-gray-200 flex gap-6">
-          {(['card', 'transactions'] as Tab[]).map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={
-                'pb-2 text-sm font-medium border-b-2 -mb-px ' +
-                (tab === t ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700')
-              }
-            >
-              {t === 'transactions' ? 'Transactions' : 'Membership Card'}
+        {section === null ? (
+          <h1 className="text-2xl font-bold text-gray-900">My Account</h1>
+        ) : (
+          <div>
+            <button type="button" onClick={backToCard} className="text-blue-600 hover:text-blue-800 text-sm flex items-center gap-1 mb-2">
+              ← My card
             </button>
-          ))}
-        </div>
-
-        {tab === 'transactions' && (
-          <div className="bg-white shadow rounded-lg p-5">
-            {loadingHistory ? (
-              <p className="text-sm text-gray-500">Loading…</p>
-            ) : historyError ? (
-              <p className="text-sm text-red-600">{historyError}</p>
-            ) : !hasAccount ? (
-              <p className="text-sm text-gray-700">You don&apos;t have a bar account yet — one is created the first time you top up at the till.</p>
-            ) : (
-              <>
-                <div className="flex justify-between items-baseline mb-4">
-                  <span className="text-sm text-gray-700">Current balance</span>
-                  <span className="text-xl font-bold text-gray-900">{fmt(balancePence)}</span>
-                </div>
-                {history === null || history.length === 0 ? (
-                  <p className="text-sm text-gray-500">No transactions yet.</p>
-                ) : (
-                  <div className="divide-y divide-gray-100">
-                    {history.map((h) => (
-                      <div key={h.id} className="flex justify-between text-sm py-2">
-                        <div>
-                          <div className="text-gray-900 capitalize">{h.type}</div>
-                          <div className="text-xs text-gray-500">{new Date(h.createdAt).toLocaleString('en-GB')}</div>
-                        </div>
-                        <div className="text-right">
-                          <div className={h.amountPence < 0 ? 'text-gray-900' : 'text-green-700'}>
-                            {h.amountPence < 0 ? '−' : '+'}{fmt(Math.abs(h.amountPence))}
-                          </div>
-                          <div className="text-xs text-gray-500">Balance {fmt(h.balanceAfterPence)}</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
+            <h1 className="text-2xl font-bold text-gray-900">{SECTION_TITLES[section]}</h1>
           </div>
         )}
 
-        {tab === 'card' && (
+        {section === null && (
           <div>
             {cardError ? (
               <p className="text-sm text-red-600">{cardError}</p>
@@ -395,103 +450,179 @@ export default function MyAccountPage() {
                   )}
                 </button>
                 <p className="text-xs text-gray-500 mt-2 text-center">Tap the card to {showQr ? 'show your details' : 'show your QR code'}.</p>
-
-                <div className="bg-white shadow rounded-lg p-5 mt-6 space-y-5">
-                  <div>
-                    <h2 className="text-lg font-semibold text-gray-900">Bar PIN</h2>
-                    <p className="text-sm text-gray-700 mt-1">
-                      To pay from or top up your bar account, scan your card at the bar or type your PIN (4 to 6 digits).
-                    </p>
-                    <p className="text-sm text-gray-900 mt-2">
-                      {card.pinLocked
-                        ? 'Your PIN is locked after too many wrong tries. Set a new one below.'
-                        : card.hasPin
-                          ? 'You have a PIN. You can change it below.'
-                          : 'You haven’t set a PIN yet.'}
-                    </p>
-                    <div className="mt-3 flex flex-wrap items-end gap-3">
-                      <div>
-                        <label className="block text-sm text-gray-700 mb-1">New PIN</label>
-                        <input type="password" inputMode="numeric" maxLength={6} value={newPin}
-                          onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))}
-                          className="w-24 border border-gray-300 rounded-md px-3 py-2 text-center tracking-widest" />
-                      </div>
-                      <div>
-                        <label className="block text-sm text-gray-700 mb-1">Same again</label>
-                        <input type="password" inputMode="numeric" maxLength={6} value={confirmPin}
-                          onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ''))}
-                          className="w-24 border border-gray-300 rounded-md px-3 py-2 text-center tracking-widest" />
-                      </div>
-                      <button onClick={savePin} disabled={pinSaving}
-                        className="px-4 py-2 rounded-md bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
-                        {pinSaving ? 'Saving…' : card.hasPin ? 'Change PIN' : 'Set PIN'}
-                      </button>
-                    </div>
-                    {pinMessage && (
-                      <p className={'text-sm mt-2 ' + (pinMessage.ok ? 'text-green-700' : 'text-red-600')}>{pinMessage.text}</p>
-                    )}
-                  </div>
-
-                  <div className="border-t border-gray-100 pt-5">
-                    <h2 className="text-lg font-semibold text-gray-900">Lost your card or phone?</h2>
-                    <p className="text-sm text-gray-700 mt-1">
-                      Reset your card so nobody else can use it. Your old QR code and any printed cards stop working
-                      straight away. The new QR code shows here; a printed card needs reprinting — ask the committee.
-                    </p>
-                    {!confirmReset ? (
-                      <button onClick={() => { setResetMessage(null); setConfirmReset(true); }}
-                        className="mt-3 px-4 py-2 rounded-md border border-red-300 text-red-700 text-sm font-medium hover:bg-red-50">
-                        Reset my card
-                      </button>
-                    ) : (
-                      <div className="mt-3 flex flex-wrap items-center gap-3">
-                        <span className="text-sm text-gray-900">Reset your card now?</span>
-                        <button onClick={resetCard} disabled={resetting}
-                          className="px-4 py-2 rounded-md bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-50">
-                          {resetting ? 'Resetting…' : 'Yes, reset it'}
-                        </button>
-                        <button onClick={() => setConfirmReset(false)} disabled={resetting}
-                          className="px-4 py-2 rounded-md border border-gray-300 text-gray-900 text-sm font-medium hover:bg-gray-50">
-                          Cancel
-                        </button>
-                      </div>
-                    )}
-                    {resetMessage && (
-                      <p className={'text-sm mt-2 ' + (resetMessage.ok ? 'text-green-700' : 'text-red-600')}>{resetMessage.text}</p>
-                    )}
-                  </div>
-                </div>
                 {validUntilLabel(card).renewalDue && !selfHasFeeItem && (
-                  <p className="text-sm text-gray-700 mt-4 text-center">
+                  <p className="text-sm text-gray-700 mt-3 text-center">
                     <Link href="/renewals" className="text-blue-600 hover:text-blue-800 font-medium">Renew your membership</Link>
                   </p>
                 )}
               </>
             )}
 
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-6">
+              {sectionButton('bar', barNote)}
+              {sectionButton('pin', pinNote || 'For paying at the bar', !!card && card.pinLocked)}
+              {sectionButton('lost', 'Stop your old card working')}
+              {sectionButton('fees', feesNote, feesDue)}
+            </div>
+          </div>
+        )}
+
+        {section === 'bar' && (
+          <div className="bg-white shadow rounded-lg p-5">
+            {loadingHistory ? (
+              <p className="text-sm text-gray-500">Loading…</p>
+            ) : historyError ? (
+              <p className="text-sm text-red-600">{historyError}</p>
+            ) : (
+              <>
+                <div className="flex justify-between items-baseline">
+                  <span className="text-sm text-gray-700">Current balance</span>
+                  <span className="text-xl font-bold text-gray-900">{hasAccount ? fmt(balancePence) : fmt(0)}</span>
+                </div>
+                <p className="text-sm text-gray-700 mt-2 mb-4">Top up at the bar, by cash or card.</p>
+                {!hasAccount ? (
+                  <p className="text-sm text-gray-700">You don&apos;t have a bar account yet — one is created the first time you top up at the bar.</p>
+                ) : history === null || history.length === 0 ? (
+                  <p className="text-sm text-gray-500">No transactions yet.</p>
+                ) : (
+                  <>
+                    <h2 className="text-sm font-semibold text-gray-900 border-t border-gray-100 pt-4">Transactions</h2>
+                    <div className="divide-y divide-gray-100">
+                      {history.map((h) => (
+                        <div key={h.id} className="flex justify-between text-sm py-2">
+                          <div>
+                            <div className="text-gray-900 capitalize">{h.type}</div>
+                            <div className="text-xs text-gray-500">{new Date(h.createdAt).toLocaleString('en-GB')}</div>
+                          </div>
+                          <div className="text-right">
+                            <div className={h.amountPence < 0 ? 'text-gray-900' : 'text-green-700'}>
+                              {h.amountPence < 0 ? '−' : '+'}{fmt(Math.abs(h.amountPence))}
+                            </div>
+                            <div className="text-xs text-gray-500">Balance {fmt(h.balanceAfterPence)}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {section === 'pin' && (
+          <div className="bg-white shadow rounded-lg p-5">
+            {cardError ? (
+              <p className="text-sm text-red-600">{cardError}</p>
+            ) : card === null ? (
+              <p className="text-sm text-gray-500">Loading…</p>
+            ) : (
+              <>
+                <p className="text-sm text-gray-700">
+                  To pay from or top up your bar account, scan your card at the bar or type your PIN (4 to 6 digits).
+                </p>
+                <p className="text-sm text-gray-900 mt-2">
+                  {card.pinLocked
+                    ? 'Your PIN is locked after too many wrong tries. Set a new one below.'
+                    : card.hasPin
+                      ? 'You have a PIN. You can change it below.'
+                      : 'You haven’t set a PIN yet.'}
+                </p>
+                <div className="mt-3 flex flex-wrap items-end gap-3">
+                  <div>
+                    <label className="block text-sm text-gray-700 mb-1">New PIN</label>
+                    <input type="password" inputMode="numeric" maxLength={6} value={newPin}
+                      onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))}
+                      className="w-24 border border-gray-300 rounded-md px-3 py-2 text-center tracking-widest" />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-700 mb-1">Same again</label>
+                    <input type="password" inputMode="numeric" maxLength={6} value={confirmPin}
+                      onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ''))}
+                      className="w-24 border border-gray-300 rounded-md px-3 py-2 text-center tracking-widest" />
+                  </div>
+                  <button onClick={savePin} disabled={pinSaving}
+                    className="px-4 py-2 rounded-md bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+                    {pinSaving ? 'Saving…' : card.hasPin ? 'Change PIN' : 'Set PIN'}
+                  </button>
+                </div>
+                {pinMessage && (
+                  <p className={'text-sm mt-2 ' + (pinMessage.ok ? 'text-green-700' : 'text-red-600')}>{pinMessage.text}</p>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {section === 'lost' && (
+          <div className="bg-white shadow rounded-lg p-5">
+            <p className="text-sm text-gray-700">
+              Lost your card or phone? Reset your card so nobody else can use it. Your old QR code and any printed cards
+              stop working straight away. The new QR code shows on your card; a printed card needs reprinting — ask the
+              committee.
+            </p>
+            {!confirmReset ? (
+              <button onClick={() => { setResetMessage(null); setConfirmReset(true); }}
+                className="mt-3 px-4 py-2 rounded-md border border-red-300 text-red-700 text-sm font-medium hover:bg-red-50">
+                Reset my card
+              </button>
+            ) : (
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <span className="text-sm text-gray-900">Reset your card now?</span>
+                <button onClick={resetCard} disabled={resetting}
+                  className="px-4 py-2 rounded-md bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-50">
+                  {resetting ? 'Resetting…' : 'Yes, reset it'}
+                </button>
+                <button onClick={() => setConfirmReset(false)} disabled={resetting}
+                  className="px-4 py-2 rounded-md border border-gray-300 text-gray-900 text-sm font-medium hover:bg-gray-50">
+                  Cancel
+                </button>
+              </div>
+            )}
+            {resetMessage && (
+              <p className={'text-sm mt-2 ' + (resetMessage.ok ? 'text-green-700' : 'text-red-600')}>{resetMessage.text}</p>
+            )}
+          </div>
+        )}
+
+        {section === 'fees' && (
+          <div>
             {paymentStatus === 'waiting' && (
-              <div className="mt-6 bg-blue-50 border border-blue-200 text-blue-900 rounded-lg px-4 py-3 text-sm">
+              <div className="mb-6 bg-blue-50 border border-blue-200 text-blue-900 rounded-lg px-4 py-3 text-sm">
                 Payment received — updating your account…
               </div>
             )}
             {paymentStatus === 'recorded' && (
-              <div className="mt-6 bg-green-50 border border-green-200 text-green-800 rounded-lg px-4 py-3 text-sm">
+              <div className="mb-6 bg-green-50 border border-green-200 text-green-800 rounded-lg px-4 py-3 text-sm">
                 Thank you — your payment has been recorded. Stripe will email you a receipt.
               </div>
             )}
             {paymentStatus === 'slow' && (
-              <div className="mt-6 bg-amber-50 border border-amber-200 text-amber-900 rounded-lg px-4 py-3 text-sm">
+              <div className="mb-6 bg-amber-50 border border-amber-200 text-amber-900 rounded-lg px-4 py-3 text-sm">
                 Your payment is taking longer than usual to show here. There&apos;s no need to pay again — refresh this page in a few minutes.
               </div>
             )}
             {paymentStatus === 'expired' && (
-              <div className="mt-6 bg-amber-50 border border-amber-200 text-amber-900 rounded-lg px-4 py-3 text-sm">
+              <div className="mb-6 bg-amber-50 border border-amber-200 text-amber-900 rounded-lg px-4 py-3 text-sm">
                 That payment page expired before it was paid. Nothing has been taken — you can start again below.
               </div>
             )}
 
-            {fees && feeItems.length > 0 && (
-              <div className="bg-white shadow rounded-lg p-5 mt-6">
+            {fees === null ? (
+              <p className={'text-sm ' + (feesError ? 'text-red-600' : 'text-gray-500')}>
+                {feesError ? 'Your membership fees couldn’t be loaded — try again later.' : 'Loading…'}
+              </p>
+            ) : feeItems.length === 0 ? (
+              <div className="bg-white shadow rounded-lg p-5 text-sm text-gray-700">
+                <p>There are no {fees.seasonYear} membership fees to show yet.</p>
+                {card && validUntilLabel(card).renewalDue && (
+                  <p className="mt-2">
+                    <Link href="/renewals" className="text-blue-600 hover:text-blue-800 font-medium">Renew your membership</Link>
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="bg-white shadow rounded-lg p-5">
                 <h2 className="text-lg font-semibold text-gray-900 mb-3">{fees.seasonYear} membership fees</h2>
                 <div className="divide-y divide-gray-100">
                   {feeItems.map((item) => (

@@ -1,6 +1,6 @@
 'use client';
 import { useSession } from 'next-auth/react';
-import { HelpSection, Step, Note, Body, BackLink } from '../_components';
+import { LastUpdated, HelpSection, Step, Note, Body, BackLink } from '../_components';
 
 export default function HelpLoginPage() {
   const { data: session, status } = useSession();
@@ -18,6 +18,7 @@ export default function HelpLoginPage() {
           )}
           <h1 className="text-2xl font-bold text-gray-900">Logging In & Out</h1>
           <p className="text-gray-500 text-sm mt-1">Signing in, passwords, and session management</p>
+          <LastUpdated date="2026-11-05" />
         </div>
         <div className="space-y-4">
           <HelpSection title="Logging in">
@@ -25,12 +26,12 @@ export default function HelpLoginPage() {
               Go to the login page. Enter your username or email address and your password.
             </Step>
             <Step n={2}>
-              Tap <strong>Sign In</strong>. If your details are correct you will be taken to the
+              Tap <strong>Sign in</strong>. If your details are correct you will be taken to the
               home page.
             </Step>
             <Step n={3}>
-              If you see an error, check your username and password carefully — usernames are
-              case-sensitive.
+              If you see an error, check your username and password carefully — passwords are
+              case-sensitive (capital letters matter), usernames are not.
             </Step>
           </HelpSection>
 
@@ -48,15 +49,15 @@ export default function HelpLoginPage() {
 
           <HelpSection title="Staying logged in">
             <Body>
-              Your session stays active for 30 days without you needing to log in again. After
-              30 days of inactivity, or 90 days from your last login, you will be asked to sign
-              in again.
+              You stay logged in on each device without needing to log in again. You will be asked
+              to log in again if you haven&apos;t used the portal on that device for 45 days, and in any
+              case 90 days after you last logged in.
             </Body>
           </HelpSection>
 
           <HelpSection title="Forgot your password">
             <Step n={1}>
-              On the login page, tap <strong>Forgot password?</strong>.
+              On the login page, tap <strong>Forgot your password?</strong>.
             </Step>
             <Step n={2}>
               Enter your email address and tap <strong>Send Reset Link</strong>.
@@ -72,7 +73,7 @@ export default function HelpLoginPage() {
           <HelpSection title="Changing your password">
             <Note>You need to be logged in to change your password. If you have forgotten your password, use the <strong>Forgot your password</strong> section above instead.</Note>
             <Step n={1}>
-              Tap your name in the top-right corner and choose <strong>Change Password</strong>.
+              Tap your initials in the top-right corner (or open the ☰ menu on a phone) and choose <strong>Change Password</strong>.
             </Step>
             <Step n={2}>
               Enter your current password, then your new password twice.
@@ -84,7 +85,7 @@ export default function HelpLoginPage() {
 
           <HelpSection title="Signing out">
             <Body>
-              Tap your name in the top-right corner and choose <strong>Sign Out</strong>. On
+              Tap your initials in the top-right corner and choose <strong>Logout</strong>. On
               mobile, open the ☰ menu and scroll to the bottom. You will be returned to the
               login page.
             </Body>
