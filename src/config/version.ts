@@ -3,8 +3,8 @@
 // Update this file before deploying using: npm run update-version
 
 export const version = {
-  number: '2.9.2',
-  buildDate: '2026-11-04', // This gets auto-updated by the update-version script
+  number: '2.10.0',
+  buildDate: '2026-11-06', // This gets auto-updated by the update-version script
 } as const;
 
 // Set on Vercel preview builds only (next.config.ts) — the package.json previewVersion.
