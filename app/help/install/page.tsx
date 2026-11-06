@@ -1,7 +1,7 @@
 'use client';
 
 import { useSession } from 'next-auth/react';
-import { HelpSection, Step, Note, Tip, Body, BackLink } from '../_components';
+import { LastUpdated, HelpSection, Step, Note, Tip, Body, BackLink } from '../_components';
 
 export default function HelpInstallPage() {
   const { data: session } = useSession();
@@ -13,6 +13,7 @@ export default function HelpInstallPage() {
           <BackLink href="/help" label="Help" />
           <h1 className="text-2xl font-bold text-gray-900">Add to your home screen</h1>
           <p className="text-gray-500 text-sm mt-1">Open the portal like an app on your phone, tablet, or computer</p>
+          <LastUpdated date="2026-04-11" />
         </div>
         <div className="space-y-4">
 

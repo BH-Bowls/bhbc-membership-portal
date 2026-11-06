@@ -1,6 +1,6 @@
 'use client';
 import { useSession } from 'next-auth/react';
-import { HelpSection, Step, Note, Tip, Body, BackLink } from '../_components';
+import { LastUpdated, HelpSection, Step, Note, Tip, Body, BackLink } from '../_components';
 
 export default function HelpBuddyPage() {
   const { data: session } = useSession();
@@ -12,6 +12,7 @@ export default function HelpBuddyPage() {
           <BackLink href="/help" label="Help" />
           <h1 className="text-2xl font-bold text-gray-900">Buddy System</h1>
           <p className="text-gray-500 text-sm mt-1">Letting another member help manage your account</p>
+          <LastUpdated date="2026-11-05" />
         </div>
         <div className="space-y-4">
           <HelpSection title="What is a buddy?">
@@ -46,13 +47,15 @@ export default function HelpBuddyPage() {
               If another member has set you as their buddy, a <strong>Switch User</strong>{' '}
               option will appear in your account menu (top-right corner). Tap it, find the
               member in the list, and select them to manage their account. Tap{' '}
-              <strong>Exit</strong> when you are done to return to your own account.
+              <strong>Exit Switch</strong> when you are done to return to your own account. You can&apos;t
+              switch to a member who holds a committee role, even if they have set you as their buddy.
             </Body>
           </HelpSection>
 
           <HelpSection title="Privacy">
             <Note>
-              Buddies can see and edit your profile and renewals, but cannot change your
+              Buddies can see and edit your profile and renewals, and see your My Account (including your
+              membership fees). They cannot change your
               password or access your login credentials.
             </Note>
           </HelpSection>

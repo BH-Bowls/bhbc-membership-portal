@@ -1,6 +1,6 @@
 'use client';
 import { useSession } from 'next-auth/react';
-import { HelpSection, Step, Body, Note, Tip, BackLink } from '../_components';
+import { LastUpdated, HelpSection, Step, Body, Note, Tip, BackLink } from '../_components';
 
 export default function HelpFriendlyManagementPage() {
   const { data: session } = useSession();
@@ -12,6 +12,7 @@ export default function HelpFriendlyManagementPage() {
           <BackLink href="/help" label="Help" />
           <h1 className="text-2xl font-bold text-gray-900">Friendly Management</h1>
           <p className="text-gray-500 text-sm mt-1">Managing the full lifecycle of friendly matches</p>
+          <LastUpdated date="2026-11-05" />
         </div>
         <div className="space-y-4">
 
@@ -164,7 +165,7 @@ export default function HelpFriendlyManagementPage() {
                 play in a friendly.
               </p>
               <p>
-                <strong>Couples / Buddies</strong> — buddy pairs (set up in member profiles)
+                <strong>Buddies</strong> — buddy pairs (set up in member profiles)
                 where both players have entered this game. Worth trying to put them on the same
                 rink.
               </p>
@@ -304,7 +305,7 @@ export default function HelpFriendlyManagementPage() {
               <p><strong>← Upcoming</strong> (available when Open) — reverts to Upcoming, closing entries without creating a selection sheet.</p>
               <p><strong>← Open</strong> (available when Selecting) — reopens entries so members can enter or withdraw again.</p>
               <p><strong>← Selecting</strong> (available when Selected/Published) — unpublishes the selection. Members can no longer see the team sheet. Use Publish again when ready.</p>
-              <p><strong>← Selected</strong> (available when Played) — sets a played game back to Selected, allowing you to correct the score or outcome. Record the result again once corrections are made.</p>
+              <p><strong>← Set to Selected</strong> (available when Played) — sets a played game back to Selected, allowing you to correct the score or outcome. Record the result again once corrections are made.</p>
             </div>
             <Note>
               Reverting does not delete any data — player entries and selection choices are

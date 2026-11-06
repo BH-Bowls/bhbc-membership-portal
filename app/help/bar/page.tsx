@@ -4,7 +4,7 @@
 // The bar till help, all on one page, for the committee and whoever trains bar staff.
 // The same text the till shows from its Help button (src/components/BarHelp.tsx).
 
-import { BackLink } from '../_components';
+import { LastUpdated, BackLink } from '../_components';
 import { BarHelpPage } from '@/components/BarHelp';
 
 export default function HelpBarPage() {
@@ -17,6 +17,7 @@ export default function HelpBarPage() {
           <p className="text-gray-500 text-sm mt-1">
             For bar staff. The till shows the same help from its Help button, and from the ? in its dialogs.
           </p>
+          <LastUpdated date="2026-11-05" />
         </div>
         <div className="space-y-4">
           <BarHelpPage />

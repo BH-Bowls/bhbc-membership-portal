@@ -45,6 +45,18 @@ export function Body({ children }: { children: React.ReactNode }) {
   return <p className="text-sm text-gray-700 leading-relaxed mb-3 last:mb-0">{children}</p>;
 }
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** "Last updated on 5 Nov 2026" badge. date is YYYY-MM-DD — change it whenever the page's text changes. */
+export function LastUpdated({ date }: { date: string }) {
+  const [y, m, d] = date.split('-').map(Number);
+  return (
+    <span className="inline-block mt-2 px-2 py-0.5 text-xs rounded-full border border-gray-200 bg-white text-gray-600">
+      Last updated on {d} {MONTHS[m - 1]} {y}
+    </span>
+  );
+}
+
 export function BackLink({ href, label }: { href: string; label: string }) {
   const router = useRouter();
   return (

@@ -1,7 +1,7 @@
 'use client';
 
 import { useSession } from 'next-auth/react';
-import { HelpSection, Body, BackLink } from '../_components';
+import { LastUpdated, HelpSection, Body, BackLink } from '../_components';
 
 export default function HelpLookupsPage() {
   const { data: session } = useSession();
@@ -13,6 +13,7 @@ export default function HelpLookupsPage() {
           <BackLink href="/help" label="Help" />
           <h1 className="text-2xl font-bold text-gray-900">Lookups</h1>
           <p className="text-gray-500 text-sm mt-1">Finding members, clubs, and rota information</p>
+          <LastUpdated date="2026-11-05" />
         </div>
         <div className="space-y-4">
 
@@ -38,8 +39,8 @@ export default function HelpLookupsPage() {
             <Body>
               Lookups → Documents shows the club&apos;s policy documents, AGM minutes, and other
               official files. Documents are grouped into folders — click a folder to expand it, then
-              click <strong>View / Download</strong> next to any document to open it in an inline
-              viewer or save it to your device.
+              click <strong>View</strong> next to any document to open it in the page (Close to hide it), or{' '}
+              <strong>Download</strong> to save it to your device.
             </Body>
           </HelpSection>
 
@@ -52,6 +53,14 @@ export default function HelpLookupsPage() {
             <Body>
               Tabs at the top let you filter to a single category if you only want to see, for
               example, league fixtures or events.
+            </Body>
+          </HelpSection>
+
+          <HelpSection title="Markers">
+            <Body>
+              Lookups → Markers lists the club members who are available to mark games, with their
+              mobile, landline and email. Use it to find someone to mark a singles match. If you would
+              like to be on the list, ask the committee.
             </Body>
           </HelpSection>
 
@@ -69,13 +78,14 @@ export default function HelpLookupsPage() {
 
           <HelpSection title="Cleaning Rota">
             <Body>
-              Lookups → Cleaning Rota shows the clubhouse cleaning schedule. Each entry shows the
-              date and which members are assigned.
+              Lookups → Cleaning Rota shows who cleans the clubhouse on Saturday mornings (before
+              10:00). Each Saturday has up to four people, and your own duties are highlighted.
             </Body>
             <Body>
-              If you need to swap your cleaning duty with another member, tap <strong>Swap</strong>
-              next to your name, select the member you want to swap with, and confirm. An email
-              notification is sent to that member so they know about the swap.
+              If you need to swap your cleaning duty, tap <strong>Swap</strong> next to your name and
+              select the member you want to swap with. If they have a duty, you swap duties (pick
+              which one if they have several); if not, they take yours. An email is sent so they know
+              about the swap.
             </Body>
           </HelpSection>
 
@@ -120,6 +130,27 @@ export default function HelpLookupsPage() {
               <strong>Removing dates after adding a pattern</strong> — if you need to remove
               individual dates after they have been added, tap the day on the calendar and confirm
               the cancellation prompt, just as you would for any other assignment.
+            </Body>
+          </HelpSection>
+
+          <HelpSection title="200 Club">
+            <Body>
+              Lookups → 200 Club shows this season&apos;s numbers and who holds them, the prizes, and
+              the winners of each draw. You buy 200 Club entries — and can choose your numbers — when
+              you fill in your renewal. See the <strong>Renewals</strong> help page.
+            </Body>
+            <Body>
+              GMC members manage the season, give out any numbers that weren&apos;t chosen, and record
+              the draws.
+            </Body>
+          </HelpSection>
+
+          <HelpSection title="Halve It (Darts)">
+            <Body>
+              Lookups → Halve It (Darts) shows the winter darts league: the league table, each
+              night&apos;s results and money, the same tables for each month (used for the monthly
+              prize), and the season&apos;s records. Anyone can view it; the darts organisers enter the
+              results.
             </Body>
           </HelpSection>
 

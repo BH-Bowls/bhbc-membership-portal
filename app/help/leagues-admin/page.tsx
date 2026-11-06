@@ -1,7 +1,7 @@
 'use client';
 
 import { useSession } from 'next-auth/react';
-import { HelpSection, Step, Note, Tip, Body, BackLink } from '../_components';
+import { LastUpdated, HelpSection, Step, Note, Tip, Body, BackLink } from '../_components';
 
 export default function HelpLeaguesAdminPage() {
   const { data: session } = useSession();
@@ -11,14 +11,15 @@ export default function HelpLeaguesAdminPage() {
       <div className="container mx-auto px-4 py-8 max-w-2xl">
         <div className="mb-6">
           <BackLink href="/help" label="Help" />
-          <h1 className="text-2xl font-bold text-gray-900">Leagues Admin</h1>
+          <h1 className="text-2xl font-bold text-gray-900">League Management</h1>
           <p className="text-gray-500 text-sm mt-1">Setting up leagues, managing squads and fixtures</p>
+          <LastUpdated date="2026-11-05" />
         </div>
         <div className="space-y-4">
 
           <HelpSection title="Overview">
             <Body>
-              League management is accessed via <strong>Admin → Leagues Admin</strong>. From there
+              League management is accessed via <strong>Admin → League Management</strong>. From there
               you can create new leagues, change their status, manage teams and squads, generate or
               add fixtures, and record results.
             </Body>
@@ -30,7 +31,7 @@ export default function HelpLeaguesAdminPage() {
 
           <HelpSection title="Creating a league">
             <Step n={1}>
-              Go to <strong>Admin → Leagues Admin</strong> and tap <strong>New League</strong>.
+              Go to <strong>Admin → League Management</strong> and tap <strong>New League</strong>.
             </Step>
             <Step n={2}>Enter a name, choose the type (Triples or Pairs), and set the season.</Step>
             <Step n={3}>
@@ -67,7 +68,7 @@ export default function HelpLeaguesAdminPage() {
             </Note>
             <Step n={1}>Open the league management page.</Step>
             <Step n={2}>
-              In the left panel, tap <strong>+ Add team</strong> and enter a team name.
+              In the left panel, enter a team name and tap <strong>Add Team</strong>.
             </Step>
             <Step n={3}>Repeat for each team in the league.</Step>
             <Body>

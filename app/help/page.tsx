@@ -59,8 +59,14 @@ export default function HelpIndexPage() {
     {
       title: 'Home page',
       description:
-        'Announcements from the committee and your personalised upcoming events — friendly games you are selected for and competition matches you have arranged.',
+        'Announcements, open polls, your diary of upcoming games and duties, and the My Account button.',
       href: '/help/home',
+    },
+    {
+      title: 'My Account',
+      description:
+        'Your membership card and QR code, your bar account and PIN, a lost card, and paying your membership fees.',
+      href: '/help/account',
     },
     {
       title: 'Getting around',
@@ -77,7 +83,7 @@ export default function HelpIndexPage() {
     {
       title: 'Logging in & out',
       description:
-        'Log in with your username and password. Your session stays active for 30 days. Forgot password, changing password, and signing out.',
+        'Log in with your username or email and password. Staying logged in, forgotten passwords, changing your password, and logging out.',
       href: '/help/login',
     },
     {
@@ -107,8 +113,14 @@ export default function HelpIndexPage() {
     {
       title: 'Lookups',
       description:
-        'Find member contact details, club information, fixtures, and rota assignments — Members, Clubs, Fixtures, Tea Rota, Cleaning Rota, and Sweeping Rota.',
+        'Members, Clubs, Fixtures, Documents, Markers, the Tea, Cleaning and Sweeping Rotas, the 200 Club and Halve It (Darts).',
       href: '/help/lookups',
+    },
+    {
+      title: 'Applying for membership',
+      description:
+        'How someone new joins the club — the online application form, and what happens to an application.',
+      href: '/help/apply',
     },
     {
       title: 'Your profile',
@@ -125,7 +137,7 @@ export default function HelpIndexPage() {
     {
       title: 'Renewals',
       description:
-        'How annual membership renewals work — when to expect your renewal, how to pay, and what happens once payment is confirmed.',
+        'Filling in your renewal, Save Draft and Submit, choosing 200 Club numbers, and paying online, by bank transfer or at the bar.',
       href: '/help/renewals',
     },
   ];
@@ -164,7 +176,7 @@ export default function HelpIndexPage() {
     },
     {
       title: 'Banking',
-      description: 'Import bank statements, match payments to renewals, and produce banking reports.',
+      description: 'Matching bank payments to renewals, Bar Reconciliation, Renewals → Xero, Member Accounts and Data Checks.',
       href: '/help/banking',
       show: isTreasurer || isAdmin,
       badge: 'Treasurer',
@@ -184,7 +196,7 @@ export default function HelpIndexPage() {
       badge: 'Captain',
     },
     {
-      title: 'Leagues Admin',
+      title: 'League Management',
       description: 'Create leagues, manage teams and squad assignments, generate fixtures, and record results.',
       href: '/help/leagues-admin',
       show: isCaptain || isLeagueOrganiser || isAdmin,
@@ -205,8 +217,8 @@ export default function HelpIndexPage() {
       badge: 'Rowland',
     },
     {
-      title: 'Fixtures & League Admin',
-      description: 'Manage fixture lists and league tables for the playing season.',
+      title: 'Fixtures & Season Planning',
+      description: 'Manage the fixture list, and build next season’s fixtures with Season Planning.',
       href: '/help/fixtures-admin',
       show: isCaptain || isAdmin,
       badge: 'Captain',
@@ -220,7 +232,7 @@ export default function HelpIndexPage() {
     },
     {
       title: 'Invite Games',
-      description: 'Manage invitation games and track responses from visiting clubs.',
+      description: 'Publishing invitations from neighbouring clubs to open competitions our members can enter.',
       href: '/help/invite-games',
       show: isGMC || isAdmin,
       badge: 'GMC',
@@ -234,7 +246,7 @@ export default function HelpIndexPage() {
     },
     {
       title: 'Cleaning Rota Admin',
-      description: 'Manage the clubhouse cleaning rota — add, edit, or remove assignments.',
+      description: 'Change who cleans the clubhouse on each Saturday, and how members swap their own duties.',
       href: '/help/cleaning-rota-admin',
       show: isGMC || isAdmin,
       badge: 'GMC',
@@ -247,9 +259,58 @@ export default function HelpIndexPage() {
       badge: 'Admin',
     },
     {
+      title: 'Website Admin',
+      description: 'Updating the public club website — committee, coaches, announcements, honours, Rowland Cup winners and documents.',
+      href: '/help/website-admin',
+      show: isAdmin || isCaptain || isGMC,
+      badge: 'Committee',
+    },
+    {
+      title: 'Clubhouse Kiosk & Access PIN',
+      description: 'Setting up the clubhouse tablet and what it can do, and the access PIN that guards the public pages.',
+      href: '/help/kiosk',
+      show: isAdmin || isCaptain || isGMC || isTreasurer,
+      badge: 'Committee',
+    },
+    {
+      title: 'Admin Tools',
+      description: 'Config (including maintenance mode and the bar settings), Logs, Backups and Cache View.',
+      href: '/help/admin-tools',
+      show: isAdmin,
+      badge: 'Admin',
+    },
+    {
       title: 'Data Export',
       description: 'Export member data in various formats for external use.',
       href: '/help/data-export',
+      show: isAdmin,
+      badge: 'Admin',
+    },
+    {
+      title: 'Bar Till Devices',
+      description: 'Approving the till tablet with its pairing code, revoking one, pairing the Square Terminal, and card payments needing attention.',
+      href: '/help/bar-devices',
+      show: isAdmin,
+      badge: 'Admin',
+    },
+    {
+      title: 'Members Admin',
+      description: 'Applications from the online form, editing and adding members, Include in Mailings, archiving leavers and reinstating them.',
+      href: '/help/members-admin',
+      show: isAdmin,
+      badge: 'Admin',
+    },
+    {
+      title: 'Print Labels',
+      description: 'Address, booklet, locker and membership card labels — choosing members, layouts, copies and skipping used labels.',
+      href: '/help/labels',
+      show: isAdmin,
+      badge: 'Admin',
+    },
+    {
+      title: 'Locker Register',
+      description: 'Who has which locker and its keys — allocating, changing, adding and removing lockers, and printing locker labels.',
+      href: '/help/lockers',
       show: isAdmin,
       badge: 'Admin',
     },
