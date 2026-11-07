@@ -1,11 +1,18 @@
 // app/api/rowland/[compId]/route.ts
-// GET single comp — PATCH to update metadata (status, dates, numTeams)
+// GET single comp (?year=2025 for a past season, read only) — PATCH to update metadata
+// (status, dates, numTeams)
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { hasRole, isCommitteeMember } from '@/lib/role-utils';
-import { getRowlandComp, updateRowlandComp, createEmptyBracket, getRowlandMatches } from '@/lib/rowland-supabase';
+import {
+  getRowlandComp,
+  updateRowlandComp,
+  createEmptyBracket,
+  getRowlandMatches,
+  getCurrentRowlandYear,
+} from '@/lib/rowland-supabase';
 import type { RowlandCompId } from '@/types/rowland';
 
 // Committee or the Rowland organiser. Multi-role aware — the previous raw string
@@ -15,15 +22,20 @@ function isCommittee(role: string) {
 }
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ compId: string }> }
 ) {
   try {
     const { compId } = await params;
-    const comp = await getRowlandComp(compId as RowlandCompId);
+
+    const currentYear = await getCurrentRowlandYear();
+    const yearParam = parseInt(req.nextUrl.searchParams.get('year') || '', 10);
+    const year = !isNaN(yearParam) ? yearParam : currentYear;
+
+    const comp = await getRowlandComp(compId as RowlandCompId, year);
     if (!comp) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-    return NextResponse.json({ comp });
+    return NextResponse.json({ comp, isPast: year !== currentYear });
   } catch (error) {
     console.error('[rowland/compId] GET error:', error);
     return NextResponse.json({ error: 'Failed to load competition' }, { status: 500 });

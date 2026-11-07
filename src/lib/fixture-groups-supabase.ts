@@ -921,8 +921,8 @@ export async function getSeasonEntryCodes(seasonId?: string): Promise<Array<{
  * the legacy code. A pool reserve in a linked group appears against every game in the
  * group they could still be picked for.
  */
-export async function getPlayerEntries(userName: string): Promise<PlayerEntry[]> {
-  const data = await loadSeasonOccasionData();
+export async function getPlayerEntries(userName: string, seasonId?: string): Promise<PlayerEntry[]> {
+  const data = await loadSeasonOccasionData(seasonId);
   const out: PlayerEntry[] = [];
   for (const entry of data.entriesByUser.get(userName.toLowerCase()) || []) {
     const selection = data.selectionByEntry.get(entry.id) || null;

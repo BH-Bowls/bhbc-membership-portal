@@ -1,6 +1,7 @@
 // app/api/competitions/[compId]/route.ts
-// GET  /api/competitions/[compId] — competition + matches
-// PATCH /api/competitions/[compId] — update competition metadata (committee)
+// GET  /api/competitions/[compId] — competition + matches (the current year)
+// GET  /api/competitions/[compId]?year=2025 — another year's competition + matches (read only)
+// PATCH /api/competitions/[compId] — update the current year's competition metadata (committee)
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
@@ -8,6 +9,7 @@ import { authOptions } from '@/lib/auth';
 import {
   getCompetitionById,
   getCompetitionMatches,
+  getCurrentCompetitionYear,
   updateCompetition,
 } from '@/lib/competitions-supabase';
 import type { Competition } from '@/types/competitions';
@@ -19,16 +21,21 @@ export async function GET(
 ) {
   try {
     const { compId } = await params;
+
+    const currentYear = await getCurrentCompetitionYear();
+    const yearParam = parseInt(request.nextUrl.searchParams.get('year') || '', 10);
+    const year = !isNaN(yearParam) ? yearParam : currentYear;
+
     const [competition, matches] = await Promise.all([
-      getCompetitionById(compId),
-      getCompetitionMatches(compId),
+      getCompetitionById(compId, year),
+      getCompetitionMatches(compId, year),
     ]);
 
     if (!competition) {
       return NextResponse.json({ error: 'Competition not found' }, { status: 404 });
     }
 
-    return NextResponse.json({ competition, matches });
+    return NextResponse.json({ competition, matches, isPast: year !== currentYear });
   } catch (error) {
     console.error('[GET /api/competitions/[compId]] Error:', error);
     return NextResponse.json({ error: 'Failed to fetch competition' }, { status: 500 });
@@ -60,6 +67,7 @@ export async function PATCH(
       ...existing,
       ...body,
       compId, // Prevent changing the ID
+      year: existing.year, // ...or the year — only the current year's row is ever updated
     };
 
     await updateCompetition(updated);

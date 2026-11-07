@@ -1,5 +1,8 @@
 // app/competitions/admin/page.tsx
-// Committee overview: all competitions with quick-access manage links
+// Committee overview: all competitions with quick-access manage links, plus the Admin
+// "Set up next year" action — creates next year's competitions (Not Started, same names,
+// types and rules). This year's draws stay as they are and become a past year on the
+// /competitions year picker.
 
 'use client';
 
@@ -37,22 +40,58 @@ export default function CompetitionsAdminPage() {
 
   const [exportComp, setExportComp] = useState<Competition | null>(null);
 
+  // Start new season
+  const [currentYear, setCurrentYear] = useState<number | null>(null);
+  const [nextYear, setNextYear] = useState<number | null>(null);
+  const [startSeasonOpen, setStartSeasonOpen] = useState(false);
+  const [startingSeason, setStartingSeason] = useState(false);
+  const [startSeasonError, setStartSeasonError] = useState<string | null>(null);
+  const [startSeasonDone, setStartSeasonDone] = useState<string | null>(null);
+
   useEffect(() => {
     if (!isCommittee && !loading) {
       router.replace('/competitions');
     }
   });
 
-  useEffect(() => {
+  function loadCompetitions() {
     fetch('/api/competitions')
       .then((r) => r.json())
       .then((data) => {
         if (data.error) throw new Error(data.error);
         setCompetitions(data.competitions || []);
+        setCurrentYear(data.currentYear || null);
+        setNextYear(data.nextYear || null);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    loadCompetitions();
   }, []);
+
+  async function startSeason() {
+    if (nextYear === null) return;
+    setStartingSeason(true);
+    setStartSeasonError(null);
+    try {
+      const res = await fetch('/api/competitions/start-year', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ year: nextYear }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to set up the new year');
+      setStartSeasonOpen(false);
+      setStartSeasonDone(`${data.year} is set up: ${data.created} competition${data.created === 1 ? '' : 's'}. The ${data.year - 1} draws are still on Competitions: pick ${data.year - 1} from the year list.`);
+      loadCompetitions();
+    } catch (err) {
+      setStartSeasonError(err instanceof Error ? err.message : 'Failed to set up the new year');
+    } finally {
+      setStartingSeason(false);
+    }
+  }
 
   const grouped: Record<CompType, Competition[]> = {
     singles: competitions.filter((c) => c.compType === 'singles'),
@@ -74,8 +113,23 @@ export default function CompetitionsAdminPage() {
               ← All Competitions
             </button>
             <h1 className="text-2xl font-bold text-gray-900">Competitions Admin</h1>
+            {currentYear !== null && <p className="text-sm text-gray-700 mt-0.5">{currentYear} season</p>}
           </div>
+          {isAdmin && nextYear !== null && (
+            <button
+              onClick={() => { setStartSeasonError(null); setStartSeasonOpen(true); }}
+              className="px-3 py-2 text-sm border border-gray-300 bg-white text-gray-700 rounded-md hover:bg-gray-50 font-medium"
+            >
+              Set up {nextYear}
+            </button>
+          )}
         </div>
+
+        {startSeasonDone && (
+          <div className="mb-6 bg-green-50 border border-green-200 rounded-lg p-4 text-sm text-green-800">
+            {startSeasonDone}
+          </div>
+        )}
 
         {loading && (
           <div className="text-center py-12 text-gray-400">Loading…</div>
@@ -147,6 +201,36 @@ export default function CompetitionsAdminPage() {
         competition={exportComp}
         onClose={() => setExportComp(null)}
       />
+    )}
+
+    {startSeasonOpen && nextYear !== null && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 px-4">
+        <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-3">Set up the {nextYear} competitions?</h2>
+          <div className="text-sm text-gray-700 space-y-2 mb-4">
+            <p>This adds every competition for {nextYear}, Not Started with no draw or dates. Names, types and rules carry over.</p>
+            <p>{nextYear} becomes the year shown on the Competitions page. The {nextYear - 1} draws and results stay as they are; pick {nextYear - 1} from the year list to see them. They can&apos;t be changed after this.</p>
+            <p className="font-medium text-gray-900">Only do this once {nextYear - 1}&apos;s competitions are finished.</p>
+          </div>
+          {startSeasonError && <p className="text-sm text-red-700 mb-3">{startSeasonError}</p>}
+          <div className="flex justify-end gap-3">
+            <button
+              onClick={() => setStartSeasonOpen(false)}
+              disabled={startingSeason}
+              className="px-4 py-2 text-sm rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={startSeason}
+              disabled={startingSeason}
+              className="px-4 py-2 text-sm rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {startingSeason ? 'Setting up…' : `Set up ${nextYear}`}
+            </button>
+          </div>
+        </div>
+      </div>
     )}
     </>
   );

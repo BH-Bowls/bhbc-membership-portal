@@ -1,12 +1,15 @@
 // app/rowland/[compId]/page.tsx
 // Bracket view for a single Rowland Cup competition — reuses BracketView
+// ?year=2025 shows that year's draw, read only: no result
+// entry, no next-match card, no Manage. Score sheets can still be viewed.
 
 'use client';
 
 import { use, useEffect, useState, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useNavbarConfig } from '@/lib/navbar-config';
+import { PastYearNotice } from '@/components/YearSelect';
 import { BracketView } from '@/components/competitions/BracketView';
 import { RowlandMatchDialog } from '@/components/rowland/RowlandMatchDialog';
 import { EmailLink, PhoneLink } from '@/components/ContactLink';
@@ -78,8 +81,12 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
   const { data: session, status } = useSession();
   const isGuest = status === 'unauthenticated';
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const yearParam = searchParams.get('year') || '';
+  const yearQuery = yearParam ? `?year=${encodeURIComponent(yearParam)}` : '';
 
   const [comp, setComp] = useState<RowlandComp | null>(null);
+  const [isPast, setIsPast] = useState(false);
   const [matches, setMatches] = useState<CompMatch[]>([]);
   const [rawMatches, setRawMatches] = useState<RowlandMatch[]>([]);
   const [loading, setLoading] = useState(true);
@@ -121,13 +128,14 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
   const loadData = useCallback(async () => {
     try {
       const [compRes, matchRes] = await Promise.all([
-        fetch(`/api/rowland/${compId}`),
-        fetch(`/api/rowland/${compId}/matches`),
+        fetch(`/api/rowland/${compId}${yearQuery}`),
+        fetch(`/api/rowland/${compId}/matches${yearQuery}`),
       ]);
       const compData  = await compRes.json();
       const matchData = await matchRes.json();
       if (compData.error) throw new Error(compData.error);
       setComp(compData.comp);
+      setIsPast(!!compData.isPast);
       const raw: RowlandMatch[] = matchData.matches ?? [];
       setRawMatches(raw);
       setMatches(raw.map(rowlandToCompMatch));
@@ -136,13 +144,14 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
     } finally {
       setLoading(false);
     }
-  }, [compId]);
+  }, [compId, yearQuery]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  // Load next match card once we know who the club is
+  // Load next match card once we know who the club is (not for a past year)
   useEffect(() => {
     if (status === 'loading') return;
+    if (yearParam) { setNextMatchData(null); return; }
 
     let lookupClubName: string | null = null;
     let lookupContactName: string | null = null;
@@ -173,12 +182,12 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
         else setNextMatchData(null);
       })
       .catch(() => setNextMatchData(null));
-  }, [status, isRowlandPlayer, isGuest, clubName, compId]);
+  }, [status, isRowlandPlayer, isGuest, clubName, compId, yearParam]);
 
   // ── Match click handling ──────────────────────────────────────────────────
 
   function handleMatchClick(compMatch: CompMatch) {
-    if (isGuest) return;
+    if (isGuest || isPast) return;
     const rawMatch = rawMatches.find((m) => m.matchId === compMatch.matchId);
     if (!rawMatch) return;
 
@@ -275,7 +284,7 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
         <div className="print:hidden flex flex-wrap items-start justify-between gap-4 mb-6">
           <div>
             <button
-              onClick={() => router.push('/rowland')}
+              onClick={() => router.push(isPast ? `/rowland?year=${encodeURIComponent(yearParam)}` : '/rowland')}
               className="text-blue-600 hover:text-blue-800 text-sm flex items-center gap-1 mb-2"
             >
               ← Rowland Cup
@@ -285,6 +294,7 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
             ) : (
               <h1 className="text-2xl font-bold text-gray-900">
                 {comp ? (ROWLAND_COMP_NAMES[comp.compId] ?? comp.compName) : compId}
+                {isPast && comp ? ` ${comp.year}` : ''}
               </h1>
             )}
           </div>
@@ -318,7 +328,7 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
               Print
             </button>
 
-            {isCommittee && (
+            {isCommittee && !isPast && (
               <button
                 onClick={() => router.push(`/rowland/${compId}/setup`)}
                 className="px-3 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium"
@@ -332,6 +342,12 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
         {error && (
           <div className="print:hidden mb-6 bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-700">
             {error}
+          </div>
+        )}
+
+        {isPast && comp && (
+          <div className="print:hidden">
+            <PastYearNotice year={comp.year} />
           </div>
         )}
 
@@ -414,6 +430,7 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
         <div className="hidden print:block mb-4">
           <h1 className="text-2xl font-bold text-gray-900">
             {comp ? (ROWLAND_COMP_NAMES[comp.compId] ?? comp.compName) : compId}
+            {isPast && comp ? ` ${comp.year}` : ''}
           </h1>
         </div>
 
@@ -433,10 +450,10 @@ export default function RowlandCompPage({ params }: { params: Promise<{ compId: 
               compType="singles"
               firstRoundCount={firstRoundCount}
               getInfo={getInfo}
-              canEnterScores={!isGuest && (isCommittee || isCaptain)}
+              canEnterScores={!isGuest && !isPast && (isCommittee || isCaptain)}
               currentUsername={myClubDisplayName}
-              allowCompleteInteraction={!isGuest && isRowlandPlayer}
-              onMatchClick={handleMatchClick}
+              allowCompleteInteraction={!isGuest && !isPast && isRowlandPlayer}
+              onMatchClick={isPast ? undefined : handleMatchClick}
               roundPlayByDates={roundPlayByDates}
               roundOnDates={roundOnDates}
               printOrientation={printOrientation}

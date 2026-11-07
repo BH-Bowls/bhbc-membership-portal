@@ -409,14 +409,11 @@ export default function CompetitionSetupPage({
 
         const comp: Competition = compData.competition;
 
-        // A competition not yet started defaults to this year, so a new season's
-        // setup picks up the new renewals without anyone having to change it.
-        // It's saved to the competition along with the dates.
-        const thisYear = new Date().getFullYear();
-        const effectiveYear = comp.status === 'Not Started' && comp.year < thisYear ? thisYear : comp.year;
-        setSeasonYear(String(effectiveYear));
+        // Each year has its own competition row (Competitions Admin → Set up next year),
+        // so the entrants always come from that year's renewals
+        setSeasonYear(String(comp.year));
 
-        const entrantData = await fetch(`/api/competitions/${compId}/entrants?year=${effectiveYear}`).then((r) => r.json());
+        const entrantData = await fetch(`/api/competitions/${compId}/entrants?year=${comp.year}`).then((r) => r.json());
         const matches: CompMatch[] = compData.matches || [];
         setCompetition(comp);
 
@@ -509,21 +506,6 @@ export default function CompetitionSetupPage({
   }, [compId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { loadData(); }, [loadData]);
-
-  // Reload just the entrants when the season year is changed by hand
-  function changeSeasonYear(value: string) {
-    setSeasonYear(value);
-    const year = parseInt(value, 10);
-    if (!compId || !/^\d{4}$/.test(value)) return;
-    fetch(`/api/competitions/${compId}/entrants?year=${year}`)
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.error) return;
-        setEntrants(data.entrants || []);
-        setSubs(data.subs || []);
-      })
-      .catch(() => { /* keep the current list */ });
-  }
 
   useEffect(() => {
     if (!loading && !isCommittee) router.replace(`/competitions/${compId}`);
@@ -687,7 +669,6 @@ export default function CompetitionSetupPage({
           qfFixed,
           sfFixed,
           compStartDate: compStartDate || null,
-          ...(/^\d{4}$/.test(seasonYear) ? { year: parseInt(seasonYear, 10) } : {}),
           ...(entrants.length === 0 && manualDrawCount
             ? { drawSideCount: parseInt(manualDrawCount, 10) || null }
             : {}),
@@ -1039,15 +1020,8 @@ export default function CompetitionSetupPage({
               <h2 className="font-semibold text-gray-900 mb-2">Play-by dates &amp; finals</h2>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Season</label>
-                <input
-                  type="number"
-                  min={2020}
-                  max={2100}
-                  value={seasonYear}
-                  onChange={(e) => changeSeasonYear(e.target.value)}
-                  className="block w-32 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
-                />
+                <p className="block text-sm font-medium text-gray-700 mb-1">Season</p>
+                <p className="text-sm text-gray-900">{seasonYear}</p>
                 <p className="mt-1 text-xs text-gray-700">Entrants are taken from this season&apos;s renewals.</p>
               </div>
 

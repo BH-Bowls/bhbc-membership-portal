@@ -123,7 +123,7 @@ function parseCompRow(row: any[], colMap: Record<string, number>): RowlandComp {
   return {
     compId: (get('comp_id') || '') as RowlandCompId,
     compName: get('comp_name') || '',
-    season: get('season') || '',
+    year: parseInt(get('season') || '', 10) || new Date().getFullYear(),
     status: (get('status') || 'Not Started') as RowlandCompStatus,
     numTeams: parseInt(get('num_teams') || '0', 10) || 0,
     prelimPlayBy: normalizeDate(get('prelim_play_by')),

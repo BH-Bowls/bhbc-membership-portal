@@ -1,13 +1,16 @@
 // app/competitions/page.tsx
 // Competitions list page — loads live data from API
+// ?year=2025 shows a past year's competitions (read only), picked from the year dropdown
+// like /fixtures.
 
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useSession } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useNavbarConfig } from '@/lib/navbar-config';
 import { RichText } from '@/components/RichText';
+import { YearSelect, PastYearNotice } from '@/components/YearSelect';
 import type { Competition, CompStatus, CompType } from '@/types/competitions';
 
 interface RulesText {
@@ -39,12 +42,31 @@ function formatDate(dateStr: string | null | undefined): string {
 }
 
 export default function CompetitionsPage() {
+  return (
+    <Suspense>
+      <CompetitionsPageInner />
+    </Suspense>
+  );
+}
+
+function CompetitionsPageInner() {
   const { data: session, status } = useSession();
   const isGuest = status === 'unauthenticated';
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const yearParam = searchParams.get('year') || '';
   const [competitions, setCompetitions] = useState<Competition[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Year picker — the API says which years exist and which one is live
+  const [years, setYears] = useState<number[]>([]);
+  const [shownYear, setShownYear] = useState<number | null>(null);
+  const [isPast, setIsPast] = useState(false);
+
+  function changeYear(year: string) {
+    router.replace(`/competitions?year=${year}`, { scroll: false });
+  }
 
   const role = session?.user?.role ?? '';
   const isCommittee = role !== 'Member' && role !== '' && role !== 'Kiosk';
@@ -59,15 +81,22 @@ export default function CompetitionsPage() {
   const [savingRules, setSavingRules] = useState(false);
 
   useEffect(() => {
-    fetch('/api/competitions')
+    setLoading(true);
+    setError(null);
+    fetch(`/api/competitions${yearParam ? `?year=${encodeURIComponent(yearParam)}` : ''}`)
       .then((r) => r.json())
       .then((data) => {
         if (data.error) throw new Error(data.error);
         setCompetitions(data.competitions || []);
+        setYears(data.years || []);
+        setShownYear(data.year || null);
+        setIsPast(!!data.isPast);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
+  }, [yearParam]);
 
+  useEffect(() => {
     fetch('/api/competitions/rules-text')
       .then((r) => r.json())
       .then((data) => {
@@ -128,7 +157,10 @@ export default function CompetitionsPage() {
               </p>
             )}
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2 justify-end">
+            {shownYear !== null && (
+              <YearSelect years={years} value={shownYear} onChange={changeYear} />
+            )}
             <a
               href="https://burgesshillbowlsclub.com/marking"
               target="_blank"
@@ -239,6 +271,8 @@ export default function CompetitionsPage() {
           </div>
         )}
 
+        {isPast && shownYear !== null && <PastYearNotice year={shownYear} />}
+
         {loading && (
           <div className="text-center py-12 text-gray-400">Loading competitions…</div>
         )}
@@ -267,7 +301,7 @@ export default function CompetitionsPage() {
                   return (
                     <button
                       key={comp.compId}
-                      onClick={() => router.push(`/competitions/${comp.compId}`)}
+                      onClick={() => router.push(isPast ? `/competitions/${comp.compId}?year=${comp.year}` : `/competitions/${comp.compId}`)}
                       title={`View ${comp.displayName} draw`}
                       className="bg-white rounded-lg border border-gray-200 p-4 text-left hover:shadow-md hover:border-gray-300 transition-all cursor-pointer"
                     >

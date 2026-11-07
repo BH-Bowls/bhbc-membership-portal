@@ -5,12 +5,17 @@
 // exists — see Specs/ROWLAND_TEAM_ENTRY_SPEC.md §7, deferred). Also reachable via the
 // Navbar's "Rowland Admin" link (src/components/Navbar.tsx), not just /rowland's own
 // "Manage" button.
+//
+// The Competitions tab also has "Set up next year" (Admin / Rowland organiser): creates
+// next year's four competitions, Not Started with no teams. This year's draws stay as they
+// are and become a past year on the /rowland year picker.
 
 'use client';
 
 import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
+import { hasRole } from '@/lib/role-utils';
 import type { RowlandComp, RowlandCompStatus } from '@/types/rowland';
 import { ROWLAND_COMP_NAMES } from '@/types/rowland';
 
@@ -54,6 +59,7 @@ export default function RowlandAdminPage() {
 
   const role = session?.user?.role ?? '';
   const isCommittee = role !== 'Member' && role !== '';
+  const canStartYear = hasRole(role, 'Admin', 'RowlandOrganiser');
 
   const [tab, setTab] = useState<Tab>('competitions');
 
@@ -61,6 +67,14 @@ export default function RowlandAdminPage() {
   const [comps, setComps] = useState<RowlandComp[]>([]);
   const [compsLoading, setCompsLoading] = useState(true);
   const [compsError, setCompsError] = useState<string | null>(null);
+
+  // Set up next year
+  const [currentYear, setCurrentYear] = useState<number | null>(null);
+  const [nextYear, setNextYear] = useState<number | null>(null);
+  const [startYearOpen, setStartYearOpen] = useState(false);
+  const [startingYear, setStartingYear] = useState(false);
+  const [startYearError, setStartYearError] = useState<string | null>(null);
+  const [startYearDone, setStartYearDone] = useState<string | null>(null);
 
   // Entries tab
   const [season, setSeason] = useState('');
@@ -75,17 +89,44 @@ export default function RowlandAdminPage() {
   }, [session, isCommittee]);
 
   useEffect(() => {
+    loadComps();
+    loadEntries();
+  }, []);
+
+  function loadComps() {
     fetch('/api/rowland')
       .then((r) => r.json())
       .then((data) => {
         if (data.error) throw new Error(data.error);
         setComps(data.comps || []);
+        setCurrentYear(data.currentYear || null);
+        setNextYear(data.nextYear || null);
       })
       .catch((err) => setCompsError(err.message))
       .finally(() => setCompsLoading(false));
+  }
 
-    loadEntries();
-  }, []);
+  async function startYear() {
+    if (nextYear === null) return;
+    setStartingYear(true);
+    setStartYearError(null);
+    try {
+      const res = await fetch('/api/rowland/start-year', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ year: nextYear }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to set up the new year');
+      setStartYearOpen(false);
+      setStartYearDone(`${data.year} is set up. The ${data.year - 1} draws are still on the Rowland Cup page: pick ${data.year - 1} from the year list.`);
+      loadComps();
+    } catch (err) {
+      setStartYearError(err instanceof Error ? err.message : 'Failed to set up the new year');
+    } finally {
+      setStartingYear(false);
+    }
+  }
 
   function loadEntries() {
     setEntriesLoading(true);
@@ -193,6 +234,26 @@ export default function RowlandAdminPage() {
             {compsError && (
               <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-700">
                 {compsError}
+              </div>
+            )}
+
+            {startYearDone && (
+              <div className="mb-6 bg-green-50 border border-green-200 rounded-lg p-4 text-sm text-green-800">
+                {startYearDone}
+              </div>
+            )}
+
+            {!compsLoading && !compsError && (
+              <div className="flex items-center justify-between mb-4">
+                {currentYear !== null ? <p className="text-sm text-gray-700">{currentYear} season</p> : <span />}
+                {canStartYear && nextYear !== null && (
+                  <button
+                    onClick={() => { setStartYearError(null); setStartYearOpen(true); }}
+                    className="px-3 py-1.5 text-xs font-medium border border-gray-300 bg-white text-gray-700 rounded-md hover:bg-gray-50"
+                  >
+                    Set up {nextYear}
+                  </button>
+                )}
               </div>
             )}
 
@@ -346,6 +407,36 @@ export default function RowlandAdminPage() {
           </>
         )}
       </div>
+
+      {startYearOpen && nextYear !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 px-4">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-3">Set up the {nextYear} Rowland Cup?</h2>
+            <div className="text-sm text-gray-700 space-y-2 mb-4">
+              <p>This adds the four {nextYear} competitions, Not Started with no teams or dates. Entries aren&apos;t affected.</p>
+              <p>{nextYear} becomes the year shown on the Rowland Cup page. The {nextYear - 1} draws and results stay as they are; pick {nextYear - 1} from the year list to see them. They can&apos;t be changed after this.</p>
+              <p className="font-medium text-gray-900">Only do this once the {nextYear - 1} finals have been played.</p>
+            </div>
+            {startYearError && <p className="text-sm text-red-700 mb-3">{startYearError}</p>}
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setStartYearOpen(false)}
+                disabled={startingYear}
+                className="px-4 py-2 text-sm rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={startYear}
+                disabled={startingYear}
+                className="px-4 py-2 text-sm rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {startingYear ? 'Setting up…' : `Set up ${nextYear}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

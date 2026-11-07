@@ -101,6 +101,7 @@ interface GameDetails {
   // Captain of the Day
   captainOfDay: string;           // Full name of captain
   sharedWith?: string[];          // Linked games: the other games in the group (reserves are shared)
+  isPast?: boolean;               // From a past season (?year=) — read only, no actions
   squad?: { id: string; label: string } | null; // League / Club Team game: its squad
 
   // Tea duty assignments (home games only)
@@ -157,7 +158,9 @@ export default function GameDetailsPage() {
   // State: Game details including teams and user status
   const [gameDetails, setGameDetails] = useState<GameDetails | null>(null);
   // A league / Club Team game goes back to its squad page; a friendly to Friendlies
-  const backHref = gameDetails && gameDetails.squad ? `/squads/${gameDetails.squad.id}` : '/friendlies';
+  // A past season's game (?year=) goes back to that year's list
+  const yearParam = searchParams.get('year') || '';
+  const backHref = gameDetails && gameDetails.squad ? `/squads/${gameDetails.squad.id}` : (yearParam ? `/friendlies?year=${yearParam}` : '/friendlies');
   usePhoneBackNavigation(backHref);
 
   // State: Loading indicator while fetching game details
@@ -271,9 +274,11 @@ export default function GameDetailsPage() {
 
     try {
       const token = searchParams.get('token');
-      const url = token
-        ? `/api/friendlies/game/${tabDate}?token=${encodeURIComponent(token)}`
-        : `/api/friendlies/game/${tabDate}`;
+      const query = new URLSearchParams();
+      if (token) query.set('token', token);
+      if (yearParam) query.set('year', yearParam);
+      const qs = query.toString();
+      const url = `/api/friendlies/game/${tabDate}${qs ? `?${qs}` : ''}`;
       const response = await fetch(url);
       const data = await response.json();
 
@@ -769,6 +774,9 @@ export default function GameDetailsPage() {
   // Show no-email indicator only to captains and admins
   const isCaptainOrAdmin = !isGuest && hasRole(session?.user?.role, 'Captain', 'Admin');
 
+  // A past season's game is read only — every action below is hidden
+  const isPast = !!gameDetails.isPast;
+
 
   // ============================================================================
   // Render UI
@@ -792,6 +800,12 @@ export default function GameDetailsPage() {
             >
               ✕
             </button>
+          </div>
+        )}
+
+        {isPast && (
+          <div className="mb-4 p-4 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-sm">
+            This game is from a past season. It&apos;s read only.
           </div>
         )}
 
@@ -832,7 +846,7 @@ export default function GameDetailsPage() {
                 {gameDetails && gameDetails.squad ? `← Back to ${gameDetails.squad.label}` : '← Back to Games'}
               </Link>
             )}
-            {!isGuest && hasRole(session?.user?.role, 'Captain', 'Admin') && (
+            {!isGuest && !isPast && hasRole(session?.user?.role, 'Captain', 'Admin') && (
               <Link
                 href={`/friendlies/manage/game/${tabDate}`}
                 className="text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded transition-colors"
@@ -912,8 +926,8 @@ export default function GameDetailsPage() {
                 )}
               </div>
 
-              {/* Action buttons (Confirm, Withdraw, Message Captains) */}
-              <div className="flex flex-wrap gap-2 justify-end">
+              {/* Action buttons (Confirm, Withdraw, Message Captains) — none for a past season */}
+              {!isPast && <div className="flex flex-wrap gap-2 justify-end">
                 {/* Confirm button — shows when the user or one of their partners still
                     needs confirming. Label adapts: "Confirm you and Peter" etc. */}
                 {getConfirmInfo().show && (
@@ -955,7 +969,7 @@ export default function GameDetailsPage() {
                 >
                   Message Captains
                 </button>
-              </div>
+              </div>}
             </div>
 
             {/* Withdrawing is personal — if the user has a partner in this game, nudge
@@ -967,7 +981,7 @@ export default function GameDetailsPage() {
               </p>
             )}
           </div>
-        ) : !isGuest && (
+        ) : !isGuest && !isPast && (
           /* No status box — show Message Captains as a standalone button */
           <div className="flex justify-end mb-6">
             <button
@@ -980,7 +994,7 @@ export default function GameDetailsPage() {
         )}
 
         {/* Token action section — shown when player arrived via email link (no session) */}
-        {isTokenMode && tokenPlayer && (
+        {isTokenMode && tokenPlayer && !isPast && (
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
             <h3 className="font-semibold text-lg mb-3 text-gray-900">Your Actions</h3>
 
@@ -1050,7 +1064,7 @@ export default function GameDetailsPage() {
         )}
 
         {/* Acknowledge button for logged-in users on cancelled games */}
-        {session && game.status === 'C' && game.userStatus && (
+        {session && !isPast && game.status === 'C' && game.userStatus && (
           <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6">
             <h3 className="font-semibold text-lg mb-2 text-gray-900">Cancellation Notice</h3>
             {game.userAcknowledged ? (

@@ -81,7 +81,7 @@ async function main() {
   const compsToInsert = comps.map((c) => ({
     comp_id: c.compId,
     comp_name: c.compName,
-    season: c.season,
+    year: c.year,
     status: c.status,
     num_teams: c.numTeams,
     prelim_play_by: c.prelimPlayBy,

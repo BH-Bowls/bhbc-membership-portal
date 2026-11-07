@@ -2,10 +2,14 @@
 // Main Friendlies page - displays list of friendly matches with entry/withdrawal functionality
 // Players can view all games, filter by status, and enter/withdraw from open games
 // Captains and Admins also see a "Manage Games" button to access team selection
+// ?year=2025 shows a past season (picked from the year dropdown, like /fixtures): the
+// games, scores and the member's own part in them, read only — no entering or removing.
 
 'use client';
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { YearSelect, PastYearNotice } from '@/components/YearSelect';
 
 // useLayoutEffect runs synchronously after DOM update but before paint — used to
 // restore cached state without a flash of the loading spinner on back-navigation.
@@ -89,12 +93,50 @@ interface StatsData {
  * - Batch update of entries with error handling
  */
 export default function FriendliesPage() {
+  return (
+    <Suspense>
+      <FriendliesPageInner />
+    </Suspense>
+  );
+}
+
+function FriendliesPageInner() {
   // Get current user session for authentication and role checking
   const { data: session, status } = useSession();
   const isGuest = status === 'unauthenticated';
   const isKiosk = (session?.user?.role || '') === 'Kiosk';
   // Guests and kiosk users see read-only friendlies (no entry, no My Entries/My Played)
   const isLimitedView = isGuest || isKiosk;
+
+  // Year picker. No ?year = the active season. A past season is read only.
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const yearParam = searchParams.get('year') || '';
+  const [seasons, setSeasons] = useState<{ year: number; isActive: boolean }[]>([]);
+  const [shownYear, setShownYear] = useState<number | null>(null);
+  const [isPast, setIsPast] = useState(false);
+
+  function changeYear(year: string) {
+    let isActiveYear = false;
+    for (const s of seasons) {
+      if (String(s.year) === year && s.isActive) isActiveYear = true;
+    }
+    if (isActiveYear) {
+      // Back to this season: the status filter the member last chose
+      const savedAllSub = sessionStorage.getItem('friendlies_all_sub');
+      if (savedAllSub === 'upcoming' || savedAllSub === 'open' || savedAllSub === 'selecting' || savedAllSub === 'played') {
+        setAllSub(savedAllSub);
+      }
+      router.replace('/friendlies', { scroll: false });
+    } else {
+      router.replace(`/friendlies?year=${year}`, { scroll: false });
+    }
+  }
+
+  /** A game's page — for a past season, the year goes with it (game names repeat each year). */
+  function gameHref(tabName: string): string {
+    return isPast && shownYear !== null ? `/friendlies/game/${tabName}?year=${shownYear}` : `/friendlies/game/${tabName}`;
+  }
 
   // State: List of all games with user's entry status for each
   const [games, setGames] = useState<GameWithUserStatus[]>([]);
@@ -222,7 +264,8 @@ export default function FriendliesPage() {
 
     sessionStorage.removeItem(BACK_FLAG); // consume back-nav flag (no longer used for cache gating)
 
-    const cached = sessionStorage.getItem(CACHE_KEY);
+    // The cache only ever holds the active season — a past year always loads fresh
+    const cached = yearParam ? null : sessionStorage.getItem(CACHE_KEY);
     if (cached) {
       try {
         setGames(JSON.parse(cached));
@@ -253,13 +296,20 @@ export default function FriendliesPage() {
     try {
       // fresh=true bypasses the server's Games cache so the entered count is current
       // right after an enter/withdraw (see the games route).
-      const response = await fetch(`/api/friendlies/games${fresh ? '?fresh=1' : ''}`);
+      const params = new URLSearchParams();
+      if (fresh) params.set('fresh', '1');
+      if (yearParam) params.set('year', yearParam);
+      const qs = params.toString();
+      const response = await fetch(`/api/friendlies/games${qs ? `?${qs}` : ''}`);
       const data = await response.json();
 
       if (data.games) {
         setGames(data.games);
-        sessionStorage.setItem(CACHE_KEY, JSON.stringify(data.games));
+        if (!data.isPast) sessionStorage.setItem(CACHE_KEY, JSON.stringify(data.games));
       }
+      if (Array.isArray(data.seasons)) setSeasons(data.seasons);
+      if (data.year) setShownYear(data.year);
+      setIsPast(!!data.isPast);
       // Tea-duty dates now come back with the games response (same Games read), so
       // there's no separate /api/tea-rota fetch on this page.
       if (Array.isArray(data.teaDutyTabNames)) {
@@ -275,6 +325,18 @@ export default function FriendliesPage() {
       if (!silent) setLoading(false);
     }
   }
+
+  // Picking another year: load that year's games, and its stats if they're showing.
+  // (The first load is done by the layout effect above, so skip the first run.)
+  const yearLoadedRef = useRef(yearParam);
+  useEffect(() => {
+    if (yearLoadedRef.current === yearParam) return;
+    yearLoadedRef.current = yearParam;
+    fetchGames();
+    setStatsData(null);
+    if (primaryTab === 'stats') fetchStats(statsPlayer || undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [yearParam]);
 
   /** Force a fresh fetch, bypassing both the client and server Games caches. */
   async function handleReload() {
@@ -405,8 +467,11 @@ export default function FriendliesPage() {
   async function fetchStats(userName?: string) {
     setStatsLoading(true);
     try {
-      const qs = userName ? `?userName=${encodeURIComponent(userName)}` : '';
-      const res = await fetch(`/api/friendlies/stats${qs}`);
+      const params = new URLSearchParams();
+      if (userName) params.set('userName', userName);
+      if (yearParam) params.set('year', yearParam);
+      const qs = params.toString();
+      const res = await fetch(`/api/friendlies/stats${qs ? `?${qs}` : ''}`);
       const data = await res.json();
       if (res.ok) {
         setStatsData(data as StatsData);
@@ -432,6 +497,9 @@ export default function FriendliesPage() {
    */
   const filteredGames = games.filter(game => {
     if (primaryTab === 'all') {
+      // A past season shows every game — its games may never have had a status
+      // recorded (seasons from before the portal), so status filters would hide them
+      if (isPast) return true;
       // All Games → filter by game status (mirrors /manage)
       switch (allSub) {
         case 'upcoming':  return game.status === '';
@@ -471,6 +539,9 @@ export default function FriendliesPage() {
    * @returns JSX element with colored badge
    */
   function getStatusBadge(status: string) {
+    // In a past season a blank status means no result was ever recorded, not "Upcoming"
+    if (isPast && status === '') return null;
+
     // Define badge labels and colors for each status
     const badges: { [key: string]: { label: string; color: string } } = {
       '': { label: 'Upcoming', color: 'bg-gray-500' },      // Blank = Not opened yet
@@ -560,16 +631,23 @@ export default function FriendliesPage() {
             </button>
           </div>
 
-          {/* Show Manage Games button only for Captains and Admins */}
-          {hasRole(session?.user?.role, 'Captain', 'Admin') && (
-            <Link
-              href="/friendlies/manage"
-              className={getButtonClasses('primary', 'md')}
-            >
-              Manage Games
-            </Link>
-          )}
+          <div className="flex items-center gap-3">
+            {shownYear !== null && (
+              <YearSelect years={seasons.map(s => s.year)} value={shownYear} onChange={changeYear} />
+            )}
+            {/* Show Manage Games button only for Captains and Admins */}
+            {hasRole(session?.user?.role, 'Captain', 'Admin') && (
+              <Link
+                href="/friendlies/manage"
+                className={getButtonClasses('primary', 'md')}
+              >
+                Manage Games
+              </Link>
+            )}
+          </div>
         </div>
+
+        {isPast && shownYear !== null && <PastYearNotice year={shownYear} />}
 
         {/* Primary tabs: All Games | My Games | My Stats */}
         <div className="flex gap-2 mb-3 border-b border-gray-200">
@@ -615,8 +693,9 @@ export default function FriendliesPage() {
           )}
         </div>
 
-        {/* Sub-filter row — status filters for All Games, played state for My Games */}
-        {primaryTab === 'all' && (
+        {/* Sub-filter row — status filters for All Games (not for a past season, which
+            shows every game), played state for My Games */}
+        {primaryTab === 'all' && !isPast && (
           <div className="flex flex-wrap gap-2 mb-6">
             {([
               { value: 'upcoming',  label: 'Upcoming' },
@@ -910,7 +989,7 @@ export default function FriendliesPage() {
                             {required != null ? ` / ${required} Required` : ''}
                           </p>
                           <p className="text-xs text-gray-700">You enter both — the captains pick you into one.</p>
-                          {!isGuest && (
+                          {!isGuest && !isPast && (
                             <button
                               onClick={() => {
                                 setSelectedGameForModal(lead);
@@ -946,7 +1025,7 @@ export default function FriendliesPage() {
                                   {!sameStatus && getStatusBadge(g.status)}
                                   {viewable ? (
                                     <Link
-                                      href={`/friendlies/game/${g.tabName}`}
+                                      href={gameHref(g.tabName)}
                                       className="text-blue-600 hover:text-blue-800 hover:underline"
                                       onClick={() => sessionStorage.setItem('friendlies_back_nav', 'true')}
                                     >
@@ -989,7 +1068,7 @@ export default function FriendliesPage() {
                         {myWithdrawn ? (
                           <p className="font-semibold text-red-600">✗ Withdrawn</p>
                         ) : myGame ? (
-                          <Link href={`/friendlies/game/${myGame.tabName}`} className="font-semibold text-green-700 hover:underline">
+                          <Link href={gameHref(myGame.tabName)} className="font-semibold text-green-700 hover:underline">
                             You: playing for {opponentName(myGame)} ›
                           </Link>
                         ) : myReserve ? (
@@ -999,14 +1078,14 @@ export default function FriendliesPage() {
                     )}
 
                     {/* Tea duty note */}
-                    {!isLimitedView && isOpen && eligibleForAny && groupOnTeaDuty && (
+                    {!isLimitedView && !isPast && isOpen && eligibleForAny && groupOnTeaDuty && (
                       <p className="text-sm text-gray-700 italic">
                         You are on tea duty for this game — not eligible to play
                       </p>
                     )}
 
                     {/* One button enters the whole occasion (with an optional preference) */}
-                    {!isLimitedView && isOpen && eligibleForAny && !groupOnTeaDuty && (
+                    {!isLimitedView && !isPast && isOpen && eligibleForAny && !groupOnTeaDuty && (
                       userInGroup ? (
                         <button
                           type="button"
@@ -1114,7 +1193,7 @@ export default function FriendliesPage() {
                               Capacity: {game.maxPlayers}
                             </p>
                           )}
-                          {!isGuest && (
+                          {!isGuest && !isPast && (
                             <button
                               onClick={() => {
                                 setSelectedGameForModal(game);
@@ -1155,7 +1234,7 @@ export default function FriendliesPage() {
                   </div>
 
                   {/* Gender ineligibility note */}
-                  {!isLimitedView && game.status === 'O' && memberType && !canEnterGame(memberType, game.ladiesMen as GameGender) && (
+                  {!isLimitedView && !isPast && game.status === 'O' && memberType && !canEnterGame(memberType, game.ladiesMen as GameGender) && (
                     game.ladiesMen === 'Ladies' || game.ladiesMen === 'Men'
                   ) && (
                     <p className="text-sm text-gray-700 italic">
@@ -1164,7 +1243,7 @@ export default function FriendliesPage() {
                   )}
 
                   {/* Tea duty note */}
-                  {!isLimitedView && game.status === 'O' && memberType && canEnterGame(memberType, game.ladiesMen as GameGender) && isOnTeaDuty && (
+                  {!isLimitedView && !isPast && game.status === 'O' && memberType && canEnterGame(memberType, game.ladiesMen as GameGender) && isOnTeaDuty && (
                     <p className="text-sm text-gray-600 italic">
                       You are on tea duty for this game — not eligible to play
                     </p>
@@ -1173,7 +1252,7 @@ export default function FriendliesPage() {
                   {/* For open games, show a single-action button that opens a confirm dialog.
                       Entering one game per action keeps writes low and removes the old
                       multi-select + floating "Update" button that confused people. */}
-                  {!isLimitedView && game.status === 'O' && memberType && canEnterGame(memberType, game.ladiesMen as GameGender) && !isOnTeaDuty && (() => {
+                  {!isLimitedView && !isPast && game.status === 'O' && memberType && canEnterGame(memberType, game.ladiesMen as GameGender) && !isOnTeaDuty && (() => {
                     // Check if game is full and user hasn't already entered
                     const capacity = calculateCapacity(game);
                     const isFull = capacity.isFull && !game.userEntered;
@@ -1209,7 +1288,7 @@ export default function FriendliesPage() {
                   {/* For Selected, Played, Cancelled, or Abandoned games, show View Details button */}
                   {['S', 'P', 'C', 'A'].includes(game.status) && (
                     <Link
-                      href={`/friendlies/game/${game.tabName}`}
+                      href={gameHref(game.tabName)}
                       className={`block w-full text-center ${getButtonClasses('primary', 'md')}`}
                       onClick={() => sessionStorage.setItem('friendlies_back_nav', 'true')}
                     >
