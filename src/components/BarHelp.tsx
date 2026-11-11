@@ -14,7 +14,7 @@
 import { createContext, useContext, useState } from 'react';
 
 export type BarHelpTopicId =
-  | 'start' | 'servers' | 'members' | 'baskets' | 'paying' | 'proof' | 'staffproof' | 'pins' | 'terminal'
+  | 'start' | 'servers' | 'members' | 'baskets' | 'paying' | 'proof' | 'staffproof' | 'pins' | 'cards' | 'terminal'
   | 'topup' | 'membership' | 'mistakes' | 'cashmovement' | 'dayend' | 'products' | 'offline' | 'problems';
 
 interface Topic {
@@ -247,15 +247,44 @@ const TOPICS: Topic[] = [
           typing a PIN or a server approval.
         </P>
         <P>
-          Lost card? The member can reset it in My Account (Lost card), which stops the old one working and gives them a new QR
-          code. An admin can also reset a card, or clear a PIN, from the member’s record in Admin.
+          Lost card? Give them a new bar card — see <TopicLink to="cards">Giving a member a bar card</TopicLink>. The
+          member can also reset their card in My Account (Lost card), which stops the old one working. An admin can
+          clear a PIN from the member’s record in Admin.
         </P>
         <P>
           With a plug-in number keypad facing the member, they can type their PIN on that, so you don’t see it.
         </P>
       </>
     ),
-    related: ['proof', 'members'],
+    related: ['proof', 'members', 'cards'],
+  },
+  {
+    id: 'cards',
+    title: 'Giving a member a bar card',
+    summary: 'Handing out one of the blank bar cards, for a first card or a lost one.',
+    points: [
+      'Bar cards are printed with no name. A card works once it’s been given to a member at the till.',
+      'Open the member’s basket, then tap “Assign new card” (under “Charge to …”).',
+      'The member shows the QR on their phone (My Account) or enters their PIN. If you know them, or they’ve shown other ID, tap “No card or PIN? … can approve it” and use your own card or PIN.',
+      'The till shows whether they’ve had a card before, when and who gave it. If it’s a replacement and there’s a charge, add the Replacement card product to their basket as normal.',
+      'Tap “Scan the new card” and scan the blank card. Their old card stops working straight away; the QR on their phone carries on working.',
+    ],
+    more: (
+      <>
+        <P>
+          It needs a connection. It’s recorded as given out by the person serving, and the date shows next time anyone
+          gives that member a card (here or in Admin).
+        </P>
+        <P>
+          “That card belongs to …” means it’s already someone else’s current card — use another one. A card that’s
+          been replaced, or handed in, can be given out again as a blank card.
+        </P>
+        <P>
+          Scanning a bar card nobody has yet on the member list says so — pick the member first, then Assign new card.
+        </P>
+      </>
+    ),
+    related: ['proof', 'pins', 'staffproof'],
   },
   {
     id: 'terminal',

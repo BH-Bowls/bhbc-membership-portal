@@ -2,7 +2,7 @@
 
 // src/components/QrScanModal.tsx
 // Camera modal for scanning a membership card QR (src/lib/bar-card.ts) — used by the
-// bar till and by Admin to restore a found card. Decodes with jsQR against captured
+// bar till and by Admin to assign a blank bar card. Decodes with jsQR against captured
 // video frames rather than the native BarcodeDetector API, which isn't available on
 // iPad Safari. The camera needs HTTPS (or localhost).
 //

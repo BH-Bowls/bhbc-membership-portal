@@ -5,6 +5,9 @@
 // the named sheet layouts (Avery L7163 etc.) set up at /admin/config's Labels tab.
 // Each label type starts on its default layout; a different one can be picked per print.
 // Locker labels print from the Locker Register (/admin/lockers), not the member list.
+// Membership Card can also print blank Bar Cards (no name, a random BHBC2 code), handed
+// out and assigned to a member at the till or in Admin Members (src/lib/bar-card.ts).
+// Nothing is saved when they're printed — a card means nothing until it's assigned.
 
 import { useEffect, useState, useMemo } from 'react';
 import { useSession } from 'next-auth/react';
@@ -39,6 +42,8 @@ interface LabelMember {
   latestRenewedSeasonYear: number | null;
   // The member's card code (src/lib/bar-card.ts) — null if it couldn't be loaded
   cardCode?: string | null;
+  // Set on blank Bar Cards only: the short reference printed on the card
+  blankRef?: string;
   // Set on locker labels only (built from the Locker Register)
   locker?: { room: LockerRoom; lockerNumber: number };
 }
@@ -187,9 +192,54 @@ function CardLabel({ member, qrSrc, widthMm, heightMm, outline }: { member: Labe
   );
 }
 
+// A blank Bar Card: same size and outline rules as CardLabel, but no name — just the
+// club, a short card reference and the QR (a random code, linked to a member at the bar).
+function BlankCardLabel({ member, qrSrc, widthMm, heightMm, outline }: { member: LabelMember; qrSrc: string | undefined; widthMm: number; heightMm: number; outline: boolean }) {
+  let cardW = widthMm;
+  let cardH = heightMm;
+  if (outline) {
+    cardW = Math.min(CARD_WIDTH_MM, widthMm - 2 * CARD_INSET_MM);
+    cardH = Math.min(CARD_HEIGHT_MM, heightMm - 2 * CARD_INSET_MM);
+  }
+  const qrMm = Math.min(cardH - 8, 34, cardW * 0.45);
+  return (
+    <div style={{ width: `${widthMm}mm`, height: `${heightMm}mm`, boxSizing: 'border-box', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', fontFamily: 'Arial, sans-serif' }}>
+      <div style={{ width: `${cardW}mm`, height: `${cardH}mm`, boxSizing: 'border-box', border: outline ? '0.2mm solid #9ca3af' : 'none', borderRadius: outline ? '3mm' : '0', display: 'flex', alignItems: 'center', padding: '3mm', gap: '3mm', color: '#111827' }}>
+        <div style={{ flex: 1, minWidth: 0, height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '2mm' }}>
+            <img src="/bhbc-logo.jpg" alt="" style={{ height: '9mm', width: 'auto' }} />
+            <div>
+              <div style={{ fontWeight: 'bold', fontSize: '9pt', lineHeight: '1.15', color: '#1e3a8a' }}>Burgess Hill Bowls Club</div>
+              <div style={{ fontSize: '6.5pt', color: '#6b7280' }}>Members&apos; Bar Card</div>
+            </div>
+          </div>
+          <div style={{ fontSize: '14pt', fontWeight: 'bold', letterSpacing: '0.5mm', color: '#1e3a8a' }}>BAR CARD</div>
+          <div>
+            <div style={{ fontSize: '7pt', fontWeight: 600 }}>Card {member.blankRef}</div>
+            <div style={{ fontSize: '6pt', color: '#4b5563', lineHeight: '1.25', marginTop: '0.5mm' }}>
+              Scan at the bar to pay from your bar account.
+            </div>
+          </div>
+        </div>
+        {qrSrc && <img src={qrSrc} alt="" style={{ width: `${qrMm}mm`, height: `${qrMm}mm`, flexShrink: 0 }} />}
+      </div>
+    </div>
+  );
+}
+
+// A random 32-hex token for a blank Bar Card
+function randomToken(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  let hex = '';
+  for (let i = 0; i < bytes.length; i++) hex += bytes[i].toString(16).padStart(2, '0');
+  return hex;
+}
+
 function LabelContent({ type, member, config, layout, qrCodes }: { type: LabelType; member: LabelMember; config: LabelConfig; layout: LabelLayout; qrCodes: Record<string, string> }) {
   const w = layout.widthMm;
   const h = layout.heightMm;
+  if (type === 'card' && member.blankRef) return <BlankCardLabel member={member} qrSrc={qrCodes[member.userName]} widthMm={w} heightMm={h} outline={layout.cardOutline} />;
   if (type === 'address') return <AddressLabel member={member} widthMm={w} heightMm={h} />;
   if (type === 'booklet') return <BookletLabel member={member} config={config} widthMm={w} heightMm={h} />;
   if (type === 'card') return <CardLabel member={member} qrSrc={qrCodes[member.userName]} widthMm={w} heightMm={h} outline={layout.cardOutline} />;
@@ -266,6 +316,19 @@ export default function LabelsPage() {
   const [lockerFilter, setLockerFilter] = useState<LockerFilter>('allocated');
   const [selectedLockerIds, setSelectedLockerIds] = useState<Set<string>>(new Set());
 
+  // Membership Card: named cards for members, or blank Bar Cards (demo)
+  const [cardStyle, setCardStyle] = useState<'named' | 'blank'>('named');
+  const [blankCount, setBlankCount] = useState(10);
+  // One random token per blank card; extended or trimmed when the count changes
+  const [blankTokens, setBlankTokens] = useState<string[]>([]);
+  const isBlank = labelType === 'card' && cardStyle === 'blank';
+
+  function sizeBlankTokens(count: number, keep: string[]) {
+    const next = keep.slice(0, count);
+    while (next.length < count) next.push(randomToken());
+    setBlankTokens(next);
+  }
+
   // Auth guard
   useEffect(() => {
     if (status === 'loading') return;
@@ -340,6 +403,20 @@ export default function LabelsPage() {
       else if (lockerFilter === 'manual') chosen = chosen.filter((l) => selectedLockerIds.has(l.id));
       return chosen.map(lockerToLabel);
     }
+    if (isBlank) {
+      const blanks: LabelMember[] = [];
+      for (const token of blankTokens) {
+        blanks.push({
+          fullName: '',
+          address1: null, address2: null, address3: null, postCode: null,
+          memberType: '', include: null,
+          userName: `blank-${token}`, honorary: false, latestRenewedSeasonYear: null,
+          cardCode: `BHBC2.${token}`,
+          blankRef: token.slice(-4).toUpperCase(),
+        });
+      }
+      return blanks;
+    }
     let list: LabelMember[];
     if (memberFilter === 'all') list = members;
     else if (memberFilter === 'include') list = members.filter((m) => m.include === 'Y');
@@ -353,7 +430,7 @@ export default function LabelsPage() {
       return [...list].sort((a, b) => lastName(a).localeCompare(lastName(b)));
     }
     return list;
-  }, [labelType, lockersInRoom, lockerFilter, selectedLockerIds, members, memberFilter, selectedNames, sortOrder]);
+  }, [labelType, lockersInRoom, lockerFilter, selectedLockerIds, isBlank, blankTokens, members, memberFilter, selectedNames, sortOrder]);
 
   useEffect(() => {
     if (labelType !== 'card') return;
@@ -377,14 +454,15 @@ export default function LabelsPage() {
     return () => { cancelled = true; };
   }, [labelType, selectedMembers, qrCodes]);
 
-  // Expand for copies
+  // Expand for copies (never for blank Bar Cards — each must have its own code)
   const labelList = useMemo(() => {
     const list: LabelMember[] = [];
+    const perItem = isBlank ? 1 : copies;
     for (const m of selectedMembers) {
-      for (let i = 0; i < copies; i++) list.push(m);
+      for (let i = 0; i < perItem; i++) list.push(m);
     }
     return list;
-  }, [selectedMembers, copies]);
+  }, [selectedMembers, copies, isBlank]);
 
   // The layout being printed on: the one picked for this print, else the label
   // type's default, else the first layout (or L7163 if none could be loaded)
@@ -516,9 +594,71 @@ export default function LabelsPage() {
               </span>
             </div>
             {layout.description && <p className="mt-1 text-sm text-gray-700">{layout.description}</p>}
+
+            {labelType === 'card' && (
+              <div className="mt-4 flex flex-wrap items-center gap-4">
+                <span className="text-sm font-medium text-gray-700">Card style</span>
+                {([['named', 'Named membership cards'], ['blank', 'Blank Bar Cards (demo)']] as ['named' | 'blank', string][]).map(([v, label]) => (
+                  <label key={v} className="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" name="cardStyle" value={v} checked={cardStyle === v} onChange={() => { setCardStyle(v); setSkipLabels(0); if (v === 'blank') sizeBlankTokens(blankCount, blankTokens); }} className="text-blue-600" />
+                    <span className="text-sm text-gray-700">{label}</span>
+                  </label>
+                ))}
+              </div>
+            )}
           </div>
 
+          {/* ── Blank Bar Cards ── */}
+          {isBlank && (
+            <div className="bg-white shadow rounded-lg p-4 space-y-4">
+              <h2 className="text-sm font-medium text-gray-700">Blank Bar Cards</h2>
+              <p className="text-sm text-gray-700">
+                Each card gets its own random code and a short reference (e.g. &quot;Card 3F9A&quot;), with no
+                member&apos;s name. Nothing is saved when they&apos;re printed: a card works once it&apos;s
+                given to a member with Assign new card, at the till or in Admin Members.
+              </p>
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <label htmlFor="blankCount" className="text-sm text-gray-700 whitespace-nowrap">Number of cards</label>
+                  <input
+                    id="blankCount"
+                    type="number"
+                    min={1}
+                    max={200}
+                    value={blankCount}
+                    onChange={(e) => {
+                      const count = Math.min(200, Math.max(1, parseInt(e.target.value) || 1));
+                      setBlankCount(count);
+                      sizeBlankTokens(count, blankTokens);
+                    }}
+                    className="w-20 border border-gray-300 rounded-md px-2 py-1 text-sm text-center"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label htmlFor="blankSkip" className="text-sm text-gray-700 whitespace-nowrap">Skip labels</label>
+                  <input
+                    id="blankSkip"
+                    type="number"
+                    min={0}
+                    max={labelsPerSheet - 1}
+                    value={skipLabels}
+                    onChange={(e) => setSkipLabels(Math.max(0, parseInt(e.target.value) || 0))}
+                    className="w-16 border border-gray-300 rounded-md px-2 py-1 text-sm text-center"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => sizeBlankTokens(blankCount, [])}
+                  className="px-3 py-1 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                >
+                  New codes
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* ── Members (or Lockers) ── */}
+          {!isBlank && (
           <div className="bg-white shadow rounded-lg p-4 space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-medium text-gray-700">{isLocker ? 'Lockers' : 'Members'}</h2>
@@ -672,6 +812,7 @@ export default function LabelsPage() {
               </p>
             )}
           </div>
+          )}
 
           {/* ── Config ── */}
           <div className="bg-white shadow rounded-lg p-4 flex items-center justify-between">
@@ -699,7 +840,7 @@ export default function LabelsPage() {
             </div>
           )}
 
-          {labelList.length === 0 && (isLocker ? lockers !== null : !membersLoading) && (
+          {labelList.length === 0 && !isBlank && (isLocker ? lockers !== null : !membersLoading) && (
             <div className="bg-white shadow rounded-lg p-8 text-center text-sm text-gray-500">
               {isLocker
                 ? (lockerFilter === 'manual' ? 'Select lockers above to preview labels.' : 'No lockers match the selected filter.')

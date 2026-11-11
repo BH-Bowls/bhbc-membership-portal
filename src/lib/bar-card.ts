@@ -2,12 +2,19 @@
 // Membership card QR codes and bar PINs — proof that a member is really at the till
 // before their bar account is charged or topped up (see 0093_bar_card_pin.sql).
 //
-// A card code is BHBC1.<user id, no dashes>.<card_token>. One token per member, 32
-// random hex characters — far too many to guess, so a code can't be made up from a
-// username. Resetting it stops every old card working; scanning a found card can make
-// its token current again. No secrets: the tokens live in the database, so a copy of
-// production restored to dev keeps every card working there. The till checks scans
-// offline against a SHA-256 of each member's current code (getTillCards).
+// One token per member (card_token), 32 random hex characters — far too many to guess.
+// It appears in two kinds of code:
+//   * BHBC1.<user id, no dashes>.<card_token> — the member's phone QR on My Account (and
+//     the older named printed cards).
+//   * BHBC2.<card_token> — a blank printed bar card, with no name. A blank card means
+//     nothing until it's assigned to a member (assignCard, at the till or in Admin
+//     Members): its token then becomes their card_token, so the old card stops working
+//     and their phone QR carries on with the new token. No card history is kept; a
+//     replaced blank card is just a blank card again.
+// Resetting the token (My Account / Admin Members) stops every card working. No secrets:
+// the tokens live in the database, so a copy of production restored to dev keeps every
+// card working there. The till checks scans offline against SHA-256s of each member's
+// current codes (getTillCards).
 //
 // A PIN (4 to 6 digits) typed at the till is sent with each payment and checked here
 // every time. The bar person serving uses their own card or PIN the same way — to
@@ -21,8 +28,10 @@ import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { getSupabaseClient } from './supabase';
 import { getConfig } from './config-supabase';
+import { getAllUsers } from './members-supabase';
 
 const CARD_PREFIX = 'BHBC1';
+const BLANK_CARD_PREFIX = 'BHBC2';
 const PIN_MAX_FAILURES = 5;
 
 export type AccountProofMode = 'off' | 'testing' | 'all';
@@ -48,7 +57,11 @@ interface CardUserRow {
   card_token: string;
   bar_pin_hash: string | null;
   bar_pin_failures: number;
+  card_issued_at: string | null;
+  card_issued_by: string | null;
 }
+
+const CARD_USER_COLUMNS = 'id, username, card_token, bar_pin_hash, bar_pin_failures, card_issued_at, card_issued_by';
 
 function compactId(userId: string): string {
   return userId.replace(/-/g, '');
@@ -67,20 +80,32 @@ function hashCode(code: string): string {
   return crypto.createHash('sha256').update(code).digest('hex');
 }
 
-/** A card code's user id and token, or null if it isn't one. */
-function parseCardCode(code: string): { userId: string; token: string } | null {
-  const parts = code.trim().split('.');
-  if (parts.length !== 3 || parts[0] !== CARD_PREFIX) return null;
-  const [, id, token] = parts;
+function buildBlankCardCode(token: string): string {
+  return `${BLANK_CARD_PREFIX}.${token}`;
+}
+
+/**
+ * A card code's token, and the user id it carries (null for a blank card, BHBC2), or
+ * null if it isn't a card code at all.
+ */
+function parseCardCode(code: string): { userId: string | null; token: string } | null {
+  const parts = code.trim().toLowerCase().split('.');
+  if (parts.length === 2 && parts[0] === BLANK_CARD_PREFIX.toLowerCase()) {
+    if (!/^[0-9a-f]{32}$/.test(parts[1])) return null;
+    return { userId: null, token: parts[1] };
+  }
+  if (parts.length !== 3 || parts[0] !== CARD_PREFIX.toLowerCase()) return null;
+  const id = parts[1];
+  const token = parts[2];
   if (!/^[0-9a-f]{32}$/.test(id) || !/^[0-9a-f]{32}$/.test(token)) return null;
   return { userId: expandId(id), token: token };
 }
 
-async function getCardUser(column: 'id' | 'username', value: string): Promise<CardUserRow | null> {
+async function getCardUser(column: 'id' | 'username' | 'card_token', value: string): Promise<CardUserRow | null> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
     .from('users')
-    .select('id, username, card_token, bar_pin_hash, bar_pin_failures')
+    .select(CARD_USER_COLUMNS)
     .eq('is_active', true)
     .eq(column, value)
     .maybeSingle();
@@ -122,28 +147,78 @@ export async function resetCard(userName: string): Promise<string> {
   return buildCardCode(user.id, token);
 }
 
-/**
- * Whose card a scanned code is, and whether it's the current one. 'invalid' means it
- * isn't a membership card code, or the member no longer exists.
- */
-export async function checkCard(code: string): Promise<{ status: 'current' | 'replaced' | 'invalid'; userName: string | null }> {
+export type CardCheck = {
+  // current: it's userName's current card (or phone QR). replaced: an old phone QR or
+  // named card of userName's. unassigned: a blank card nobody has (new, or replaced
+  // since). invalid: not a card code, or the member no longer exists.
+  status: 'current' | 'replaced' | 'unassigned' | 'invalid';
+  userName: string | null;
+  blank: boolean;   // a blank printed card (BHBC2), as opposed to a phone QR / named card
+};
+
+/** Whose card a scanned code is, and whether it's the current one. */
+export async function checkCard(code: string): Promise<CardCheck> {
   const parsed = parseCardCode(code);
-  if (!parsed) return { status: 'invalid', userName: null };
+  if (!parsed) return { status: 'invalid', userName: null, blank: false };
+  if (parsed.userId === null) {
+    const holder = await getCardUser('card_token', parsed.token);
+    if (!holder) return { status: 'unassigned', userName: null, blank: true };
+    return { status: 'current', userName: holder.username, blank: true };
+  }
   const user = await getCardUser('id', parsed.userId);
-  if (!user) return { status: 'invalid', userName: null };
-  return { status: user.card_token === parsed.token ? 'current' : 'replaced', userName: user.username };
+  if (!user) return { status: 'invalid', userName: null, blank: false };
+  return { status: user.card_token === parsed.token ? 'current' : 'replaced', userName: user.username, blank: false };
+}
+
+/** When the member's current card was assigned, and by whom (username) — null if never. */
+export interface CardIssued {
+  issuedAt: string | null;
+  issuedBy: string | null;
 }
 
 /**
- * Make a found card the member's current one again (it must be theirs). Any card
- * issued since it was replaced stops working.
+ * Give a member a blank card: its token becomes theirs, so their previous card stops
+ * working and their phone QR switches to the new token. issuedBy is the username of
+ * the bar person or admin doing it. Throws a message fit to show if the card can't be
+ * used (not a blank card, already this member's, or someone else's).
  */
-export async function restoreCard(userName: string, code: string): Promise<void> {
+export async function assignCard(userName: string, code: string, issuedBy: string): Promise<CardIssued> {
   const parsed = parseCardCode(code);
-  if (!parsed) throw new Error('That isn’t a membership card');
+  if (!parsed) throw new Error('That isn’t a bar card.');
+  if (parsed.userId !== null) throw new Error('That’s a phone or named card — scan one of the blank bar cards.');
   const user = await getCardUser('username', userName);
-  if (!user || user.id !== parsed.userId) throw new Error('That card belongs to a different member');
-  await updateCardUser(user.id, { card_token: parsed.token });
+  if (!user) throw new Error('Member not found');
+  if (user.card_token === parsed.token) throw new Error('That’s already their card — nothing to change.');
+  const holder = await getCardUser('card_token', parsed.token);
+  if (holder) throw new Error(`That card belongs to ${await memberName(holder.username)}. Give them a new card first if it’s moving.`);
+  const issuedAt = new Date().toISOString();
+  const supabase = getSupabaseClient();
+  const { error } = await supabase
+    .from('users')
+    .update({ card_token: parsed.token, card_issued_at: issuedAt, card_issued_by: issuedBy })
+    .eq('id', user.id);
+  if (error) {
+    // The unique index — the card is held by a member who has left
+    if (error.code === '23505') throw new Error('That card belongs to a former member — use another card.');
+    throw new Error(`Failed to assign the card: ${error.message}`);
+  }
+  return { issuedAt: issuedAt, issuedBy: issuedBy };
+}
+
+/** A member's full name for messages, or the username if it can't be found. */
+export async function memberName(userName: string): Promise<string> {
+  try {
+    for (const u of await getAllUsers()) {
+      if (u.userName === userName) return u.fullName || userName;
+    }
+  } catch { /* fall back to the username */ }
+  return userName;
+}
+
+export async function getCardIssued(userName: string): Promise<CardIssued> {
+  const user = await getCardUser('username', userName);
+  if (!user) throw new Error('Member not found');
+  return { issuedAt: user.card_issued_at, issuedBy: user.card_issued_by };
 }
 
 // ── PINs ──────────────────────────────────────────────────────────────────────
@@ -218,6 +293,17 @@ async function getRoles(userId: string): Promise<string[]> {
 async function checkPersonProof(user: CardUserRow, proof: PersonProof | undefined, offlineReplay: boolean): Promise<string | null> {
   if (proof && typeof proof.cardCode === 'string') {
     const parsed = parseCardCode(proof.cardCode);
+    // A blank card only says whose it is through the token itself
+    if (parsed && parsed.userId === null) {
+      if (parsed.token === user.card_token) {
+        if (user.bar_pin_failures > 0) await updateCardUser(user.id, { bar_pin_failures: 0 });
+        return null;
+      }
+      // Queued offline when it was their card, and replaced since — fine, unless it's
+      // now someone else's
+      if (offlineReplay && !(await getCardUser('card_token', parsed.token))) return null;
+      return 'This card isn’t theirs (or has been replaced) — scan their current card or enter the PIN.';
+    }
     if (parsed && parsed.userId === user.id) {
       if (parsed.token === user.card_token) {
         if (user.bar_pin_failures > 0) await updateCardUser(user.id, { bar_pin_failures: 0 });
@@ -254,7 +340,18 @@ export async function checkAccountProof(
   const user = await getCardUser('username', userName);
   if (!user) return { error: 'Member not found' };
   if (mode === 'testing' && !(await getRoles(user.id)).includes('Testing')) return { error: null };
+  return checkMemberOrServerProof(user, proof, staff);
+}
 
+/**
+ * The member's own card or PIN, or the bar person serving (staff) approving with theirs.
+ * approvedBy says how the server approved, if they did.
+ */
+async function checkMemberOrServerProof(
+  user: CardUserRow,
+  proof: AccountProof | undefined,
+  staff: string,
+): Promise<{ error: string | null; approvedBy?: 'pin' | 'card' }> {
   const offlineReplay = !!(proof && proof.offlineReplay);
   if (proof && proof.serverApproval) {
     if (!staff) return { error: 'Select who’s serving first.' };
@@ -266,6 +363,18 @@ export async function checkAccountProof(
   }
   const error = await checkPersonProof(user, proof, offlineReplay);
   return { error: error };
+}
+
+/**
+ * Assigning a blank card at the till: whatever the bar_account_proof setting, the member
+ * shows their phone QR (or current card, or PIN), or the bar person serving approves
+ * with their own card or PIN. Not for offline use.
+ */
+export async function checkCardAssignProof(userName: string, proof: AccountProof | undefined, staff: string): Promise<string | null> {
+  const user = await getCardUser('username', userName);
+  if (!user) return 'Member not found';
+  const plain: AccountProof | undefined = proof ? { cardCode: proof.cardCode, pin: proof.pin, serverApproval: proof.serverApproval } : undefined;
+  return (await checkMemberOrServerProof(user, plain, staff)).error;
 }
 
 export async function getStaffProofMode(): Promise<AccountProofMode> {
@@ -331,7 +440,10 @@ export async function getApprovedSaleIds(saleIds: string[]): Promise<Set<string>
 export interface TillCard {
   userName: string;
   userId: string;        // no dashes, as in the card code
-  cardHash: string;      // SHA-256 of the current card code
+  cardHash: string;      // SHA-256 of the current phone QR code (BHBC1)
+  blankCardHash: string; // SHA-256 of the same token as a blank card code (BHBC2)
+  cardIssuedAt: string | null;  // when their current blank card was assigned (null = never)
+  cardIssuedBy: string | null;  // who assigned it (username)
   hasPin: boolean;
   pinLocked: boolean;
   proofRequired: boolean;       // as a member: for Pay by Account / Top Up
@@ -349,7 +461,7 @@ export async function getTillCards(): Promise<{ cards: TillCard[] }> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
     .from('users')
-    .select('id, username, card_token, bar_pin_hash, bar_pin_failures, user_roles(role)')
+    .select(`${CARD_USER_COLUMNS}, user_roles(role)`)
     .eq('is_active', true);
   if (error) throw new Error(`Failed to load cards: ${error.message}`);
   const rows = (data ?? []) as (CardUserRow & { user_roles: { role: string }[] | null })[];
@@ -359,6 +471,9 @@ export async function getTillCards(): Promise<{ cards: TillCard[] }> {
       userName: row.username,
       userId: compactId(row.id),
       cardHash: hashCode(buildCardCode(row.id, row.card_token)),
+      blankCardHash: hashCode(buildBlankCardCode(row.card_token)),
+      cardIssuedAt: row.card_issued_at,
+      cardIssuedBy: row.card_issued_by,
       hasPin: !!row.bar_pin_hash,
       pinLocked: row.bar_pin_failures >= PIN_MAX_FAILURES,
       proofRequired: mode === 'all' || (mode === 'testing' && testing),
