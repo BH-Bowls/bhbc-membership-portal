@@ -110,8 +110,16 @@ export default function HelpBankingPage() {
 
           <HelpSection title="Banking report">
             <Body>
-              <strong>Report</strong> (on the Banking page) shows which subscriptions are paid and
-              unpaid, and which payments are allocated and unallocated.
+              <strong>Report</strong> (on the Banking page) is for one year: choose it at the top. The{' '}
+              <strong>Subs</strong> tab shows which subscriptions are paid and unpaid, and the payments
+              allocated to that year&apos;s renewals. The <strong>Rowland Cup</strong> tab shows which
+              clubs have paid their entry fees, which still owe, and their payments, including cash
+              recorded in Rowland Admin.
+            </Body>
+            <Body>
+              Unallocated payments haven&apos;t been matched to anything yet, so they have no year. The
+              Subs tab shows those with &quot;SUBS&quot; in the reference, and the Rowland Cup tab those
+              with &quot;EGR&quot;. Download CSV and Print cover the tab and year on show.
             </Body>
           </HelpSection>
 
