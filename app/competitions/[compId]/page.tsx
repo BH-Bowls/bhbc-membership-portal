@@ -1,12 +1,15 @@
 // app/competitions/[compId]/page.tsx
 // Competition bracket page — loads live data from API
+// ?year=2025 shows that year's draw, read only: no score entry,
+// no date arranging, no Manage or rules editing.
 
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useNavbarConfig } from '@/lib/navbar-config';
+import { PastYearNotice } from '@/components/YearSelect';
 import { BracketView } from '@/components/competitions/BracketView';
 import { ScoreDialog } from '@/components/competitions/ScoreDialog';
 import { PlannedDateDialog } from '@/components/competitions/PlannedDateDialog';
@@ -49,6 +52,8 @@ export default function CompetitionBracketPage({
   const { data: session, status } = useSession();
   const isGuest = status === 'unauthenticated';
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const yearParam = searchParams.get('year') || '';
 
   const [compId, setCompId] = React.useState<string>('');
   React.useEffect(() => {
@@ -65,6 +70,7 @@ export default function CompetitionBracketPage({
   }, [params, router]);
 
   const [competition, setCompetition] = useState<Competition | null>(null);
+  const [isPast, setIsPast] = useState(false);
   const [matches, setMatches] = useState<CompMatch[]>([]);
   const [memberMap, setMemberMap] = useState<Map<string, CompMemberInfo>>(new Map());
   const [loading, setLoading] = useState(true);
@@ -94,9 +100,10 @@ export default function CompetitionBracketPage({
   }
 
   const role = session?.user?.role ?? '';
-  // Only Captains and Admins can manage/enter competition results on behalf of players
-  const canEnterScores = (role.split(',').map(r => r.trim())).some(r => ['Captain', 'Admin'].includes(r));
-  const isAdmin = (role.split(',').map(r => r.trim())).includes('Admin');
+  // Only Captains and Admins can manage/enter competition results on behalf of players.
+  // Nobody can change a past year.
+  const canEnterScores = !isPast && (role.split(',').map(r => r.trim())).some(r => ['Captain', 'Admin'].includes(r));
+  const isAdmin = !isPast && (role.split(',').map(r => r.trim())).includes('Admin');
   const currentUsername = session?.user?.userName ?? '';
 
   // ── Data loading ───────────────────────────────────────────────────────────
@@ -104,13 +111,14 @@ export default function CompetitionBracketPage({
     if (!compId) return;
     setLoading(true);
     Promise.all([
-      fetch(`/api/competitions/${compId}`).then((r) => r.json()),
+      fetch(`/api/competitions/${compId}${yearParam ? `?year=${encodeURIComponent(yearParam)}` : ''}`).then((r) => r.json()),
       fetch('/api/competitions/members').then((r) => r.json()),
     ])
       .then(([compData, memberData]) => {
         if (compData.error) throw new Error(compData.error);
         if (memberData.error) throw new Error(memberData.error);
         setCompetition(compData.competition);
+        setIsPast(!!compData.isPast);
         setMatches(compData.matches || []);
         const map = new Map<string, CompMemberInfo>();
         for (const [key, val] of Object.entries(memberData.members as Record<string, CompMemberInfo>)) {
@@ -120,7 +128,7 @@ export default function CompetitionBracketPage({
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [compId]);
+  }, [compId, yearParam]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -338,8 +346,8 @@ export default function CompetitionBracketPage({
     if (competition.finalsFixed) roundOnDates.add('F');
   }
 
-  // My pending match (for "Your next match" callout)
-  const myPending = matches.find(
+  // My pending match (for "Your next match" callout) — never for a past year
+  const myPending = isPast ? undefined : matches.find(
     (m) =>
       m.status === 'Pending' &&
       [...m.side1Usernames, ...(m.side2Usernames ?? [])].some(
@@ -358,7 +366,7 @@ export default function CompetitionBracketPage({
         <div className="print:hidden flex flex-wrap items-start justify-between gap-4 mb-6">
           <div>
             <button
-              onClick={() => router.push('/competitions')}
+              onClick={() => router.push(isPast && competition ? `/competitions?year=${competition.year}` : '/competitions')}
               className="text-blue-600 hover:text-blue-800 text-sm flex items-center gap-1 mb-2"
             >
               ← All Competitions
@@ -367,7 +375,10 @@ export default function CompetitionBracketPage({
               <div className="h-7 w-48 bg-gray-200 rounded animate-pulse" />
             ) : (
               <>
-                <h1 className="text-2xl font-bold text-gray-900">{competition?.displayName ?? compId}</h1>
+                <h1 className="text-2xl font-bold text-gray-900">
+                  {competition?.displayName ?? compId}
+                  {isPast && competition ? ` ${competition.year}` : ''}
+                </h1>
                 <p className="text-gray-500 text-sm mt-0.5 capitalize">{competition?.compType}</p>
                 {competition && (
                   <div className="mt-1">
@@ -442,6 +453,12 @@ export default function CompetitionBracketPage({
           </div>
         )}
 
+        {isPast && competition && (
+          <div className="print:hidden">
+            <PastYearNotice year={competition.year} />
+          </div>
+        )}
+
         {/* Your match callout */}
         {myPending && !loading && (
           <div className="print:hidden mb-4 bg-blue-50 border border-blue-300 rounded-lg px-4 py-3 text-sm text-blue-800 flex items-center justify-between">
@@ -473,7 +490,10 @@ export default function CompetitionBracketPage({
 
         {/* Print-only title */}
         <div className="hidden print:block mb-4">
-          <h1 className="text-2xl font-bold text-gray-900">{competition?.displayName ?? compId}</h1>
+          <h1 className="text-2xl font-bold text-gray-900">
+            {competition?.displayName ?? compId}
+            {isPast && competition ? ` ${competition.year}` : ''}
+          </h1>
         </div>
 
         {/* Bracket */}
@@ -496,7 +516,7 @@ export default function CompetitionBracketPage({
               getInfo={getInfo}
               currentUsername={currentUsername}
               showHandicap={isHandicapComp}
-              onMatchClick={handleMatchClick}
+              onMatchClick={isPast ? undefined : handleMatchClick}
               canEnterScores={canEnterScores}
               roundPlayByDates={roundPlayByDates}
               roundOnDates={roundOnDates}

@@ -14,7 +14,8 @@
 // match_id is kept as the existing human-readable business key (e.g.
 // "mens-championship-r1-3") rather than replaced by the row's own uuid — bracket
 // progression (nextRoundTarget/propagateWinnerToNextRound) constructs and looks these up
-// directly, so preserving the ID scheme avoids rewriting that logic.
+// directly, so preserving the ID scheme avoids rewriting that logic. Since 0097 every
+// year is kept (see YEARS below), so match_id is only unique within a year.
 
 import { getSupabaseClient } from './supabase';
 import { getAllUsers } from './members-supabase';
@@ -100,34 +101,115 @@ function mapMatchRow(row: any): CompMatch {
 }
 
 // ============================================================================
+// YEARS (supabase/migrations/0097_competition_years.sql)
+// ============================================================================
+// Every year's competitions live side by side in the same tables, the same way fixtures
+// do: competitions has one row per competition per year (primary key comp_id + year)
+// and competition_matches carries the year too. The CURRENT year is the latest year
+// that has competitions — the one being played, and the only one that can be changed.
+// Earlier years are read only (the year picker on /competitions).
+//
+// Every function below that takes an optional year uses the current year when it's left
+// out, so the score, setup and propagation code only ever touches the current year.
+
+/** The latest year with competitions, e.g. 2026 — the one being played. */
+export async function getCurrentCompetitionYear(): Promise<number> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('competitions')
+    .select('year')
+    .order('year', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(`Failed to fetch the competition year: ${error.message}`);
+  return data ? data.year : new Date().getFullYear();
+}
+
+/** Every year with competitions, oldest first — for the year picker. */
+export async function getCompetitionYears(): Promise<number[]> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.from('competitions').select('year');
+  if (error) throw new Error(`Failed to fetch competition years: ${error.message}`);
+  const years: number[] = [];
+  for (const row of data || []) {
+    if (!years.includes(row.year)) years.push(row.year);
+  }
+  years.sort((a, b) => a - b);
+  return years;
+}
+
+/**
+ * Sets up next year: a new row for every one of this year's competitions — same name,
+ * type and rules text, Not Started, no dates, no draw. This year's competitions and
+ * results are left exactly as they are (they become a past year on the picker).
+ * The year must already exist in the seasons table, as fixtures' seasons do.
+ */
+export async function startNextCompetitionYear(): Promise<{ year: number; created: number }> {
+  const currentYear = await getCurrentCompetitionYear();
+  const newYear = currentYear + 1;
+  const supabase = getSupabaseClient();
+
+  const { data: season, error: seasonError } = await supabase.from('seasons').select('year').eq('year', newYear).maybeSingle();
+  if (seasonError) throw new Error(`Failed to check the ${newYear} season: ${seasonError.message}`);
+  if (!season) throw new Error(`There's no ${newYear} season yet. Create it in Season Planning first.`);
+
+  const current = await getAllCompetitions(currentYear);
+  const rows = current.map((c) => ({
+    comp_id: c.compId,
+    year: newYear,
+    display_name: c.displayName,
+    comp_type: c.compType,
+    status: 'Not Started',
+    comp_description: c.compDescription || null,
+    extra_description: c.extraDescription || null,
+    markers_notes: c.markersNotes || null,
+  }));
+  if (rows.length > 0) {
+    // One insert statement, so either every competition is created or none is
+    const { error } = await supabase.from('competitions').insert(rows);
+    if (error) throw new Error(`Failed to set up the ${newYear} competitions: ${error.message}`);
+  }
+  return { year: newYear, created: rows.length };
+}
+
+// ============================================================================
 // COMPETITIONS — READ
 // ============================================================================
 
-export async function getAllCompetitions(): Promise<Competition[]> {
+/** All competitions for a year (default: the current year). */
+export async function getAllCompetitions(year?: number): Promise<Competition[]> {
+  const resolvedYear = year !== undefined ? year : await getCurrentCompetitionYear();
   const supabase = getSupabaseClient();
-  const { data, error } = await supabase.from('competitions').select('*');
+  const { data, error } = await supabase.from('competitions').select('*').eq('year', resolvedYear);
   if (error) throw new Error(`Failed to fetch competitions: ${error.message}`);
   return (data ?? []).map(mapCompetitionRow);
 }
 
-export async function getCompetitionById(compId: string): Promise<Competition | null> {
+/** One competition for a year (default: the current year). */
+export async function getCompetitionById(compId: string, year?: number): Promise<Competition | null> {
+  const resolvedYear = year !== undefined ? year : await getCurrentCompetitionYear();
   const supabase = getSupabaseClient();
-  const { data, error } = await supabase.from('competitions').select('*').eq('comp_id', compId).maybeSingle();
+  const { data, error } = await supabase
+    .from('competitions')
+    .select('*')
+    .eq('comp_id', compId)
+    .eq('year', resolvedYear)
+    .maybeSingle();
   if (error) throw new Error(`Failed to fetch competition ${compId}: ${error.message}`);
   return data ? mapCompetitionRow(data) : null;
 }
 
 // ============================================================================
-// COMPETITIONS — WRITE
+// COMPETITIONS — WRITE (current year only)
 // ============================================================================
 
+/** Saves a competition's settings. comp.year says which row; the year itself never changes. */
 export async function updateCompetition(comp: Competition): Promise<void> {
   const supabase = getSupabaseClient();
   const { error } = await supabase.from('competitions').update({
     display_name: comp.displayName,
     comp_type: comp.compType,
     status: comp.status,
-    year: comp.year,
     finals_date: comp.finalsDate || null,
     prelim_play_by: comp.prelimPlayBy || null,
     r1_play_by: comp.r1PlayBy || null,
@@ -145,19 +227,25 @@ export async function updateCompetition(comp: Competition): Promise<void> {
     comp_description: comp.compDescription || null,
     extra_description: comp.extraDescription || null,
     markers_notes: comp.markersNotes || null,
-  }).eq('comp_id', comp.compId);
+  }).eq('comp_id', comp.compId).eq('year', comp.year);
   if (error) throw new Error(`Failed to update competition ${comp.compId}: ${error.message}`);
 }
 
 export async function updateDrawSideCount(compId: string, drawSideCount: number): Promise<void> {
+  const year = await getCurrentCompetitionYear();
   const supabase = getSupabaseClient();
-  const { error } = await supabase.from('competitions').update({ draw_side_count: drawSideCount }).eq('comp_id', compId);
+  const { error } = await supabase
+    .from('competitions')
+    .update({ draw_side_count: drawSideCount })
+    .eq('comp_id', compId)
+    .eq('year', year);
   if (error) throw new Error(`Failed to update draw side count for ${compId}: ${error.message}`);
 }
 
 export async function updateCompetitionStatus(compId: string, status: CompStatus): Promise<void> {
+  const year = await getCurrentCompetitionYear();
   const supabase = getSupabaseClient();
-  const { error } = await supabase.from('competitions').update({ status }).eq('comp_id', compId);
+  const { error } = await supabase.from('competitions').update({ status }).eq('comp_id', compId).eq('year', year);
   if (error) throw new Error(`Failed to update status for ${compId}: ${error.message}`);
 }
 
@@ -165,10 +253,16 @@ export async function updateCompetitionStatus(compId: string, status: CompStatus
 // MATCHES — READ
 // ============================================================================
 
-export async function getCompetitionMatches(compId: string): Promise<CompMatch[]> {
+/** A competition's matches for a year (default: the current year). */
+export async function getCompetitionMatches(compId: string, year?: number): Promise<CompMatch[]> {
   if (!COMP_SHEET_CONFIG[compId]) throw new Error(`Unknown competition: ${compId}`);
+  const resolvedYear = year !== undefined ? year : await getCurrentCompetitionYear();
   const supabase = getSupabaseClient();
-  const { data, error } = await supabase.from('competition_matches').select('*').eq('comp_id', compId);
+  const { data, error } = await supabase
+    .from('competition_matches')
+    .select('*')
+    .eq('comp_id', compId)
+    .eq('year', resolvedYear);
   if (error) throw new Error(`Failed to fetch matches for ${compId}: ${error.message}`);
   return (data ?? []).map(mapMatchRow);
 }
@@ -345,14 +439,20 @@ export async function saveCompetitionSetup(
   }
 
   const supabase = getSupabaseClient();
+  const year = comp ? comp.year : await getCurrentCompetitionYear();
 
-  // Replace this competition's matches wholesale — same semantics as the Sheets
-  // version's clear-then-rewrite.
-  const { error: deleteError } = await supabase.from('competition_matches').delete().eq('comp_id', compId);
+  // Replace this competition's matches for this year wholesale — same semantics as the
+  // Sheets version's clear-then-rewrite. Other years' matches are never touched.
+  const { error: deleteError } = await supabase
+    .from('competition_matches')
+    .delete()
+    .eq('comp_id', compId)
+    .eq('year', year);
   if (deleteError) throw new Error(`Failed to clear existing matches for ${compId}: ${deleteError.message}`);
 
   const rows = allMatches.map((m) => ({
     comp_id: compId,
+    year: year,
     match_id: m.matchId,
     round: m.round,
     position: m.position,
@@ -508,11 +608,14 @@ export async function updateMatch(
   if (Object.keys(columnUpdates).length === 0) return;
   columnUpdates.updated_at = new Date().toISOString();
 
+  // Match IDs repeat every year — only the current year's match can be changed
+  const year = await getCurrentCompetitionYear();
   const supabase = getSupabaseClient();
   const { error, count } = await supabase
     .from('competition_matches')
     .update(columnUpdates, { count: 'exact' })
     .eq('comp_id', compId)
+    .eq('year', year)
     .eq('match_id', matchId);
   if (error) throw new Error(`Failed to update match ${matchId}: ${error.message}`);
   if (!count) throw new Error(`Match '${matchId}' not found in ${compId}`);

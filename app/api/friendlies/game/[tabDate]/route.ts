@@ -1,9 +1,11 @@
 // GET /api/friendlies/game/[tabDate] - Get game details for player
+// ?year=2025 looks the game up in that past season (tab names repeat every year) and
+// returns isPast: true so the page hides every action.
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { getGameSheet, getClubDetails, validateGameToken, getGroupFixtures, fixtureDisplayName } from '@/lib/fixture-groups-supabase';
-import { getFixtureByTabName, getTeaRotaEntry } from '@/lib/fixtures-supabase';
+import { getFixtureRoster, getClubDetails, validateGameToken, getGroupFixtures, fixtureDisplayName } from '@/lib/fixture-groups-supabase';
+import { getFixtureByTabName, getTeaRotaEntry, getSeasonByYear } from '@/lib/fixtures-supabase';
 import { getUserByUsername, getAllUsers } from '@/lib/members-supabase';
 import { getSquadForFixture } from '@/lib/squads-supabase';
 
@@ -45,8 +47,16 @@ export async function GET(
       return fullName.split(' ')[0];
     }
 
+    // A past season's game, if ?year= names a season that isn't the active one
+    let pastSeasonId: string | undefined = undefined;
+    const yearParam = parseInt(request.nextUrl.searchParams.get('year') || '', 10);
+    if (!isNaN(yearParam)) {
+      const season = await getSeasonByYear(yearParam);
+      if (season && !season.isActive) pastSeasonId = season.id;
+    }
+
     // Get game details (URL parameter is called tabDate but contains tabName)
-    const game = await getFixtureByTabName(tabDate);
+    const game = await getFixtureByTabName(tabDate, pastSeasonId);
 
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
@@ -62,7 +72,7 @@ export async function GET(
 
     // Read game sheet, club details, tea rota, and member list in parallel
     const [allPlayers, clubDetailsResult, teaRotaList, allUsers] = await Promise.all([
-      getGameSheet(game.tabName),
+      getFixtureRoster(game),
       game.homeAway === 'A' ? getClubDetails(game.clubName).catch(() => null) : Promise.resolve(null),
       // The game's own tea fields — covers league teas too (the tea rota list is friendlies only)
       game.homeAway === 'H' ? getTeaRotaEntry(game.id).catch(() => null) : Promise.resolve(null),
@@ -279,6 +289,7 @@ export async function GET(
       : [];
 
     return NextResponse.json({
+      isPast: !!pastSeasonId,
       sharedWith,
       squad: squad ? { id: squad.id, label: squad.label } : null,
       partners,

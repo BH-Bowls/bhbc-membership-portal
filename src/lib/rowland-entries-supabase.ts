@@ -4,9 +4,10 @@
 // message), same separation already used between renewals-supabase.ts and
 // banking-supabase.ts.
 //
-// Schema + entry form only this pass — no functions here yet for the draw-setup
-// integration (assigning a team-entry to a bracket, §6 of the spec) or bank
-// reconciliation (§7) — those are separate, deliberately deferred pieces.
+// No functions here yet for the draw-setup integration (assigning a team-entry to a
+// bracket, §6 of the spec) — a separate, deliberately deferred piece. Payments (§7) are
+// matched on /banking's Rowland Cup tab, or recorded as cash in Rowland Admin, through
+// the rowland_transactions ledger (0098).
 
 import crypto from 'crypto';
 import { getSupabaseClient } from './supabase';
@@ -24,11 +25,15 @@ export interface TeamEntryInput {
   contactEmail: string;
 }
 
+/** A problem with what was entered (e.g. too many teams); its message is safe to show. */
+export class RowlandEntryError extends Error {}
+
 export interface SubmitRowlandEntryInput {
   clubName: string;
   season: string;
   consentToPublish: boolean;
   teams: TeamEntryInput[];
+  createdBy: string;   // who entered it: a committee login, or 'entry form'
 }
 
 export interface TeamEntry {
@@ -56,6 +61,7 @@ export interface RowlandEntry {
 
 export interface RowlandEntryWithTeams extends RowlandEntry {
   teams: TeamEntry[];
+  payments?: RowlandPaymentRecord[];   // getAllRowlandEntries only
 }
 
 function mapEntryRow(row: any): RowlandEntry {
@@ -128,28 +134,58 @@ export async function submitRowlandEntry(input: SubmitRowlandEntryInput): Promis
   if (existingError) throw new Error(`Failed to check for an existing entry: ${existingError.message}`);
 
   let entryId: string;
-  let amountDuePence: number;
+  const feeForTheseTeamsPence = input.teams.length * feePence;
+  const amountDuePence = (existing ? existing.amount_due_pence : 0) + feeForTheseTeamsPence;
+
+  // The form always numbers teams from 1, so a club adding to its entry would clash with
+  // its own team 1. Give the new teams the free numbers after the club's existing ones
+  // (withdrawn teams keep their number), and refuse before anything is saved or charged
+  // if that's more than 2 for a trophy.
+  const teams: TeamEntryInput[] = [];
+  const usedNumbers: Record<RowlandTrophy, number[]> = { edward: [], gladys: [] };
+  if (existing) {
+    const { data: existingTeams, error: existingTeamsError } = await supabase
+      .from('rowland_team_entries')
+      .select('trophy, team_number')
+      .eq('rowland_entry_id', existing.id);
+    if (existingTeamsError) throw new Error(`Failed to check the club's existing teams: ${existingTeamsError.message}`);
+    for (const t of existingTeams || []) {
+      usedNumbers[t.trophy as RowlandTrophy].push(t.team_number);
+    }
+  }
+  for (const t of input.teams) {
+    let teamNumber = 0;
+    for (const n of [1, 2]) {
+      if (!usedNumbers[t.trophy].includes(n)) {
+        teamNumber = n;
+        break;
+      }
+    }
+    if (teamNumber === 0) {
+      const trophyName = t.trophy === 'edward' ? 'Edward' : 'Gladys';
+      throw new RowlandEntryError(
+        `${input.clubName} already has 2 ${trophyName} Rowland teams for ${input.season}, which is the most a club can enter.`
+      );
+    }
+    usedNumbers[t.trophy].push(teamNumber);
+    teams.push({ ...t, teamNumber: teamNumber as 1 | 2 });
+  }
 
   if (existing) {
     entryId = existing.id;
-    amountDuePence = existing.amount_due_pence + input.teams.length * feePence;
     const { error: updateError } = await supabase
       .from('rowland_entries')
-      .update({
-        consent_to_publish: input.consentToPublish,
-        amount_due_pence: amountDuePence,
-      })
+      .update({ consent_to_publish: input.consentToPublish })
       .eq('id', entryId);
     if (updateError) throw new Error(`Failed to update the existing entry: ${updateError.message}`);
   } else {
-    amountDuePence = input.teams.length * feePence;
     const { data: created, error: createError } = await supabase
       .from('rowland_entries')
       .insert({
         club_name: input.clubName,
         season: input.season,
         consent_to_publish: input.consentToPublish,
-        amount_due_pence: amountDuePence,
+        amount_due_pence: 0,
       })
       .select('id')
       .single();
@@ -157,7 +193,8 @@ export async function submitRowlandEntry(input: SubmitRowlandEntryInput): Promis
     entryId = created.id;
   }
 
-  const teamsToInsert = input.teams.map((t) => ({
+  // Teams first, then the fee, so a failed save never leaves a charge behind
+  const teamsToInsert = teams.map((t) => ({
     rowland_entry_id: entryId,
     trophy: t.trophy,
     team_number: t.teamNumber,
@@ -171,6 +208,24 @@ export async function submitRowlandEntry(input: SubmitRowlandEntryInput): Promis
     .insert(teamsToInsert)
     .select('*');
   if (teamsError) throw new Error(`Failed to save team entries: ${teamsError.message}`);
+
+  // What's owed only ever changes through the ledger, so it goes in the Xero journal
+  // (0098). Adding teams to a Paid entry makes it Partial again.
+  const { error: feeError } = await supabase.rpc('rowland_add_entry_fee', {
+    p_entry_id: entryId,
+    p_teams: teams.length,
+    p_amount_pence: feeForTheseTeamsPence,
+    p_created_by: input.createdBy,
+  });
+  if (feeError) {
+    const insertedIds: string[] = [];
+    for (const row of insertedTeams || []) insertedIds.push(row.id);
+    if (insertedIds.length > 0) {
+      const { error: undoError } = await supabase.from('rowland_team_entries').delete().in('id', insertedIds);
+      if (undoError) console.error('[rowland] Failed to remove teams after the fee failed:', undoError.message);
+    }
+    throw new Error(`Failed to record the entry fee: ${feeError.message}`);
+  }
 
   return {
     entryId,
@@ -214,9 +269,7 @@ export async function getRowlandEntryByClub(clubName: string, season: string): P
 }
 
 // ============================================================================
-// COMMITTEE ADMIN — view all entries, mark payment received, withdraw a team.
-// No bank-rec matching yet (§7 of the spec, deferred) — payment status is set by
-// hand here until that exists.
+// COMMITTEE ADMIN — view all entries, withdraw a team.
 // ============================================================================
 
 /** Every club's entry + teams for a season, clubs sorted alphabetically. */
@@ -236,56 +289,140 @@ export async function getAllRowlandEntries(season: string): Promise<RowlandEntry
     .in('rowland_entry_id', entryRows.map((r) => r.id));
   if (teamsError) throw new Error(`Failed to fetch team entries: ${teamsError.message}`);
 
+  const paymentsByEntry = await getPaymentsByEntry(entryRows.map((r) => r.id));
+
   return entryRows.map((entryRow) => ({
     ...mapEntryRow(entryRow),
     teams: (teamRows || [])
       .filter((t) => t.rowland_entry_id === entryRow.id)
       .map(mapTeamEntryRow),
+    payments: paymentsByEntry.get(entryRow.id) || [],
   }));
 }
 
-/**
- * Marks the whole club's combined payment as received in full. No bank-rec matching
- * yet, so this is a manual "we've checked the bank and it's arrived" action — a
- * partial amount isn't supported here, only fully paid or not.
- */
-export async function markEntryPaid(entryId: string): Promise<void> {
-  const supabase = getSupabaseClient();
-  const { data: entryRow, error: fetchError } = await supabase
-    .from('rowland_entries')
-    .select('amount_due_pence')
-    .eq('id', entryId)
-    .maybeSingle();
-  if (fetchError) throw new Error(`Failed to fetch entry: ${fetchError.message}`);
-  if (!entryRow) throw new Error('Entry not found');
+// ============================================================================
+// PAYMENTS (0098) — Banking payments matched on /banking's Rowland Cup tab, and cash
+// recorded in Rowland Admin. Each is a rowland_transactions row, so it goes in the Xero
+// journal with renewals. A part payment leaves the entry Partial; it's Paid once the
+// full amount is in.
+// ============================================================================
 
-  const { error } = await supabase
-    .from('rowland_entries')
-    .update({
-      amount_received_pence: entryRow.amount_due_pence,
-      payment_status: 'Paid',
-      payment_received_at: new Date().toISOString(),
-    })
-    .eq('id', entryId);
-  if (error) throw new Error(`Failed to mark entry paid: ${error.message}`);
+export interface RowlandPaymentResult {
+  paymentStatus: RowlandPaymentStatus;
+  becamePaid: boolean;   // this payment made it Paid — send the payment-received email
 }
 
-/** Undoes a mistaken "mark paid" — resets back to Unpaid, zero received. */
-export async function markEntryUnpaid(entryId: string): Promise<void> {
+/**
+ * Record a payment against a club's entry. Banking: the Unmatched payments in
+ * paymentIds, for their total, dated with the latest bank date. Cash: amountPence today.
+ * Refused (nothing saved) if it's more than the club still owes.
+ */
+export async function recordRowlandPayment(opts: {
+  entryId: string;
+  source: 'banking' | 'cash';
+  paymentIds: string[];
+  amountPence: number;
+  createdBy: string;
+}): Promise<RowlandPaymentResult> {
   const supabase = getSupabaseClient();
-  const { error } = await supabase
+  const { data, error } = await supabase.rpc('rowland_record_payment', {
+    p_entry_id: opts.entryId,
+    p_source: opts.source,
+    p_payment_ids: opts.paymentIds,
+    p_amount_pence: opts.amountPence,
+    p_txn_date: null,
+    p_created_by: opts.createdBy,
+  });
+  if (error) throw new Error(error.message);
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) throw new Error('The payment could not be recorded');
+  return { paymentStatus: row.payment_status, becamePaid: row.became_paid === true };
+}
+
+/** Undo a payment that hasn't been exported to Xero. A Banking payment goes back to Unmatched. */
+export async function removeRowlandPayment(txnId: string): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase.rpc('rowland_remove_payment', { p_txn_id: txnId });
+  if (error) throw new Error(error.message);
+}
+
+export interface RowlandPaymentRecord {
+  id: string;
+  date: string;
+  amountPence: number;
+  source: 'banking' | 'cash';
+  paymentIds: string;
+  exported: boolean;
+}
+
+async function getPaymentsByEntry(entryIds: string[]): Promise<Map<string, RowlandPaymentRecord[]>> {
+  const byEntry = new Map<string, RowlandPaymentRecord[]>();
+  if (entryIds.length === 0) return byEntry;
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('rowland_transactions')
+    .select('id, rowland_entry_id, txn_date, amount_pence, source, payment_ids, xero_export_id')
+    .eq('kind', 'payment')
+    .in('rowland_entry_id', entryIds)
+    .order('txn_date');
+  if (error) throw new Error(`Failed to fetch payments: ${error.message}`);
+  for (const row of data || []) {
+    const list = byEntry.get(row.rowland_entry_id) || [];
+    list.push({
+      id: row.id,
+      date: row.txn_date,
+      amountPence: row.amount_pence,
+      source: row.source,
+      paymentIds: row.payment_ids || '',
+      exported: !!row.xero_export_id,
+    });
+    byEntry.set(row.rowland_entry_id, list);
+  }
+  return byEntry;
+}
+
+/** Entries, any season, with money still owed — the left-hand list on /banking's Rowland Cup tab. */
+export async function getRowlandEntriesOwing(): Promise<RowlandEntry[]> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
     .from('rowland_entries')
-    .update({ amount_received_pence: 0, payment_status: 'Unpaid', payment_received_at: null })
-    .eq('id', entryId);
-  if (error) throw new Error(`Failed to mark entry unpaid: ${error.message}`);
+    .select('*')
+    .neq('payment_status', 'Paid')
+    .order('club_name');
+  if (error) throw new Error(`Failed to fetch entries: ${error.message}`);
+  const entries: RowlandEntry[] = [];
+  for (const row of data || []) {
+    if (row.amount_due_pence > row.amount_received_pence) entries.push(mapEntryRow(row));
+  }
+  return entries;
+}
+
+/** Each contact address for a club's entered teams, with the teams they look after. */
+export async function getEntryContacts(entryId: string): Promise<{
+  entry: RowlandEntry;
+  contacts: Array<{ email: string; name: string; teams: TeamEntry[] }>;
+} | null> {
+  const entry = await getRowlandEntry(entryId);
+  if (!entry) return null;
+  const byEmail = new Map<string, { email: string; name: string; teams: TeamEntry[] }>();
+  for (const team of entry.teams) {
+    if (team.status !== 'Entered' || !team.contactEmail) continue;
+    const key = team.contactEmail.toLowerCase();
+    let contact = byEmail.get(key);
+    if (!contact) {
+      contact = { email: team.contactEmail, name: team.contactName, teams: [] };
+      byEmail.set(key, contact);
+    }
+    contact.teams.push(team);
+  }
+  return { entry, contacts: Array.from(byEmail.values()) };
 }
 
 /**
  * Withdraws a single team (e.g. payment never arrives) — sets status rather than
  * deleting, so there's a record of "entered but withdrawn" rather than the row simply
  * disappearing. Suspending a whole club is calling this for each of their teams.
- * Doesn't touch rowland_entries.amount_due_pence — if the fee owed needs adjusting to
- * match, that's a manual edit for now (no per-team fee is tracked to recalculate from).
+ * Doesn't touch what the club owes: the entry fee is kept once entered.
  */
 export async function withdrawTeamEntry(teamEntryId: string): Promise<void> {
   const supabase = getSupabaseClient();

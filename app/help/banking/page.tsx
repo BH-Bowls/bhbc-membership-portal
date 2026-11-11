@@ -9,8 +9,8 @@ export default function HelpBankingPage() {
         <div className="mb-6">
           <BackLink href="/help" label="Help" />
           <h1 className="text-2xl font-bold text-gray-900">Banking &amp; the Treasurer&apos;s tools</h1>
-          <p className="text-gray-500 text-sm mt-1">Matching renewal payments, the bar&apos;s cash, member accounts and Xero</p>
-          <LastUpdated date="2026-11-05" />
+          <p className="text-gray-500 text-sm mt-1">Matching renewal and Rowland Cup payments, the bar&apos;s cash, member accounts and Xero</p>
+          <LastUpdated date="2026-11-10" />
         </div>
         <div className="space-y-4">
 
@@ -20,7 +20,7 @@ export default function HelpBankingPage() {
               Treasurer and Admin:
             </Body>
             <ul className="list-disc pl-5 space-y-1 text-sm text-gray-700 mb-3">
-              <li><strong>Banking</strong> — matching bank payments to members&apos; renewals.</li>
+              <li><strong>Banking</strong> — matching bank payments to members&apos; renewals and to Rowland Cup entry fees.</li>
               <li><strong>Bar Reconciliation</strong> — confirming the bar&apos;s Day Ends and banking the cash.</li>
               <li><strong>Renewals → Xero</strong> — exporting the renewals journals, and checks and adjustments.</li>
               <li><strong>Member Accounts</strong> — the members&apos; bar account balances and transactions.</li>
@@ -38,7 +38,7 @@ export default function HelpBankingPage() {
               <strong>Import CSV</strong> — export a CSV from online banking with the columns Date,
               Type, Description and Amount. Tap <strong>Import CSV</strong> to see the exact layout,
               then choose the file. Types are TRF (bank transfer), CDM (card machine), CHQ (cheque) and
-              CSH (cash).
+              CSH (cash). A header line is optional, and outgoings (negative amounts) are skipped.
             </Step>
             <Step n={2}>
               <strong>+ Add Payments</strong> — enter several payments by hand, for example cheques or
@@ -62,7 +62,14 @@ export default function HelpBankingPage() {
             <Step n={3}>Tap <strong>Update</strong> to save the matches.</Step>
             <Body>
               A payment for several members at once (e.g. &quot;A &amp; B SMITH SUBS&quot;) can be matched
-              to several renewals. Tap a payment to amend or delete it.
+              to several renewals. Double-tap a payment to amend it. Receipts that aren&apos;t renewals
+              or Rowland Cup fees can be removed with the bin beside them.
+            </Body>
+            <Body>
+              Each tab matches only its own payments: Payments shows what&apos;s matched on the tab
+              you&apos;re on, and the tab name shows how many matches are waiting. Changing tab unticks
+              anything not yet matched. <strong>Update</strong> saves only the matches on the tab
+              you&apos;re on; the other tab&apos;s stay waiting for its own Update.
             </Body>
             <Note>
               The member&apos;s payment reference (shown on their renewal and in My Account) makes
@@ -70,10 +77,49 @@ export default function HelpBankingPage() {
             </Note>
           </HelpSection>
 
+          <HelpSection title="Rowland Cup entry fees">
+            <Body>
+              The <strong>Rowland Cup</strong> tab, beside <strong>Renewals</strong> on the left of the
+              Banking page, lists the clubs that still owe entry fees. Clubs pay with the reference
+              &quot;EGR&quot; and their club name. The Payments list on the right is the same one, and
+              matching works the same way as renewals.
+            </Body>
+            <Step n={1}>
+              When Banking opens, a payment whose reference names one club, for exactly what that club
+              owes, is already matched (ticked in red).
+            </Step>
+            <Step n={2}>
+              Otherwise tick the club and its payment(s). When they come to what the club owes they
+              match. If they come to less, the Manual Match box opens: tap <strong>Amend</strong> to
+              match it as a part payment. One club at a time.
+            </Step>
+            <Step n={3}>
+              Tap <strong>Update</strong> to save the Rowland Cup matches.
+            </Step>
+            <Body>
+              A part payment leaves the entry <strong>Partial</strong> with the rest still owed. Once it&apos;s
+              paid in full it becomes <strong>Paid</strong>, and the team contacts get a payment received
+              email. A match that hasn&apos;t been exported to Xero yet can be undone in{' '}
+              <strong>Rowland Admin → Entries</strong>, which puts the payment back in Banking.
+            </Body>
+            <Note>
+              Cash handed to the Rowland organiser is recorded in Rowland Admin with{' '}
+              <strong>Record cash payment</strong>, not in Banking.
+            </Note>
+          </HelpSection>
+
           <HelpSection title="Banking report">
             <Body>
-              <strong>Report</strong> (on the Banking page) shows which subscriptions are paid and
-              unpaid, and which payments are allocated and unallocated.
+              <strong>Report</strong> (on the Banking page) is for one year: choose it at the top. The{' '}
+              <strong>Subs</strong> tab shows which subscriptions are paid and unpaid, and the payments
+              allocated to that year&apos;s renewals. The <strong>Rowland Cup</strong> tab shows which
+              clubs have paid their entry fees, which still owe, and their payments, including cash
+              recorded in Rowland Admin.
+            </Body>
+            <Body>
+              Unallocated payments haven&apos;t been matched to anything yet, so they have no year. The
+              Subs tab shows those with &quot;SUBS&quot; in the reference, and the Rowland Cup tab those
+              with &quot;EGR&quot;. Download CSV and Print cover the tab and year on show.
             </Body>
           </HelpSection>
 
@@ -97,13 +143,13 @@ export default function HelpBankingPage() {
             <Body>Four tabs:</Body>
             <ul className="list-disc pl-5 space-y-1 text-sm text-gray-700 mb-3">
               <li>
-                <strong>Export</strong> — everything about renewals not yet in Xero, as one journal per
-                day (totals by account, no names). Export downloads the CSV for Xero and marks it
-                exported. Earlier exports can be downloaded again.
+                <strong>Export</strong> — everything about renewals and Rowland Cup entry fees not yet in
+                Xero, as one journal per day (totals by account, no names). Export downloads the CSV for
+                Xero and marks it exported. Earlier exports can be downloaded again.
               </li>
               <li>
-                <strong>Checks</strong> — what Membership debtors and the transfers clearing account
-                should be at a date, to compare with Xero.
+                <strong>Checks</strong> — what Membership debtors, Rowland Cup debtors and the transfers
+                clearing account should be at a date, to compare with Xero.
               </li>
               <li>
                 <strong>Adjustments</strong> — a member&apos;s renewal account, and extra charges,

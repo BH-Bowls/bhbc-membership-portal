@@ -195,6 +195,14 @@ export interface FixtureSeason {
   isActive: boolean;
 }
 
+/** One season by its year, or null if there's no such season. */
+export async function getSeasonByYear(year: number): Promise<FixtureSeason | null> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.from('seasons').select('id, year, is_active').eq('year', year).maybeSingle();
+  if (error) throw new Error(`Failed to fetch the ${year} season: ${error.message}`);
+  return data ? { id: data.id, year: data.year, isActive: !!data.is_active } : null;
+}
+
 /** All seasons (past, active, and any not-yet-active draft), for the /fixtures year picker. */
 export async function getAllSeasons(): Promise<FixtureSeason[]> {
   const supabase = getSupabaseClient();
@@ -224,13 +232,14 @@ export async function getFixtures(statusFilter?: GameStatus, typeFilter?: GameTy
   return withLiveCounts(rows.map(mapFixtureRow));
 }
 
-export async function getFixtureByTabName(tabName: string): Promise<Fixture | null> {
+/** Tab names repeat from year to year, so this looks in one season: the active one unless seasonId is given. */
+export async function getFixtureByTabName(tabName: string, seasonId?: string): Promise<Fixture | null> {
   const supabase = getSupabaseClient();
-  const seasonId = await getActiveSeasonId();
+  const resolvedSeasonId = seasonId || (await getActiveSeasonId());
   const { data, error } = await supabase
     .from('fixtures')
     .select('*')
-    .eq('season_id', seasonId)
+    .eq('season_id', resolvedSeasonId)
     .eq('tab_name', tabName)
     .maybeSingle();
   if (error) throw new Error(`Failed to fetch fixture: ${error.message}`);

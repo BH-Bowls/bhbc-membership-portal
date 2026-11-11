@@ -48,7 +48,7 @@ Both are hosted on **Vercel**, under the same Vercel account. Both use the **sam
   - Both on Supabase's free "Hobby" plan, which keeps **no platform backups**. Production is backed up nightly by a GitHub Actions workflow to the club's Google Drive (90 days kept), with restore scripts for dev and production. See **`Specs/BHBC_Database_Backup_Technical_Runbook.md`**. `scripts/db-dump.ts` / `scripts/db-restore.ts` (and the `db-*` npm scripts) remain for copying data only between environments.
   - Migrations: `supabase/migrations/`
 - File attachments: Google Drive. `src/lib/drive.ts` prefers an OAuth-authenticated user (`GOOGLE_OAUTH_CLIENT_ID`/`SECRET`/`REFRESH_TOKEN`) if configured, falling back to the plain service account otherwise — the OAuth path exists because a bare service account has no Drive storage quota of its own on a non-Workspace Google account.
-- Email: Gmail SMTP via `nodemailer` (`SMTP_USER`/`SMTP_PASSWORD` — an app password, not the account's main password)
+- Email: Gmail, through the Gmail API (`src/lib/email/gmail-api.ts`, OAuth refresh token `GMAIL_REFRESH_TOKEN` with scope `gmail.send`) when set, otherwise Gmail SMTP via `nodemailer` (`SMTP_PASSWORD` — an app password). `SMTP_USER` is the club address either way. Test with `scripts/send-test-email.ts`
 - Local dev: `npm run dev` (port 3001)
 
 ---
@@ -95,7 +95,7 @@ Both are hosted on **Vercel**, under the same Vercel account. Both use the **sam
 Names only — actual values live in each Vercel project's dashboard, and locally in `.env.dev.local` / `.env.prod.local` (never committed).
 
 **Portal:**
-`NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `NEXT_PUBLIC_APP_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_PRIVATE_KEY`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`, `GOOGLE_DRIVE_ATTACHMENTS_FOLDER_ID`, `FRIENDLIES_SPREADSHEET_ID`, `PORTAL_DOCUMENTS_FOLDER_ID`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `PUBLIC_ACCESS_PIN`, `ICS_UPDATE_EMAILS`
+`NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `NEXT_PUBLIC_APP_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_PRIVATE_KEY`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`, `GOOGLE_DRIVE_ATTACHMENTS_FOLDER_ID`, `FRIENDLIES_SPREADSHEET_ID`, `PORTAL_DOCUMENTS_FOLDER_ID`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `GMAIL_REFRESH_TOKEN` (Gmail API sending for the club account — preferred over `SMTP_PASSWORD`; get it with `scripts/get-gmail-token.mjs`), `ROWLAND_EMAIL` + `ROWLAND_GMAIL_REFRESH_TOKEN` or `ROWLAND_SMTP_PASSWORD` (optional — the Rowland Cup Gmail account; Rowland emails fall back to the club account if unset), `PUBLIC_ACCESS_PIN`, `ICS_UPDATE_EMAILS`
 
 > Most of the Portal's Sheets migrated to Supabase/Postgres through 2026 (see Section 1) — `MEMBERS_SPREADSHEET_ID`, `COMPETITIONS_SPREADSHEET_ID`, `LEAGUES_SPREADSHEET_ID`, `ROWLAND_SPREADSHEET_ID`, `MATCH_DAY_CONTACTS_SPREADSHEET_ID`, and `PORTAL_CONFIG_SPREADSHEET_ID` are now commented out in `.env.dev.local`/`.env.prod.local` and removed from Vercel — no longer used. `FRIENDLIES_SPREADSHEET_ID` is the only spreadsheet ID still live, since Friendlies hasn't fully migrated off Sheets yet.
 

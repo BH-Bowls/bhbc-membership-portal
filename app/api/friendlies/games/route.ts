@@ -1,12 +1,17 @@
 // app/api/friendlies/games/route.ts
 // API endpoint to fetch all games with optional status filtering and user's entry status
 // Used by the main Friendlies page to display available games to players
+//
+// ?year=2025 returns a past season's games instead (read only): the games and the
+// user's own status in each, but no tea duties, buddies or confirmation state — those
+// only matter for games that can still be entered. Every response also carries
+// seasons (the year picker: past and active, not next year's draft) and year.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getPlayerEntries, getUserEntriesByGroup } from '@/lib/fixture-groups-supabase';
-import { getFixtures, getTeaRotaList } from '@/lib/fixtures-supabase';
+import { getFixtures, getTeaRotaList, getAllSeasons, type FixtureSeason } from '@/lib/fixtures-supabase';
 import { getClubs } from '@/lib/clubs-supabase';
 import { GameStatus, GameType, FriendliesBuddy } from '@/lib/types/friendlies';
 import { hasRole } from '@/lib/role-utils';
@@ -27,6 +32,56 @@ export async function GET(request: NextRequest) {
     // Admins also see Test games; all other roles see Friendly only
     const isAdmin = hasRole(session?.user?.role, 'Admin');
     const typeFilter: GameType[] = isAdmin ? ['Friendly', 'Test'] : ['Friendly'];
+
+    // Year picker: past seasons and the active one. Next year's Season Planning draft
+    // is left out — its friendlies can't be entered yet.
+    const allSeasons = await getAllSeasons();
+    let activeSeason: FixtureSeason | null = null;
+    for (const s of allSeasons) {
+      if (s.isActive) activeSeason = s;
+    }
+    const seasons: { year: number; isActive: boolean }[] = [];
+    for (const s of allSeasons) {
+      if (!activeSeason || s.year <= activeSeason.year) seasons.push({ year: s.year, isActive: s.isActive });
+    }
+
+    // A past season, if one was asked for
+    const yearParam = parseInt(searchParams.get('year') || '', 10);
+    let pastSeason: FixtureSeason | null = null;
+    if (!isNaN(yearParam)) {
+      for (const s of allSeasons) {
+        if (s.year === yearParam && !s.isActive && (!activeSeason || s.year < activeSeason.year)) pastSeason = s;
+      }
+    }
+
+    if (pastSeason) {
+      const pastGames = await getFixtures(undefined, typeFilter, pastSeason.id);
+      const pastEntries = session?.user?.userName ? await getPlayerEntries(session.user.userName, pastSeason.id) : [];
+      const pastGamesWithStatus = pastGames.map(game => {
+        let entry = null;
+        for (const e of pastEntries) {
+          if (e.tabName === game.tabName) { entry = e; break; }
+        }
+        return {
+          ...game,
+          petrolCost: null,
+          userEntered: !!entry,
+          userStatus: entry ? entry.status : null,
+          userConfirmed: null,
+        };
+      });
+      return NextResponse.json({
+        games: pastGamesWithStatus,
+        teaDutyDates: [],
+        teaDutyTabNames: [],
+        buddies: [],
+        seasons,
+        year: pastSeason.year,
+        isPast: true,
+      });
+    }
+
+    const year = activeSeason ? activeSeason.year : null;
 
     // Fetch games and club details in parallel. Postgres reads are always fresh —
     // no cache layer to bypass here (unlike the old Sheets Games cache, which the
@@ -72,7 +127,7 @@ export async function GET(request: NextRequest) {
         userStatus: null,
         userConfirmed: null,
       }));
-      return NextResponse.json({ games: gamesWithUserStatus, teaDutyDates, teaDutyTabNames });
+      return NextResponse.json({ games: gamesWithUserStatus, teaDutyDates, teaDutyTabNames, seasons, year, isPast: false });
     }
 
     // This user's entries (with derived status codes) and their raw entry rows (for confirmation)
@@ -138,7 +193,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Return success response with games array + the user's tea-duty dates + buddies
-    return NextResponse.json({ games: gamesWithUserStatus, teaDutyDates, teaDutyTabNames, buddies });
+    return NextResponse.json({ games: gamesWithUserStatus, teaDutyDates, teaDutyTabNames, buddies, seasons, year, isPast: false });
   } catch (error) {
     // Log error and return 500 response
     return NextResponse.json(

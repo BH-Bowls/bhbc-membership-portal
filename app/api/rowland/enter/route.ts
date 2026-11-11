@@ -14,10 +14,11 @@ import {
   getRowlandEntryDeadline,
   getRowlandEntrySeason,
   createAccessToken,
+  RowlandEntryError,
   type TeamEntryInput,
   type RowlandTrophy,
 } from '@/lib/rowland-entries-supabase';
-import { isEmailConfigured, getEmailTransporter } from '@/lib/email/mailer';
+import { getRowlandEmailSender } from '@/lib/email/mailer';
 import { formatOrdinalDate } from '@/lib/date-utils';
 import { processEmailTemplate } from '@/lib/email/template-processor';
 import { readFileSync } from 'fs';
@@ -29,9 +30,6 @@ import { getBankDetails } from '@/lib/bank-details';
 // Rate limiting - simple in-memory store, same pattern as /api/apply
 const submissionTimes: Map<string, number> = new Map();
 const RATE_LIMIT_MINUTES = 5;
-
-// Same club contact address application-mailer.ts uses for "questions about this" lines.
-const CLUB_EMAIL = 'burgesshillbc@gmail.com';
 
 interface EnterRequestBody {
   clubName: string;
@@ -143,6 +141,7 @@ export async function POST(request: NextRequest) {
       season,
       consentToPublish: data.consentToPublish,
       teams: teamsInput,
+      createdBy: isCommitteeSession && session ? session.user.userName : 'entry form',
     });
 
     console.log(`[rowland/enter] Entry saved for ${data.clubName} (${teamsInput.length} team(s))`);
@@ -154,7 +153,9 @@ export async function POST(request: NextRequest) {
 
     // Create an access token per team, and send one confirmation email per unique
     // contact address, listing every team that address is the contact for.
-    if (isEmailConfigured()) {
+    // Sent from the Rowland Cup account when it's set up, which is also the address for questions
+    const sender = getRowlandEmailSender();
+    if (sender) {
       try {
         const deadline = await getRowlandEntryDeadline();
         const expiresAt = new Date(deadline || Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
@@ -178,7 +179,6 @@ export async function POST(request: NextRequest) {
         const templatePath = join(process.cwd(), 'src', 'lib', 'email', 'templates', 'rowland-entry-confirmation.html');
         const templateSource = readFileSync(templatePath, 'utf-8');
         const template = Handlebars.compile(templateSource);
-        const transporter = getEmailTransporter();
 
         for (const [email, entries] of byEmail) {
           const teamLines = entries.map(({ team, token }) => ({
@@ -194,13 +194,13 @@ export async function POST(request: NextRequest) {
             amountDue: (result.amountDuePence / 100).toFixed(2),
             paymentReference: result.paymentReference,
             deadline: deadline ? formatOrdinalDate(deadline) : '',
-            contactEmail: CLUB_EMAIL,
+            contactEmail: sender.address,
             ...bankDetails,
           });
           const processedHtml = processEmailTemplate(html);
 
-          await transporter.sendMail({
-            from: `"Burgess Hill Bowls Club" <${process.env.SMTP_USER}>`,
+          await sender.transporter.sendMail({
+            from: sender.from,
             to: email,
             subject: `Rowland Cup Entry — ${data.clubName}`,
             html: processedHtml,
@@ -221,6 +221,9 @@ export async function POST(request: NextRequest) {
       bankDetails,
     });
   } catch (error) {
+    if (error instanceof RowlandEntryError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     console.error('[rowland/enter] POST error:', error);
     return NextResponse.json({ error: 'Failed to submit entry. Please try again.' }, { status: 500 });
   }

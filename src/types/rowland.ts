@@ -87,7 +87,7 @@ export interface RowlandMatch {
 export interface RowlandComp {
   compId: RowlandCompId;
   compName: string;
-  season: string;    // e.g. "2025-26"
+  year: number;      // the season, e.g. 2026 — one row per competition per year (0097)
   status: RowlandCompStatus;
   numTeams: number;  // number of entered teams (determines bracket size)
 
