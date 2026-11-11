@@ -10,7 +10,7 @@ export default function HelpMembersAdminPage() {
           <BackLink href="/help" label="Help" />
           <h1 className="text-2xl font-bold text-gray-900">Members Admin</h1>
           <p className="text-gray-500 text-sm mt-1">Applications, member records, and leavers</p>
-          <LastUpdated date="2026-11-05" />
+          <LastUpdated date="2026-11-11" />
         </div>
         <div className="space-y-4">
 
@@ -61,8 +61,9 @@ export default function HelpMembersAdminPage() {
             <ul className="list-disc pl-5 space-y-1 text-sm text-gray-700 mb-3">
               <li>
                 <strong>Edit</strong> — change any of their details (not their username), including their
-                roles and <strong>Include in Mailings</strong>. Their record also has their bar card: reset
-                it, clear their PIN, or restore a card they have found.
+                roles and <strong>Include in Mailings</strong>. Their record also has their bar card: when
+                it was issued and by whom, <strong>Assign new card…</strong> (scan one of the blank bar
+                cards with the phone or laptop camera), reset it, or clear their PIN.
               </li>
               <li>
                 <strong>Add Member</strong> — create a member by hand, without an application. You are

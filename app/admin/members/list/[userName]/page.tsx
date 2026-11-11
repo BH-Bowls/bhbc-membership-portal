@@ -76,19 +76,18 @@ export default function MemberDetailPage() {
   const [memberOptions, setMemberOptions] = useState<{ userName: string; name: string }[]>([]);
 
   // Membership card and bar PIN (src/lib/bar-card.ts) — saved straight away, not with Save Changes
-  const [barCard, setBarCard] = useState<{ hasPin: boolean; pinLocked: boolean } | null>(null);
+  const [barCard, setBarCard] = useState<{ hasPin: boolean; pinLocked: boolean; issuedAt: string | null; issuedByName: string | null } | null>(null);
   const [cardBusy, setCardBusy] = useState(false);
   const [cardMessage, setCardMessage] = useState<{ ok: boolean; text: string } | null>(null);
-  const [cardConfirm, setCardConfirm] = useState<'reset_card' | 'clear_pin' | null>(null);
+  // assign_card: the Assign new card panel is open (scan a blank card to finish)
+  const [cardConfirm, setCardConfirm] = useState<'reset_card' | 'clear_pin' | 'assign_card' | null>(null);
   const [scanningCard, setScanningCard] = useState(false);
-  // A found card scanned for restoring, waiting for the admin to confirm
-  const [restoreCode, setRestoreCode] = useState<{ code: string; isCurrent: boolean } | null>(null);
 
   const loadBarCard = () => {
     fetch(`/api/admin/members/${encodeURIComponent(userNameParam)}/bar-card`)
       .then((r) => r.json())
       .then((data) => {
-        if (!data.error) setBarCard({ hasPin: data.hasPin, pinLocked: data.pinLocked });
+        if (!data.error) setBarCard({ hasPin: data.hasPin, pinLocked: data.pinLocked, issuedAt: data.cardIssuedAt, issuedByName: data.cardIssuedByName });
       })
       .catch(() => {});
   };
@@ -107,7 +106,6 @@ export default function MemberDetailPage() {
       if (!res.ok) throw new Error(data.error || 'Failed to update the card');
       setCardMessage({ ok: true, text: done });
       setCardConfirm(null);
-      setRestoreCode(null);
       loadBarCard();
     } catch (err) {
       setCardMessage({ ok: false, text: err instanceof Error ? err.message : 'Failed to update the card' });
@@ -116,21 +114,21 @@ export default function MemberDetailPage() {
     }
   };
 
-  const cardScanned = async (code: string) => {
+  // A blank card scanned in the Assign new card panel — assign it straight away
+  const cardScanned = (code: string) => {
     setScanningCard(false);
-    setCardMessage(null);
-    try {
-      const res = await fetch(`/api/admin/members/${encodeURIComponent(userNameParam)}/bar-card`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'check_card', code: code }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Couldn’t check the card');
-      setRestoreCode({ code: code, isCurrent: data.status === 'current' });
-    } catch (err) {
-      setCardMessage({ ok: false, text: err instanceof Error ? err.message : 'Couldn’t check the card' });
-    }
+    barCardAction({ action: 'assign_card', code: code }, 'Card assigned. Their previous card no longer works.');
+  };
+
+  // e.g. "3 Mar 2027 by Jane Smith" — '' if no card has been issued
+  const cardIssuedDetail = (): string => {
+    if (!barCard || !barCard.issuedAt) return '';
+    const date = new Date(barCard.issuedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    return barCard.issuedByName ? `${date} by ${barCard.issuedByName}` : date;
+  };
+  const cardIssuedText = (): string => {
+    const detail = cardIssuedDetail();
+    return detail ? `Card issued on ${detail}.` : 'No card issued yet.';
   };
 
   // Load the member's current details
@@ -536,8 +534,9 @@ export default function MemberDetailPage() {
                       : 'No bar PIN set.'}
                 {' '}These buttons take effect straight away — no need to Save Changes.
               </p>
+              {barCard !== null && <p className="text-sm text-gray-700 mb-3">{cardIssuedText()}</p>}
 
-              {cardConfirm === null && restoreCode === null && (
+              {cardConfirm === null && (
                 <div className="flex flex-wrap gap-2">
                   <button className={getButtonClasses('secondary', 'sm')} disabled={cardBusy}
                     onClick={() => { setCardMessage(null); setCardConfirm('reset_card'); }}>
@@ -547,9 +546,9 @@ export default function MemberDetailPage() {
                     onClick={() => { setCardMessage(null); setCardConfirm('clear_pin'); }}>
                     Clear PIN
                   </button>
-                  <button className={getButtonClasses('secondary', 'sm')} disabled={cardBusy}
-                    onClick={() => { setCardMessage(null); setScanningCard(true); }}>
-                    Restore a found card…
+                  <button className={getButtonClasses('secondary', 'sm')} disabled={cardBusy || barCard === null}
+                    onClick={() => { setCardMessage(null); setCardConfirm('assign_card'); }}>
+                    Assign new card…
                   </button>
                 </div>
               )}
@@ -580,25 +579,20 @@ export default function MemberDetailPage() {
                 </div>
               )}
 
-              {restoreCode !== null && (
+              {cardConfirm === 'assign_card' && barCard !== null && (
                 <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-gray-900">
-                  {restoreCode.isCurrent ? (
-                    <>
-                      <p>That card is already {userNameParam}&apos;s current card — nothing to restore.</p>
-                      <button className={`${getButtonClasses('secondary', 'sm')} mt-3`} onClick={() => setRestoreCode(null)}>OK</button>
-                    </>
+                  {barCard.issuedAt ? (
+                    <p>{userNameParam} already has a card (issued {cardIssuedDetail()}). Assigning a new one stops the old card working.</p>
                   ) : (
-                    <>
-                      <p>This is one of {userNameParam}&apos;s old cards. Restore it? It works again, and their current card (and its QR on My Account) stops working.</p>
-                      <div className="flex gap-2 mt-3">
-                        <button className={getButtonClasses('primary', 'sm')} disabled={cardBusy}
-                          onClick={() => barCardAction({ action: 'restore_card', code: restoreCode.code }, 'Card restored.')}>
-                          {cardBusy ? 'Restoring…' : 'Restore card'}
-                        </button>
-                        <button className={getButtonClasses('secondary', 'sm')} disabled={cardBusy} onClick={() => setRestoreCode(null)}>Cancel</button>
-                      </div>
-                    </>
+                    <p>No card issued yet — this will be {userNameParam}&apos;s first card.</p>
                   )}
+                  <p className="mt-1">Scan one of the blank bar cards. Their phone QR on My Account carries on working.</p>
+                  <div className="flex gap-2 mt-3">
+                    <button className={getButtonClasses('primary', 'sm')} disabled={cardBusy} onClick={() => setScanningCard(true)}>
+                      {cardBusy ? 'Assigning…' : 'Scan card'}
+                    </button>
+                    <button className={getButtonClasses('secondary', 'sm')} disabled={cardBusy} onClick={() => setCardConfirm(null)}>Cancel</button>
+                  </div>
                 </div>
               )}
 
@@ -606,7 +600,7 @@ export default function MemberDetailPage() {
                 <p className={`text-sm mt-2 ${cardMessage.ok ? 'text-green-700' : 'text-red-600'}`}>{cardMessage.text}</p>
               )}
               {scanningCard && (
-                <QrScanModal title={`Scan ${userNameParam}’s found card`} onScan={cardScanned} onClose={() => setScanningCard(false)} />
+                <QrScanModal title={`Scan a blank bar card for ${userNameParam}`} onScan={cardScanned} onClose={() => setScanningCard(false)} />
               )}
             </div>
 

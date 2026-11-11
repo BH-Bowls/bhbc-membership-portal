@@ -100,7 +100,11 @@ interface BasketLine { product: BarProduct; qty: number }
 interface MemberOption { userName: string; fullName: string }
 // One member's card/PIN details from /api/bar/cards (TillCard in src/lib/bar-card.ts)
 interface TillCard {
-  userName: string; userId: string; cardHash: string; hasPin: boolean; pinLocked: boolean;
+  userName: string; userId: string; hasPin: boolean; pinLocked: boolean;
+  cardHash: string;              // their phone QR (BHBC1.<id>.<token>)
+  blankCardHash: string;         // the same token as a blank bar card (BHBC2.<token>)
+  cardIssuedAt: string | null;   // when their current bar card was assigned (null = never)
+  cardIssuedBy: string | null;   // who assigned it (username)
   proofRequired: boolean;        // as a member: Pay by Account / Top Up
   staffProofRequired: boolean;   // as the person serving: Day End, Void, Refund, Cash Movement
 }
@@ -183,8 +187,10 @@ export default function BarTillPage() {
   const tillCardsLoad = useRef<Promise<void> | null>(null);
   const [proof, setProof] = useState<MemberProof | null>(null);
   const proofRef = useRef<MemberProof | null>(null);
-  const [proofDialog, setProofDialog] = useState<{ purpose: 'pay' | 'topup'; onProven: () => void } | null>(null);
+  const [proofDialog, setProofDialog] = useState<{ purpose: 'pay' | 'topup' | 'card'; onProven: () => void } | null>(null);
   const [showSetPin, setShowSetPin] = useState(false);
+  // Assign new card is open for the member on screen
+  const [showAssignCard, setShowAssignCard] = useState(false);
   // Day End / Void / Refund / Cash Movement waiting for the person serving to confirm,
   // and their confirmation for the one in progress (see requireStaff)
   const [staffDialog, setStaffDialog] = useState<{ label: string; server: string; onProven: (p: PersonProof) => void } | null>(null);
@@ -676,6 +682,36 @@ export default function BarTillPage() {
       setProofDialog({ purpose: purpose, onProven: () => { setProofDialog(null); action(); } });
     });
   }
+  // Assign new card: the member shows their phone QR (or current card, or PIN) — or the
+  // person serving approves — then a blank bar card is scanned (AssignCardDialog). Always
+  // asked, whatever the bar_account_proof setting; needs a connection.
+  function startAssignCard() {
+    const onScreen = member;
+    if (!onScreen) return;
+    if (!volunteer) { setError('Select who’s serving first.'); return; }
+    whenCardsReady(() => {
+      if (hasProof(onScreen.userName)) { setShowAssignCard(true); return; }
+      setProofDialog({ purpose: 'card', onProven: () => { setProofDialog(null); setShowAssignCard(true); } });
+    });
+  }
+  // The card's now theirs: update the till's copy (so scans work straight away, offline
+  // too) and count the new card as their proof for this basket.
+  async function cardAssigned(userName: string, code: string, issuedAt: string, issuedBy: string) {
+    const card = tillCardFor(userName);
+    const token = code.split('.')[1];
+    const phoneHash = card ? await sha256Hex(`BHBC1.${card.userId}.${token}`) : null;
+    const blankHash = await sha256Hex(code);
+    setTillCards((prev) => prev.map((c) => (c.userName === userName
+      ? { ...c, cardHash: phoneHash || c.cardHash, blankCardHash: blankHash || c.blankCardHash, cardIssuedAt: issuedAt, cardIssuedBy: issuedBy }
+      : c)));
+    setMemberProof({ userName: userName, cardCode: code });
+  }
+  // A member's or bar person's full name, for "issued by"
+  function personName(userName: string): string {
+    const found = allMembers.find((m) => m.userName === userName);
+    return found ? found.fullName : barPersonName(userName);
+  }
+
   // The server said the proof wasn't good enough (e.g. a PIN check expired) — ask again next time
   function handleProofRefused(data: { proofRequired?: boolean }) {
     if (data.proofRequired) setMemberProof(null);
@@ -1014,8 +1050,18 @@ export default function BarTillPage() {
   // it works offline. An old card that's been reset, or an old-style QR holding just the
   // username, finds the member (same as picking them from the list) but isn't proof.
   async function readScan(value: string): Promise<{ person?: BarAccount; proof?: MemberProof; message?: string }> {
-    const code = value.trim();
+    let code = value.trim();
     if (!tillCardsLoaded.current) await loadTillCards();
+    // A blank bar card (BHBC2.<token>) has no member id — it's found by its token's hash
+    if (/^bhbc2./i.test(code)) {
+      code = 'BHBC2.' + code.slice(6).toLowerCase();
+      const hash = await sha256Hex(code);
+      if (hash === null) return { message: 'This device can’t check cards — the till needs to be on its https:// address.' };
+      const card = tillCardsRef.current.find((c) => c.blankCardHash === hash);
+      const person = card ? allPeople.find((m) => m.userName === card.userName) : undefined;
+      if (!card || !person) return { message: 'This bar card isn’t anyone’s yet (or has been replaced). To give it to a member, pick them, then Assign new card.' };
+      return { person: person, proof: { userName: person.userName, cardCode: code } };
+    }
     if (code.startsWith('BHBC1.')) {
       const card = tillCardsRef.current.find((c) => c.userId === code.split('.')[1]);
       const person = card ? allPeople.find((m) => m.userName === card.userName) : undefined;
@@ -1057,7 +1103,7 @@ export default function BarTillPage() {
       return;
     }
     setError(result.message ?? '');
-  }, (view === 'person' || (view === 'sale' && !!member)) && !proofDialog && !staffDialog && !showSetPin && !terminalPay && !voidDialog);
+  }, (view === 'person' || (view === 'sale' && !!member)) && !proofDialog && !staffDialog && !showSetPin && !showAssignCard && !terminalPay && !voidDialog);
 
   // On a Day End or Cash Movement the person serving has confirmed it's them — keep it them
   const serverLocked = !!staffSession && !!staffSession.proof && (view === 'report' || view === 'cashmovement');
@@ -1120,6 +1166,18 @@ export default function BarTillPage() {
             onPinLocked={() => markPinLocked(staffDialog.server)}
             onProven={staffDialog.onProven}
             onClose={() => { setStaffDialog(null); if (view === 'volunteer') setView('person'); }}
+          />
+        )}
+
+        {showAssignCard && member && proof && proof.userName === member.userName && (
+          <AssignCardDialog
+            member={member}
+            card={tillCardFor(member.userName)}
+            issuedByName={personName}
+            staff={volunteer}
+            proof={proofFor(member.userName)}
+            onAssigned={(code, issuedAt, issuedBy) => cardAssigned(member.userName, code, issuedAt, issuedBy)}
+            onClose={() => setShowAssignCard(false)}
           />
         )}
 
@@ -1407,6 +1465,9 @@ export default function BarTillPage() {
               ) : member && tillCardFor(member.userName)?.proofRequired ? (
                 <div className="-mt-1 mb-2 text-xs text-gray-600">Card or PIN needed to pay from or top up the account</div>
               ) : null}
+              {member && !offline && (
+                <button onClick={startAssignCard} className="-mt-1 mb-2 text-xs text-blue-700 underline">Assign new card</button>
+              )}
               {basket.length === 0 ? <p className="text-gray-400 text-sm py-4">Tap items to add.</p> : (
                 <div className="space-y-2">
                   {basket.map((l) => (
@@ -1809,6 +1870,81 @@ function PersonProofPanel({ person, card, offline, readScan, onPinLocked, onProv
   );
 }
 
+// Assign new card: gives the member on screen one of the blank bar cards (BHBC2). Opened
+// once they've shown their phone QR / current card / PIN, or the person serving has
+// approved it (ProofDialog). Shows when their current card was issued, so the bar person
+// can add a Replacement card charge with the normal till buttons if one is due.
+function AssignCardDialog({ member, card, issuedByName, staff, proof, onAssigned, onClose }: {
+  member: BarAccount;
+  card: TillCard | undefined;
+  issuedByName: (userName: string) => string;
+  staff: string;
+  proof: { cardCode?: string; pin?: string; serverApproval?: PersonProof } | undefined;
+  onAssigned: (code: string, issuedAt: string, issuedBy: string) => void;
+  onClose: () => void;
+}) {
+  const [scanning, setScanning] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [done, setDone] = useState(false);
+
+  let status = `No card issued yet — this will be ${member.fullName}'s first card.`;
+  if (card && card.cardIssuedAt) {
+    const date = new Date(card.cardIssuedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    const by = card.cardIssuedBy ? ` by ${issuedByName(card.cardIssuedBy)}` : '';
+    status = `${member.fullName} already has a card (issued ${date}${by}). A new one stops the old card working — add a Replacement card charge if one is due.`;
+  }
+
+  async function scanned(value: string) {
+    setScanning(false);
+    if (busy || done) return;
+    let code = value.trim();
+    if (/^bhbc2./i.test(code)) code = 'BHBC2.' + code.slice(6).toLowerCase();
+    setBusy(true); setMessage('');
+    try {
+      const res = await fetch('/api/bar/cards/assign', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userName: member.userName, code: code, staff: staff, proof: proof }) });
+      const data = await res.json();
+      if (!res.ok) { setMessage(data.error || 'Couldn’t assign the card'); return; }
+      onAssigned(code, data.cardIssuedAt, data.cardIssuedBy);
+      setDone(true);
+    } catch {
+      setMessage('Couldn’t assign the card — check the connection.');
+    } finally {
+      setBusy(false);
+    }
+  }
+  useCardScanner(scanned, !scanning && !busy && !done);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="relative w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
+        <BarHelpLink topic="cards" className="absolute top-3 right-3" />
+        <h2 className="text-lg font-bold text-gray-900 text-center">New bar card for {member.fullName}</h2>
+        {done ? (
+          <p className="mt-3 text-sm text-green-700 font-medium text-center">
+            ✓ Card assigned. Their previous card no longer works; the QR on their phone carries on working.
+          </p>
+        ) : (
+          <>
+            <p className="text-sm text-gray-700 text-center mt-2">{status}</p>
+            <button onClick={() => { setMessage(''); setScanning(true); }} disabled={busy}
+              className="mt-4 w-full py-3 rounded-lg border-2 border-blue-300 bg-blue-50 text-blue-800 font-semibold hover:bg-blue-100 disabled:opacity-50">
+              {busy ? 'Assigning…' : 'Scan the new card'}
+            </button>
+            <p className="mt-2 text-xs text-gray-700 text-center">Use one of the blank bar cards. A plug-in scanner works too.</p>
+          </>
+        )}
+        {message && <p className="mt-3 text-sm text-red-600 font-medium text-center">{message}</p>}
+        <button onClick={onClose} className="mt-4 w-full py-2 rounded-lg border border-gray-300 bg-white font-medium text-gray-900 hover:bg-gray-50">
+          {done ? 'Done' : 'Cancel'}
+        </button>
+        {scanning && <QrScanModal title="Scan the new bar card" onScan={scanned} onClose={() => setScanning(false)} />}
+      </div>
+    </div>
+  );
+}
+
 // Pay by Account / Top Up for a member who must prove they're here: their card or PIN —
 // or, if they can't (forgotten card, no PIN), the bar person serving approves it with
 // their own card or PIN, which is logged against the sale.
@@ -1816,7 +1952,7 @@ function ProofDialog({ member, server, cards, purpose, offline, readScan, onPinL
   member: BarAccount;
   server: { userName: string; fullName: string } | null;
   cards: TillCard[];
-  purpose: 'pay' | 'topup';
+  purpose: 'pay' | 'topup' | 'card';
   offline: boolean;
   readScan: (value: string) => Promise<{ person?: BarAccount; proof?: MemberProof; message?: string }>;
   onPinLocked: (userName: string) => void;
@@ -1825,6 +1961,12 @@ function ProofDialog({ member, server, cards, purpose, offline, readScan, onPinL
 }) {
   const [byServer, setByServer] = useState(false);
   const who = byServer && server ? server : member;
+  let serverText = `${who.fullName}, scan your card or enter your PIN to ${purpose === 'pay' ? 'charge' : 'top up'} ${member.fullName}'s account. It's recorded as approved by you.`;
+  let memberText = `To ${purpose === 'pay' ? 'pay from' : 'top up'} ${member.fullName}'s account, scan their membership card or enter their PIN.`;
+  if (purpose === 'card') {
+    serverText = `${who.fullName}, scan your card or enter your PIN to give ${member.fullName} a new bar card. It's recorded as issued by you.`;
+    memberText = `To give ${member.fullName} a new bar card, scan the QR on their phone (My Account) or enter their PIN. If you know them, ${server ? server.fullName : 'the person serving'} can approve it instead.`;
+  }
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="relative w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
@@ -1832,11 +1974,7 @@ function ProofDialog({ member, server, cards, purpose, offline, readScan, onPinL
         <h2 className="text-lg font-bold text-gray-900 text-center">
           {byServer ? `${who.fullName} to approve` : 'Card or PIN needed'}
         </h2>
-        <p className="text-sm text-gray-700 text-center mt-1">
-          {byServer
-            ? `${who.fullName}, scan your card or enter your PIN to ${purpose === 'pay' ? 'charge' : 'top up'} ${member.fullName}'s account. It's recorded as approved by you.`
-            : `To ${purpose === 'pay' ? 'pay from' : 'top up'} ${member.fullName}'s account, scan their membership card or enter their PIN.`}
-        </p>
+        <p className="text-sm text-gray-700 text-center mt-1">{byServer ? serverText : memberText}</p>
         <PersonProofPanel
           key={who.userName}
           person={who}

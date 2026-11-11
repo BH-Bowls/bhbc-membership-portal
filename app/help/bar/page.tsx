@@ -17,7 +17,7 @@ export default function HelpBarPage() {
           <p className="text-gray-500 text-sm mt-1">
             For bar staff. The till shows the same help from its Help button, and from the ? in its dialogs.
           </p>
-          <LastUpdated date="2026-11-05" />
+          <LastUpdated date="2026-11-11" />
         </div>
         <div className="space-y-4">
           <BarHelpPage />
