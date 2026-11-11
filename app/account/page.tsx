@@ -557,9 +557,8 @@ export default function MyAccountPage() {
         {section === 'lost' && (
           <div className="bg-white shadow rounded-lg p-5">
             <p className="text-sm text-gray-700">
-              Lost your card or phone? Reset your card so nobody else can use it. Your old QR code and any printed cards
-              stop working straight away. The new QR code shows on your card; a printed card needs reprinting — ask the
-              committee.
+              Lost your card or phone? Reset your card so nobody else can use it. Your old QR code and your bar card
+              stop working straight away. The new QR code shows on your card; for a new bar card, ask at the bar.
             </p>
             {!confirmReset ? (
               <button onClick={() => { setResetMessage(null); setConfirmReset(true); }}

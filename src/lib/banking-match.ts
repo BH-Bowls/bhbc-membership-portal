@@ -387,6 +387,10 @@ export function runGlobalAutoMatch(
   };
 
   for (const payment of unmatchedPayments) {
+    // "EGR <club>" is a Rowland Cup entry fee — matched on the Rowland Cup tab, never to
+    // a member (a club name can share a word with a member's name)
+    if (/^\s*EGR\b/i.test(payment.reference)) continue;
+
     // Select payment
     payment.isSelected = true;
     payment.selected_amount = payment.amount;

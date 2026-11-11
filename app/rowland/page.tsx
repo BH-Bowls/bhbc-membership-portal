@@ -1,12 +1,14 @@
 // app/rowland/page.tsx
 // Rowland Cup home — card grid like /competitions, with editable message panel
+// ?year=2025 shows another year's competitions (read only), picked from the year dropdown.
 
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, Suspense } from 'react';
 import { useSession } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useNavbarConfig } from '@/lib/navbar-config';
+import { YearSelect, PastYearNotice } from '@/components/YearSelect';
 import type { RowlandComp, RowlandCompStatus } from '@/types/rowland';
 import { ROWLAND_COMP_NAMES } from '@/types/rowland';
 
@@ -31,9 +33,19 @@ const GROUP_ORDER: { heading: string; statuses: RowlandCompStatus[] }[] = [
 ];
 
 export default function RowlandPage() {
+  return (
+    <Suspense>
+      <RowlandPageInner />
+    </Suspense>
+  );
+}
+
+function RowlandPageInner() {
   const { data: session, status } = useSession();
   const isGuest = status === 'unauthenticated';
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const yearParam = searchParams.get('year') || '';
 
   const role = session?.user?.role ?? '';
   const isCommittee = role !== 'Member' && role !== 'Kiosk' && role !== '';
@@ -41,6 +53,31 @@ export default function RowlandPage() {
   const [comps, setComps] = useState<RowlandComp[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Year picker — the API says which years exist and which one is current
+  const [years, setYears] = useState<number[]>([]);
+  const [shownYear, setShownYear] = useState<number | null>(null);
+  const [isPast, setIsPast] = useState(false);
+
+  function changeYear(year: string) {
+    router.replace(`/rowland?year=${year}`, { scroll: false });
+  }
+
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    fetch(`/api/rowland${yearParam ? `?year=${encodeURIComponent(yearParam)}` : ''}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.error) throw new Error(data.error);
+        setComps(data.comps || []);
+        setYears(data.years || []);
+        setShownYear(data.year || null);
+        setIsPast(!!data.isPast);
+      })
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+  }, [yearParam]);
 
   // Club selector shown to guests/plain members (a RowlandPlayer is already identified, no picker needed)
   const isClubSession = role.split(',').map(r => r.trim()).includes('RowlandPlayer');
@@ -57,15 +94,6 @@ export default function RowlandPage() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    fetch('/api/rowland')
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.error) throw new Error(data.error);
-        setComps(data.comps || []);
-      })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
-
     fetch('/api/rowland/message')
       .then((r) => r.json())
       .then((data) => { if (typeof data.message === 'string') setMessage(data.message); })
@@ -132,15 +160,22 @@ export default function RowlandPage() {
       <div className="container mx-auto px-4 py-8 max-w-4xl">
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-3xl font-bold text-gray-900">Rowland Cup</h1>
-          {isCommittee && (
-            <button
-              onClick={() => router.push('/rowland/admin')}
-              className="px-3 py-1.5 text-sm font-medium text-blue-600 border border-blue-200 rounded-md hover:bg-blue-50"
-            >
-              Manage
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {shownYear !== null && (
+              <YearSelect years={years} value={shownYear} onChange={changeYear} />
+            )}
+            {isCommittee && (
+              <button
+                onClick={() => router.push('/rowland/admin')}
+                className="px-3 py-1.5 text-sm font-medium text-blue-600 border border-blue-200 rounded-md hover:bg-blue-50"
+              >
+                Manage
+              </button>
+            )}
+          </div>
         </div>
+
+        {isPast && shownYear !== null && <PastYearNotice year={shownYear} />}
 
         {/* Message panel */}
         {(message || isCommittee) && (
@@ -286,7 +321,7 @@ export default function RowlandPage() {
                   return (
                     <button
                       key={comp.compId}
-                      onClick={() => router.push(`/rowland/${comp.compId}`)}
+                      onClick={() => router.push(isPast ? `/rowland/${comp.compId}?year=${comp.year}` : `/rowland/${comp.compId}`)}
                       title={`View ${ROWLAND_COMP_NAMES[comp.compId] ?? comp.compName} bracket`}
                       className="bg-white rounded-lg border border-gray-200 p-4 text-left hover:shadow-md hover:border-gray-300 transition-all cursor-pointer"
                     >
@@ -295,8 +330,8 @@ export default function RowlandPage() {
                           <p className="font-semibold text-gray-900">
                             {ROWLAND_COMP_NAMES[comp.compId] ?? comp.compName}
                           </p>
-                          {comp.season && (
-                            <p className="text-xs text-gray-500 mt-0.5">{comp.season}</p>
+                          {comp.year && (
+                            <p className="text-xs text-gray-700 mt-0.5">{comp.year}</p>
                           )}
                         </div>
                         <span className={`text-xs font-medium px-2 py-1 rounded-full ${badge}`}>

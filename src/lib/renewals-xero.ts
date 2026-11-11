@@ -15,6 +15,9 @@
 //       charge   Dr Membership debtors, Cr the fee type's account
 //       credit   Dr the fee type's account, Cr Membership debtors
 //       refund   Dr Membership debtors, Cr Transfers clearing (bank) or Stripe clearing
+//   - rowland_transactions rows (Rowland Cup entry fees, 0098), in the same journal:
+//       entry    Dr Rowland Cup debtors, Cr Rowland Cup entry fees
+//       payment  Dr Transfers clearing (Banking) or Cash-in-hand, Cr Rowland Cup debtors
 //
 // A renewal voided before its submission was exported is left out altogether — the two
 // cancel. Only seasons from config renewals_xero_first_season are exported.
@@ -41,6 +44,8 @@ export const RENEWALS_ACCOUNT_FIELDS: Array<[string, string, string]> = [
   ['club200', 'renewals_nominal_200_club_account', '200 Club entries (liability)'],
   ['donations', 'renewals_nominal_donations_account', 'Donations with renewals'],
   ['adjustments', 'renewals_nominal_adjustments_account', 'Renewal differences and write-offs'],
+  ['rowlandDebtors', 'renewals_nominal_rowland_debtors_account', 'Rowland Cup debtors'],
+  ['rowlandFees', 'renewals_nominal_rowland_fees_account', 'Rowland Cup entry fees'],
 ];
 
 /** The bar's own accounts, shared (set on Admin config → Bar). */
@@ -121,13 +126,13 @@ export interface Posting {
   account: string;     // account key (see RENEWALS_ACCOUNT_FIELDS / BAR_ACCOUNT_FIELDS)
   debitPence: number;
   creditPence: number;
-  username: string;
+  username: string;    // the club, for a Rowland Cup posting
   eventKey: string;    // one event can make several postings; used to count events
 }
 
 /** A submission, void or transaction that hasn't been exported yet. */
 interface PendingEvent {
-  kind: 'submit' | 'void' | 'txn';
+  kind: 'submit' | 'void' | 'txn' | 'rowland';
   id: string;
   postings: Posting[];
 }
@@ -256,6 +261,27 @@ function transactionPostings(row: Record<string, unknown>): Posting[] {
   return postings;
 }
 
+/** A Rowland Cup entry or payment (0098). Postings are against the club. */
+function rowlandPostings(row: Record<string, unknown>): Posting[] {
+  const postings: Posting[] = [];
+  const club = String(row.club_name);
+  const date = String(row.txn_date);
+  const eventKey = `rowland:${row.id}`;
+  const amount = Number(row.amount_pence) || 0;
+
+  if (row.kind === 'entry') {
+    post(postings, date, 'Rowland Cup entries', 'rowlandDebtors', 'Dr', amount, club, eventKey);
+    post(postings, date, 'Rowland Cup entries', 'rowlandFees', 'Cr', amount, club, eventKey);
+    return postings;
+  }
+
+  const isCash = row.source === 'cash';
+  const label = isCash ? 'Rowland Cup cash payments' : 'Rowland Cup bank receipts matched';
+  post(postings, date, label, isCash ? 'cashInHand' : 'transfersClearing', 'Dr', amount, club, eventKey);
+  post(postings, date, label, 'rowlandDebtors', 'Cr', amount, club, eventKey);
+  return postings;
+}
+
 // ============================================================================
 // LOADING EVENTS
 // ============================================================================
@@ -278,7 +304,7 @@ async function fetchAll(build: (from: number, to: number) => PromiseLike<{ data:
 /** Everything not yet exported. */
 async function loadPendingEvents(firstSeason: number): Promise<PendingEvent[]> {
   const supabase = getSupabaseClient();
-  const [submits, voids, txns] = await Promise.all([
+  const [submits, voids, txns, rowland] = await Promise.all([
     fetchAll((from, to) => supabase.from('renewals').select(RENEWAL_COLUMNS)
       .gte('season_year', firstSeason)
       .eq('renewing_membership', true)
@@ -296,24 +322,33 @@ async function loadPendingEvents(firstSeason: number): Promise<PendingEvent[]> {
       .gte('season_year', firstSeason)
       .is('xero_export_id', null)
       .order('id').range(from, to)),
+    fetchAll((from, to) => supabase.from('rowland_transactions').select('*')
+      .gte('season_year', firstSeason)
+      .is('xero_export_id', null)
+      .order('id').range(from, to)),
   ]);
 
   const events: PendingEvent[] = [];
   for (const row of submits) events.push({ kind: 'submit', id: String(row.id), postings: submissionPostings(row, false) });
   for (const row of voids) events.push({ kind: 'void', id: String(row.id), postings: submissionPostings(row, true) });
   for (const row of txns) events.push({ kind: 'txn', id: String(row.id), postings: transactionPostings(row) });
+  for (const row of rowland) events.push({ kind: 'rowland', id: String(row.id), postings: rowlandPostings(row) });
   return events;
 }
 
 /** Every posting already exported to Xero — for the debtors report. */
 async function loadExportedPostings(firstSeason: number): Promise<Posting[]> {
   const supabase = getSupabaseClient();
-  const [submitted, txns] = await Promise.all([
+  const [submitted, txns, rowland] = await Promise.all([
     fetchAll((from, to) => supabase.from('renewals').select(RENEWAL_COLUMNS)
       .gte('season_year', firstSeason)
       .not('xero_submit_export_id', 'is', null)
       .order('id').range(from, to)),
     fetchAll((from, to) => supabase.from('renewal_transactions').select('*')
+      .gte('season_year', firstSeason)
+      .not('xero_export_id', 'is', null)
+      .order('id').range(from, to)),
+    fetchAll((from, to) => supabase.from('rowland_transactions').select('*')
       .gte('season_year', firstSeason)
       .not('xero_export_id', 'is', null)
       .order('id').range(from, to)),
@@ -328,6 +363,9 @@ async function loadExportedPostings(firstSeason: number): Promise<Posting[]> {
   }
   for (const row of txns) {
     for (const p of transactionPostings(row)) postings.push(p);
+  }
+  for (const row of rowland) {
+    for (const p of rowlandPostings(row)) postings.push(p);
   }
   return postings;
 }
@@ -362,7 +400,9 @@ function formatNarrationDate(isoDate: string): string {
 /** Sum postings into one journal per date, one line per (what happened, account, side). */
 function buildJournals(postings: Posting[], config: RenewalsXeroConfig): JournalPreview[] {
   const byDate = new Map<string, Map<string, { label: string; account: string; isDebit: boolean; pence: number; events: Set<string> }>>();
+  const rowlandDates = new Set<string>();
   for (const p of postings) {
+    if (p.eventKey.startsWith('rowland:')) rowlandDates.add(p.date);
     let groups = byDate.get(p.date);
     if (!groups) {
       groups = new Map();
@@ -404,7 +444,7 @@ function buildJournals(postings: Posting[], config: RenewalsXeroConfig): Journal
     lines.sort((a, b) => (b.debitPence > 0 ? 1 : 0) - (a.debitPence > 0 ? 1 : 0));
     journals.push({
       date,
-      narration: `Membership renewals ${formatNarrationDate(date)}`,
+      narration: `${rowlandDates.has(date) ? 'Membership renewals and Rowland Cup' : 'Membership renewals'} ${formatNarrationDate(date)}`,
       lines,
       totalDebitPence,
       totalCreditPence,
@@ -457,11 +497,13 @@ export async function createExport(exportedBy: string): Promise<{ exportId: stri
   const submitIds: string[] = [];
   const voidIds: string[] = [];
   const txnIds: string[] = [];
+  const rowlandTxnIds: string[] = [];
   for (const e of events) {
     for (const p of e.postings) postings.push(p);
     if (e.kind === 'submit') submitIds.push(e.id);
     if (e.kind === 'void') voidIds.push(e.id);
     if (e.kind === 'txn') txnIds.push(e.id);
+    if (e.kind === 'rowland') rowlandTxnIds.push(e.id);
   }
   const journals = buildJournals(postings, config);
 
@@ -511,6 +553,7 @@ export async function createExport(exportedBy: string): Promise<{ exportId: stri
     p_submit_ids: submitIds,
     p_void_ids: voidIds,
     p_txn_ids: txnIds,
+    p_rowland_txn_ids: rowlandTxnIds,
   });
   if (error) throw new Error(error.message);
 
@@ -568,6 +611,8 @@ export interface DebtorsReport {
   totalPence: number;
   members: Array<{ username: string; fullName: string; balancePence: number }>;
   pendingEvents: number;   // not yet exported, so not in Xero (or this report)
+  rowlandTotalPence: number;   // Rowland Cup debtors, worked out the same way
+  rowlandClubs: Array<{ clubName: string; balancePence: number }>;
 }
 
 /** Each member's balance on Membership debtors, from exported events dated on or before asAt. */
@@ -580,7 +625,13 @@ export async function getDebtorsReport(asAt: string): Promise<DebtorsReport> {
   ]);
 
   const balances = new Map<string, number>();
+  const clubBalances = new Map<string, number>();
   for (const p of postings) {
+    if (p.account === 'rowlandDebtors' && p.date <= asAt) {
+      const current = clubBalances.get(p.username) || 0;
+      clubBalances.set(p.username, current + p.debitPence - p.creditPence);
+      continue;
+    }
     if (p.account !== 'debtors' || p.date > asAt) continue;
     const key = p.username.toLowerCase();
     const current = balances.get(key) || 0;
@@ -601,7 +652,16 @@ export async function getDebtorsReport(asAt: string): Promise<DebtorsReport> {
   }
   members.sort((a, b) => a.fullName.localeCompare(b.fullName));
 
-  return { asAt, totalPence, members, pendingEvents: pending.length };
+  const rowlandClubs: Array<{ clubName: string; balancePence: number }> = [];
+  let rowlandTotalPence = 0;
+  for (const [clubName, balancePence] of clubBalances) {
+    rowlandTotalPence += balancePence;
+    if (balancePence === 0) continue;
+    rowlandClubs.push({ clubName, balancePence });
+  }
+  rowlandClubs.sort((a, b) => a.clubName.localeCompare(b.clubName));
+
+  return { asAt, totalPence, members, pendingEvents: pending.length, rowlandTotalPence, rowlandClubs };
 }
 
 export interface UnmatchedReceiptsReport {
@@ -622,7 +682,7 @@ export async function getUnmatchedReceiptsReport(): Promise<UnmatchedReceiptsRep
   const supabase = getSupabaseClient();
   const firstDay = `${config.firstSeason}-01-01`;
 
-  const [payments, txns] = await Promise.all([
+  const [payments, txns, rowland] = await Promise.all([
     fetchAll((from, to) => supabase.from('renewal_payments')
       .select('payment_id, date, reference, amount, status, source')
       .eq('status', 'Unmatched')
@@ -632,6 +692,13 @@ export async function getUnmatchedReceiptsReport(): Promise<UnmatchedReceiptsRep
     fetchAll((from, to) => supabase.from('renewal_transactions')
       .select('kind, source, refund_via, amount')
       .gte('season_year', config.firstSeason)
+      .is('xero_export_id', null)
+      .order('id').range(from, to)),
+    fetchAll((from, to) => supabase.from('rowland_transactions')
+      .select('id, amount_pence')
+      .gte('season_year', config.firstSeason)
+      .eq('kind', 'payment')
+      .eq('source', 'banking')
       .is('xero_export_id', null)
       .order('id').range(from, to)),
   ]);
@@ -649,6 +716,10 @@ export async function getUnmatchedReceiptsReport(): Promise<UnmatchedReceiptsRep
   for (const t of txns) {
     if (t.kind === 'payment' && t.source === 'banking') matchedNotExportedPence += toPence(t.amount);
     if (t.kind === 'refund' && t.refund_via === 'bank') bankRefundsNotExportedPence += toPence(t.amount);
+  }
+  // Rowland Cup entry fees matched in Banking clear the same account
+  for (const t of rowland) {
+    matchedNotExportedPence += Number(t.amount_pence) || 0;
   }
 
   return {

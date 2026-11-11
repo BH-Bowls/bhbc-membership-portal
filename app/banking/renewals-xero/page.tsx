@@ -1,7 +1,7 @@
 // app/banking/renewals-xero/page.tsx
 // Renewals → Xero (specs/RENEWALS_XERO_PAYMENTS_SPEC.md §6). Admin and Treasurer.
 //
-//   Export       — every renewal event not yet in Xero, as one journal per day (totals
+//   Export       — every renewal and Rowland Cup event not yet in Xero, as one journal per day (totals
 //                  by account, no names); Export downloads the CSV and marks it all
 //                  exported. Past exports can be downloaded again.
 //   Checks       — Membership debtors as at a date, and receipts that should be in
@@ -24,7 +24,14 @@ interface PreviewLine { description: string; accountName: string; accountCode: s
 interface JournalPreview { date: string; narration: string; lines: PreviewLine[]; totalDebitPence: number; totalCreditPence: number }
 interface Preview { journals: JournalPreview[]; eventCount: number; missingAccounts: string[]; unbalanced: string[] }
 interface ExportSummary { id: string; exportedAt: string; exportedBy: string; fromDate: string; toDate: string; journalCount: number }
-interface DebtorsReport { asAt: string; totalPence: number; members: { username: string; fullName: string; balancePence: number }[]; pendingEvents: number }
+interface DebtorsReport {
+  asAt: string;
+  totalPence: number;
+  members: { username: string; fullName: string; balancePence: number }[];
+  pendingEvents: number;
+  rowlandTotalPence: number;
+  rowlandClubs: { clubName: string; balancePence: number }[];
+}
 interface UnmatchedReport {
   totalPence: number;
   unmatched: { paymentId: string; date: string; reference: string; amountPence: number }[];
@@ -53,6 +60,8 @@ const ACCOUNT_FIELDS: [string, string][] = [
   ['renewals_nominal_200_club_account', '200 Club entries (liability)'],
   ['renewals_nominal_donations_account', 'Donations with renewals'],
   ['renewals_nominal_adjustments_account', 'Renewal differences and write-offs'],
+  ['renewals_nominal_rowland_debtors_account', 'Rowland Cup debtors'],
+  ['renewals_nominal_rowland_fees_account', 'Rowland Cup entry fees'],
 ];
 
 const FEE_TYPE_LABELS: [string, string][] = [
@@ -108,6 +117,7 @@ export default function RenewalsXeroPage() {
   const [unmatched, setUnmatched] = useState<UnmatchedReport | null>(null);
   const [loadingChecks, setLoadingChecks] = useState(false);
   const [showDebtorMembers, setShowDebtorMembers] = useState(false);
+  const [showDebtorClubs, setShowDebtorClubs] = useState(false);
 
   // Adjustments
   const [members, setMembers] = useState<{ userName: string; fullName: string }[]>([]);
@@ -455,10 +465,37 @@ export default function RenewalsXeroPage() {
               )}
             </div>
 
+            {debtors && (
+              <div className={`${getCardClasses('md')} space-y-3`}>
+                <h2 className="text-lg font-medium text-gray-900">Rowland Cup debtors</h2>
+                <p className="text-sm text-gray-700">
+                  What clubs owed for Rowland Cup entries on {debtors.asAt}, from everything already exported. It should match the Rowland Cup debtors balance in Xero on the same date.
+                </p>
+                <p className="text-2xl font-bold text-gray-900">{gbp(debtors.rowlandTotalPence)}</p>
+                {debtors.rowlandClubs.length > 0 && (
+                  <div>
+                    <button onClick={() => setShowDebtorClubs(!showDebtorClubs)} className="text-sm text-blue-700 hover:text-blue-900">
+                      {showDebtorClubs ? 'Hide' : 'Show'} {debtors.rowlandClubs.length} {debtors.rowlandClubs.length === 1 ? 'club' : 'clubs'}
+                    </button>
+                    {showDebtorClubs && (
+                      <ul className="mt-2 divide-y divide-gray-100 text-sm">
+                        {debtors.rowlandClubs.map((c) => (
+                          <li key={c.clubName} className="py-1 flex justify-between text-gray-900">
+                            <span>{c.clubName}</span>
+                            <span className={c.balancePence < 0 ? 'text-red-700' : ''}>{gbp(c.balancePence)}{c.balancePence < 0 ? ' (overpaid)' : ''}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className={`${getCardClasses('md')} space-y-3`}>
               <h2 className="text-lg font-medium text-gray-900">Membership transfers clearing</h2>
               <p className="text-sm text-gray-700">
-                Subscription receipts on the HSBC feed that haven&apos;t yet gone through an exported journal. It should match the Membership transfers clearing balance in Xero, and is zero once every receipt has been matched and exported.
+                Subscription and Rowland Cup entry receipts on the HSBC feed that haven&apos;t yet gone through an exported journal. It should match the Membership transfers clearing balance in Xero, and is zero once every receipt has been matched and exported.
               </p>
               {unmatched && (
                 <>

@@ -32,12 +32,14 @@ export async function POST(request: NextRequest) {
     // Valid payment types
     const validTypes = ['TRF', 'CDM', 'CHQ', 'CSH'];
 
-    // Filter out header rows (where Date is "Date") and empty rows
+    // Filter out header rows (where Date is "Date") and empty rows, and skip outgoings
+    // (negative or £0 amounts) — only money coming in is matched on Banking.
     // Expected CSV columns: Date, Type, Description, Amount, Balance (ignored)
     const filteredData = csvData.filter((row: any) => {
       const date = row.Date || '';
       // Skip header row and empty rows
       if (!date || date === 'Date') return false;
+      if (!(parseFloat(row.Amount) > 0)) return false;
       return true;
     });
 

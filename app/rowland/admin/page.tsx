@@ -1,16 +1,22 @@
 // app/rowland/admin/page.tsx
 // Committee admin — two tabs: Competitions (overview of all 4 Rowland comps, links to
 // each one's setup page) and Entries (every club's Rowland Cup entry — teams, contacts,
-// payment status; manual "Mark Paid"/"Withdraw" actions until real bank-rec matching
-// exists — see Specs/ROWLAND_TEAM_ENTRY_SPEC.md §7, deferred). Also reachable via the
+// payment status and payments, "Withdraw"). Bank payments are matched on /banking's
+// Rowland Cup tab; cash is recorded here with "Record cash payment". A payment not yet
+// exported to Xero can be undone. Also reachable via the
 // Navbar's "Rowland Admin" link (src/components/Navbar.tsx), not just /rowland's own
 // "Manage" button.
+//
+// The Competitions tab also has "Set up next year" (Admin / Rowland organiser): creates
+// next year's four competitions, Not Started with no teams. This year's draws stay as they
+// are and become a past year on the /rowland year picker.
 
 'use client';
 
 import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
+import { hasRole } from '@/lib/role-utils';
 import type { RowlandComp, RowlandCompStatus } from '@/types/rowland';
 import { ROWLAND_COMP_NAMES } from '@/types/rowland';
 
@@ -33,6 +39,15 @@ interface TeamEntry {
   status: 'Entered' | 'Withdrawn';
 }
 
+interface RowlandPayment {
+  id: string;
+  date: string;
+  amountPence: number;
+  source: 'banking' | 'cash';
+  paymentIds: string;
+  exported: boolean;
+}
+
 interface RowlandEntry {
   id: string;
   clubName: string;
@@ -40,6 +55,11 @@ interface RowlandEntry {
   amountReceivedPence: number;
   paymentStatus: 'Unpaid' | 'Partial' | 'Paid';
   teams: TeamEntry[];
+  payments: RowlandPayment[];
+}
+
+function gbp(pence: number): string {
+  return `£${(pence / 100).toFixed(2)}`;
 }
 
 const PAYMENT_STYLES: Record<RowlandEntry['paymentStatus'], string> = {
@@ -54,6 +74,7 @@ export default function RowlandAdminPage() {
 
   const role = session?.user?.role ?? '';
   const isCommittee = role !== 'Member' && role !== '';
+  const canStartYear = hasRole(role, 'Admin', 'RowlandOrganiser');
 
   const [tab, setTab] = useState<Tab>('competitions');
 
@@ -62,12 +83,32 @@ export default function RowlandAdminPage() {
   const [compsLoading, setCompsLoading] = useState(true);
   const [compsError, setCompsError] = useState<string | null>(null);
 
+  // Set up next year
+  const [currentYear, setCurrentYear] = useState<number | null>(null);
+  const [nextYear, setNextYear] = useState<number | null>(null);
+  const [startYearOpen, setStartYearOpen] = useState(false);
+  const [startingYear, setStartingYear] = useState(false);
+  const [startYearError, setStartYearError] = useState<string | null>(null);
+  const [startYearDone, setStartYearDone] = useState<string | null>(null);
+
   // Entries tab
   const [season, setSeason] = useState('');
   const [entries, setEntries] = useState<RowlandEntry[]>([]);
   const [entriesLoading, setEntriesLoading] = useState(true);
   const [entriesError, setEntriesError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [entriesNotice, setEntriesNotice] = useState<string | null>(null);
+
+  // Record cash payment
+  const [cashEntry, setCashEntry] = useState<RowlandEntry | null>(null);
+  const [cashAmount, setCashAmount] = useState('');
+  const [cashSaving, setCashSaving] = useState(false);
+  const [cashError, setCashError] = useState<string | null>(null);
+
+  // Undo a payment
+  const [undoPayment, setUndoPayment] = useState<{ entry: RowlandEntry; payment: RowlandPayment } | null>(null);
+  const [undoSaving, setUndoSaving] = useState(false);
+  const [undoError, setUndoError] = useState<string | null>(null);
 
   useEffect(() => {
     if (session && !isCommittee) router.replace('/rowland');
@@ -75,17 +116,44 @@ export default function RowlandAdminPage() {
   }, [session, isCommittee]);
 
   useEffect(() => {
+    loadComps();
+    loadEntries();
+  }, []);
+
+  function loadComps() {
     fetch('/api/rowland')
       .then((r) => r.json())
       .then((data) => {
         if (data.error) throw new Error(data.error);
         setComps(data.comps || []);
+        setCurrentYear(data.currentYear || null);
+        setNextYear(data.nextYear || null);
       })
       .catch((err) => setCompsError(err.message))
       .finally(() => setCompsLoading(false));
+  }
 
-    loadEntries();
-  }, []);
+  async function startYear() {
+    if (nextYear === null) return;
+    setStartingYear(true);
+    setStartYearError(null);
+    try {
+      const res = await fetch('/api/rowland/start-year', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ year: nextYear }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to set up the new year');
+      setStartYearOpen(false);
+      setStartYearDone(`${data.year} is set up. The ${data.year - 1} draws are still on the Rowland Cup page: pick ${data.year - 1} from the year list.`);
+      loadComps();
+    } catch (err) {
+      setStartYearError(err instanceof Error ? err.message : 'Failed to set up the new year');
+    } finally {
+      setStartingYear(false);
+    }
+  }
 
   function loadEntries() {
     setEntriesLoading(true);
@@ -100,20 +168,66 @@ export default function RowlandAdminPage() {
       .finally(() => setEntriesLoading(false));
   }
 
-  async function setPaymentStatus(entryId: string, newStatus: 'Paid' | 'Unpaid') {
-    setBusyId(entryId);
+  function openCashPayment(entry: RowlandEntry) {
+    setCashError(null);
+    setCashAmount(((entry.amountDuePence - entry.amountReceivedPence) / 100).toFixed(2));
+    setCashEntry(entry);
+  }
+
+  async function saveCashPayment() {
+    if (!cashEntry) return;
+    const amountPence = Math.round(parseFloat(cashAmount) * 100);
+    if (!(amountPence > 0)) {
+      setCashError('Enter an amount more than £0');
+      return;
+    }
+    setCashSaving(true);
+    setCashError(null);
     try {
-      const res = await fetch(`/api/rowland/entries/${entryId}/payment`, {
-        method: 'PATCH',
+      const res = await fetch(`/api/rowland/entries/${cashEntry.id}/payment`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus }),
+        body: JSON.stringify({ amountPence }),
       });
-      if (!res.ok) throw new Error((await res.json()).error ?? 'Failed to update payment status');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to record the payment');
+      let notice = `${cashEntry.clubName}: ${gbp(amountPence)} cash recorded — now ${data.paymentStatus}.`;
+      if (data.paymentStatus === 'Paid') {
+        notice += data.emailsSent > 0
+          ? ` Payment received email sent to ${data.emailsSent} contact${data.emailsSent === 1 ? '' : 's'}.`
+          : ' No payment received email was sent (email isn\'t set up, or no contacts).';
+      }
+      setEntriesNotice(notice);
+      setCashEntry(null);
       loadEntries();
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to update payment status');
+      setCashError(err instanceof Error ? err.message : 'Failed to record the payment');
     } finally {
-      setBusyId(null);
+      setCashSaving(false);
+    }
+  }
+
+  async function confirmUndoPayment() {
+    if (!undoPayment) return;
+    setUndoSaving(true);
+    setUndoError(null);
+    try {
+      const res = await fetch(`/api/rowland/entries/${undoPayment.entry.id}/payment?txnId=${encodeURIComponent(undoPayment.payment.id)}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to undo the payment');
+      setEntriesNotice(
+        undoPayment.payment.source === 'banking'
+          ? `${undoPayment.entry.clubName}: payment undone. ${undoPayment.payment.paymentIds || 'The bank payment'} is back in Banking, unmatched.`
+          : `${undoPayment.entry.clubName}: cash payment undone.`
+      );
+      setUndoPayment(null);
+      loadEntries();
+    } catch (err) {
+      setUndoError(err instanceof Error ? err.message : 'Failed to undo the payment');
+    } finally {
+      setUndoSaving(false);
     }
   }
 
@@ -196,6 +310,26 @@ export default function RowlandAdminPage() {
               </div>
             )}
 
+            {startYearDone && (
+              <div className="mb-6 bg-green-50 border border-green-200 rounded-lg p-4 text-sm text-green-800">
+                {startYearDone}
+              </div>
+            )}
+
+            {!compsLoading && !compsError && (
+              <div className="flex items-center justify-between mb-4">
+                {currentYear !== null ? <p className="text-sm text-gray-700">{currentYear} season</p> : <span />}
+                {canStartYear && nextYear !== null && (
+                  <button
+                    onClick={() => { setStartYearError(null); setStartYearOpen(true); }}
+                    className="px-3 py-1.5 text-xs font-medium border border-gray-300 bg-white text-gray-700 rounded-md hover:bg-gray-50"
+                  >
+                    Set up {nextYear}
+                  </button>
+                )}
+              </div>
+            )}
+
             {!compsLoading && !compsError && (
               <div className="space-y-6">
                 {[
@@ -268,6 +402,13 @@ export default function RowlandAdminPage() {
                   </button>
                 </div>
 
+                {entriesNotice && (
+                  <div className="mb-4 bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-800 flex justify-between gap-3">
+                    <span>{entriesNotice}</span>
+                    <button onClick={() => setEntriesNotice(null)} className="font-bold" aria-label="Dismiss">×</button>
+                  </div>
+                )}
+
                 {entries.length === 0 && (
                   <div className="text-center py-12 text-gray-400">No entries yet.</div>
                 )}
@@ -289,21 +430,13 @@ export default function RowlandAdminPage() {
                           <span className={`text-xs font-medium px-2 py-1 rounded-full ${PAYMENT_STYLES[entry.paymentStatus]}`}>
                             {entry.paymentStatus}
                           </span>
-                          {entry.paymentStatus === 'Paid' ? (
+                          {entry.paymentStatus !== 'Paid' && (
                             <button
-                              onClick={() => setPaymentStatus(entry.id, 'Unpaid')}
-                              disabled={busyId === entry.id}
-                              className="text-xs px-2 py-1 border border-gray-300 rounded text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                            >
-                              Undo
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => setPaymentStatus(entry.id, 'Paid')}
+                              onClick={() => openCashPayment(entry)}
                               disabled={busyId === entry.id}
                               className="text-xs px-2 py-1 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
                             >
-                              Mark Paid
+                              Record cash payment
                             </button>
                           )}
                           {activeTeams.length > 0 && (
@@ -317,6 +450,29 @@ export default function RowlandAdminPage() {
                           )}
                         </div>
                       </div>
+
+                      {entry.payments.length > 0 && (
+                        <div className="mb-3 rounded border border-gray-100 bg-gray-50 px-3 py-2 text-sm">
+                          <p className="text-xs font-medium text-gray-700 mb-1">Payments</p>
+                          {entry.payments.map((p) => (
+                            <div key={p.id} className="flex items-center justify-between gap-3 py-0.5">
+                              <span className="text-gray-900">
+                                {p.date} · {p.source === 'cash' ? 'Cash' : `Bank${p.paymentIds ? ` (${p.paymentIds})` : ''}`} · {gbp(p.amountPence)}
+                              </span>
+                              {p.exported ? (
+                                <span className="text-xs text-gray-700">In Xero</span>
+                              ) : (
+                                <button
+                                  onClick={() => { setUndoError(null); setUndoPayment({ entry, payment: p }); }}
+                                  className="text-xs px-2 py-0.5 border border-gray-300 rounded text-gray-700 hover:bg-white"
+                                >
+                                  Undo
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
 
                       <div className="divide-y divide-gray-100">
                         {entry.teams.map((team) => (
@@ -346,6 +502,106 @@ export default function RowlandAdminPage() {
           </>
         )}
       </div>
+
+      {cashEntry && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 px-4">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-3">Record cash payment — {cashEntry.clubName}</h2>
+            <div className="text-sm text-gray-700 space-y-2 mb-4">
+              <p>They owe {gbp(cashEntry.amountDuePence - cashEntry.amountReceivedPence)}. A part payment is fine; the entry stays Partial until it&apos;s all paid.</p>
+              <p>Only for cash. A bank transfer or cheque shows on the bank statement, so the Treasurer matches it in Banking.</p>
+            </div>
+            <label htmlFor="cash-amount" className="block text-sm font-medium text-gray-900 mb-1">Amount (£)</label>
+            <input
+              id="cash-amount"
+              type="number"
+              step="0.01"
+              min="0"
+              value={cashAmount}
+              onChange={(e) => setCashAmount(e.target.value)}
+              className="w-full border border-gray-300 rounded px-3 py-2 text-gray-900 mb-3"
+            />
+            {cashError && <p className="text-sm text-red-700 mb-3">{cashError}</p>}
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setCashEntry(null)}
+                disabled={cashSaving}
+                className="px-4 py-2 text-sm rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveCashPayment}
+                disabled={cashSaving}
+                className="px-4 py-2 text-sm rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
+              >
+                {cashSaving ? 'Saving…' : 'Record payment'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {undoPayment && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 px-4">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-3">Undo this payment?</h2>
+            <div className="text-sm text-gray-700 space-y-2 mb-4">
+              <p>{undoPayment.entry.clubName}: {gbp(undoPayment.payment.amountPence)} on {undoPayment.payment.date}.</p>
+              {undoPayment.payment.source === 'banking' && (
+                <p>The bank payment goes back to Banking, unmatched, so it can be matched again.</p>
+              )}
+            </div>
+            {undoError && <p className="text-sm text-red-700 mb-3">{undoError}</p>}
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setUndoPayment(null)}
+                disabled={undoSaving}
+                className="px-4 py-2 text-sm rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmUndoPayment}
+                disabled={undoSaving}
+                className="px-4 py-2 text-sm rounded bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {undoSaving ? 'Undoing…' : 'Undo payment'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {startYearOpen && nextYear !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 px-4">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-3">Set up the {nextYear} Rowland Cup?</h2>
+            <div className="text-sm text-gray-700 space-y-2 mb-4">
+              <p>This adds the four {nextYear} competitions, Not Started with no teams or dates. Entries aren&apos;t affected.</p>
+              <p>{nextYear} becomes the year shown on the Rowland Cup page. The {nextYear - 1} draws and results stay as they are; pick {nextYear - 1} from the year list to see them. They can&apos;t be changed after this.</p>
+              <p className="font-medium text-gray-900">Only do this once the {nextYear - 1} finals have been played.</p>
+            </div>
+            {startYearError && <p className="text-sm text-red-700 mb-3">{startYearError}</p>}
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setStartYearOpen(false)}
+                disabled={startingYear}
+                className="px-4 py-2 text-sm rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={startYear}
+                disabled={startingYear}
+                className="px-4 py-2 text-sm rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {startingYear ? 'Setting up…' : `Set up ${nextYear}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

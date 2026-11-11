@@ -10,7 +10,7 @@ export default function HelpAccountPage() {
           <BackLink href="/help" label="Help" />
           <h1 className="text-2xl font-bold text-gray-900">My Account</h1>
           <p className="text-gray-500 text-sm mt-1">Your membership card, bar account, bar PIN and membership fees</p>
-          <LastUpdated date="2026-11-05" />
+          <LastUpdated date="2026-11-11" />
         </div>
         <div className="space-y-4">
 
@@ -94,9 +94,9 @@ export default function HelpAccountPage() {
               then <strong>Reset my card</strong> and confirm.
             </Body>
             <Body>
-              Your old QR code and any printed cards stop working straight away, and your new QR code
-              shows on your card. A printed card needs reprinting — ask the committee. Your PIN and your
-              balance are not affected.
+              Your old QR code and your bar card stop working straight away, and your new QR code
+              shows on your card. For a new bar card, ask at the bar. Your PIN and your balance are not
+              affected.
             </Body>
           </HelpSection>
 

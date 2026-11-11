@@ -1,7 +1,7 @@
 // src/lib/rowland-supabase.ts
 // Postgres-backed data layer for Rowland Cup match/bracket management — replaces
 // rowland-sheets.ts (kept read-only, for scripts/migrate-rowland.ts only — see its
-// header). See supabase/migrations/0048_rowland.sql for schema.
+// header). See supabase/migrations/0048_rowland.sql for schema, and 0097 for years.
 //
 // Teams are identified by club_name directly (no club_id — see
 // specs/Phase_0_1_Migration_Plan.md's Rowland redesign section).
@@ -35,7 +35,7 @@ function mapCompRow(row: any): RowlandComp {
   return {
     compId: row.comp_id,
     compName: row.comp_name,
-    season: row.season || '',
+    year: row.year,
     status: row.status,
     numTeams: row.num_teams ?? 0,
     prelimPlayBy: row.prelim_play_by,
@@ -79,33 +79,108 @@ function sortMatches(matches: RowlandMatch[]): RowlandMatch[] {
 // CONTROL — READ / WRITE
 // ============================================================================
 
-export async function getAllRowlandComps(): Promise<RowlandComp[]> {
+// Every year's Rowland Cup lives side by side in the same tables, the same way fixtures
+// do (supabase/migrations/0097_competition_years.sql): rowland_comps has one row per
+// competition per year and rowland_matches carries the year too. The CURRENT year is the
+// latest year with competitions — the only one that can be changed. Functions with an
+// optional year use the current year when it's left out.
+
+/** The latest year with Rowland competitions, e.g. 2026. */
+export async function getCurrentRowlandYear(): Promise<number> {
   return withJwtRetry(async () => {
     const supabase = getSupabaseClient();
-    const { data, error } = await supabase.from('rowland_comps').select('*');
+    const { data, error } = await supabase
+      .from('rowland_comps')
+      .select('year')
+      .order('year', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw new Error(`Failed to fetch the Rowland year: ${error.message}`);
+    return data ? data.year : new Date().getFullYear();
+  });
+}
+
+/** Every year with Rowland competitions, oldest first — for the year picker. */
+export async function getRowlandYears(): Promise<number[]> {
+  return withJwtRetry(async () => {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase.from('rowland_comps').select('year');
+    if (error) throw new Error(`Failed to fetch Rowland years: ${error.message}`);
+    const years: number[] = [];
+    for (const row of data || []) {
+      if (!years.includes(row.year)) years.push(row.year);
+    }
+    years.sort((a, b) => a - b);
+    return years;
+  });
+}
+
+/**
+ * Sets up next year: a new Not Started row for each of this year's four competitions
+ * (no teams, no dates). This year's draws and results are left as they are. The year
+ * must already exist in the seasons table.
+ */
+export async function startNextRowlandYear(): Promise<{ year: number; created: number }> {
+  const currentYear = await getCurrentRowlandYear();
+  const newYear = currentYear + 1;
+  const supabase = getSupabaseClient();
+
+  const { data: season, error: seasonError } = await supabase.from('seasons').select('year').eq('year', newYear).maybeSingle();
+  if (seasonError) throw new Error(`Failed to check the ${newYear} season: ${seasonError.message}`);
+  if (!season) throw new Error(`There's no ${newYear} season yet. Create it in Season Planning first.`);
+
+  const current = await getAllRowlandComps(currentYear);
+  const rows = current.map((c) => ({
+    comp_id: c.compId,
+    year: newYear,
+    comp_name: c.compName,
+    status: 'Not Started',
+    num_teams: 0,
+  }));
+  if (rows.length > 0) {
+    // One insert statement, so either all four are created or none is
+    const { error } = await supabase.from('rowland_comps').insert(rows);
+    if (error) throw new Error(`Failed to set up the ${newYear} Rowland Cup: ${error.message}`);
+  }
+  return { year: newYear, created: rows.length };
+}
+
+/** All Rowland competitions for a year (default: the current year). */
+export async function getAllRowlandComps(year?: number): Promise<RowlandComp[]> {
+  const resolvedYear = year !== undefined ? year : await getCurrentRowlandYear();
+  return withJwtRetry(async () => {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase.from('rowland_comps').select('*').eq('year', resolvedYear);
     if (error) throw new Error(`Failed to fetch Rowland comps: ${error.message}`);
     return (data || []).map(mapCompRow);
   });
 }
 
-export async function getRowlandComp(compId: RowlandCompId): Promise<RowlandComp | null> {
+/** One Rowland competition for a year (default: the current year). */
+export async function getRowlandComp(compId: RowlandCompId, year?: number): Promise<RowlandComp | null> {
+  const resolvedYear = year !== undefined ? year : await getCurrentRowlandYear();
   return withJwtRetry(async () => {
     const supabase = getSupabaseClient();
-    const { data, error } = await supabase.from('rowland_comps').select('*').eq('comp_id', compId).maybeSingle();
+    const { data, error } = await supabase
+      .from('rowland_comps')
+      .select('*')
+      .eq('comp_id', compId)
+      .eq('year', resolvedYear)
+      .maybeSingle();
     if (error) throw new Error(`Failed to fetch Rowland comp: ${error.message}`);
     return data ? mapCompRow(data) : null;
   });
 }
 
+/** Updates the current year's settings for a competition. */
 export async function updateRowlandComp(
   compId: RowlandCompId,
-  updates: Partial<Pick<RowlandComp, 'status' | 'numTeams' | 'season' | 'prelimPlayBy' | 'r1PlayBy' | 'r2PlayBy' | 'qfPlayBy' | 'sfPlayBy' | 'fPlayBy'>>
+  updates: Partial<Pick<RowlandComp, 'status' | 'numTeams' | 'prelimPlayBy' | 'r1PlayBy' | 'r2PlayBy' | 'qfPlayBy' | 'sfPlayBy' | 'fPlayBy'>>
 ): Promise<void> {
   const supabase = getSupabaseClient();
   const columnUpdates: Record<string, any> = {};
   if (updates.status !== undefined) columnUpdates.status = updates.status;
   if (updates.numTeams !== undefined) columnUpdates.num_teams = updates.numTeams;
-  if (updates.season !== undefined) columnUpdates.season = updates.season;
   if (updates.prelimPlayBy !== undefined) columnUpdates.prelim_play_by = updates.prelimPlayBy;
   if (updates.r1PlayBy !== undefined) columnUpdates.r1_play_by = updates.r1PlayBy;
   if (updates.r2PlayBy !== undefined) columnUpdates.r2_play_by = updates.r2PlayBy;
@@ -115,8 +190,9 @@ export async function updateRowlandComp(
 
   if (Object.keys(columnUpdates).length === 0) return;
 
+  const year = await getCurrentRowlandYear();
   await withJwtRetry(async () => {
-    const { error } = await supabase.from('rowland_comps').update(columnUpdates).eq('comp_id', compId);
+    const { error } = await supabase.from('rowland_comps').update(columnUpdates).eq('comp_id', compId).eq('year', year);
     if (error) throw new Error(`Failed to update Rowland comp ${compId}: ${error.message}`);
   });
 }
@@ -125,10 +201,16 @@ export async function updateRowlandComp(
 // MATCHES — READ / WRITE
 // ============================================================================
 
-export async function getRowlandMatches(compId: RowlandCompId): Promise<RowlandMatch[]> {
+/** A competition's matches for a year (default: the current year). */
+export async function getRowlandMatches(compId: RowlandCompId, year?: number): Promise<RowlandMatch[]> {
+  const resolvedYear = year !== undefined ? year : await getCurrentRowlandYear();
   return withJwtRetry(async () => {
     const supabase = getSupabaseClient();
-    const { data, error } = await supabase.from('rowland_matches').select('*').eq('comp_id', compId);
+    const { data, error } = await supabase
+      .from('rowland_matches')
+      .select('*')
+      .eq('comp_id', compId)
+      .eq('year', resolvedYear);
     if (error) throw new Error(`Failed to fetch Rowland matches: ${error.message}`);
     return sortMatches((data || []).map(mapMatchRow));
   });
@@ -175,11 +257,14 @@ export async function updateRowlandMatch(
 
   if (Object.keys(columnUpdates).length === 0) return;
 
+  // Match IDs repeat every year — only the current year's match can be changed
+  const year = await getCurrentRowlandYear();
   await withJwtRetry(async () => {
     const { error } = await supabase
       .from('rowland_matches')
       .update(columnUpdates)
       .eq('comp_id', compId)
+      .eq('year', year)
       .eq('match_id', matchId);
     if (error) throw new Error(`Failed to update Rowland match ${matchId}: ${error.message}`);
   });
@@ -255,13 +340,15 @@ export async function setupRowlandBracket(
     }
   }
 
+  // Only this year's matches are replaced — earlier years are never touched
+  const year = await getCurrentRowlandYear();
   await withJwtRetry(async () => {
     const supabase = getSupabaseClient();
-    const { error: deleteError } = await supabase.from('rowland_matches').delete().eq('comp_id', compId);
+    const { error: deleteError } = await supabase.from('rowland_matches').delete().eq('comp_id', compId).eq('year', year);
     if (deleteError) throw new Error(`Failed to clear existing matches for ${compId}: ${deleteError.message}`);
 
     if (rows.length === 0) return;
-    const { error } = await supabase.from('rowland_matches').insert(rows);
+    const { error } = await supabase.from('rowland_matches').insert(rows.map((r) => ({ ...r, year: year })));
     if (error) throw new Error(`Failed to create bracket for ${compId}: ${error.message}`);
   });
 }
@@ -302,13 +389,15 @@ export async function createEmptyBracket(
     }
   }
 
+  // Only this year's matches are replaced — earlier years are never touched
+  const year = await getCurrentRowlandYear();
   await withJwtRetry(async () => {
     const supabase = getSupabaseClient();
-    const { error: deleteError } = await supabase.from('rowland_matches').delete().eq('comp_id', compId);
+    const { error: deleteError } = await supabase.from('rowland_matches').delete().eq('comp_id', compId).eq('year', year);
     if (deleteError) throw new Error(`Failed to clear existing matches for ${compId}: ${deleteError.message}`);
 
     if (rows.length === 0) return;
-    const { error } = await supabase.from('rowland_matches').insert(rows);
+    const { error } = await supabase.from('rowland_matches').insert(rows.map((r) => ({ ...r, year: year })));
     if (error) throw new Error(`Failed to create empty bracket for ${compId}: ${error.message}`);
   });
 }

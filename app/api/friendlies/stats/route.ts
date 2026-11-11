@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { getSeasonEntryCodes } from '@/lib/fixture-groups-supabase';
-import { getFixtures } from '@/lib/fixtures-supabase';
+import { getFixtures, getSeasonByYear } from '@/lib/fixtures-supabase';
 import { getAllUsers } from '@/lib/members-supabase';
 import { hasRole } from '@/lib/role-utils';
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -69,8 +69,19 @@ export async function GET(request: NextRequest) {
       targetUser = requestedUser;
     }
 
+    // ?year= picks a past season (the Friendlies page's year picker); default is the active one
+    let seasonId: string | undefined = undefined;
+    const yearParam = parseInt(searchParams.get('year') || '', 10);
+    if (!isNaN(yearParam)) {
+      const season = await getSeasonByYear(yearParam);
+      if (season) seasonId = season.id;
+    }
+
     // Every season entry (one per entry, anchored to its game) and the fixtures
-    const [seasonEntries, games] = await Promise.all([getSeasonEntryCodes(), getFixtures()]);
+    const [seasonEntries, games] = await Promise.all([
+      getSeasonEntryCodes(seasonId),
+      getFixtures(undefined, undefined, seasonId),
+    ]);
     const gameById = new Map(games.map(g => [g.id, g]));
     const target = targetUser.toLowerCase();
 

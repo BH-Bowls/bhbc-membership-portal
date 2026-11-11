@@ -1,5 +1,11 @@
 // app/api/banking/report/route.ts
-// Banking Report API - fetches data for Paid/Unpaid Subs and Allocated/Unallocated Payments
+// Banking Report API, for one year (?year=, default the current season):
+//   Subs        — paid / unpaid renewals for that season, and the payments allocated to them
+//   Rowland Cup — paid / owing club entries for that year, and their payments (bank + cash)
+//   Unallocated — payments not yet matched to anything; they have no year until they are
+// A payment's year comes from what it paid for: the renewal's season (renewal_transactions
+// or renewals.payment_ids) or the Rowland Cup entry's year. Matched renewal payments with
+// no year found are listed separately rather than guessed.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
@@ -66,6 +72,25 @@ export interface PaymentTotals {
   total: { amount: number; count: number };
 }
 
+export interface RowlandReportRow {
+  entryId: string;
+  clubName: string;
+  teams: number;
+  due: number;         // pounds, like the rest of the report
+  received: number;
+  outstanding: number;
+  status: 'Unpaid' | 'Partial' | 'Paid';
+  paidAt: string | null;
+}
+
+export interface RowlandTotals {
+  count: number;
+  teams: number;
+  due: number;
+  received: number;
+  outstanding: number;
+}
+
 function zeroTotals(count: number): ReportTotals {
   return {
     playingFee: 0, socialFee: 0, competitionsFee: 0, club200Fee: 0, totalFeeDue: 0,
@@ -87,9 +112,33 @@ export async function GET(request: NextRequest) {
     }
 
     const supabase = getSupabaseClient();
-    const seasonYear = getCurrentSeasonYear();
+    const currentYear = getCurrentSeasonYear();
+    const yearParam = parseInt(request.nextUrl.searchParams.get('year') || '', 10);
+    const seasonYear = yearParam >= 2000 && yearParam <= 2100 ? yearParam : currentYear;
 
-    // Fetch Renewals data (current season only — this table is real multi-year history now)
+    // Which years there are to pick from: renewal seasons and Rowland Cup years
+    const { data: yearRows, error: yearError } = await supabase
+      .from('renewals')
+      .select('season_year')
+      .not('submitted_at', 'is', null);
+    if (yearError) throw new Error(yearError.message);
+    const { data: rowlandYearRows, error: rowlandYearError } = await supabase
+      .from('rowland_entries')
+      .select('season');
+    if (rowlandYearError) throw new Error(rowlandYearError.message);
+    const years: number[] = [currentYear];
+    for (const r of yearRows || []) {
+      const y = Number(r.season_year);
+      if (y && !years.includes(y)) years.push(y);
+    }
+    for (const r of rowlandYearRows || []) {
+      const y = parseInt(r.season, 10);
+      if (y && !years.includes(y)) years.push(y);
+    }
+    if (!years.includes(seasonYear)) years.push(seasonYear);
+    years.sort((a, b) => b - a);
+
+    // Fetch Renewals data for the chosen season
     const { data: renewalsRows, error: renewalsError } = await supabase
       .from('renewals')
       .select('username, renewing_membership, playing_fee, social_fee, competitions_fee, club_200_fee, total_fee_due, outstanding, banking, difference, donations, card_machine, bank_transfer, cheque, cash, stripe')
@@ -97,6 +146,29 @@ export async function GET(request: NextRequest) {
       .not('submitted_at', 'is', null) // drafts aren't owed (spec §3.9)
       .is('voided_at', null);          // nor are voided renewals (§5)
     if (renewalsError) throw new Error(renewalsError.message);
+
+    // Which season each renewal payment paid for (P### ids → season)
+    const paymentSeason = new Map<string, number>();
+    const addIds = (ids: string | null, year: number) => {
+      if (!ids) return;
+      for (const id of ids.split(',')) {
+        const trimmed = id.trim();
+        if (trimmed && !paymentSeason.has(trimmed)) paymentSeason.set(trimmed, year);
+      }
+    };
+    const { data: txnRows, error: txnError } = await supabase
+      .from('renewal_transactions')
+      .select('season_year, payment_ids')
+      .eq('kind', 'payment')
+      .not('payment_ids', 'is', null);
+    if (txnError) throw new Error(txnError.message);
+    for (const t of txnRows || []) addIds(t.payment_ids, Number(t.season_year));
+    const { data: renewalIdRows, error: renewalIdError } = await supabase
+      .from('renewals')
+      .select('season_year, payment_ids')
+      .not('payment_ids', 'is', null);
+    if (renewalIdError) throw new Error(renewalIdError.message);
+    for (const r of renewalIdRows || []) addIds(r.payment_ids, Number(r.season_year));
 
     // Fetch Postgres members for full names
     const allUsers = await getAllUsers();
@@ -179,15 +251,31 @@ export async function GET(request: NextRequest) {
     // Fetch Payments data
     const { data: paymentsRows, error: paymentsError } = await supabase
       .from('renewal_payments')
-      .select('payment_id, date, type, reference, amount, status, matched_users')
+      .select('payment_id, date, type, reference, amount, status, matched_users, rowland_entry_id')
       .neq('status', 'Deleted');
     if (paymentsError) throw new Error(paymentsError.message);
 
-    // Parse payments
+    // Rowland Cup entries — every year, to name the club on a payment; this year's for the tab
+    const { data: rowlandRows, error: rowlandError } = await supabase
+      .from('rowland_entries')
+      .select('id, club_name, season, amount_due_pence, amount_received_pence, payment_status, payment_received_at');
+    if (rowlandError) throw new Error(rowlandError.message);
+    const rowlandClubs = new Map<string, { club: string; year: number }>();
+    const thisYearEntries: NonNullable<typeof rowlandRows> = [];
+    for (const r of rowlandRows || []) {
+      const year = parseInt(r.season, 10);
+      rowlandClubs.set(r.id, { club: r.club_name, year });
+      if (year === seasonYear) thisYearEntries.push(r);
+    }
+
+    // Parse payments: each matched one goes to its own year and tab
     const allocatedPayments: PaymentReportRow[] = [];
+    const allocatedUnknownYear: PaymentReportRow[] = [];
+    const rowlandPayments: PaymentReportRow[] = [];
     const unallocatedPayments: PaymentReportRow[] = [];
 
     for (const row of paymentsRows ?? []) {
+      const rowland = row.rowland_entry_id ? rowlandClubs.get(row.rowland_entry_id) : undefined;
       const paymentRow: PaymentReportRow = {
         paymentId: row.payment_id,
         date: row.date,
@@ -195,15 +283,84 @@ export async function GET(request: NextRequest) {
         reference: row.reference ?? '',
         amount: Number(row.amount) || 0,
         status: row.status,
-        matchedUsers: row.matched_users ?? '',
+        matchedUsers: rowland ? rowland.club : (row.matched_users ?? ''),
       };
 
-      if (row.status === 'Matched') {
-        allocatedPayments.push(paymentRow);
-      } else {
+      if (row.status !== 'Matched') {
         unallocatedPayments.push(paymentRow);
+      } else if (row.rowland_entry_id) {
+        if (rowland && rowland.year === seasonYear) rowlandPayments.push(paymentRow);
+      } else {
+        const year = paymentSeason.get(row.payment_id);
+        if (year === seasonYear) allocatedPayments.push(paymentRow);
+        else if (year === undefined) allocatedUnknownYear.push(paymentRow);
       }
     }
+
+    // Rowland Cup: cash recorded in Rowland Admin never reaches Banking — add it too
+    const { data: cashRows, error: cashError } = await supabase
+      .from('rowland_transactions')
+      .select('id, rowland_entry_id, txn_date, amount_pence, club_name')
+      .eq('kind', 'payment')
+      .eq('source', 'cash')
+      .eq('season_year', seasonYear);
+    if (cashError) throw new Error(cashError.message);
+    for (const c of cashRows || []) {
+      rowlandPayments.push({
+        paymentId: '',
+        date: c.txn_date,
+        type: 'CSH',
+        reference: 'Cash recorded in Rowland Admin',
+        amount: (c.amount_pence || 0) / 100,
+        status: 'Matched',
+        matchedUsers: c.club_name,
+      });
+    }
+
+    // Rowland Cup entries for the year: teams entered (withdrawn teams still pay)
+    const teamCounts = new Map<string, number>();
+    if (thisYearEntries.length > 0) {
+      const entryIds: string[] = [];
+      for (const e of thisYearEntries) entryIds.push(e.id);
+      const { data: teamRows, error: teamError } = await supabase
+        .from('rowland_team_entries')
+        .select('rowland_entry_id')
+        .in('rowland_entry_id', entryIds);
+      if (teamError) throw new Error(teamError.message);
+      for (const t of teamRows || []) {
+        teamCounts.set(t.rowland_entry_id, (teamCounts.get(t.rowland_entry_id) || 0) + 1);
+      }
+    }
+    const rowlandPaid: RowlandReportRow[] = [];
+    const rowlandOwing: RowlandReportRow[] = [];
+    for (const e of thisYearEntries) {
+      const due = (e.amount_due_pence || 0) / 100;
+      const received = (e.amount_received_pence || 0) / 100;
+      const rowlandRow: RowlandReportRow = {
+        entryId: e.id,
+        clubName: e.club_name,
+        teams: teamCounts.get(e.id) || 0,
+        due,
+        received,
+        outstanding: due - received,
+        status: e.payment_status,
+        paidAt: e.payment_received_at,
+      };
+      if (e.payment_status === 'Paid') rowlandPaid.push(rowlandRow);
+      else rowlandOwing.push(rowlandRow);
+    }
+    const rowlandTotals = (rows: RowlandReportRow[]): RowlandTotals => {
+      const totals: RowlandTotals = { count: rows.length, teams: 0, due: 0, received: 0, outstanding: 0 };
+      for (const r of rows) {
+        totals.teams += r.teams;
+        totals.due += r.due;
+        totals.received += r.received;
+        totals.outstanding += r.outstanding;
+      }
+      return totals;
+    };
+    rowlandPaid.sort((a, b) => a.clubName.localeCompare(b.clubName));
+    rowlandOwing.sort((a, b) => a.clubName.localeCompare(b.clubName));
 
     // Calculate payment totals by type
     const calculatePaymentTotals = (payments: PaymentReportRow[]): PaymentTotals => {
@@ -236,9 +393,23 @@ export async function GET(request: NextRequest) {
     paidSubs.sort((a, b) => a.fullName.localeCompare(b.fullName));
     unpaidSubs.sort((a, b) => a.fullName.localeCompare(b.fullName));
     allocatedPayments.sort((a, b) => a.date.localeCompare(b.date));
+    allocatedUnknownYear.sort((a, b) => a.date.localeCompare(b.date));
+    rowlandPayments.sort((a, b) => a.date.localeCompare(b.date));
     unallocatedPayments.sort((a, b) => a.date.localeCompare(b.date));
 
     return NextResponse.json({
+      year: seasonYear,
+      currentYear,
+      years,
+      allocatedUnknownYear: {
+        rows: allocatedUnknownYear,
+        totals: calculatePaymentTotals(allocatedUnknownYear),
+      },
+      rowland: {
+        paid: { rows: rowlandPaid, totals: rowlandTotals(rowlandPaid) },
+        owing: { rows: rowlandOwing, totals: rowlandTotals(rowlandOwing) },
+        payments: { rows: rowlandPayments, totals: calculatePaymentTotals(rowlandPayments) },
+      },
       paidSubs: {
         rows: paidSubs,
         totals: paidTotals,
