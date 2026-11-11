@@ -179,9 +179,19 @@ export async function GET(request: NextRequest) {
     // Fetch Payments data
     const { data: paymentsRows, error: paymentsError } = await supabase
       .from('renewal_payments')
-      .select('payment_id, date, type, reference, amount, status, matched_users')
+      .select('payment_id, date, type, reference, amount, status, matched_users, rowland_entry_id')
       .neq('status', 'Deleted');
     if (paymentsError) throw new Error(paymentsError.message);
+
+    // Payments matched to a Rowland Cup entry have no member — show the club instead
+    const { data: rowlandRows, error: rowlandError } = await supabase
+      .from('rowland_entries')
+      .select('id, club_name, season');
+    if (rowlandError) throw new Error(rowlandError.message);
+    const rowlandClubs = new Map<string, string>();
+    for (const r of rowlandRows || []) {
+      rowlandClubs.set(r.id, `Rowland Cup ${r.season}: ${r.club_name}`);
+    }
 
     // Parse payments
     const allocatedPayments: PaymentReportRow[] = [];
@@ -195,7 +205,9 @@ export async function GET(request: NextRequest) {
         reference: row.reference ?? '',
         amount: Number(row.amount) || 0,
         status: row.status,
-        matchedUsers: row.matched_users ?? '',
+        matchedUsers: row.rowland_entry_id
+          ? (rowlandClubs.get(row.rowland_entry_id) || 'Rowland Cup')
+          : (row.matched_users ?? ''),
       };
 
       if (row.status === 'Matched') {

@@ -1,5 +1,12 @@
 // app/banking/page.tsx
 // Banking Reconciliation System - FULL WIDTH UI
+//
+// Left column has two tabs, sharing the Payments column on the right:
+//   Renewals    — tick renewals and payments; equal totals match, then Update
+//   Rowland Cup — clubs that still owe entry fees, matched the same way: tick the club
+//                 and its payment(s); equal amounts match, less opens the part payment
+//                 box. Update saves only the tab on show. One club per match. The payment-received
+//                 email goes once an entry is paid in full.
 
 'use client';
 
@@ -18,6 +25,112 @@ import {
   type RenewalWithState,
   type PaymentWithState,
 } from '@/lib/banking-match';
+
+interface RowlandOwing {
+  id: string;
+  clubName: string;
+  season: string;
+  amountDuePence: number;
+  amountReceivedPence: number;
+  paymentStatus: 'Unpaid' | 'Partial' | 'Paid';
+}
+
+interface RowlandWithState extends RowlandOwing {
+  isSelected: boolean;
+  isMatched: boolean;
+  matchedPence: number;
+  matchedPaymentIds: string[];
+}
+
+function owingPence(entry: RowlandOwing): number {
+  return entry.amountDuePence - entry.amountReceivedPence;
+}
+
+/** Total of the payments ticked but not yet matched, in pence. */
+function selectedPaymentPence(payments: PaymentWithState[]): number {
+  let total = 0;
+  for (const p of payments) {
+    if (p.isSelected && !p.isMatched) total += Math.round(p.amount * 100);
+  }
+  return total;
+}
+
+/** Move the ticked payments onto the club as a staged match (saved on Update). */
+function stageRowlandMatch(entry: RowlandWithState, payments: PaymentWithState[]) {
+  const ids: string[] = [];
+  let total = 0;
+  for (const p of payments) {
+    if (!p.isSelected || p.isMatched) continue;
+    ids.push(p.payment_id);
+    total += Math.round(p.amount * 100);
+    p.matched_amount = p.amount;
+    p.matched_user_names = [`Rowland Cup: ${entry.clubName}`];
+    p.selected_amount = 0;
+    p.isSelected = false;
+    p.isMatched = true;
+  }
+  entry.matchedPence = total;
+  entry.matchedPaymentIds = ids;
+  entry.isSelected = false;
+  entry.isMatched = true;
+}
+
+/**
+ * Like the renewals auto-match on load: a payment whose reference names only this club,
+ * for exactly what it owes, is matched to it.
+ */
+function rowlandAutoMatch(entries: RowlandWithState[], payments: PaymentWithState[]) {
+  for (const entry of entries) {
+    const owed = owingPence(entry);
+    let found: PaymentWithState | null = null;
+    let count = 0;
+    for (const p of suggestRowlandPayments(entry.clubName, payments)) {
+      if (p.isSelected || Math.round(p.amount * 100) !== owed) continue;
+      let namesAnotherClub = false;
+      for (const other of entries) {
+        if (other !== entry && suggestRowlandPayments(other.clubName, [p]).length > 0) {
+          namesAnotherClub = true;
+          break;
+        }
+      }
+      if (namesAnotherClub) continue;
+      found = p;
+      count++;
+    }
+    if (count === 1 && found) {
+      found.isSelected = true;
+      found.selected_amount = found.amount;
+      stageRowlandMatch(entry, payments);
+    }
+  }
+}
+
+const CLUB_NAME_NOISE = ['bowls', 'bowling', 'club', 'the', 'and'];
+
+/** Unmatched payments whose reference mentions the club, e.g. "EGR HAYWARDS HEATH". */
+function suggestRowlandPayments(clubName: string, payments: PaymentWithState[]): PaymentWithState[] {
+  const words: string[] = [];
+  for (const w of clubName.toLowerCase().split(/[^a-z]+/)) {
+    if (w.length >= 4 && !CLUB_NAME_NOISE.includes(w)) words.push(w);
+  }
+  const found: PaymentWithState[] = [];
+  if (words.length === 0) return found;
+  for (const p of payments) {
+    if (p.isMatched) continue;
+    const reference = p.reference.toLowerCase();
+    for (const w of words) {
+      if (reference.includes(w)) {
+        found.push(p);
+        break;
+      }
+    }
+  }
+  return found;
+}
+
+function gbpFromPence(pence: number): string {
+  return `£${(pence / 100).toFixed(2)}`;
+}
 
 export default function BankingPage() {
   const { data: session, status } = useSession();
@@ -65,9 +178,16 @@ export default function BankingPage() {
   // CSV import
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [csvData, setCsvData] = useState<any[]>([]);
+  const [csvSkipped, setCsvSkipped] = useState(0);
   const [isImporting, setIsImporting] = useState(false);
   const csvInputRef = useRef<HTMLInputElement>(null);
 
+  // Rowland Cup tab
+  const [leftTab, setLeftTab] = useState<'renewals' | 'rowland'>('renewals');
+  const [rowlandEntries, setRowlandEntries] = useState<RowlandWithState[]>([]);
+  const [editingRowland, setEditingRowland] = useState<RowlandWithState | null>(null);
+  // Which tabs have had their auto-match since the last load
+  const autoMatched = useRef({ renewals: false, rowland: false });
   // Check authorization
   const canAccess = hasRole(session?.user?.role, 'Admin', 'Treasurer', 'T');
 
@@ -99,10 +219,35 @@ export default function BankingPage() {
       setRenewals(renewalsWithState);
       setPayments(paymentsWithState);
 
-      // Run global auto-match
-      runGlobalAutoMatch(renewalsWithState, paymentsWithState);
+      // Auto-match only for the tab on show; the other tab's runs when it's opened
+      autoMatched.current = { renewals: false, rowland: false };
+      if (leftTab === 'renewals') {
+        runGlobalAutoMatch(renewalsWithState, paymentsWithState);
+        autoMatched.current.renewals = true;
+      }
+
+      // Rowland Cup entries still owing, auto-matched the same way
+      let rowlandWithState: RowlandWithState[] = [];
+      try {
+        const rowlandRes = await fetch('/api/banking/rowland');
+        const rowlandData = await rowlandRes.json();
+        if (!rowlandRes.ok) throw new Error(rowlandData.error || 'Failed to load Rowland Cup entries');
+        const owing: RowlandOwing[] = rowlandData.entries || [];
+        for (const e of owing) {
+          rowlandWithState.push({ ...e, isSelected: false, isMatched: false, matchedPence: 0, matchedPaymentIds: [] });
+        }
+        if (leftTab === 'rowland') {
+          rowlandAutoMatch(rowlandWithState, paymentsWithState);
+          autoMatched.current.rowland = true;
+        }
+      } catch (err) {
+        rowlandWithState = [];
+        setError(err instanceof Error ? err.message : 'Failed to load Rowland Cup entries');
+      }
+
       setRenewals([...renewalsWithState]);
       setPayments([...paymentsWithState]);
+      setRowlandEntries(rowlandWithState);
 
       setLoading(false);
     } catch (err) {
@@ -112,14 +257,118 @@ export default function BankingPage() {
     }
   };
 
-  // Calculate totals
+  // Rowland Cup totals, like the renewals ones
+  const paymentsTickedPence = selectedPaymentPence(payments);
+  let rowlandSelected: RowlandWithState | null = null;
+  let rowlandOutstandingPence = 0;
+  let rowlandMatchedPence = 0;
+  for (const e of rowlandEntries) {
+    if (e.isSelected) rowlandSelected = e;
+    rowlandOutstandingPence += owingPence(e) - e.matchedPence;
+    rowlandMatchedPence += e.matchedPence;
+  }
+  let rowlandSelectedPence = 0;
+  if (rowlandSelected) rowlandSelectedPence = Math.min(paymentsTickedPence, owingPence(rowlandSelected));
+
+  // Payments staged against a club, so each tab only shows its own matches on the right
+  const rowlandStagedIds: string[] = [];
+  for (const e of rowlandEntries) {
+    for (const id of e.matchedPaymentIds) rowlandStagedIds.push(id);
+  }
+  const visiblePayments: PaymentWithState[] = [];
+  for (const p of payments) {
+    const stagedToRowland = rowlandStagedIds.includes(p.payment_id);
+    if (leftTab === 'renewals' && stagedToRowland) continue;
+    if (leftTab === 'rowland' && p.isMatched && !stagedToRowland) continue;
+    visiblePayments.push(p);
+  }
+
+  /**
+   * Change tab: untick anything ticked but not matched (matches already made are kept
+   * for Update), then auto-match the new tab if it hasn't been since the last load.
+   */
+  const switchTab = (tab: 'renewals' | 'rowland') => {
+    if (tab === leftTab) return;
+    for (const p of payments) {
+      if (p.isSelected && !p.isMatched) {
+        p.isSelected = false;
+        p.selected_amount = 0;
+      }
+    }
+    clearRenewalSelection();
+    clearRowlandSelection();
+    if (tab === 'renewals' && !autoMatched.current.renewals) {
+      runGlobalAutoMatch(renewals, payments);
+      autoMatched.current.renewals = true;
+    }
+    if (tab === 'rowland' && !autoMatched.current.rowland) {
+      rowlandAutoMatch(rowlandEntries, payments);
+      autoMatched.current.rowland = true;
+    }
+    setLeftTab(tab);
+    setRenewals([...renewals]);
+    setPayments([...payments]);
+    setRowlandEntries([...rowlandEntries]);
+  };
+
+  /** Untick a club that's ticked but not matched (ticking a renewal does this). */
+  const clearRowlandSelection = () => {
+    for (const e of rowlandEntries) e.isSelected = false;
+  };
+
+  /** Untick renewals that are ticked but not matched (ticking a club does this). */
+  const clearRenewalSelection = () => {
+    for (const r of renewals) {
+      if (!r.isSelected) continue;
+      r.isSelected = false;
+      r.selected_banking = 0;
+      r.selected_donations = 0;
+      r.selected_difference = 0;
+    }
+  };
+
+  // Handle Rowland Cup checkbox — one club at a time, matched like a renewal:
+  // equal amounts match, less opens the part payment box, more waits.
+  const handleRowlandCheck = (entry: RowlandWithState) => {
+    if (entry.isMatched) return;
+    const selecting = !entry.isSelected;
+    clearRowlandSelection();
+    if (selecting) {
+      clearRenewalSelection();
+      entry.isSelected = true;
+      const ticked = selectedPaymentPence(payments);
+      const owed = owingPence(entry);
+      if (ticked > 0 && ticked === owed) {
+        stageRowlandMatch(entry, payments);
+      } else if (ticked > 0 && ticked < owed) {
+        setEditingRowland(entry);
+      }
+    }
+    setRowlandEntries([...rowlandEntries]);
+    setRenewals([...renewals]);
+    setPayments([...payments]);
+  };
+
+  const handleSaveRowlandPartPay = () => {
+    if (!editingRowland) return;
+    stageRowlandMatch(editingRowland, payments);
+    setEditingRowland(null);
+    setRowlandEntries([...rowlandEntries]);
+    setPayments([...payments]);
+  };
+
+  // Calculate totals (the Payments column's are for the payments on show)
   const renewalTotals = calculateRenewalTotals(renewals);
-  const paymentTotals = calculatePaymentTotals(payments);
+  const paymentTotals = calculatePaymentTotals(visiblePayments);
 
   // Handle renewal checkbox
   const handleRenewalCheck = (renewal: RenewalWithState) => {
     if (renewal.isMatched) return;
 
+    if (!renewal.isSelected) {
+      clearRowlandSelection();
+      setRowlandEntries([...rowlandEntries]);
+    }
     renewal.isSelected = !renewal.isSelected;
 
     if (renewal.isSelected) {
@@ -174,8 +423,18 @@ export default function BankingPage() {
     payment.isSelected = !payment.isSelected;
     payment.selected_amount = payment.isSelected ? payment.amount : 0;
 
-    // Try auto-match
-    autoMatchIfEqual(renewals, payments);
+    // Try auto-match — against the ticked club if there is one, otherwise renewals
+    let club: RowlandWithState | null = null;
+    for (const e of rowlandEntries) {
+      if (e.isSelected) club = e;
+    }
+    if (club) {
+      const ticked = selectedPaymentPence(payments);
+      if (ticked > 0 && ticked === owingPence(club)) stageRowlandMatch(club, payments);
+      setRowlandEntries([...rowlandEntries]);
+    } else {
+      autoMatchIfEqual(renewals, payments);
+    }
     setRenewals([...renewals]);
     setPayments([...payments]);
   };
@@ -246,32 +505,32 @@ export default function BankingPage() {
     });
   };
 
-  // Delete payment
-  const handleDeletePayment = async () => {
-    if (!editingPayment) return;
+  // Delete payment — from the Amend dialog, or the bin beside an unmatched payment
+  // (e.g. a receipt that isn't a renewal or Rowland Cup fee)
+  const handleDeletePayment = async (payment: PaymentWithState | null = editingPayment) => {
+    if (!payment) return;
 
     setConfirmDialog({
       isOpen: true,
       title: 'Delete Payment',
-      message: 'Are you sure you want to delete this payment?',
+      message: `Delete ${payment.payment_id} (${payment.reference || 'no reference'}, £${payment.amount.toFixed(2)}) from Banking?`,
       onConfirm: () => {
         closeConfirmDialog();
-        performDeletePayment();
+        performDeletePayment(payment);
       },
     });
   };
 
-  // Perform the actual delete operation
-  const performDeletePayment = async () => {
-    if (!editingPayment) return;
-
+  // Perform the actual delete operation. Removes it from the list without reloading,
+  // so matches waiting for Update aren't lost.
+  const performDeletePayment = async (payment: PaymentWithState) => {
     try {
       const res = await fetch('/api/banking/payment', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'delete',
-          payment_id: editingPayment.payment_id,
+          payment_id: payment.payment_id,
         }),
       });
 
@@ -281,8 +540,12 @@ export default function BankingPage() {
       }
 
       setShowPaymentDialog(false);
-      setSuccess('Payment deleted successfully');
-      loadData();
+      setSuccess(`Payment ${payment.payment_id} deleted`);
+      const remaining: PaymentWithState[] = [];
+      for (const p of payments) {
+        if (p.payment_id !== payment.payment_id) remaining.push(p);
+      }
+      setPayments(remaining);
     } catch (err: any) {
       setError(err.message);
     }
@@ -389,30 +652,47 @@ export default function BankingPage() {
       const text = event.target?.result as string;
       const lines = text.split('\n');
 
+      // A header line is optional: any line whose Amount isn't a number (e.g. "Amount")
+      // is treated as a header and skipped, so files with or without one both work
+      const cell = (value: string | undefined) => (value || '').trim().replace(/^"|"$/g, '').trim();
       const data = lines
-        .slice(1)
         .filter(line => line.trim())
         .map(line => {
           const values = line.split(',');
-          const rawType = values[1]?.trim().toUpperCase() || 'TRF';
+          const rawType = cell(values[1]).toUpperCase() || 'TRF';
           // Validate type - default to TRF if invalid
           const type = validTypes.includes(rawType) ? rawType : 'TRF';
           return {
-            Date: values[0]?.trim(),
+            Date: cell(values[0]),
             Type: type,
-            Description: values[2]?.trim(), // Use Description (column 3) as reference
-            Amount: values[3]?.trim(),
+            Description: cell(values[2]), // Use Description (column 3) as reference
+            Amount: cell(values[3]).replace(/£/g, ''),
           };
         });
 
-      // Filter out header rows (where Date is "Date") and empty rows
-      const filteredData = data.filter(d => d.Date && d.Date !== 'Date');
+      // Skip header lines and empty rows, and outgoings (negative or £0 amounts):
+      // only money coming in is matched here
+      const filteredData = [];
+      let outgoings = 0;
+      for (const d of data) {
+        if (!d.Date || d.Date === 'Date') continue;
+        if (d.Amount === '' || isNaN(Number(d.Amount))) continue; // header line
+        const amount = parseFloat(d.Amount);
+        if (!(amount > 0)) {
+          outgoings++;
+          continue;
+        }
+        filteredData.push(d);
+      }
 
       setCsvData(filteredData);
+      setCsvSkipped(outgoings);
 
       // Show confirmation dialog if there are transactions
       if (filteredData.length === 0) {
-        setError('No transactions found in CSV');
+        setError(outgoings > 0
+          ? `No receipts found in the CSV (${outgoings} outgoing${outgoings === 1 ? '' : 's'} skipped)`
+          : 'No transactions found in CSV');
       } else {
         setShowImportDialog(true);
       }
@@ -454,12 +734,124 @@ export default function BankingPage() {
   };
 
   // Submit matched payments
+  /** Reload the renewals list after its matches are saved (the Rowland tab is left alone). */
+  const refreshRenewals = async (remainingPayments: PaymentWithState[]) => {
+    const res = await fetch('/api/banking/renewals');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to reload renewals');
+    const fresh: RenewalWithState[] = data.renewals.map(initializeRenewalState);
+    runGlobalAutoMatch(fresh, remainingPayments);
+    setRenewals(fresh);
+    setPayments([...remainingPayments]);
+  };
+
+  /** Reload the clubs still owing after Rowland matches are saved (renewals are left alone). */
+  const refreshRowland = async () => {
+    const res = await fetch('/api/banking/rowland');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to reload Rowland Cup entries');
+    const owing: RowlandOwing[] = data.entries || [];
+    const fresh: RowlandWithState[] = [];
+    for (const e of owing) {
+      fresh.push({ ...e, isSelected: false, isMatched: false, matchedPence: 0, matchedPaymentIds: [] });
+    }
+    setRowlandEntries(fresh);
+  };
+
+  /**
+   * Take saved payments off the list. Any still marked matched to a club that didn't
+   * save (Rowland tab, after an error) go back to unmatched.
+   */
+  const dropSavedPayments = (savedIds: string[], resetIds: string[]) => {
+    const remaining: PaymentWithState[] = [];
+    for (const p of payments) {
+      if (savedIds.includes(p.payment_id)) continue;
+      if (resetIds.includes(p.payment_id)) {
+        p.isMatched = false;
+        p.isSelected = false;
+        p.matched_amount = 0;
+        p.selected_amount = 0;
+        p.matched_user_names = [];
+      }
+      remaining.push(p);
+    }
+    setPayments(remaining);
+    return remaining;
+  };
+
+  // Update saves only the matches on the tab on show; the other tab's stay waiting
   const handleSubmit = async () => {
+    if (leftTab === 'rowland') {
+      await submitRowland();
+    } else {
+      await submitRenewals();
+    }
+  };
+
+  const submitRowland = async () => {
+    const matchedRowland: RowlandWithState[] = [];
+    const rowlandPaymentIds: string[] = [];
+    for (const e of rowlandEntries) {
+      if (!e.isMatched) continue;
+      matchedRowland.push(e);
+      for (const id of e.matchedPaymentIds) rowlandPaymentIds.push(id);
+    }
+    if (matchedRowland.length === 0) {
+      setError('No Rowland Cup matches to submit');
+      return;
+    }
+
+    setSubmitting(true);
+    setError('');
+    setSuccess('');
+
+    const messages: string[] = [];
+    const savedIds: string[] = [];
+    try {
+      // One save per club (recorded for the Xero journal; the payment received email
+      // goes when the entry becomes Paid)
+      for (const entry of matchedRowland) {
+        const res = await fetch('/api/banking/rowland', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ entryId: entry.id, paymentIds: entry.matchedPaymentIds }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(`${entry.clubName}: ${data.error || 'Failed to match the payment'}`);
+        for (const id of entry.matchedPaymentIds) savedIds.push(id);
+        let message = `${entry.clubName}: ${gbpFromPence(entry.matchedPence)} matched, now ${data.paymentStatus}.`;
+        if (data.paymentStatus === 'Paid') {
+          message += data.emailsSent > 0
+            ? ` Payment received email sent to ${data.emailsSent} contact${data.emailsSent === 1 ? '' : 's'}.`
+            : ' No payment received email was sent (email isn\'t set up, or no contacts).';
+        }
+        messages.push(message);
+      }
+      setSuccess(messages.join(' '));
+    } catch (err) {
+      if (messages.length > 0) setSuccess(messages.join(' '));
+      setError(err instanceof Error ? err.message : 'Failed to save the Rowland Cup matches');
+    } finally {
+      dropSavedPayments(savedIds, rowlandPaymentIds);
+      try {
+        await refreshRowland();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to reload Rowland Cup entries');
+      }
+      setSubmitting(false);
+    }
+  };
+
+  const submitRenewals = async () => {
+    const rowlandPaymentIds: string[] = [];
+    for (const e of rowlandEntries) {
+      for (const id of e.matchedPaymentIds) rowlandPaymentIds.push(id);
+    }
     const matchedRenewals = renewals.filter(r => r.isMatched);
-    const matchedPayments = payments.filter(p => p.isMatched);
+    const matchedPayments = payments.filter(p => p.isMatched && !rowlandPaymentIds.includes(p.payment_id));
 
     if (matchedRenewals.length === 0 || matchedPayments.length === 0) {
-      setError('No matched items to submit');
+      setError('No renewal matches to submit');
       return;
     }
 
@@ -552,9 +944,10 @@ export default function BankingPage() {
         const error = await res.json();
         throw new Error(error.error);
       }
-
-      setSuccess('Matched payments submitted successfully');
-      loadData();
+      setSuccess('Matched renewal payments submitted successfully');
+      const savedIds: string[] = [];
+      for (const p of matchedPayments) savedIds.push(p.payment_id);
+      await refreshRenewals(dropSavedPayments(savedIds, []));
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -578,7 +971,14 @@ export default function BankingPage() {
     return null;
   }
 
-  const hasMatched = renewals.some(r => r.isMatched) || payments.some(p => p.isMatched);
+  // Matches waiting for Update, shown on each tab (the other tab's are hidden from Payments)
+  let renewalsMatchedCount = 0;
+  for (const r of renewals) if (r.isMatched) renewalsMatchedCount++;
+  let rowlandMatchedCount = 0;
+  for (const e of rowlandEntries) if (e.isMatched) rowlandMatchedCount++;
+
+  // Update shows when the tab on show has matches to save
+  const hasMatched = leftTab === 'rowland' ? rowlandMatchedCount > 0 : renewalsMatchedCount > 0;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -668,8 +1068,118 @@ export default function BankingPage() {
 
         {/* TWO-COLUMN LAYOUT - 40:60 PROPORTION */}
         <div className="grid grid-cols-[40%_60%] gap-6">
-          {/* LEFT COLUMN - RENEWALS (40%) */}
+          {/* LEFT COLUMN - RENEWALS / ROWLAND CUP (40%) */}
           <div className="bg-white rounded-lg shadow">
+            <div className="flex border-b border-gray-200 px-6 pt-4">
+              {([['renewals', 'Renewals'], ['rowland', 'Rowland Cup']] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => switchTab(key)}
+                  className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${
+                    leftTab === key ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-700 hover:text-gray-900'
+                  }`}
+                >
+                  {label}
+                  {key === 'rowland' && rowlandEntries.length > 0 && (
+                    <span className="ml-2 text-xs bg-gray-100 text-gray-700 rounded-full px-2 py-0.5">{rowlandEntries.length}</span>
+                  )}
+                  {(key === 'renewals' ? renewalsMatchedCount : rowlandMatchedCount) > 0 && (
+                    <span
+                      className="ml-2 text-xs bg-red-50 text-red-700 rounded-full px-2 py-0.5"
+                      title="Matched, waiting for Update"
+                    >
+                      {key === 'renewals' ? renewalsMatchedCount : rowlandMatchedCount} matched
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+
+            {leftTab === 'rowland' && (
+              <>
+                <div className="p-6 pb-0">
+                  <h2 className="text-lg font-semibold mb-4 text-gray-900">Rowland Cup (Outstanding)</h2>
+                  <div className="grid grid-cols-[auto_1fr_auto_auto] gap-3 pb-2 border-b font-medium text-sm text-gray-900">
+                    <div className="w-5"></div>
+                    <div>Club</div>
+                    <div className="text-right">Outstanding</div>
+                    <div className="text-right w-20">Banking</div>
+                  </div>
+                </div>
+
+                <div className="px-6 max-h-[600px] overflow-y-auto">
+                  {rowlandEntries.length === 0 && (
+                    <p className="py-6 text-sm text-gray-700 text-center">No Rowland Cup entries are outstanding.</p>
+                  )}
+                  {rowlandEntries.map(entry => {
+                    const owed = owingPence(entry);
+                    let banking = 0;
+                    if (entry.isMatched) banking = entry.matchedPence;
+                    else if (entry.isSelected) banking = Math.min(paymentsTickedPence, owed);
+                    const overpaid = entry.isSelected && paymentsTickedPence > owed;
+                    return (
+                      <div
+                        key={entry.id}
+                        className={`grid grid-cols-[auto_1fr_auto_auto] gap-3 py-3 hover:bg-gray-50 border-b border-gray-100 ${
+                          entry.isSelected ? 'cursor-pointer' : ''
+                        }`}
+                        onClick={() => entry.isSelected && setEditingRowland(entry)}
+                      >
+                        <div>
+                          <input
+                            type="checkbox"
+                            checked={entry.isSelected || entry.isMatched}
+                            onChange={() => handleRowlandCheck(entry)}
+                            disabled={entry.isMatched}
+                            className={`h-5 w-5 ${entry.isMatched ? 'text-red-600' : 'text-gray-900'}`}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </div>
+                        <div>
+                          <div className="font-medium">
+                            {entry.clubName} <span className="text-xs font-normal text-gray-700">{entry.season}</span>
+                          </div>
+                          {entry.paymentStatus === 'Partial' && (
+                            <div className="text-xs text-gray-700">
+                              Partial: {gbpFromPence(entry.amountReceivedPence)} of {gbpFromPence(entry.amountDuePence)} received
+                            </div>
+                          )}
+                          {overpaid && (
+                            <div className="text-xs text-red-700">
+                              Ticked payments come to {gbpFromPence(paymentsTickedPence)}, more than they owe
+                            </div>
+                          )}
+                        </div>
+                        <div className="text-right font-semibold text-blue-500">
+                          {gbpFromPence(owed - entry.matchedPence)}
+                        </div>
+                        <div className="text-right font-semibold text-green-600 w-20">
+                          {gbpFromPence(banking)}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="p-6 pt-4 border-t space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span>Total Outstanding:</span>
+                    <span className="font-semibold">{gbpFromPence(rowlandOutstandingPence)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm text-red-600">
+                    <span>Total Matched:</span>
+                    <span className="font-semibold">{gbpFromPence(rowlandMatchedPence)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span>Total Selected:</span>
+                    <span className="font-semibold">{gbpFromPence(rowlandSelectedPence)}</span>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {leftTab === 'renewals' && (
+            <>
             <div className="p-6 pb-0">
               <h2 className="text-lg font-semibold mb-4 text-gray-900">Renewals (Outstanding)</h2>
 
@@ -729,6 +1239,8 @@ export default function BankingPage() {
                 <span className="font-semibold">£{renewalTotals.totalSelected.toFixed(2)}</span>
               </div>
             </div>
+            </>
+            )}
           </div>
 
           {/* RIGHT COLUMN - PAYMENTS (65%) */}
@@ -737,7 +1249,7 @@ export default function BankingPage() {
               <h2 className="text-lg font-semibold mb-4 text-gray-900">Payments (Unmatched)</h2>
 
               {/* Column Headers - 4 distinct columns */}
-              <div className="grid grid-cols-[auto_100px_60px_1fr_100px] gap-3 pb-2 border-b font-medium text-sm text-gray-900">
+              <div className="grid grid-cols-[auto_100px_60px_1fr_100px_32px] gap-3 pb-2 border-b font-medium text-sm text-gray-900">
                 <div className="w-5"></div>
                 <div>Date</div>
                 <div>Type</div>
@@ -747,10 +1259,10 @@ export default function BankingPage() {
             </div>
 
             <div className="px-6 max-h-[600px] overflow-y-auto">
-              {payments.map(payment => (
+              {visiblePayments.map(payment => (
                 <div
                   key={payment.payment_id}
-                  className="grid grid-cols-[auto_100px_60px_1fr_100px] gap-3 py-3 hover:bg-gray-50 border-b border-gray-100"
+                  className="grid grid-cols-[auto_100px_60px_1fr_100px_32px] gap-3 py-3 hover:bg-gray-50 border-b border-gray-100"
                   onDoubleClick={() => openAmendDialog(payment)}
                 >
                   <div>
@@ -776,27 +1288,41 @@ export default function BankingPage() {
                   <div className="text-right font-semibold text-green-600">
                     £{payment.amount.toFixed(2)}
                   </div>
+                  <div className="text-right">
+                    {!payment.isMatched && (
+                      <button
+                        onClick={() => handleDeletePayment(payment)}
+                        className="text-gray-700 hover:text-red-600"
+                        title="Delete this payment"
+                        aria-label={`Delete payment ${payment.payment_id}`}
+                      >
+                        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
 
             {/* Payments Totals */}
             <div className="p-6 pt-4 border-t space-y-2">
-              <div className="grid grid-cols-[auto_100px_60px_1fr_100px] gap-3 text-sm">
+              <div className="grid grid-cols-[auto_100px_60px_1fr_100px_32px] gap-3 text-sm">
                 <div></div>
                 <div></div>
                 <div></div>
                 <div>Total Banking:</div>
                 <div className="text-right font-semibold">£{paymentTotals.totalBanking.toFixed(2)}</div>
               </div>
-              <div className="grid grid-cols-[auto_100px_60px_1fr_100px] gap-3 text-sm text-red-600">
+              <div className="grid grid-cols-[auto_100px_60px_1fr_100px_32px] gap-3 text-sm text-red-600">
                 <div></div>
                 <div></div>
                 <div></div>
                 <div>Total Matched:</div>
                 <div className="text-right font-semibold">£{paymentTotals.totalMatched.toFixed(2)}</div>
               </div>
-              <div className="grid grid-cols-[auto_100px_60px_1fr_100px] gap-3 text-sm">
+              <div className="grid grid-cols-[auto_100px_60px_1fr_100px_32px] gap-3 text-sm">
                 <div></div>
                 <div></div>
                 <div></div>
@@ -871,7 +1397,7 @@ export default function BankingPage() {
                 </button>
                 {editingPayment && (
                   <button
-                    onClick={handleDeletePayment}
+                    onClick={() => handleDeletePayment()}
                     className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
                   >
                     Delete
@@ -1009,6 +1535,68 @@ export default function BankingPage() {
           );
         })()}
 
+        {/* Rowland Cup Match Dialog */}
+        {editingRowland && (() => {
+          const owed = owingPence(editingRowland);
+          const ticked = paymentsTickedPence;
+          const tooMuch = ticked > owed;
+          const leftPence = owed - ticked;
+          return (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 px-4">
+              <div className="bg-white rounded-lg p-6 w-96">
+                <h3 className="text-lg font-semibold mb-4 text-gray-900">Manual Match Rowland Cup</h3>
+
+                <div className="mb-4 space-y-1">
+                  <div className="text-sm text-gray-700">Club: {editingRowland.clubName}</div>
+                  <div className="text-sm text-gray-700">Total Fee Due: {gbpFromPence(editingRowland.amountDuePence)}</div>
+                  <div className="text-sm text-gray-700">Outstanding: {gbpFromPence(owed)}</div>
+                  <div className="text-sm font-medium text-purple-600 border-t pt-2 mt-2">
+                    Selected Payment Total: {gbpFromPence(ticked)}
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium">Still to pay:</span>
+                    <div className="flex items-center space-x-2">
+                      <span className={`font-semibold ${leftPence !== 0 ? 'text-red-600' : 'text-green-600'}`}>
+                        {gbpFromPence(Math.max(leftPence, 0))}
+                      </span>
+                      {leftPence > 0 && ticked > 0 && (
+                        <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded font-semibold">Part Pay</span>
+                      )}
+                    </div>
+                  </div>
+                  {tooMuch && (
+                    <p className="text-sm text-red-700 mt-2">
+                      That&apos;s more than they owe. Untick a payment, or if they&apos;ve overpaid, sort out the difference with them first.
+                    </p>
+                  )}
+                  {ticked === 0 && (
+                    <p className="text-sm text-gray-700 mt-2">Tick the club&apos;s payment(s) on the right first.</p>
+                  )}
+                </div>
+
+                <div className="mt-6 flex justify-end space-x-3">
+                  <button
+                    onClick={() => setEditingRowland(null)}
+                    className="px-4 py-2 border rounded hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSaveRowlandPartPay}
+                    disabled={tooMuch || ticked === 0}
+                    className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50"
+                  >
+                    Amend
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* CSV Import Format Dialog */}
         {showImportFormatDialog && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -1017,7 +1605,8 @@ export default function BankingPage() {
 
               <div className="mb-4 space-y-3">
                 <p className="text-sm text-gray-600">
-                  The CSV file should have 4 columns: Date, Type, Description, Amount
+                  The CSV file should have 4 columns: Date, Type, Description, Amount. A header line
+                  is optional, and outgoings (negative amounts) are skipped.
                 </p>
 
                 <div className="bg-gray-50 rounded-lg p-3 font-mono text-xs">
@@ -1099,6 +1688,11 @@ export default function BankingPage() {
                 <p className="text-sm font-medium text-gray-900">
                   Found: {csvData.length} transactions
                 </p>
+                {csvSkipped > 0 && (
+                  <p className="text-xs text-gray-700 mt-1">
+                    {csvSkipped} outgoing{csvSkipped === 1 ? '' : 's'} (negative amounts) skipped
+                  </p>
+                )}
                 <div className="mt-2 space-y-1">
                   {Object.entries(typeCounts).map(([type, count]) => (
                     <p key={type} className="text-xs text-gray-500">

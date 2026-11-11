@@ -14,6 +14,7 @@ import {
   getRowlandEntryDeadline,
   getRowlandEntrySeason,
   createAccessToken,
+  RowlandEntryError,
   type TeamEntryInput,
   type RowlandTrophy,
 } from '@/lib/rowland-entries-supabase';
@@ -140,6 +141,7 @@ export async function POST(request: NextRequest) {
       season,
       consentToPublish: data.consentToPublish,
       teams: teamsInput,
+      createdBy: isCommitteeSession && session ? session.user.userName : 'entry form',
     });
 
     console.log(`[rowland/enter] Entry saved for ${data.clubName} (${teamsInput.length} team(s))`);
@@ -219,6 +221,9 @@ export async function POST(request: NextRequest) {
       bankDetails,
     });
   } catch (error) {
+    if (error instanceof RowlandEntryError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     console.error('[rowland/enter] POST error:', error);
     return NextResponse.json({ error: 'Failed to submit entry. Please try again.' }, { status: 500 });
   }
