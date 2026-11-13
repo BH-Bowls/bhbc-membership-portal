@@ -131,7 +131,7 @@ export interface TitlePicture {
 // badge, from the website's history photo with the enamel colours evened out and the
 // reflections and dust taken out.
 export const CREST: TitlePicture = { file: '/images/honours-boards/crest.png', aspect: 311 / 504, heightShare: 1 };
-export const CENTENARY_PIN: TitlePicture = { file: '/images/honours-boards/centenary-pin.png', aspect: 738 / 665, heightShare: 0.85 };
+export const CENTENARY_PIN: TitlePicture = { file: '/images/honours-boards/centenary-pin.png', aspect: 832 / 785, heightShare: 0.85 };
 
 /** What goes beside the title: nothing, the crest on the left or both sides, or crest left and pin right. */
 export type LogoPlace = 'none' | 'left' | 'both' | 'crest_pin';
