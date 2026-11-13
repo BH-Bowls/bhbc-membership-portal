@@ -611,16 +611,16 @@ export default function PrintHonoursBoardsPage() {
           )}
 
           {/* County, national and other external results, in the same style as the boards */}
-          {!loadError && (
+          {!loadError && !settingsError && (
             <div className="bg-white shadow rounded-lg p-5 space-y-3">
               <h2 className="font-semibold text-gray-900">External honours board</h2>
               <p className="text-sm text-gray-700">
                 County, national and other results from the{' '}
                 <a href="/admin/website/honours-external" className="text-blue-600 hover:text-blue-800">External Honours</a> records,
-                one row per entry, running on over as many sheets as they need. Uses the style and line spacing
-                as set for this print (above).
+                in any of the board layouts. Uses the rows, line spacing and style
+                as set for this print (above), so it matches the club boards.
               </p>
-              <HonoursExternalBoard style={style} lineSpacing={lineSpacing} clubName={theme.brand.name} />
+              <HonoursExternalBoard style={style} lineSpacing={lineSpacing} rowControl={yearsPerSet} clubName={theme.brand.name} />
             </div>
           )}
 

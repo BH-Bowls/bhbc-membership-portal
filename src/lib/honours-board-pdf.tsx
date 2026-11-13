@@ -12,11 +12,12 @@
 // out of the server bundle.
 
 import { Document, Font, Image, Page, Text, View, pdf } from '@react-pdf/renderer';
-import { LINE_SPACINGS, sheetGeometry, sheetLabel } from '@/types/honours-boards';
-import type { BoardSheet, HonoursBoard, LineSpacing } from '@/types/honours-boards';
+import { LINE_SPACINGS, sheetForYear, sheetGeometry, sheetLabel } from '@/types/honours-boards';
+import type { BoardLayout, BoardSheet, HonoursBoard, LineSpacing, SheetGeometry } from '@/types/honours-boards';
 import { findPreset, fontFileFor, titlePictures } from '@/types/honours-board-style';
 import type { BoardStyleSettings, FontChoice, FontSlot, TitlePicture } from '@/types/honours-board-style';
-import type { ExternalGeometry, ExternalRow } from '@/types/honours-external-board';
+import { externalCapacity, externalGeometry, externalSheets, rowsUsed, singleSheet } from '@/types/honours-external-board';
+import type { ExternalRow, ExternalSheet } from '@/types/honours-external-board';
 
 /** One season's honours: year, plus winner names keyed by website.honours_internal column. */
 export type HonoursYearRow = { year: number } & Record<string, string | number | null>;
@@ -433,37 +434,140 @@ export function honoursBoardFileName(board: HonoursBoard, sheet: BoardSheet, yea
 // Share of the width after the year column given to the competition; the rest is winners/detail
 const EXTERNAL_COMPETITION_SHARE = 0.45;
 
+/** Column widths (mm) on an external board sheet. */
+function externalColumns(g: SheetGeometry): { yearW: number; competitionW: number; detailW: number; pad: number } {
+  const tableW = g.widthMm - g.marginXMm * 2;
+  const yearW = YEAR_COL_W * g.scale;
+  const competitionW = (tableW - yearW) * EXTERNAL_COMPETITION_SHARE;
+  return { yearW, competitionW, detailW: tableW - yearW - competitionW, pad: CELL_PAD * g.scale };
+}
+
+/**
+ * Splits text into lines that fit the room (mm) at a size (pt), breaking between words.
+ * A single word too long for a line gets a line to itself (and is shrunk when drawn).
+ */
+function wrapText(font: ResolvedFont, text: string, roomMm: number, pt: number): string[] {
+  const words = text.split(/\s+/).filter((w) => w !== '');
+  if (words.length === 0) return [''];
+  const room = roomMm * MM * FIT_SAFETY;
+  const lines: string[] = [];
+  let line = words[0];
+  for (let i = 1; i < words.length; i++) {
+    const longer = `${line} ${words[i]}`;
+    if (textWidthEm(font, longer) * pt <= room) line = longer;
+    else {
+      lines.push(line);
+      line = words[i];
+    }
+  }
+  lines.push(line);
+  return lines;
+}
+
+/**
+ * Works out how each entry prints on sheets of this geometry: its competition and winners
+ * wrapped to their columns at the standard size, taking as many rows as the longer of the
+ * two needs. Only an entry longer than maxLines is shrunk (and, if it still doesn't fit,
+ * cut short with "…").
+ */
+function measureExternalRows(rows: ExternalRow[], g: SheetGeometry, font: ResolvedFont, maxLines: number): ExternalRow[] {
+  const cols = externalColumns(g);
+  const competitionRoom = cols.competitionW - cols.pad * 2;
+  const detailRoom = cols.detailW - cols.pad * 2;
+  const limit = Math.max(1, maxLines);
+  const measured: ExternalRow[] = [];
+  for (const row of rows) {
+    let pt = g.namePt;
+    let competitionLines = wrapText(font, row.competition, competitionRoom, pt);
+    let detailLines = wrapText(font, row.detail, detailRoom, pt);
+    while (Math.max(competitionLines.length, detailLines.length) > limit && pt > MIN_NAME_PT) {
+      pt = Math.max(MIN_NAME_PT, pt - 0.5);
+      competitionLines = wrapText(font, row.competition, competitionRoom, pt);
+      detailLines = wrapText(font, row.detail, detailRoom, pt);
+    }
+    if (competitionLines.length > limit) {
+      competitionLines = competitionLines.slice(0, limit);
+      competitionLines[limit - 1] += '…';
+    }
+    if (detailLines.length > limit) {
+      detailLines = detailLines.slice(0, limit);
+      detailLines[limit - 1] += '…';
+    }
+    measured.push({ ...row, competitionLines, detailLines, textPt: pt, lines: Math.max(competitionLines.length, detailLines.length) });
+  }
+  return measured;
+}
+
+/**
+ * The external board's sheets in a layout: the entries measured and wrapped (which needs
+ * the fonts, so it runs in the browser), then split into sheets. Every layout but the single
+ * sheet keeps one row height throughout, so the entries are measured once; the single
+ * sheet is fitted to the rows the entries need, which changes the row height and so the
+ * wrapping — it's worked out again until it settles.
+ * Throws HonoursFontError if a font can't be found or loaded.
+ */
+export async function planExternalHonours(options: {
+  rows: ExternalRow[];
+  layout: BoardLayout;
+  rowControl: number;
+  lineSpacing: LineSpacing;
+  style: BoardStyleSettings;
+}): Promise<ExternalSheet[]> {
+  const { rows, layout, rowControl, lineSpacing } = options;
+  const fonts = await resolveFonts(options.style);
+  if (layout === 'single') {
+    let rowCount = Math.max(1, rows.length);
+    let measured = rows;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const g = sheetGeometry('single', singleSheet(rowCount), rowControl, lineSpacing);
+      measured = measureExternalRows(rows, g, fonts.names, rowCount);
+      const needed = rowsUsed(measured);
+      if (needed <= rowCount) break;
+      rowCount = needed;
+    }
+    const sheets = externalSheets(measured, 'single', rowControl);
+    // The sheet is as tall as the rows the entries settled on
+    if (sheets.length > 0) sheets[0].sheet = singleSheet(rowCount);
+    return sheets;
+  }
+  const first = sheetForYear(1, 1, layout, rowControl);
+  if (!first) return [];
+  const second = sheetForYear(first.lastYear + 1, 1, layout, rowControl);
+  // An entry has to fit on any one sheet
+  let maxLines = externalCapacity(layout, first, rowControl);
+  if (second) maxLines = Math.min(maxLines, externalCapacity(layout, second, rowControl));
+  const g = externalGeometry(layout, first, rowControl, lineSpacing);
+  return externalSheets(measureExternalRows(rows, g, fonts.names, maxLines), layout, rowControl);
+}
+
 interface ExternalSheetProps {
   title: string;
-  sheetRows: ExternalRow[];
-  sheetIndex: number;      // 0 = the first sheet, with the full title
-  sheetCount: number;
-  g: ExternalGeometry;
+  external: ExternalSheet;
+  layout: BoardLayout;
+  rowControl: number;
+  lineSpacing: LineSpacing;
   style: BoardStyleSettings;
   fonts: ResolvedFonts;
   clubName: string;
 }
 
-/** One sheet of the external board — the same look as the club boards, one row per entry. */
-function ExternalSheetPage({ title, sheetRows, sheetIndex, sheetCount, g, style, fonts, clubName }: ExternalSheetProps) {
+/** One sheet of the external board — the club boards' look and sizes, one row per line of an entry. */
+function ExternalSheetPage({ title, external, layout, rowControl, lineSpacing, style, fonts, clubName }: ExternalSheetProps) {
+  const g = externalGeometry(layout, external.sheet, rowControl, lineSpacing);
   const s = g.scale;
-  const tableW = g.widthMm - g.marginMm * 2;
-  const yearColW = YEAR_COL_W * s;
-  const pad = CELL_PAD * s;
-  const competitionW = (tableW - yearColW) * EXTERNAL_COMPETITION_SHARE;
-  const detailW = tableW - yearColW - competitionW;
+  const tableW = g.widthMm - g.marginXMm * 2;
+  const cols = externalColumns(g);
+  const pad = cols.pad;
   const nameBoxAlign = style.nameAlign === 'left' ? 'flex-start' : style.nameAlign === 'right' ? 'flex-end' : 'center';
   const rowH = g.rowHeightMm - 0.01;
   const headingPt = Math.min(g.namePt * 0.85, 12.5 * s);
-  const first = sheetIndex === 0;
-  const rowCount = first ? g.firstRows : g.laterRows;
   const bleedMm = style.bleed ? BLEED_MM : 0;
   const pageSize = style.bleed ? { width: (g.widthMm + bleedMm * 2) * MM, height: (g.heightMm + bleedMm * 2) * MM } : g.paper;
 
   // Title area, as on the club boards: club name, board title, line, and pictures either side
   const titleNeedsMm = (style.underline ? 27 : 23.5) * s;
   const t = s * Math.min(1, g.titleHeightMm / titleNeedsMm);
-  const titleBottomPadMm = Math.min(g.marginMm, Math.max(0, g.titleHeightMm - titleNeedsMm * (t / s)));
+  const titleBottomPadMm = Math.min(g.marginYMm, Math.max(0, g.titleHeightMm - titleNeedsMm * (t / s)));
   const pictures = titlePictures(style.logo);
   const pictureSpaceMm = Math.min(g.titleHeightMm - 4 * s, 48 * s);
   const pictureInsetMm = 12 * s;
@@ -474,15 +578,31 @@ function ExternalSheetPage({ title, sheetRows, sheetIndex, sheetCount, g, style,
   }
   const titlePt = fitSize(fonts.titles, title, tableW - pictureRoomMm * 2, 30 * t);
 
-  // The sheet's rows, then blank rows to fill it
-  const slots: (ExternalRow | null)[] = [];
-  for (let i = 0; i < rowCount; i++) slots.push(i < sheetRows.length ? sheetRows[i] : null);
+  // The sheet's entries, then one blank row for each row left over
+  const slots: (ExternalRow | null)[] = [...external.rows];
+  for (let i = rowsUsed(external.rows); i < externalCapacity(layout, external.sheet, rowControl); i++) slots.push(null);
 
   const headingText = { fontFamily: fonts.headings.family, fontWeight: fonts.headings.weight, fontSize: headingPt, color: style.headingText };
 
+  /** One column of an entry: each line in a row-high box, so wrapped lines sit on the row grid. */
+  function textColumn(lines: string[], widthMm: number, pt: number) {
+    return (
+      <View style={{ width: widthMm * MM, paddingHorizontal: pad * MM }}>
+        {lines.map((line, k) => (
+          <View key={k} style={{ height: rowH * MM, justifyContent: 'center', alignItems: nameBoxAlign, overflow: 'hidden' }}>
+            <Text style={{ fontFamily: fonts.names.family, fontWeight: fonts.names.weight, fontSize: fitSize(fonts.names, line, widthMm - pad * 2, pt), lineHeight: ROW_LINE_HEIGHT, color: style.text, textAlign: style.nameAlign }}>
+              {line}
+            </Text>
+          </View>
+        ))}
+      </View>
+    );
+  }
+
   return (
-    <Page size={pageSize} orientation={style.bleed ? undefined : g.orientation} wrap={false} style={{ paddingHorizontal: (g.marginMm + bleedMm) * MM, paddingVertical: (g.marginMm + bleedMm) * MM, backgroundColor: style.background }}>
-      {first ? (
+    <Page size={pageSize} orientation={style.bleed ? undefined : g.orientation} wrap={false} style={{ paddingHorizontal: (g.marginXMm + bleedMm) * MM, paddingVertical: (g.marginYMm + bleedMm) * MM, backgroundColor: style.background }}>
+      {/* The title, on the first sheet of a set (or the only sheet) */}
+      {g.titleHeightMm > 0 && (
         <View style={{ height: g.titleHeightMm * MM, paddingBottom: titleBottomPadMm * MM, justifyContent: 'center', alignItems: 'center' }}>
           {pictures.left && pictureSpaceMm > 0 && (
             <View style={{ position: 'absolute', top: pictureTop(pictures.left) * MM, left: pictureInsetMm * MM }}>
@@ -504,25 +624,31 @@ function ExternalSheetPage({ title, sheetRows, sheetIndex, sheetCount, g, style,
             <View style={{ width: 60 * MM * t, height: DECADE_LINE_PT * t, backgroundColor: style.underline, marginTop: 3 * MM * t }} />
           )}
         </View>
-      ) : (
+      )}
+
+      {/* A one-line title on a continuation sheet, so it still says what it is in its own frame */}
+      {g.contTitleHeightMm > 0 && (
         <View style={{ height: g.contTitleHeightMm * MM, justifyContent: 'center', alignItems: 'center' }}>
           <Text style={{ fontFamily: fonts.titles.family, fontWeight: fonts.titles.weight, fontSize: 11.5 * s, lineHeight: 1.2, color: style.title }}>
-            {title} (continued{sheetCount > 2 ? ` — sheet ${sheetIndex + 1}` : ''})
+            {title} (continued)
           </Text>
         </View>
       )}
 
-      <View style={{ flexDirection: 'row', height: g.headerHeightMm * MM, backgroundColor: style.headingBand }}>
-        <View style={{ width: yearColW * MM, justifyContent: 'center', alignItems: 'center' }}>
-          <Text style={{ ...headingText, fontSize: fitSize(fonts.headings, 'Year', yearColW, headingPt) }}>Year</Text>
+      {/* Column headings — on every sheet of the external board */}
+      {g.headerHeightMm > 0 && (
+        <View style={{ flexDirection: 'row', height: g.headerHeightMm * MM, backgroundColor: style.headingBand }}>
+          <View style={{ width: cols.yearW * MM, justifyContent: 'center', alignItems: 'center' }}>
+            <Text style={{ ...headingText, fontSize: fitSize(fonts.headings, 'Year', cols.yearW, headingPt) }}>Year</Text>
+          </View>
+          <View style={{ width: cols.competitionW * MM, paddingHorizontal: pad * MM, justifyContent: 'center', alignItems: 'center' }}>
+            <Text style={headingText}>Competition</Text>
+          </View>
+          <View style={{ width: cols.detailW * MM, paddingHorizontal: pad * MM, justifyContent: 'center', alignItems: 'center' }}>
+            <Text style={headingText}>Winners</Text>
+          </View>
         </View>
-        <View style={{ width: competitionW * MM, paddingHorizontal: pad * MM, justifyContent: 'center', alignItems: 'center' }}>
-          <Text style={headingText}>Competition</Text>
-        </View>
-        <View style={{ width: detailW * MM, paddingHorizontal: pad * MM, justifyContent: 'center', alignItems: 'center' }}>
-          <Text style={headingText}>Winners</Text>
-        </View>
-      </View>
+      )}
 
       {slots.map((row, i) => {
         const prev = i > 0 ? slots[i - 1] : null;
@@ -532,27 +658,20 @@ function ExternalSheetPage({ title, sheetRows, sheetIndex, sheetCount, g, style,
         const decade = style.decadeLines !== null && row !== null && prev !== null && newYear && Math.floor(row.year / 10) !== Math.floor(prev.year / 10);
         // A fine line between years, and between the blank rows at the end
         const ruled = style.yearLines !== null && !decade && i > 0 && (newYear || row === null);
-        const competition = row ? row.competition : '';
-        const detail = row ? row.detail : '';
+        const lines = row ? row.lines : 1;
+        const pt = row && row.textPt ? row.textPt : g.namePt;
         return (
-          <View key={i} style={{ flexDirection: 'row', height: rowH * MM, backgroundColor: striped && style.stripes ? style.stripes : style.background }}>
+          <View key={i} style={{ flexDirection: 'row', height: lines * rowH * MM, backgroundColor: striped && style.stripes ? style.stripes : style.background }}>
             {decade && style.decadeLines && <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: DECADE_LINE_PT * s, backgroundColor: style.decadeLines }} />}
             {ruled && style.yearLines && <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: ROW_RULE_PT * s, backgroundColor: style.yearLines }} />}
-            <View style={{ width: yearColW * MM, justifyContent: 'center', alignItems: 'center' }}>
-              <Text style={{ fontFamily: fonts.headings.family, fontWeight: fonts.headings.weight, fontSize: fitSize(fonts.headings, row ? String(row.year) : '', yearColW, g.namePt), lineHeight: ROW_LINE_HEIGHT, color: style.years }}>
+            {/* The year lines up with the entry's first line */}
+            <View style={{ width: cols.yearW * MM, height: rowH * MM, justifyContent: 'center', alignItems: 'center' }}>
+              <Text style={{ fontFamily: fonts.headings.family, fontWeight: fonts.headings.weight, fontSize: fitSize(fonts.headings, row ? String(row.year) : '', cols.yearW, g.namePt), lineHeight: ROW_LINE_HEIGHT, color: style.years }}>
                 {row && row.showYear ? String(row.year) : ''}
               </Text>
             </View>
-            <View style={{ width: competitionW * MM, paddingHorizontal: pad * MM, justifyContent: 'center', alignItems: nameBoxAlign, overflow: 'hidden' }}>
-              <Text style={{ fontFamily: fonts.names.family, fontWeight: fonts.names.weight, fontSize: fitSize(fonts.names, competition, competitionW - pad * 2, g.namePt), lineHeight: ROW_LINE_HEIGHT, color: style.text, textAlign: style.nameAlign }}>
-                {competition}
-              </Text>
-            </View>
-            <View style={{ width: detailW * MM, paddingHorizontal: pad * MM, justifyContent: 'center', alignItems: nameBoxAlign, overflow: 'hidden' }}>
-              <Text style={{ fontFamily: fonts.names.family, fontWeight: fonts.names.weight, fontSize: fitSize(fonts.names, detail, detailW - pad * 2, g.namePt), lineHeight: ROW_LINE_HEIGHT, color: style.text, textAlign: style.nameAlign }}>
-                {detail}
-              </Text>
-            </View>
+            {textColumn(row && row.competitionLines ? row.competitionLines : [row ? row.competition : ''], cols.competitionW, pt)}
+            {textColumn(row && row.detailLines ? row.detailLines : [row ? row.detail : ''], cols.detailW, pt)}
           </View>
         );
       })}
@@ -561,28 +680,29 @@ function ExternalSheetPage({ title, sheetRows, sheetIndex, sheetCount, g, style,
 }
 
 /**
- * Renders the external honours board: every sheet as one page of a single PDF.
- * Throws HonoursFontError if a font can't be found or loaded.
+ * Renders sheets of the external board (from planExternalHonours) — one, or all — as one
+ * PDF, a page per sheet. Throws HonoursFontError if a font can't be found or loaded.
  */
 export async function buildExternalHonoursPdf(options: {
   title: string;
-  sheets: ExternalRow[][];
-  geometry: ExternalGeometry;
+  sheets: ExternalSheet[];
+  layout: BoardLayout;
+  rowControl: number;
+  lineSpacing: LineSpacing;
   style: BoardStyleSettings;
   clubName: string;
 }): Promise<Blob> {
   const fonts = await resolveFonts(options.style);
-  const count = options.sheets.length;
   return pdf(
     <Document title={`${options.clubName} — ${options.title}`} author={options.clubName}>
-      {options.sheets.map((sheetRows, i) => (
+      {options.sheets.map((external, i) => (
         <ExternalSheetPage
           key={i}
           title={options.title}
-          sheetRows={sheetRows}
-          sheetIndex={i}
-          sheetCount={count}
-          g={options.geometry}
+          external={external}
+          layout={options.layout}
+          rowControl={options.rowControl}
+          lineSpacing={options.lineSpacing}
           style={options.style}
           fonts={fonts}
           clubName={options.clubName}
@@ -592,8 +712,16 @@ export async function buildExternalHonoursPdf(options: {
   ).toBlob();
 }
 
-/** Download filename, e.g. "BHBC Honours - County & National Honours (2 sheets, A3 portrait).pdf". */
-export function externalHonoursFileName(title: string, sheetCount: number, g: ExternalGeometry, bleed = false): string {
+/**
+ * Download filename for one sheet, e.g. "BHBC Honours - County & National Honours - Set 1
+ * Sheet 3 1999-2011 (A3 landscape).pdf" — the years are those of the entries on it.
+ */
+export function externalHonoursFileName(title: string, layout: BoardLayout, external: ExternalSheet, rowControl: number, bleed = false): string {
   const safeTitle = title.replace(/[\\/:*?"<>|]/g, '-');
-  return `BHBC Honours - ${safeTitle} (${sheetCount} sheet${sheetCount === 1 ? '' : 's'}, ${g.paper} ${g.orientation}${bleed ? ' with 3mm bleed' : ''}).pdf`;
+  const g = sheetGeometry(layout, external.sheet, rowControl, 'snug');
+  const label = sheetLabel(layout, external.sheet).replace(/ \(.*\)$/, '');
+  const where = external.sheet.position === 'Single' ? '' : `Set ${external.sheet.set} ${label} `;
+  const rows = external.rows;
+  const years = rows.length > 0 ? `${rows[0].year}-${rows[rows.length - 1].year} ` : 'blank ';
+  return `BHBC Honours - ${safeTitle} - ${where}${years}(${g.paper} ${g.orientation}${bleed ? ' with 3mm bleed' : ''}).pdf`;
 }
