@@ -1,7 +1,7 @@
 // app/admin/website/honours-boards/page.tsx
 // Print Honours Boards — builds the printed sheets for the clubhouse honours boards as
-// PDFs, in the browser, from the internal honours records, and photo plaques for the
-// champions photos. Everyone here can change the rows and style for one print; an Admin can
+// PDFs, in the browser, from the internal honours records, the external honours board
+// (county and national results), and photo plaques for the champions photos. Everyone here can change the rows and style for one print; an Admin can
 // also save them as the club's settings, and open Setup (start year and the boards themselves).
 // Access: Admin, Captain, GMC (enforced by the API routes; saving is Admin only).
 
@@ -21,6 +21,7 @@ import type { HonoursYearRow } from '@/lib/honours-board-pdf';
 import { HonoursBoardStyleEditor } from '@/components/HonoursBoardStyleEditor';
 import { HonoursRowSettings, rowSummary } from '@/components/HonoursRowSettings';
 import { HonoursPhotoPlaque } from '@/components/HonoursPhotoPlaque';
+import { HonoursExternalBoard } from '@/components/HonoursExternalBoard';
 import { HonoursBoardsPanel } from '@/components/HonoursBoardsPanel';
 import { HonoursPrintSpec } from '@/components/HonoursPrintSpec';
 import { honoursPrintSpec } from '@/lib/honours-print-spec';
@@ -606,6 +607,20 @@ export default function PrintHonoursBoardsPage() {
                   Every font is embedded in the PDF, so the print shop sees exactly what&apos;s previewed here.
                 </p>
               )}
+            </div>
+          )}
+
+          {/* County, national and other external results, in the same style as the boards */}
+          {!loadError && (
+            <div className="bg-white shadow rounded-lg p-5 space-y-3">
+              <h2 className="font-semibold text-gray-900">External honours board</h2>
+              <p className="text-sm text-gray-700">
+                County, national and other results from the{' '}
+                <a href="/admin/website/honours-external" className="text-blue-600 hover:text-blue-800">External Honours</a> records,
+                one row per entry, running on over as many sheets as they need. Uses the style and line spacing
+                as set for this print (above).
+              </p>
+              <HonoursExternalBoard style={style} lineSpacing={lineSpacing} clubName={theme.brand.name} />
             </div>
           )}
 

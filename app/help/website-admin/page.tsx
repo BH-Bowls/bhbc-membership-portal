@@ -10,7 +10,7 @@ export default function HelpWebsiteAdminPage() {
           <BackLink href="/help" label="Help" />
           <h1 className="text-2xl font-bold text-gray-900">Website Admin</h1>
           <p className="text-gray-500 text-sm mt-1">Keeping the public club website up to date</p>
-          <LastUpdated date="2026-11-05" />
+          <LastUpdated date="2026-11-13" />
         </div>
         <div className="space-y-4">
 
@@ -41,7 +41,8 @@ export default function HelpWebsiteAdminPage() {
               </li>
               <li>
                 <strong>Print Honours Boards</strong> — builds print-ready PDFs of the internal honours for
-                the clubhouse boards, and photo plaques for the champions&apos; photos. You can adjust the rows
+                the clubhouse boards, an external honours board from the External Honours records (one row
+                per result, over as many sheets as needed), and photo plaques for the champions&apos; photos. You can adjust the rows
                 and style for one print; only an Admin can save them as the club&apos;s settings, or change
                 the boards themselves in Setup.
               </li>
