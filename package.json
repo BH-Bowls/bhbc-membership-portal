@@ -1,6 +1,6 @@
 {
   "name": "bhbc-membership-portal",
-  "version": "2.11.3",
+  "version": "2.11.4",
   "previewVersion": "27",
   "private": true,
   "scripts": {
