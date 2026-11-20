@@ -48,7 +48,6 @@ import { canUseBarTill } from '@/lib/role-utils';
 import { priceItem, type BarPricingConfig, type BarProduct, type BarCategoryRow, type BarAccount, type BarPerson, type BarReport, type BarSaleSummary, type BarDayEnd, type BarDayEndLedgerRow } from '@/lib/bar-supabase';
 import { useOnlineStatus } from '@/hooks/useOnlineStatus';
 import { useCardScanner } from '@/hooks/useCardScanner';
-import { beep } from '@/lib/beep';
 import { enqueue, listQueued, dequeue, newQueueId, type QueuedEntry } from '@/lib/bar-offline-queue';
 import BarTerminalPayment, { type TerminalCheckout } from '@/components/BarTerminalPayment';
 import { BarHelpPanel, BarHelpContext, BarHelpLink, type BarHelpTopicId } from '@/components/BarHelp';
@@ -1089,7 +1088,6 @@ export default function BarTillPage() {
     setShowScanner(false);
     const result = await readScan(value);
     if (result.person) selectMember(result.person, result.proof ?? null);
-    if (result.message) beep('error');
     setError(result.message ?? '');
   }
 
@@ -1101,11 +1099,9 @@ export default function BarTillPage() {
     const result = await readScan(code);
     if (member && result.proof && result.proof.userName === member.userName) { setMemberProof(result.proof); setError(''); return; }
     if (member && result.person && result.person.userName !== member.userName) {
-      beep('error');
       setError(`That’s ${result.person.fullName}’s card — go back to the member list to serve them.`);
       return;
     }
-    if (result.message) beep('error');
     setError(result.message ?? '');
   }, (view === 'person' || (view === 'sale' && !!member)) && !proofDialog && !staffDialog && !showSetPin && !showAssignCard && !terminalPay && !voidDialog);
 
@@ -1852,7 +1848,6 @@ function PersonProofPanel({ person, card, offline, readScan, onPinLocked, onProv
     setScanning(false);
     const result = await readScan(value);
     if (result.proof && result.proof.userName === person.userName) { onProven({ cardCode: result.proof.cardCode }); return; }
-    beep('error');
     if (result.person && result.person.userName !== person.userName) setMessage(`That’s ${result.person.fullName}’s card, not ${person.fullName}’s.`);
     else setMessage(result.message || 'That card can’t be used — try the PIN.');
   }
