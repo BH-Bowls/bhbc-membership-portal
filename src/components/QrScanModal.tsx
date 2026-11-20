@@ -13,6 +13,7 @@
 import { useEffect, useRef, useState } from 'react';
 import jsQR from 'jsqr';
 import { useCardScanner } from '@/hooks/useCardScanner';
+import { beep, primeBeep } from '@/lib/beep';
 
 const CAMERA_KEY = 'qr_scan_camera';
 
@@ -37,6 +38,8 @@ export default function QrScanModal({ title = 'Scan member QR', onScan, onClose 
   useEffect(() => { onScanRef.current = onScan; });
   // A plug-in scanner works while the camera is open too
   useCardScanner((code) => onScanRef.current(code));
+  // The modal opens from a tap, so this is the moment the browser lets audio start
+  useEffect(() => { primeBeep(); }, []);
 
   useEffect(() => {
     let stream: MediaStream | null = null;
@@ -54,7 +57,7 @@ export default function QrScanModal({ title = 'Scan member QR', onScan, onClose 
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
           const code = jsQR(imageData.data, imageData.width, imageData.height);
-          if (code?.data) { onScanRef.current(code.data); return; }
+          if (code?.data) { beep('ok'); onScanRef.current(code.data); return; }
         }
       }
       rafId = requestAnimationFrame(tick);
