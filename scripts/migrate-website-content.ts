@@ -192,28 +192,35 @@ async function migrateRowlandInterest(): Promise<void> {
 // Columns not listed here keep their name unchanged (see CLAUDE.md / HONOURS_DELTA_SPEC.md
 // for why some competitions were renamed and others weren't).
 const HONOURS_INTERNAL_COLUMN_MAP: Record<string, string> = {
-  captain: 'mens_captain',
   mens_champion: 'mens_championship',
-  mens_maynard: 'mixed_handicap',
-  pairs: 'drawn_pairs',
+  mixed_handcap: 'mixed_handicap',
+  mixed_pairs: 'drawn_pairs',
   triples: 'drawn_triples',
-  victor_veterans: 'veterans_cup',
   centenary: 'centenary_cup',
+  veterans: 'veterans_cup',
 };
+
+const DRY_RUN = process.env.DRY_RUN === '1';
 
 async function migrateHonoursInternal(): Promise<void> {
   console.log('HonoursInternal...');
   const supabase = getSupabaseClient().schema('website');
   const rows = await readSheetRows('HonoursInternal');
-
-  const { error: wipeErr } = await supabase.from('honours_internal').delete().neq('year', NEVER_MATCHES_YEAR);
-  if (wipeErr) throw new Error(`honours_internal wipe failed: ${wipeErr.message}`);
+  console.log(`  sheet rows read: ${rows.length}`);
 
   const toInsert = [];
-  for (const r of rows) {
-    const year = parseInt(r['year'] ?? '0', 10);
-    if (!Number.isFinite(year) || year <= 0) continue;
+  for (const rawRow of rows) {
+    // Normalise headers so "Mens Captain" becomes "mens_captain"
+    const r: Record<string, string> = {};
+    for (const [header, value] of Object.entries(rawRow)) {
+      r[header.trim().toLowerCase().replace(/\s+/g, '_')] = value;
+    }
 
+    const year = parseInt(r['year'] ?? '0', 10);
+    if (!Number.isFinite(year) || year <= 0) {
+      console.warn(`  !! dropped row with invalid year: "${r['year']}"`);
+      continue;
+    }
     const row: Record<string, string | number | null> = { year };
     for (const [sheetCol, value] of Object.entries(r)) {
       if (sheetCol === 'year') continue;
@@ -223,10 +230,21 @@ async function migrateHonoursInternal(): Promise<void> {
     toInsert.push(row);
   }
 
-  if (toInsert.length > 0) {
-    const { error } = await supabase.from('honours_internal').insert(toInsert);
-    if (error) throw new Error(`honours_internal insert failed: ${error.message}`);
+  if (toInsert.length === 0) {
+    throw new Error('No valid rows read from HonoursInternal - aborting before wipe');
   }
+
+  console.log(`  columns that will be inserted: ${Object.keys(toInsert[0]).join(', ')}`);
+  if (DRY_RUN) {
+    console.log('  DRY RUN - nothing written');
+    return;
+  }
+
+  const { error: wipeErr } = await supabase.from('honours_internal').delete().neq('year', NEVER_MATCHES_YEAR);
+  if (wipeErr) throw new Error(`honours_internal wipe failed: ${wipeErr.message}`);
+
+  const { error } = await supabase.from('honours_internal').insert(toInsert);
+  if (error) throw new Error(`honours_internal insert failed: ${error.message}`);
   console.log(`  -> ${toInsert.length} rows`);
 }
 
@@ -255,12 +273,12 @@ async function migrateHonoursExternal(): Promise<void> {
 
 async function main() {
   console.log(`Migrating Website Content sheet -> website schema (spreadsheet ${getWebsiteContentSpreadsheetId()})\n`);
-  await migrateCommittee();
-  await migrateCoaches();
-  await migrateAnnouncements();
-  await migrateRowlandInterest();
+//  await migrateCommittee();
+//  await migrateCoaches();
+//  await migrateAnnouncements();
+//  await migrateRowlandInterest();
   await migrateHonoursInternal();
-  await migrateHonoursExternal();
+//  await migrateHonoursExternal();
   console.log('\nDone.');
 }
 
