@@ -20,12 +20,13 @@ export function beep(kind: 'ok' | 'error' = 'ok') {
   try {
     primeBeep();
     if (!ctx) return;
-    const length = kind === 'ok' ? 0.12 : 0.3;
+    const length = kind === 'ok' ? 0.2 : 0.45;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = 'square';
-    osc.frequency.value = kind === 'ok' ? 1800 : 400; // high chirp vs low buzz
-    gain.gain.setValueAtTime(0.15, ctx.currentTime);
+    osc.frequency.value = kind === 'ok' ? 1500 : 500; // chirp vs buzz — kept in the range tablet speakers handle best
+    gain.gain.setValueAtTime(1.0, ctx.currentTime);
+    gain.gain.setValueAtTime(1.0, ctx.currentTime + length * 0.7); // hold full volume, then fade the tail
     gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + length);
     osc.connect(gain);
     gain.connect(ctx.destination);
